@@ -12,7 +12,6 @@ if TYPE_CHECKING:
 
 __all__ = [
     "FETCH_CHUNK_BYTES",
-    "FETCH_FRAME_LIMIT_BYTES",
     "AudioRequest",
     "AudioResult",
 ]
@@ -24,11 +23,6 @@ __all__ = [
 # deliberately no total-file ceiling on the daemon -- the old single-frame limit
 # no longer governs retrieval.
 FETCH_CHUNK_BYTES = 256 * 1024
-
-# Legacy single-frame ceiling, retained only for the top-level ``record`` locator
-# hint in ``__main__.py`` (which the unified-verb CLI mission deletes). The daemon
-# ``fetch`` no longer uses it -- retrieval is chunked and unbounded.
-FETCH_FRAME_LIMIT_BYTES = 700_000
 
 
 def _metadata() -> dict[str, str]:

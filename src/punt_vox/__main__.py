@@ -6,11 +6,9 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import platform
 import shutil
 import subprocess
-import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -22,7 +20,7 @@ from punt_vox import __version__
 from punt_vox.api_key_resolver import ApiKeyResolver
 from punt_vox.cli_io import OutputFlags, TextInput
 from punt_vox.cli_music import build_music_app
-from punt_vox.client_env import DaemonEnv
+from punt_vox.cli_rec import build_rec_app
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import ConfigStore
@@ -30,13 +28,12 @@ from punt_vox.desktop_install import DesktopInstaller
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, default_output_dir, find_config_dir
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
-from punt_vox.types_audio import FETCH_FRAME_LIMIT_BYTES
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe import VibeChange
 
 if TYPE_CHECKING:
     # Annotation-only; keeps `client` off __main__'s runtime import graph.
-    from punt_vox.client import RecordResult, SynthesizeResult
+    from punt_vox.client import SynthesizeResult
 
 logger = logging.getLogger(__name__)
 
@@ -152,14 +149,6 @@ LanguageOpt = Annotated[
 RateOpt = Annotated[
     int,
     typer.Option("--rate", help="Speech rate as percentage (e.g. 90 = 90%% speed)."),
-]
-NameOpt = Annotated[
-    str | None,
-    typer.Option(
-        "--name",
-        help="Bare filename to store the recording under (no path). "
-        "Default: content-addressed by text.",
-    ),
 ]
 OutputDirOpt = Annotated[
     Path | None,
@@ -382,128 +371,6 @@ def say(  # pyright: ignore[reportUnusedFunction]
 
     segments = _text_input.resolve(text, from_file)
     _speak_segments(segments, spec, once)
-
-
-# ---------------------------------------------------------------------------
-# record — save audio to file
-# ---------------------------------------------------------------------------
-
-
-@app.command()
-def record(  # pyright: ignore[reportUnusedFunction]
-    text: TextArg = None,
-    from_file: FromOpt = None,
-    voice: VoiceOpt = None,
-    language: LanguageOpt = None,
-    rate: RateOpt = 90,
-    name: NameOpt = None,
-    provider: ProviderOpt = None,
-    model: ModelOpt = None,
-    stability: StabilityOpt = None,
-    similarity: SimilarityOpt = None,
-    style: StyleOpt = None,
-    speaker_boost: SpeakerBoostFlag = False,  # noqa: FBT002 -- typer CLI requires bool default
-    *,
-    json_output: JsonOutput = False,
-    verbose: Verbose = False,
-    quiet: Quiet = False,
-) -> None:
-    """Capture synthesized audio into the daemon's store; print its locator.
-
-    Reads the text from the TEXT argument, from ``--from`` (a JSON segments
-    file), or from stdin when TEXT is ``-`` or the input is piped. The daemon
-    owns the file -- this command names no path. Play it with ``vox play <id>``
-    or copy it out with ``vox fetch <id> -o <path>``.
-    """
-    _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-    boost = speaker_boost if speaker_boost else None
-    spec = _validated_spec(
-        SynthesisSpec(
-            voice=voice,
-            language=language,
-            rate=rate,
-            provider=provider,
-            model=model,
-            stability=stability,
-            similarity=similarity,
-            style=style,
-            speaker_boost=boost,
-        )
-    )
-
-    segments = _text_input.resolve(text, from_file)
-    if name is not None and not name:
-        # The daemon rejects an empty name (it is the single authority); the CLI
-        # fast-fails here with a clear message before a wasted round-trip.
-        _formatter.error("--name must not be empty", "Error: --name must not be empty")
-        raise typer.Exit(code=1)
-    if name and len(segments) > 1:
-        _formatter.error(
-            "--name supports a single segment only",
-            "Error: --name supports a single segment only",
-        )
-        raise typer.Exit(code=1)
-
-    client = VoxClientSync()
-    for seg_text in segments:
-        try:
-            result = client.record(seg_text, spec, name=name)
-        except (VoxdConnectionError, VoxdProtocolError) as exc:
-            _formatter.error(str(exc), f"Error: {exc}")
-            raise typer.Exit(code=1) from exc
-        _emit_record_locator(result)
-
-
-def _emit_record_locator(result: RecordResult) -> None:
-    """Print a stored recording's locator: a local path, or a remote id + host.
-
-    The bare local path is shown only when the store path is provably the
-    daemon's recording -- it exists on this machine AND its size equals the
-    daemon-reported byte count. Mere existence is not proof: a remote daemon
-    may share this user's home layout, so a same-named local file (content
-    names collide on text; an explicit --name collides outright) is a
-    different file. A size mismatch therefore means "not the daemon's file"
-    and falls through to the remote locator, never a spurious error. Only a
-    genuine local anomaly -- the path exists but cannot be stat'd (a race or
-    permission fault) -- is a one-line error rather than a traceback.
-    """
-    payload: dict[str, object] = {
-        "id": result.id,
-        "name": result.name,
-        "path": str(result.store_path),
-        "bytes": result.byte_count,
-        "cached": result.cached,
-    }
-    try:
-        is_local = (
-            result.store_path.is_file()
-            and result.store_path.stat().st_size == result.byte_count
-        )
-    except OSError as exc:
-        detail = f"cannot read recording {result.store_path}: {exc}"
-        _formatter.error(detail, f"Error: {detail}")
-        raise typer.Exit(code=1) from exc
-    if is_local:
-        _formatter.emit(payload, str(result.store_path))
-        return
-
-    # The connection host stays in the structured payload (machine-readable,
-    # accurate as the endpoint) but NOT in the human text: under an SSH tunnel
-    # it is 127.0.0.1 (the tunnel endpoint), not where the recording lives, and
-    # the CLI cannot reliably tell tunnel from direct -- so the text says "the
-    # daemon" generically (matching the guide example).
-    payload["host"] = DaemonEnv.host()
-    # Only advertise fetch when the recording actually fits a single fetch frame;
-    # above the limit fetch always fails, so point at host-side playback instead.
-    if result.byte_count > FETCH_FRAME_LIMIT_BYTES:
-        retrieval = (
-            f"too large to fetch over the wire — play it on the daemon host "
-            f"with vox play {result.name}"
-        )
-    else:
-        retrieval = f"fetch: vox fetch {result.name} -o <path>"
-    text = f"{result.name} on the daemon (play: vox play {result.name}; {retrieval})"
-    _formatter.emit(payload, text)
 
 
 # ---------------------------------------------------------------------------
@@ -990,118 +857,6 @@ def install_desktop(
 
 
 # ---------------------------------------------------------------------------
-# play
-# ---------------------------------------------------------------------------
-
-
-@app.command()
-def play(
-    ref: Annotated[
-        str,
-        typer.Argument(help="A store recording id/name, or a local audio file path."),
-    ],
-) -> None:
-    """Play a recording on the daemon host, or a local file on this machine.
-
-    If REF is an existing file on this machine it plays here with serialized
-    flock queuing (loopback = the right machine). Otherwise REF is a store
-    id/name and the daemon plays it on the host with speakers.
-    """
-    local = Path(ref)
-    if local.is_file():
-        from punt_vox.playback import play_audio
-
-        # This path plays immediately and blocks, so the dispatch line is
-        # accurate up front (documented precedence: an existing local file wins).
-        _formatter.emit(
-            {"played": str(local), "where": "local"}, f"playing local file {local}"
-        )
-        detail = play_audio(local)
-        if detail is not None:
-            # A failed local playback must exit non-zero with a one-line error,
-            # the same as the daemon store-ref path.
-            _formatter.error(detail, f"Error: {detail}")
-            raise typer.Exit(code=1)
-        return
-
-    client = VoxClientSync()
-    try:
-        client.play(ref)
-    except (VoxdConnectionError, VoxdProtocolError) as exc:
-        _formatter.error(str(exc), f"Error: {exc}")
-        raise typer.Exit(code=1) from exc
-    # Reported only after the daemon accepted the ref and playback finished --
-    # a rejected ref raises above, so we never claim "played" optimistically.
-    _formatter.emit(
-        {"played": ref, "where": "daemon"},
-        f"played store recording {ref} on the daemon host",
-    )
-
-
-# ---------------------------------------------------------------------------
-# fetch
-# ---------------------------------------------------------------------------
-
-
-@app.command()
-def fetch(
-    ref: Annotated[str, typer.Argument(help="Store recording id/name to retrieve.")],
-    output: Annotated[
-        Path,
-        typer.Option("--output", "-o", help="Local path to write the recording to."),
-    ],
-) -> None:
-    """Materialize a stored recording to a local path.
-
-    Always retrieves the bytes from the connected daemon and writes OUTPUT.
-    There is no local-copy shortcut: a same-named file under this machine's
-    recordings dir is not provably the connected daemon's recording (a remote
-    daemon may share this user's home layout), and the client cannot confirm
-    identity without the daemon's bytes -- so it fetches them. REF is a bare
-    store id/name; no daemon path is named.
-    """
-    try:
-        data = VoxClientSync().fetch(ref)
-        # Atomic write (temp in the same dir + os.replace): a mid-write failure
-        # (disk full, interrupted I/O) leaves any existing file untouched and
-        # never materializes a partial/truncated file. The post-write stat lives
-        # inside the guard so a stat failure is the same one-line error.
-        size = _atomic_write_bytes(output, data)
-    except (VoxdConnectionError, VoxdProtocolError) as exc:
-        _formatter.error(str(exc), f"Error: {exc}")
-        raise typer.Exit(code=1) from exc
-    except OSError as exc:
-        detail = f"cannot write {output}: {exc}"
-        _formatter.error(detail, f"Error: {detail}")
-        raise typer.Exit(code=1) from exc
-    _formatter.emit({"path": str(output), "bytes": size}, str(output))
-
-
-def _atomic_write_bytes(output: Path, data: bytes) -> int:
-    """Write *data* to *output* atomically; return the byte count written.
-
-    Writes to a temp file in the destination's directory, then renames it into
-    place with ``os.replace`` -- so the destination is the complete file or
-    untouched, never a partial write. Mirrors the daemon store's mkstemp +
-    replace discipline. On any error the temp is removed and the OSError
-    re-raised.
-    """
-    # Create the destination directory first so a nested -o path (e.g.
-    # ./out/rec.mp3) works, instead of mkstemp failing with FileNotFoundError.
-    output.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(dir=output.parent, suffix=".tmp")
-    tmp = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(data)
-        tmp.replace(output)
-    except OSError:
-        tmp.unlink(missing_ok=True)
-        raise
-    return output.stat().st_size
-
-
-# ---------------------------------------------------------------------------
 # cache commands
 # ---------------------------------------------------------------------------
 
@@ -1157,6 +912,13 @@ def mcp() -> None:
 # ---------------------------------------------------------------------------
 
 app.add_typer(build_music_app(_formatter), name="music")
+
+
+# ---------------------------------------------------------------------------
+# rec subcommand group (recordings store; implementation in cli_rec)
+# ---------------------------------------------------------------------------
+
+app.add_typer(build_rec_app(_formatter), name="rec")
 
 
 # ---------------------------------------------------------------------------
