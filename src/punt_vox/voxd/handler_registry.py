@@ -9,6 +9,7 @@ from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 from punt_vox.voxd.fetch_handler import FetchHandler
 from punt_vox.voxd.play_handler import PlayHandler
+from punt_vox.voxd.rec_handlers import RecListHandler, RecRemoveHandler
 from punt_vox.voxd.record_handler import RecordHandler
 from punt_vox.voxd.record_store import RecordStore
 from punt_vox.voxd.speech_handlers import SynthesizeHandler
@@ -72,6 +73,8 @@ class HandlerRegistry:
             "record": RecordHandler(synthesis=self._synthesis, store=store),
             "play": PlayHandler(playback=self._playback, store=store),
             "fetch": FetchHandler(store=store, music=self._programs.library),
+            "rec_list": RecListHandler(store),
+            "rec_remove": RecRemoveHandler(store),
             "chime": ChimeHandler(
                 chimes=ChimeResolver(),
                 chime_dedup=ChimeDedup(),

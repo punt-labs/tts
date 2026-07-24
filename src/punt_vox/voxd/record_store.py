@@ -23,6 +23,7 @@ import os
 import shutil
 import tempfile
 from dataclasses import dataclass
+from operator import attrgetter
 from pathlib import Path
 from typing import Self, final
 
@@ -43,6 +44,15 @@ class RecordWrite:
     """
 
     path: Path
+    byte_count: int
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class RecordingEntry:
+    """One recording in the store: its bare name and byte count (the list view)."""
+
+    name: str
     byte_count: int
 
 
@@ -113,6 +123,40 @@ class RecordStore:
             if moved is not None:
                 return moved
         return self._copy(source, dest, cached=cached)
+
+    def entries(self) -> tuple[RecordingEntry, ...]:
+        """Return the store's immediate recordings (name + bytes), sorted by name.
+
+        Lists only the files directly in the ``0700`` root -- no recursion and no
+        following a symlink out of it -- so the enumeration cannot leak a path the
+        client could never have named. A missing root is an empty store.
+        """
+        if not self._root.is_dir():
+            return ()
+        found = [
+            RecordingEntry(child.name, child.stat().st_size)
+            for child in self._root.iterdir()
+            if self._is_plain_file(child)
+        ]
+        return tuple(sorted(found, key=attrgetter("name")))
+
+    @staticmethod
+    def _is_plain_file(child: Path) -> bool:
+        """Return whether *child* is a real in-root file, not a symlink or dir."""
+        return child.is_file() and not child.is_symlink()
+
+    def remove(self, ref: str) -> None:
+        """Delete one in-root recording by its bare name, or raise.
+
+        ``ref`` runs through the shared validator (a hostile name raises
+        ``ValueError`` before any filesystem touch); a well-formed but absent
+        recording raises ``FileNotFoundError``, so a client can trust a success.
+        """
+        path = self.resolve_ref(ref)
+        if not path.is_file():
+            msg = f"no recording named {ref!r}"
+            raise FileNotFoundError(msg)
+        path.unlink()
 
     def _resolve_within_root(self, candidate: str) -> Path:
         """Validate a bare name and resolve it within the shared containment root."""

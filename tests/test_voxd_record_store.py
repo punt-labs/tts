@@ -114,6 +114,42 @@ class TestContainment:
         assert resolved.name == "greeting.mp3"
 
 
+class TestEnumerateAndRemove:
+    """entries() lists immediate in-root files; remove() unlinks one by bare name."""
+
+    def test_entries_skips_dirs_and_symlinks(
+        self, store: RecordStore, tmp_path: Path
+    ) -> None:
+        store.root.mkdir(parents=True)
+        (store.root / "real.mp3").write_bytes(b"12345")
+        (store.root / "sub").mkdir()  # a directory is not a recording
+        (store.root / "link.mp3").symlink_to(tmp_path / "elsewhere.mp3")
+        names = {entry.name for entry in store.entries()}
+        assert names == {"real.mp3"}
+
+    def test_entries_reports_byte_counts(self, store: RecordStore) -> None:
+        store.root.mkdir(parents=True)
+        (store.root / "a.mp3").write_bytes(b"1234")
+        [entry] = store.entries()
+        assert entry.name == "a.mp3"
+        assert entry.byte_count == 4
+
+    def test_remove_unlinks_an_in_root_file(self, store: RecordStore) -> None:
+        store.root.mkdir(parents=True)
+        (store.root / "gone.mp3").write_bytes(b"x")
+        store.remove("gone.mp3")
+        assert not (store.root / "gone.mp3").exists()
+
+    def test_remove_missing_raises_file_not_found(self, store: RecordStore) -> None:
+        store.root.mkdir(parents=True)
+        with pytest.raises(FileNotFoundError, match="no recording named"):
+            store.remove("nope.mp3")
+
+    def test_remove_hostile_ref_raises_before_touch(self, store: RecordStore) -> None:
+        with pytest.raises(ValueError, match="separator"):
+            store.remove("../../etc/passwd")
+
+
 class TestPlacement:
     """place() lands audio atomically in the root and reports its size."""
 
