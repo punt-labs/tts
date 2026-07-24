@@ -50,11 +50,7 @@ class ChimeHandler(MessageHandler):
         self._playback = playback
         return self
 
-    async def __call__(
-        self,
-        msg: dict[str, object],
-        websocket: WebSocket,
-    ) -> None:
+    async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Play a bundled chime sound."""
         signal = str(msg.get("signal", "done"))
         path = self._chimes.resolve(signal)
@@ -89,15 +85,18 @@ class VoicesHandler(MessageHandler):
     def __new__(cls) -> Self:
         return super().__new__(cls)
 
-    async def __call__(
-        self,
-        msg: dict[str, object],
-        websocket: WebSocket,
-    ) -> None:
+    async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """List available voices for the requested provider."""
-        provider_name = parse_optional_str(msg, "provider") or auto_detect_provider()
-
+        # Parse inside the try so a non-string provider or a provider fault is an
+        # id-stamped error frame, not a ValueError escaping the router's broad
+        # except and tearing the connection down. provider_name is bound first so
+        # the except message is always defined.
+        request_id = str(msg.get("id", ""))
+        provider_name = ""
         try:
+            provider_name = (
+                parse_optional_str(msg, "provider") or auto_detect_provider()
+            )
             provider = get_provider(provider_name, config_dir=None)
             voice_list = await asyncio.to_thread(provider.list_voices)
         except Exception as exc:
@@ -105,12 +104,11 @@ class VoicesHandler(MessageHandler):
             await websocket.send_json(
                 {
                     "type": "error",
-                    "id": "",
+                    "id": request_id,
                     "message": f"voice listing failed: {exc}",
                 }
             )
             return
-
         await websocket.send_json(
             {"type": "voices", "provider": provider_name, "voices": voice_list}
         )

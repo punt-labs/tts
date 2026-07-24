@@ -13,7 +13,7 @@ import pytest
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup
 from punt_vox.voxd.playback import PlaybackQueue
-from punt_vox.voxd.system_handlers import ChimeHandler
+from punt_vox.voxd.system_handlers import ChimeHandler, VoicesHandler
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -96,3 +96,19 @@ class TestChimeInfoBudget:
         ]
         assert infos == []  # deduped -> DEBUG only
         assert ws.sent == [{"type": "done", "id": ""}]
+
+
+class TestVoicesHandler:
+    """The voices handler rejects a malformed provider without tearing the socket."""
+
+    @pytest.mark.asyncio
+    async def test_non_string_provider_is_a_clean_error(self) -> None:
+        """A non-string ``provider`` yields an id-stamped error frame -- the parse
+        must not escape the handler and tear the connection down."""
+        ws = _CollectingWs()
+        # Must not raise: the ValueError is caught and replied as an error frame.
+        await VoicesHandler()({"id": "v1", "provider": 123}, cast("WebSocket", ws))
+
+        assert ws.sent[-1]["type"] == "error"
+        assert ws.sent[-1]["id"] == "v1"
+        assert "must be a string" in str(ws.sent[-1]["message"])
