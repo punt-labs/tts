@@ -134,9 +134,14 @@ class RecTools:
         """
         session = self._session_provider()
         session.refresh_from_config()
-        # One validation path: reject bad voice settings before any round-trip.
+        # Reject bad voice settings before any round-trip as a clean {"error"}
+        # envelope (the sibling verbs' contract), not a bare exception through
+        # the MCP tool.
         spec = SynthesisSpec(stability=stability, similarity=similarity, style=style)
-        spec.validate()
+        try:
+            spec.validate()
+        except ValueError as exc:
+            return _error(str(exc))
         if segments is None:
             if text is None:
                 return _error("Provide text or segments.")

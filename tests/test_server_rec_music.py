@@ -243,6 +243,18 @@ def test_rec_new_empty_name_single_segment_sent_to_daemon() -> None:
     assert client.record.call_args.kwargs["name"] == ""  # "" reached the wire
 
 
+def test_rec_new_bad_voice_setting_returns_clean_error() -> None:
+    """An out-of-range stability is the {"error"} envelope its sibling verbs use,
+    not a bare exception surfacing through the MCP tool."""
+    fake = _FakeClient()
+
+    result = json.loads(_rec(fake).new(text="hi", stability=2.0))
+
+    assert "error" in result
+    assert "stability" in result["error"]
+    assert fake.calls == []  # rejected before any round-trip
+
+
 def test_rec_new_daemon_error_surfaces_as_clean_error() -> None:
     client = MagicMock()
     client.record.side_effect = VoxdConnectionError("not running")
