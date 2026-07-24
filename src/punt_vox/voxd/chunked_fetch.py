@@ -96,6 +96,11 @@ class ChunkedTransfer:
         except OSError as exc:
             await self._abort_mid_stream(ref, exc)
             return
+        if sent is None:
+            # The peer left mid-stream: a silent end, like a gone peer at begin.
+            # Nothing to deliver and no fault to report -- do not claim the file
+            # "changed".
+            return
         if sent != total:
             await self._abort_mid_stream(
                 ref, OSError(f"file changed mid-fetch: sent {sent} of {total} bytes")
@@ -103,12 +108,16 @@ class ChunkedTransfer:
             return
         await self._reply.send({"type": "fetch_end", "ref": ref, "bytes": total})
 
-    async def _pump(self, path: Path, total: int) -> int:
+    async def _pump(self, path: Path, total: int) -> int | None:
         """Send one ``chunk`` per slice up to ``total`` bytes; return the bytes sent.
 
         Bounded by the declared ``total``, not the live file size: a file grown
         after the measure pass transfers exactly its declared prefix, and a file
         that shrank yields an early EOF so ``sent < total`` aborts the stream.
+
+        Returns ``None`` -- a terminal peer-gone state, not a byte count -- when a
+        chunk send finds the peer already disconnected: reading and base64-encoding
+        the rest of the file would deliver nothing, so the pump stops at once.
         """
         seq = 0
         sent = 0
@@ -117,13 +126,14 @@ class ChunkedTransfer:
                 slice_ = handle.read(min(self._chunk_bytes, total - sent))
                 if not slice_:
                     break  # EOF before the declared total -- the file shrank
-                await self._reply.send(
+                if not await self._reply.send(
                     {
                         "type": "chunk",
                         "seq": seq,
                         "data": base64.b64encode(slice_).decode("ascii"),
                     }
-                )
+                ):
+                    return None  # peer gone -- stop reading and encoding further
                 seq += 1
                 sent += len(slice_)
         return sent

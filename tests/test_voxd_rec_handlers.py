@@ -68,6 +68,30 @@ class TestRecList:
         pairs = {(e["name"], e["bytes"]) for e in entries}
         assert pairs == {("a.mp3", 5), ("b.mp3", 2)}
 
+    def test_listing_io_error_is_a_clean_error_frame(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An OSError enumerating the root is an id-stamped error frame, not a teardown.
+
+        Per-entry stat faults are skipped in the store, but a fault reading the
+        root itself must not escape to the router's broad except (which logs and
+        drops the socket). The handler catches it and replies cleanly -- matching
+        RecRemoveHandler -- and this test reaching its assertions (no raise out of
+        the call) is itself the "connection intact" check.
+        """
+        store = _store(tmp_path)
+
+        def boom(_self: RecordStore) -> object:
+            raise OSError("permission denied on recordings root")
+
+        monkeypatch.setattr(RecordStore, "entries", boom)
+        ws, sent = _capturing_ws()
+        asyncio.run(RecListHandler(store)({"id": "l9"}, ws))  # type: ignore[arg-type]
+
+        assert sent[-1]["type"] == "error"
+        assert sent[-1]["id"] == "l9"
+        assert "permission denied" in str(sent[-1]["message"])
+
     def test_does_not_recurse_into_subdirs(self, tmp_path: Path) -> None:
         store = _store(tmp_path)
         (store.root / "top.mp3").write_bytes(b"1")

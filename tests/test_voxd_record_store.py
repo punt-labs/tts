@@ -134,6 +134,28 @@ class TestEnumerateAndRemove:
         assert entry.name == "a.mp3"
         assert entry.byte_count == 4
 
+    def test_entries_skips_a_child_whose_stat_fails(
+        self, store: RecordStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A child unlinked between iterdir and lstat (TOCTOU) is skipped, not fatal.
+
+        A listing is best-effort under concurrent mutation: one entry whose lstat
+        raises OSError drops out and the enumeration continues for the rest.
+        """
+        store.root.mkdir(parents=True)
+        (store.root / "good.mp3").write_bytes(b"12345")
+        (store.root / "racing.mp3").write_bytes(b"vanishing")
+        real_lstat = Path.lstat
+
+        def flaky_lstat(self: Path) -> object:
+            if self.name == "racing.mp3":
+                raise OSError("vanished mid-scan")
+            return real_lstat(self)
+
+        monkeypatch.setattr(Path, "lstat", flaky_lstat)
+        names = {entry.name for entry in store.entries()}
+        assert names == {"good.mp3"}  # the racing entry skipped, listing survives
+
     def test_remove_unlinks_an_in_root_file(self, store: RecordStore) -> None:
         store.root.mkdir(parents=True)
         (store.root / "gone.mp3").write_bytes(b"x")

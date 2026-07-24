@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
+from starlette.websockets import WebSocketDisconnect
 
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup
@@ -112,3 +113,23 @@ class TestVoicesHandler:
         assert ws.sent[-1]["type"] == "error"
         assert ws.sent[-1]["id"] == "v1"
         assert "must be a string" in str(ws.sent[-1]["message"])
+
+    @pytest.mark.asyncio
+    async def test_gone_peer_during_send_does_not_raise(self) -> None:
+        """A peer gone while the handler replies is absorbed by WireReply.
+
+        The reply routes through WireReply's disconnect-safe send, so a socket
+        that raises WebSocketDisconnect mid-reply yields a clean no-op instead of
+        a traceback escaping the handler (which would tear the connection down).
+        Reaching the end of the call without an exception is the assertion.
+        """
+
+        class _GoneWs:
+            async def send_json(self, _payload: dict[str, object]) -> None:
+                raise WebSocketDisconnect(code=1006)
+
+        # A non-string provider drives the error reply; the gone peer must not
+        # turn that reply into a raise escaping the handler.
+        await VoicesHandler()(
+            {"id": "v1", "provider": 123}, cast("WebSocket", _GoneWs())
+        )

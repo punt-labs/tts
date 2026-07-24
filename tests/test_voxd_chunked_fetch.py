@@ -17,6 +17,8 @@ import io
 import logging
 from typing import TYPE_CHECKING, final
 
+from starlette.websockets import WebSocketDisconnect
+
 from punt_vox.voxd.chunked_fetch import ChunkedTransfer
 from punt_vox.voxd.wire_reply import WireReply
 
@@ -191,6 +193,51 @@ class TestAtomicTerminal:
         assert frames[0]["bytes"] == 10
         assert frames[-1]["type"] == "error"
         assert not [f for f in frames if f["type"] == "fetch_end"]
+
+
+class TestPeerGoneMidStream:
+    def test_pump_stops_encoding_when_peer_disconnects(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A chunk send that finds the peer gone stops the pump at once.
+
+        The next chunk is never read or base64-encoded, and the exchange ends
+        silently -- no ``fetch_end`` and no ``error`` terminal, since a normal
+        disconnect is not a fault. Without the send-result check the pump would
+        keep encoding every remaining chunk into a socket nobody is reading.
+        """
+        path = tmp_path / "r.mp3"
+        path.write_bytes(b"abcdefghij")  # 10 bytes, chunk 4 -> 3 chunks
+
+        encodes = {"n": 0}
+        real_b64 = base64.b64encode
+
+        def counting_b64(data: bytes) -> bytes:
+            encodes["n"] += 1
+            return real_b64(data)
+
+        monkeypatch.setattr(
+            "punt_vox.voxd.chunked_fetch.base64.b64encode", counting_b64
+        )
+
+        sent: list[dict[str, object]] = []
+
+        @final
+        class _GoneAfterFirstChunk:
+            async def send_json(self, payload: dict[str, object]) -> None:
+                sent.append(payload)
+                # The peer drops once the second chunk send is attempted.
+                if sum(1 for f in sent if f.get("type") == "chunk") >= 2:
+                    raise WebSocketDisconnect(code=1006)
+
+        reply = WireReply(_GoneAfterFirstChunk(), "f1")  # type: ignore[arg-type]
+        asyncio.run(ChunkedTransfer(reply, _CHUNK).stream(path, "r.mp3"))
+
+        # Chunk 0 (delivered) and chunk 1 (the send that finds the gone peer) are
+        # encoded; the pump then stops, so chunk 2 is never encoded.
+        assert encodes["n"] == 2
+        assert not [f for f in sent if f["type"] == "fetch_end"]
+        assert not [f for f in sent if f["type"] == "error"]
 
 
 class TestGrownFile:

@@ -18,6 +18,7 @@ from punt_vox.voxd.dedup import ChimeDedup
 from punt_vox.voxd.health import DaemonHealth
 from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue
 from punt_vox.voxd.types import MessageHandler
+from punt_vox.voxd.wire_reply import WireReply
 
 __all__ = ["ChimeHandler", "HealthHandler", "VoicesHandler"]
 
@@ -87,11 +88,13 @@ class VoicesHandler(MessageHandler):
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """List available voices for the requested provider."""
-        # Parse inside the try so a non-string provider or a provider fault is an
-        # id-stamped error frame, not a ValueError escaping the router's broad
-        # except and tearing the connection down. provider_name is bound first so
-        # the except message is always defined.
-        request_id = str(msg.get("id", ""))
+        # Reply through WireReply so both frames survive a gone peer -- a send on
+        # a disconnected socket no-ops rather than raising WebSocketDisconnect out
+        # of the handler and tearing the connection down, matching the store
+        # handlers. Parse inside the try so a non-string provider or a provider
+        # fault is an id-stamped error frame; provider_name is bound first so the
+        # except message is always defined.
+        reply = WireReply(websocket, str(msg.get("id", "")))
         provider_name = ""
         try:
             provider_name = (
@@ -101,15 +104,11 @@ class VoicesHandler(MessageHandler):
             voice_list = await asyncio.to_thread(provider.list_voices)
         except Exception as exc:
             logger.exception("Voice listing failed for provider=%r", provider_name)
-            await websocket.send_json(
-                {
-                    "type": "error",
-                    "id": request_id,
-                    "message": f"voice listing failed: {exc}",
-                }
+            await reply.send(
+                {"type": "error", "message": f"voice listing failed: {exc}"}
             )
             return
-        await websocket.send_json(
+        await reply.send(
             {"type": "voices", "provider": provider_name, "voices": voice_list}
         )
 
