@@ -74,7 +74,13 @@ class RecRemoveHandler:
         return self
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """Validate the ref, unlink the recording, and reply -- or error."""
+        """Validate the ref, unlink the recording, and reply -- or error.
+
+        ``remove`` raises ``ValueError`` for a hostile ref and ``OSError`` for a
+        filesystem fault (absent recording, denied unlink, or a race). Catching
+        ``OSError`` -- the parent of ``FileNotFoundError`` and ``PermissionError``
+        -- keeps a fault an id-stamped error frame instead of a router teardown.
+        """
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
             ref = parse_optional_str(msg, "ref")
@@ -82,7 +88,7 @@ class RecRemoveHandler:
                 await reply.error("rec remove requires a ref")
                 return
             self._store.remove(ref)
-        except (ValueError, FileNotFoundError) as exc:
+        except (ValueError, OSError) as exc:
             await reply.error(str(exc))
             return
         await reply.send({"type": "removed", "name": ref})

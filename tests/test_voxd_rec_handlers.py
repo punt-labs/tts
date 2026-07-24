@@ -124,6 +124,32 @@ class TestRecRemove:
         assert sent[-1]["type"] == "error"
         assert "no recording named" in str(sent[-1]["message"])
 
+    def test_oserror_on_unlink_is_a_clean_error_frame(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A PermissionError (an OSError) from remove() replies cleanly, no teardown.
+
+        remove() can raise OSError beyond FileNotFoundError -- a denied unlink
+        (PermissionError) or a race. The handler catches OSError (the parent of
+        both) so the fault becomes an id-stamped error frame instead of escaping
+        to the router's broad except, which logs and drops the socket. This test
+        reaching its assertions (no raise out of the call) is the connection-
+        intact check.
+        """
+        store = _store(tmp_path)
+        (store.root / "denied.mp3").write_bytes(b"bytes")
+
+        def denied_remove(_self: RecordStore, _ref: str) -> None:
+            raise PermissionError("[Errno 13] Permission denied")
+
+        monkeypatch.setattr(RecordStore, "remove", denied_remove)
+        ws, sent = _capturing_ws()
+        asyncio.run(RecRemoveHandler(store)({"id": "r7", "ref": "denied.mp3"}, ws))  # type: ignore[arg-type]
+
+        assert sent[-1]["type"] == "error"
+        assert sent[-1]["id"] == "r7"
+        assert "Permission denied" in str(sent[-1]["message"])
+
     def test_missing_ref_is_an_error(self, tmp_path: Path) -> None:
         ws, sent = _capturing_ws()
         asyncio.run(RecRemoveHandler(_store(tmp_path))({"id": "r1"}, ws))  # type: ignore[arg-type]
