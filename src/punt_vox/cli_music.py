@@ -10,7 +10,8 @@ store directly (R2 layering fix).
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Annotated, NoReturn, Self, final
+from pathlib import Path
+from typing import Annotated, NoReturn, Protocol, Self, final, runtime_checkable
 
 import typer
 from websockets.exceptions import WebSocketException
@@ -36,28 +37,83 @@ _GATEWAY_ERRORS = (
 )
 
 
+@runtime_checkable
+class CatalogGateway(Protocol):
+    """The catalog-authoring operations ``music new``/``get``/``remove`` issue.
+
+    Distinct from :class:`ProgramGateway` (playback control): these mutate the
+    catalog, not the running Program. A test injects an in-memory fake; the
+    daemon owns the catalog and every path decision.
+    """
+
+    def new(self, prompt: str, name: str | None) -> str:
+        """Author one track into a fresh album; return its bare album id."""
+        ...
+
+    def get(self, album_id: str, dest_dir: str) -> str:
+        """Copy album *album_id* into *dest_dir*; return the written directory."""
+        ...
+
+    def remove(self, album_id: str) -> None:
+        """Delete album *album_id* from the catalog (a live album is refused)."""
+        ...
+
+
+@final
+class ClientCatalogGateway:
+    """Back the ``CatalogGateway`` seam with WebSocket calls to ``voxd``."""
+
+    __slots__ = ("_client",)
+    _client: VoxClientSync
+
+    def __new__(cls, client: VoxClientSync) -> Self:
+        self = super().__new__(cls)
+        self._client = client
+        return self
+
+    def new(self, prompt: str, name: str | None) -> str:
+        """Author one track via the ``music_new`` op; return the album id."""
+        return self._client.music_new(prompt, name)
+
+    def get(self, album_id: str, dest_dir: str) -> str:
+        """Copy the album into *dest_dir* via the ``music_get`` op."""
+        return str(self._client.music_get(album_id, Path(dest_dir)))
+
+    def remove(self, album_id: str) -> None:
+        """Delete the album via the ``music_remove`` op."""
+        self._client.music_remove(album_id)
+
+
 @final
 class MusicCli:
     """The consume-only music command implementations (a humble object)."""
 
-    __slots__ = ("_formatter", "_gateway_factory")
+    __slots__ = ("_catalog_factory", "_formatter", "_gateway_factory")
     _formatter: OutputFormatter
     _gateway_factory: Callable[[], ProgramGateway]
+    _catalog_factory: Callable[[], CatalogGateway]
 
     def __new__(
         cls,
         formatter: OutputFormatter,
         gateway_factory: Callable[[], ProgramGateway] | None = None,
+        catalog_factory: Callable[[], CatalogGateway] | None = None,
     ) -> Self:
         self = super().__new__(cls)
         self._formatter = formatter
         self._gateway_factory = gateway_factory or cls._default_gateway
+        self._catalog_factory = catalog_factory or cls._default_catalog
         return self
 
     @staticmethod
     def _default_gateway() -> ProgramGateway:
         """Build the production gateway -- a fresh WebSocket client per command."""
         return ClientProgramGateway(VoxClientSync())
+
+    @staticmethod
+    def _default_catalog() -> CatalogGateway:
+        """Build the production catalog gateway -- a fresh client per command."""
+        return ClientCatalogGateway(VoxClientSync())
 
     @staticmethod
     def _fail(message: str) -> NoReturn:
@@ -92,20 +148,26 @@ class MusicCli:
 
     def play(
         self,
+        album_id: Annotated[
+            str | None, typer.Argument(help="Album id to replay (from 'music list').")
+        ] = None,
+        *,
         style: Annotated[
-            str | None, typer.Argument(help="Style tag to replay, e.g. 'trance'.")
+            str | None, typer.Option("--style", help="Style tag radio, e.g. 'trance'.")
         ] = None,
         vibe: Annotated[
-            str | None, typer.Argument(help="Vibe tag to replay, e.g. 'calm'.")
+            str | None, typer.Option("--vibe", help="Vibe tag radio, e.g. 'calm'.")
         ] = None,
         name: Annotated[
             str | None, typer.Option("--name", help="Curated album name to replay.")
         ] = None,
-        album_id: Annotated[
-            str | None, typer.Option("--id", help="Exact album id to replay.")
-        ] = None,
     ) -> None:
-        """Replay a Selection resolved by style/vibe/name tags or an exact id."""
+        """Replay an album by its bare id, or a tag radio by style/vibe/name.
+
+        The bare ``<id>`` positional is the unified-verb primary form; the
+        ``--style``/``--vibe``/``--name`` selectors keep the shipped per-vibe,
+        cross-genre union radio (D-3, both resolve).
+        """
         request = SelectionRequest(style=style, vibe=vibe, name=name, id=album_id)
         try:
             outcome = self._gateway_factory().select(request)
@@ -115,6 +177,48 @@ class MusicCli:
             {"music": "play", "applied": outcome.applied},
             outcome.display("Playing selection."),
         )
+
+    def new(
+        self,
+        prompt: Annotated[
+            str, typer.Argument(help="Verbatim ElevenLabs descriptive prompt.")
+        ],
+        name: Annotated[
+            str | None, typer.Option("--name", help="Curated album handle.")
+        ] = None,
+    ) -> None:
+        """Generate one track into a fresh catalog album; print its bare id.
+
+        The prompt is passed to the daemon verbatim (no LLM expansion). This
+        parks a track in the catalog and leaves the active Program untouched.
+        """
+        try:
+            album_id = self._catalog_factory().new(prompt, name)
+        except _GATEWAY_ERRORS as exc:
+            self._fail(str(exc))
+        self._formatter.emit({"album_id": album_id}, album_id)
+
+    def get(
+        self,
+        album_id: Annotated[str, typer.Argument(help="Album id to copy out.")],
+    ) -> None:
+        """Copy an album into the current directory as a directory of its parts."""
+        try:
+            target = self._catalog_factory().get(album_id, str(Path.cwd()))
+        except _GATEWAY_ERRORS as exc:
+            self._fail(str(exc))
+        self._formatter.emit({"path": target}, target)
+
+    def remove(
+        self,
+        album_id: Annotated[str, typer.Argument(help="Album id to delete.")],
+    ) -> None:
+        """Delete a catalog album by id (a playing album is refused, D-2)."""
+        try:
+            self._catalog_factory().remove(album_id)
+        except _GATEWAY_ERRORS as exc:
+            self._fail(str(exc))
+        self._formatter.emit({"removed": album_id}, f"removed {album_id}")
 
     def advance(self) -> None:
         """Advance the active source to another Part."""
@@ -157,8 +261,11 @@ def build_music_app(formatter: OutputFormatter) -> typer.Typer:
         help="Play and manage saved audio albums (consume-only).",
         no_args_is_help=True,
     )
+    app.command("new")(cli.new)
     app.command("list")(cli.list_programs)
     app.command("play")(cli.play)
+    app.command("get")(cli.get)
+    app.command("remove")(cli.remove)
     app.command("next")(cli.advance)
     app.command("status")(cli.status)
     return app
