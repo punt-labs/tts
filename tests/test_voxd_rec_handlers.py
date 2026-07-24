@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, cast, final
 
 import pytest
 
@@ -21,6 +21,8 @@ from punt_vox.voxd.record_store import RecordStore
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from starlette.websockets import WebSocket
 
 _HOSTILE = {
     "absolute": "/etc/passwd",
@@ -32,7 +34,7 @@ _HOSTILE = {
 }
 
 
-def _capturing_ws() -> tuple[object, list[dict[str, object]]]:
+def _capturing_ws() -> tuple[WebSocket, list[dict[str, object]]]:
     sent: list[dict[str, object]] = []
 
     @final
@@ -40,7 +42,7 @@ def _capturing_ws() -> tuple[object, list[dict[str, object]]]:
         async def send_json(self, payload: dict[str, object]) -> None:
             sent.append(payload)
 
-    return _WS(), sent
+    return cast("WebSocket", _WS()), sent
 
 
 def _store(tmp_path: Path) -> RecordStore:
@@ -52,7 +54,7 @@ def _store(tmp_path: Path) -> RecordStore:
 class TestRecList:
     def test_empty_store_lists_nothing(self, tmp_path: Path) -> None:
         ws, sent = _capturing_ws()
-        asyncio.run(RecListHandler(_store(tmp_path))({"id": "l1"}, ws))  # type: ignore[arg-type]
+        asyncio.run(RecListHandler(_store(tmp_path))({"id": "l1"}, ws))
         assert sent[-1]["type"] == "recordings"
         assert sent[-1]["entries"] == []
 
@@ -61,8 +63,7 @@ class TestRecList:
         (store.root / "a.mp3").write_bytes(b"12345")
         (store.root / "b.mp3").write_bytes(b"12")
         ws, sent = _capturing_ws()
-        asyncio.run(RecListHandler(store)({"id": "l1"}, ws))  # type: ignore[arg-type]
-
+        asyncio.run(RecListHandler(store)({"id": "l1"}, ws))
         entries = sent[-1]["entries"]
         assert isinstance(entries, list)
         pairs = {(e["name"], e["bytes"]) for e in entries}
@@ -86,8 +87,7 @@ class TestRecList:
 
         monkeypatch.setattr(RecordStore, "entries", boom)
         ws, sent = _capturing_ws()
-        asyncio.run(RecListHandler(store)({"id": "l9"}, ws))  # type: ignore[arg-type]
-
+        asyncio.run(RecListHandler(store)({"id": "l9"}, ws))
         assert sent[-1]["type"] == "error"
         assert sent[-1]["id"] == "l9"
         assert "permission denied" in str(sent[-1]["message"])
@@ -99,8 +99,7 @@ class TestRecList:
         sub.mkdir()
         (sub / "deep.mp3").write_bytes(b"1")
         ws, sent = _capturing_ws()
-        asyncio.run(RecListHandler(store)({"id": "l1"}, ws))  # type: ignore[arg-type]
-
+        asyncio.run(RecListHandler(store)({"id": "l1"}, ws))
         entries = sent[-1]["entries"]
         assert isinstance(entries, list)
         assert {e["name"] for e in entries} == {"top.mp3"}  # subdir not listed
@@ -111,16 +110,14 @@ class TestRecRemove:
         store = _store(tmp_path)
         (store.root / "gone.mp3").write_bytes(b"bytes")
         ws, sent = _capturing_ws()
-        asyncio.run(RecRemoveHandler(store)({"id": "r1", "ref": "gone.mp3"}, ws))  # type: ignore[arg-type]
-
+        asyncio.run(RecRemoveHandler(store)({"id": "r1", "ref": "gone.mp3"}, ws))
         assert sent[-1] == {"type": "removed", "id": "r1", "name": "gone.mp3"}
         assert not (store.root / "gone.mp3").exists()
 
     def test_not_found_is_an_error(self, tmp_path: Path) -> None:
         store = _store(tmp_path)
         ws, sent = _capturing_ws()
-        asyncio.run(RecRemoveHandler(store)({"id": "r1", "ref": "nope.mp3"}, ws))  # type: ignore[arg-type]
-
+        asyncio.run(RecRemoveHandler(store)({"id": "r1", "ref": "nope.mp3"}, ws))
         assert sent[-1]["type"] == "error"
         assert "no recording named" in str(sent[-1]["message"])
 
@@ -144,15 +141,14 @@ class TestRecRemove:
 
         monkeypatch.setattr(RecordStore, "remove", denied_remove)
         ws, sent = _capturing_ws()
-        asyncio.run(RecRemoveHandler(store)({"id": "r7", "ref": "denied.mp3"}, ws))  # type: ignore[arg-type]
-
+        asyncio.run(RecRemoveHandler(store)({"id": "r7", "ref": "denied.mp3"}, ws))
         assert sent[-1]["type"] == "error"
         assert sent[-1]["id"] == "r7"
         assert "Permission denied" in str(sent[-1]["message"])
 
     def test_missing_ref_is_an_error(self, tmp_path: Path) -> None:
         ws, sent = _capturing_ws()
-        asyncio.run(RecRemoveHandler(_store(tmp_path))({"id": "r1"}, ws))  # type: ignore[arg-type]
+        asyncio.run(RecRemoveHandler(_store(tmp_path))({"id": "r1"}, ws))
         assert sent[-1]["type"] == "error"
 
     def test_non_string_ref_is_a_clean_error(self, tmp_path: Path) -> None:
@@ -161,8 +157,7 @@ class TestRecRemove:
         store = _store(tmp_path)
         (store.root / "gone.mp3").write_bytes(b"bytes")
         ws, sent = _capturing_ws()
-        asyncio.run(RecRemoveHandler(store)({"id": "r1", "ref": 123}, ws))  # type: ignore[arg-type]
-
+        asyncio.run(RecRemoveHandler(store)({"id": "r1", "ref": 123}, ws))
         assert sent[-1]["type"] == "error"
         assert "must be a string" in str(sent[-1]["message"])
         assert (store.root / "gone.mp3").exists()  # nothing removed
@@ -183,8 +178,7 @@ class TestRecRemove:
         victim.write_text("keep me")
         ws, sent = _capturing_ws()
         with caplog.at_level(logging.WARNING):
-            asyncio.run(RecRemoveHandler(store)({"id": "r9", "ref": ref}, ws))  # type: ignore[arg-type]
-
+            asyncio.run(RecRemoveHandler(store)({"id": "r9", "ref": ref}, ws))
         assert sent[-1]["type"] == "error"
         assert any("r9" in r.getMessage() for r in caplog.records)
         assert victim.read_text() == "keep me"  # nothing outside root deleted
@@ -196,5 +190,5 @@ class TestRecRemove:
         victim.write_text("private")
         ws, _sent = _capturing_ws()
         for ref in _HOSTILE.values():
-            asyncio.run(RecRemoveHandler(store)({"id": "t", "ref": ref}, ws))  # type: ignore[arg-type]
+            asyncio.run(RecRemoveHandler(store)({"id": "t", "ref": ref}, ws))
         assert victim.read_text() == "private"

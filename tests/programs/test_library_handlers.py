@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, cast, final
 
 from punt_vox.voxd.programs.catalog import Catalog
 from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
@@ -29,12 +29,13 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import pytest
+    from starlette.websockets import WebSocket
 
     from punt_vox.voxd.programs.part import Part
     from punt_vox.voxd.programs.producer import Producer
 
 
-def _capturing_ws() -> tuple[object, list[dict[str, object]]]:
+def _capturing_ws() -> tuple[WebSocket, list[dict[str, object]]]:
     """Return a fake WebSocket and the list its ``send_json`` appends to."""
     sent: list[dict[str, object]] = []
 
@@ -43,7 +44,7 @@ def _capturing_ws() -> tuple[object, list[dict[str, object]]]:
         async def send_json(self, payload: dict[str, object]) -> None:
             sent.append(payload)
 
-    return _WS(), sent
+    return cast("WebSocket", _WS()), sent
 
 
 @final
@@ -68,7 +69,7 @@ class TestMusicNewHandler:
         library = _library(tmp_path / "programs")
         ws, sent = _capturing_ws()
         msg: dict[str, object] = {"type": "music_new", "id": "n1", "prompt": "pads"}
-        asyncio.run(MusicNewHandler(library)(msg, ws))  # type: ignore[arg-type]
+        asyncio.run(MusicNewHandler(library)(msg, ws))
 
         assert sent[0]["type"] == "generating"
         assert sent[-1]["type"] == "album"
@@ -83,7 +84,7 @@ class TestMusicNewHandler:
         ws, sent = _capturing_ws()
         msg: dict[str, object] = {"type": "music_new", "id": "n2", "prompt": ""}
         with caplog.at_level(logging.WARNING):
-            asyncio.run(MusicNewHandler(library)(msg, ws))  # type: ignore[arg-type]
+            asyncio.run(MusicNewHandler(library)(msg, ws))
 
         assert [f["type"] for f in sent] == ["error"]  # no 'generating' ack
         assert any("n2" in r.getMessage() for r in caplog.records)
@@ -94,7 +95,7 @@ class TestMusicNewHandler:
         library = _library(tmp_path / "programs")
         ws, sent = _capturing_ws()
         msg: dict[str, object] = {"type": "music_new", "id": "n4", "prompt": 123}
-        asyncio.run(MusicNewHandler(library)(msg, ws))  # type: ignore[arg-type]
+        asyncio.run(MusicNewHandler(library)(msg, ws))
 
         assert [f["type"] for f in sent] == ["error"]  # no 'generating' ack
         assert "must be a string" in str(sent[-1]["message"])
@@ -106,7 +107,7 @@ class TestMusicNewHandler:
         ws, sent = _capturing_ws()
         msg: dict[str, object] = {"type": "music_new", "id": "n3", "prompt": "x"}
         with caplog.at_level(logging.WARNING):
-            asyncio.run(MusicNewHandler(library)(msg, ws))  # type: ignore[arg-type]
+            asyncio.run(MusicNewHandler(library)(msg, ws))
 
         assert sent[0]["type"] == "generating"
         assert sent[-1]["type"] == "error"
@@ -120,7 +121,7 @@ class TestMusicManifestHandler:
         library = _library(root)
         ws, sent = _capturing_ws()
         msg: dict[str, object] = {"id": "m1", "album": "a3f1c9"}
-        asyncio.run(MusicManifestHandler(library)(msg, ws))  # type: ignore[arg-type]
+        asyncio.run(MusicManifestHandler(library)(msg, ws))
 
         reply = sent[-1]
         assert reply["type"] == "manifest"
@@ -136,7 +137,7 @@ class TestMusicManifestHandler:
         ws, sent = _capturing_ws()
         msg: dict[str, object] = {"id": "m2", "album": "abcdef"}
         with caplog.at_level(logging.WARNING):
-            asyncio.run(MusicManifestHandler(library)(msg, ws))  # type: ignore[arg-type]
+            asyncio.run(MusicManifestHandler(library)(msg, ws))
 
         assert sent[-1]["type"] == "error"
         assert "no album named" in str(sent[-1]["message"])
@@ -150,9 +151,7 @@ class TestMusicRemoveHandler:
         library = _library(root)
         ws, sent = _capturing_ws()
         msg: dict[str, object] = {"type": "music_remove", "id": "r1", "album": "a3f1c9"}
-        asyncio.run(
-            MusicRemoveHandler(library, frozenset)(msg, ws)  # type: ignore[arg-type]
-        )
+        asyncio.run(MusicRemoveHandler(library, frozenset)(msg, ws))
 
         assert sent[-1] == {"type": "removed", "id": "r1", "album_id": "a3f1c9"}
         assert not (root / locator).exists()
@@ -167,7 +166,7 @@ class TestMusicRemoveHandler:
         msg: dict[str, object] = {"type": "music_remove", "id": "r2", "album": "a3f1c9"}
         with caplog.at_level(logging.WARNING):
             asyncio.run(
-                MusicRemoveHandler(library, lambda: frozenset({locator}))(msg, ws)  # type: ignore[arg-type]
+                MusicRemoveHandler(library, lambda: frozenset({locator}))(msg, ws)
             )
 
         assert sent[-1]["type"] == "error"
@@ -187,8 +186,6 @@ class TestMusicRemoveHandler:
         for hostile in ("../../victim", "/etc/passwd", "a/b"):
             msg: dict[str, object] = {"type": "music_remove", "album": hostile}
             with caplog.at_level(logging.WARNING):
-                asyncio.run(
-                    MusicRemoveHandler(library, frozenset)(msg, ws)  # type: ignore[arg-type]
-                )
+                asyncio.run(MusicRemoveHandler(library, frozenset)(msg, ws))
             assert sent[-1]["type"] == "error"
         assert outside.read_text() == "keep me"

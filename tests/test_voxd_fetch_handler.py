@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, cast, final
 
 from punt_vox.voxd.fetch_handler import FetchHandler
 from punt_vox.voxd.programs.catalog import Catalog
@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     import pytest
+    from starlette.websockets import WebSocket
 
     from punt_vox.voxd.programs.producer import PartSpec
 
@@ -42,7 +43,7 @@ class _QuietProducer:
         return Part(target.name, spec.index)
 
 
-def _capturing_ws() -> tuple[object, list[dict[str, object]]]:
+def _capturing_ws() -> tuple[WebSocket, list[dict[str, object]]]:
     sent: list[dict[str, object]] = []
 
     @final
@@ -50,7 +51,7 @@ def _capturing_ws() -> tuple[object, list[dict[str, object]]]:
         async def send_json(self, payload: dict[str, object]) -> None:
             sent.append(payload)
 
-    return _WS(), sent
+    return cast("WebSocket", _WS()), sent
 
 
 def _handler(tmp_path: Path) -> tuple[FetchHandler, RecordStore, MusicLibrary]:
@@ -79,7 +80,7 @@ class TestRecordingFetch:
         (store.root / "a1b2c3.mp3").write_bytes(blob)
         ws, sent = _capturing_ws()
         msg: dict[str, object] = {"id": "f1", "ref": "a1b2c3.mp3"}
-        asyncio.run(handler(msg, ws))  # type: ignore[arg-type]
+        asyncio.run(handler(msg, ws))
 
         assert sent[0]["type"] == "fetch_begin"
         assert sent[0]["ref"] == "a1b2c3.mp3"
@@ -90,7 +91,7 @@ class TestRecordingFetch:
         handler, _, _ = _handler(tmp_path)
         ws, sent = _capturing_ws()
         msg: dict[str, object] = {"id": "f1", "ref": "nope.mp3"}
-        asyncio.run(handler(msg, ws))  # type: ignore[arg-type]
+        asyncio.run(handler(msg, ws))
 
         assert sent[-1]["type"] == "error"
         assert "no recording" in str(sent[-1]["message"])
@@ -104,7 +105,7 @@ class TestRecordingFetch:
         ws, sent = _capturing_ws()
         msg: dict[str, object] = {"id": "f8", "ref": "../../etc/passwd"}
         with caplog.at_level(logging.WARNING):
-            asyncio.run(handler(msg, ws))  # type: ignore[arg-type]
+            asyncio.run(handler(msg, ws))
 
         assert sent[-1]["type"] == "error"
         assert not [f for f in sent if f["type"] == "fetch_begin"]
@@ -113,7 +114,7 @@ class TestRecordingFetch:
     def test_missing_ref_and_album_is_an_error(self, tmp_path: Path) -> None:
         handler, _, _ = _handler(tmp_path)
         ws, sent = _capturing_ws()
-        asyncio.run(handler({"id": "f1"}, ws))  # type: ignore[arg-type]
+        asyncio.run(handler({"id": "f1"}, ws))
         assert sent[-1]["type"] == "error"
 
     def test_non_string_album_is_a_clean_error(self, tmp_path: Path) -> None:
@@ -121,7 +122,7 @@ class TestRecordingFetch:
         escape the handler and tear the connection down."""
         handler, _, _ = _handler(tmp_path)
         ws, sent = _capturing_ws()
-        asyncio.run(handler({"id": "f1", "album": 123}, ws))  # type: ignore[arg-type]
+        asyncio.run(handler({"id": "f1", "album": 123}, ws))
         assert sent[-1]["type"] == "error"
         assert "must be a string" in str(sent[-1]["message"])
         assert not [f for f in sent if f["type"] == "fetch_begin"]
@@ -133,7 +134,7 @@ class TestMusicPartFetch:
         album_id = asyncio.run(lib.new("a prompt", None)).value
         ws, sent = _capturing_ws()
         msg: dict[str, object] = {"id": "f1", "album": album_id, "part": "001.mp3"}
-        asyncio.run(handler(msg, ws))  # type: ignore[arg-type]
+        asyncio.run(handler(msg, ws))
 
         assert sent[0]["type"] == "fetch_begin"
         assert sent[0]["ref"] == "001.mp3"
@@ -144,7 +145,7 @@ class TestMusicPartFetch:
         handler, _, _ = _handler(tmp_path)
         ws, sent = _capturing_ws()
         msg: dict[str, object] = {"id": "f1", "album": "abcdef", "part": "001.mp3"}
-        asyncio.run(handler(msg, ws))  # type: ignore[arg-type]
+        asyncio.run(handler(msg, ws))
 
         assert sent[-1]["type"] == "error"
         assert "no album named" in str(sent[-1]["message"])
@@ -159,7 +160,7 @@ class TestMusicPartFetch:
         ws, sent = _capturing_ws()
         msg: dict[str, object] = {"id": "f9", "album": album_id, "part": "../../etc/x"}
         with caplog.at_level(logging.WARNING):
-            asyncio.run(handler(msg, ws))  # type: ignore[arg-type]
+            asyncio.run(handler(msg, ws))
 
         assert sent[-1]["type"] == "error"
         assert not [f for f in sent if f["type"] == "fetch_begin"]
@@ -170,6 +171,6 @@ class TestMusicPartFetch:
         album_id = asyncio.run(lib.new("a prompt", None)).value
         ws, sent = _capturing_ws()
         msg: dict[str, object] = {"id": "f1", "album": album_id}
-        asyncio.run(handler(msg, ws))  # type: ignore[arg-type]
+        asyncio.run(handler(msg, ws))
         assert sent[-1]["type"] == "error"
         assert "requires a part" in str(sent[-1]["message"])
