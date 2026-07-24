@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import typer
+from _cli_introspect import command_opts
 from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
@@ -1189,13 +1190,17 @@ class TestMainGroup:
         runner = CliRunner()
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
-        assert "vox" in result.output.lower()
+        # Structural fact, not a scrape of Rich-wrapped help text: the app
+        # is named vox. (Rich soft-wraps the help body at the runner's
+        # 80-col width, so substring matches on the rendered output are
+        # width-dependent and fail on Linux CI.)
+        assert app.info.name == "vox"
 
     def test_say_help(self) -> None:
-        runner = CliRunner()
-        result = runner.invoke(app, ["say", "--help"])
-        assert result.exit_code == 0
-        assert "voice" in result.output.lower()
+        # ``say`` exposes a --voice option. Assert it against the registered
+        # Click parameters rather than the rendered --help table, whose
+        # option column Rich soft-wraps at 80 cols on Linux CI.
+        assert "--voice" in command_opts("say")
 
     def test_verbose_flag(self) -> None:
         runner = CliRunner()

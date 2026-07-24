@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import typer
+from _cli_introspect import command_opts
 from typer.testing import CliRunner
 from websockets.exceptions import WebSocketException
 
@@ -343,14 +344,16 @@ def test_rec_and_music_groups_are_registered() -> None:
 
 
 def test_no_output_option_in_rec_get_surface() -> None:
-    result = CliRunner().invoke(app, ["rec", "get", "--help"])
-    assert "-o" not in result.output
-    assert "--output" not in result.output
+    opts = command_opts("rec", "get")
+    assert "-o" not in opts
+    assert "--output" not in opts
 
 
 def test_output_dir_kept_only_on_install_desktop() -> None:
-    result = CliRunner().invoke(app, ["install-desktop", "--help"])
-    assert "--output-dir" in result.output
+    opts = command_opts("install-desktop")
+    assert "--output-dir" in opts
+    assert "-d" in opts
+    assert "--output-dir" not in command_opts("rec", "get")
 
 
 def test_rec_app_no_subcommand_shows_help() -> None:
