@@ -29,6 +29,7 @@ from punt_vox.voxd.synthesis import (  # pyright: ignore[reportPrivateUsage]
     SynthesisPipeline,
 )
 from punt_vox.voxd.types import MessageHandler
+from punt_vox.voxd.wire_reply import WireReply
 
 __all__ = ["SynthesizeHandler"]
 
@@ -128,9 +129,8 @@ class SynthesizeHandler(MessageHandler):
             req = _SpeechRequest.from_msg(msg, websocket)
             once = parse_optional_int(msg, "once")
         except ValueError as exc:
-            await websocket.send_json(
-                {"id": str(msg.get("id", "")), "type": "error", "message": str(exc)}
-            )
+            # WireReply makes a gone-peer send a clean no-op, matching the siblings.
+            await WireReply(websocket, str(msg.get("id", ""))).error(str(exc))
             return
 
         dedup_recorded = await self._respond_if_deduped(req, once)
