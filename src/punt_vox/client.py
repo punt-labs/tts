@@ -12,6 +12,9 @@ import contextlib
 import hashlib
 import json
 import logging
+import os
+import shutil
+import tempfile
 import uuid
 from collections.abc import Generator
 from dataclasses import dataclass
@@ -66,6 +69,14 @@ class RecordResult:
 
 
 @dataclass(frozen=True, slots=True)
+class RecordingSummary:
+    """One recording in the store's list: its bare name and byte count."""
+
+    name: str
+    byte_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class SynthesizeResult:
     """Result of a ``synthesize`` call on voxd.
 
@@ -111,6 +122,11 @@ _TIMEOUT_FETCH = 120.0
 _RECORD_TIMEOUT_BASE = 60.0
 _RECORD_TIMEOUT_PER_CHAR = 0.05
 _RECORD_TIMEOUT_MAX = 600.0
+
+# music_new generates one ElevenLabs track (measured minutes for a fresh track);
+# the daemon acks 'generating' first, but the client still bounds the wait so a
+# wedged provider is detected. Generous, matching the record ceiling.
+_TIMEOUT_MUSIC_NEW = 600.0
 
 # ---------------------------------------------------------------------------
 # Path resolution — delegated to punt_vox.paths so every module agrees.
@@ -692,6 +708,98 @@ class VoxClient:
             "part": part,
         }
         return await self._transport.fetch_stream(msg, timeout=_TIMEOUT_FETCH)
+
+    # -- recordings store (rec group) ---------------------------------------
+
+    async def rec_list(self) -> tuple[RecordingSummary, ...]:
+        """Return the store's recordings (name + bytes), the ``rec list`` view."""
+        resp = await self._command("rec_list")
+        with self._wire_guard():
+            obj = JsonObject.coerce(resp, "rec_list")
+            return tuple(
+                self._recording_row(JsonObject.coerce(item, "rec_list.entries"))
+                for item in obj.require_list("entries")
+            )
+
+    @staticmethod
+    def _recording_row(row: JsonObject) -> RecordingSummary:
+        """Parse one ``rec_list`` entry (name + bytes) from the wire."""
+        return RecordingSummary(
+            name=row.require_str("name"), byte_count=row.require_int("bytes")
+        )
+
+    async def rec_remove(self, ref: str) -> None:
+        """Delete recording *ref* from the store (a hostile/absent ref raises)."""
+        await self._command("rec_remove", ref=ref)
+
+    # -- music catalog (music group) ----------------------------------------
+
+    async def music_new(self, prompt: str, name: str | None = None) -> str:
+        """Author one track into a fresh catalog album; return its bare album id.
+
+        The daemon sends a ``generating`` ack before the long generation, then the
+        terminal ``album`` frame; an empty/bad prompt raises. *prompt* is the
+        verbatim ElevenLabs descriptive prompt -- the client expands nothing.
+        """
+        fields: dict[str, object] = {"prompt": prompt}
+        if name is not None:
+            fields["name"] = name
+        msg: dict[str, object] = {
+            "type": "music_new",
+            "id": uuid.uuid4().hex[:12],
+            **fields,
+        }
+        responses = await self._transport.send_and_drain(
+            msg, timeout=_TIMEOUT_MUSIC_NEW, terminal_type="album"
+        )
+        terminal = responses[-1] if responses else {}
+        if terminal.get("type") != "album":
+            raise VoxdProtocolError(f"expected 'album', got {terminal.get('type')!r}")
+        with self._wire_guard():
+            return JsonObject.coerce(terminal, "album").require_str("album_id")
+
+    async def music_remove(self, album_id: str) -> None:
+        """Delete a catalog album by id (a playing album is refused, D-2)."""
+        await self._command("music_remove", album=album_id)
+
+    async def music_get(self, album_id: str, dest_dir: Path) -> Path:
+        """Copy an album into *dest_dir* as ``<album-name>/`` of its parts.
+
+        Fetches the manifest, creates the album directory (refusing a collision,
+        D-1), then chunk-fetches every part and writes it atomically. On any
+        failure the half-written directory is removed, so a fault leaves nothing.
+        """
+        manifest = await self._command("music_manifest", album=album_id)
+        with self._wire_guard():
+            obj = JsonObject.coerce(manifest, "music_manifest")
+            album_name = obj.require_str("album")
+            parts = [
+                JsonObject.coerce(item, "manifest.parts").require_str("part")
+                for item in obj.require_list("parts")
+            ]
+        target = dest_dir / album_name
+        target.mkdir(parents=True)  # exist_ok=False: a collision raises (D-1)
+        try:
+            for part in parts:
+                data = await self.fetch_part(album_id, part)
+                self._write_atomically(target / part, data)
+        except BaseException:
+            shutil.rmtree(target, ignore_errors=True)
+            raise
+        return target
+
+    @staticmethod
+    def _write_atomically(dest: Path, data: bytes) -> None:
+        """Write *data* to a temp sibling then ``os.replace`` onto *dest*."""
+        fd, tmp_name = tempfile.mkstemp(dir=dest.parent, suffix=".part")
+        tmp = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+            tmp.replace(dest)
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            raise
 
     async def voices(self, provider: str | None = None) -> list[str]:
         """List available voices; a missing ``voices`` key is a protocol error.

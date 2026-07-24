@@ -891,6 +891,137 @@ class TestVoxClientPlayFetch:
             await client.fetch("x.mp3")
 
 
+class TestVoxClientRecMusic:
+    """The rec/music catalog client methods over a mock WebSocket."""
+
+    @pytest.mark.asyncio
+    async def test_rec_list_parses_entries(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "recordings",
+                    "id": "l1",
+                    "entries": [
+                        {"name": "a.mp3", "bytes": 5},
+                        {"name": "b.mp3", "bytes": 2},
+                    ],
+                }
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        rows = await client.rec_list()
+        assert [(r.name, r.byte_count) for r in rows] == [("a.mp3", 5), ("b.mp3", 2)]
+
+    @pytest.mark.asyncio
+    async def test_rec_remove_error_raises(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "error", "id": "r1", "message": "no recording named 'x.mp3'"}
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="no recording named"):
+            await client.rec_remove("x.mp3")
+
+    @pytest.mark.asyncio
+    async def test_music_new_returns_album_id_after_ack(self) -> None:
+        """music_new consumes the 'generating' ack then returns the 'album' id."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "generating", "id": "n1"}),
+                json.dumps(
+                    {"type": "album", "id": "n1", "album_id": "7f3a91", "parts": 1}
+                ),
+            ]
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        assert await client.music_new("warm pads") == "7f3a91"
+        sent = json.loads(mock_ws.send.call_args.args[0])
+        assert sent["prompt"] == "warm pads"
+
+    @pytest.mark.asyncio
+    async def test_music_new_bad_prompt_raises(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "generating", "id": "n1"}),
+                json.dumps({"type": "error", "id": "n1", "message": "bad_prompt"}),
+            ]
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="bad_prompt"):
+            await client.music_new("rejected")
+
+    @pytest.mark.asyncio
+    async def test_music_remove_ok(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "removed", "id": "r1", "album_id": "7f3a91"}
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        await client.music_remove("7f3a91")  # no raise
+
+    @pytest.mark.asyncio
+    async def test_music_get_writes_album_dir(self, tmp_path: Path) -> None:
+        """music_get creates ./<album>/ and writes each chunk-fetched part."""
+        part = b"track-bytes"
+        frames = [
+            json.dumps(
+                {
+                    "type": "manifest",
+                    "id": "m1",
+                    "album": "warm-pads-7f3a91",
+                    "parts": [{"part": "001.mp3", "bytes": len(part)}],
+                }
+            ),
+            *[json.dumps(f) for f in _fetch_frames(part, chunk=4)],
+        ]
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(side_effect=frames)
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        target = await client.music_get("7f3a91", tmp_path)
+        assert target == tmp_path / "warm-pads-7f3a91"
+        assert (target / "001.mp3").read_bytes() == part
+
+    @pytest.mark.asyncio
+    async def test_music_get_refuses_collision(self, tmp_path: Path) -> None:
+        """A pre-existing target directory is a collision error (D-1)."""
+        (tmp_path / "warm-pads-7f3a91").mkdir()
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "manifest",
+                    "id": "m1",
+                    "album": "warm-pads-7f3a91",
+                    "parts": [{"part": "001.mp3", "bytes": 3}],
+                }
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(FileExistsError):
+            await client.music_get("7f3a91", tmp_path)
+
+
 class TestVoxClientVoices:
     """Test voices method."""
 
