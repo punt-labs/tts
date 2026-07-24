@@ -61,7 +61,8 @@ Catalog verbs (address a saved album by the id `music_list` prints):
 
 - `mic:music_new` — generate ONE track from a finished, verbatim prompt into a
   fresh single-track catalog album. It does not disturb the running program.
-- `mic:music_get` — export a saved album by id.
+- `mic:music_get` — export a saved album by id into a destination directory
+  you name (`dest`); returns the written path/locator.
 - `mic:music_remove` — delete a saved album by id (refused while it is playing).
 
 ## Slash commands
