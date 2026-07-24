@@ -39,11 +39,11 @@ class RecListHandler:
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Enumerate the store and reply with the recordings list -- or error.
 
-        Enumeration is best-effort per entry, but a fault reading the root
-        itself (its permissions changed, it was swapped for a file) raises
-        ``OSError`` here. Guard it so the fault becomes an id-stamped error
-        frame -- matching ``RecRemoveHandler`` -- instead of escaping to the
-        router's broad except, which logs and tears the connection down.
+        Enumeration is best-effort per entry. A root that is missing or has been
+        swapped for a file is simply an empty store -- ``entries`` returns no rows
+        rather than raising -- so only a genuine I/O fault reading a real
+        directory (its permissions changed mid-scan) raises ``OSError`` here; the
+        guard turns that into an id-stamped error frame, not a router teardown.
         """
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
