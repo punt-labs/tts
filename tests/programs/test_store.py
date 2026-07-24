@@ -103,6 +103,23 @@ class TestCreateAndScan:
         assert [a.id.value for a in albums] == ["a3f1c9"]  # the healthy album survives
         assert any("exceeds" in r.getMessage() for r in caplog.records)
 
+    def test_scan_skips_a_symlinked_manifest(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A manifest.json symlinked at an arbitrary target is a planted file: the
+        # O_NOFOLLOW open refuses it rather than reading through the link, so scan
+        # treats it as a corrupt album and the rest of the catalog survives.
+        secret = tmp_path / "secret.json"
+        secret.write_text('{"id": "sneaky"}', encoding="utf-8")
+        planted = tmp_path / "planted-dir"
+        planted.mkdir(parents=True)
+        (planted / "manifest.json").symlink_to(secret)
+        FilesystemProgramStore(tmp_path).create(_draft("a3f1c9", "lofi", "calm"))
+        with caplog.at_level(logging.ERROR):
+            albums = FilesystemProgramStore(tmp_path).scan()
+        assert [a.id.value for a in albums] == ["a3f1c9"]  # the healthy album survives
+        assert any("corrupt manifest" in r.getMessage() for r in caplog.records)
+
     def test_open_rejects_an_oversized_manifest(self, tmp_path: Path) -> None:
         """``open`` refuses a manifest above the ceiling before reading it."""
         store = FilesystemProgramStore(tmp_path)
@@ -112,6 +129,19 @@ class TestCreateAndScan:
             "x" * (1024 * 1024 + 1), encoding="utf-8"
         )
         with pytest.raises(ValueError, match="exceeds"):
+            store.open(draft.locator)
+
+    def test_open_rejects_a_symlinked_manifest(self, tmp_path: Path) -> None:
+        """``open`` refuses a symlinked manifest instead of reading its target."""
+        store = FilesystemProgramStore(tmp_path)
+        draft = _draft("a3f1c9", "techno", "ambient")
+        store.create(draft)
+        secret = tmp_path / "secret.json"
+        secret.write_text('{"id": "sneaky"}', encoding="utf-8")
+        manifest = tmp_path / draft.locator / "manifest.json"
+        manifest.unlink()
+        manifest.symlink_to(secret)
+        with pytest.raises(OSError):
             store.open(draft.locator)
 
     def test_manifest_written_utf8(self, tmp_path: Path) -> None:

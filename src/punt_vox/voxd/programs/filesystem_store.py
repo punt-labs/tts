@@ -11,6 +11,7 @@ seam that dereferences an opaque locator to a ``Path``.
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -175,17 +176,22 @@ class FilesystemProgramStore:
 
     @staticmethod
     def _read_manifest_text(manifest_path: Path) -> str:
-        """Return a manifest's UTF-8 text, rejecting a file above the ceiling.
+        """Return a manifest's UTF-8 text, refusing a symlink or an oversized file.
 
-        The ``stat`` guard runs before ``read_text`` so an oversized (corrupt or
-        planted) manifest raises ``ValueError`` without ever being pulled into
-        memory. ``_scan_one`` catches that and skips the album; ``open`` lets it
-        surface as the corrupt-album error.
+        The manifest is opened ``O_NOFOLLOW`` so a symlinked ``manifest.json`` (a
+        planted file pointing at an arbitrary target) raises ``OSError`` instead
+        of being read through. ``fstat`` on that same descriptor enforces the
+        ceiling before any bytes are pulled into memory, so an oversized (corrupt
+        or planted) manifest raises ``ValueError``. ``_scan_one`` catches both and
+        skips the album; ``open`` lets them surface as the corrupt-album error.
         """
-        if manifest_path.stat().st_size > _MAX_MANIFEST_BYTES:
-            msg = f"manifest exceeds {_MAX_MANIFEST_BYTES} bytes: {manifest_path.name}"
-            raise ValueError(msg)
-        return manifest_path.read_text(encoding="utf-8")
+        fd = os.open(manifest_path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, encoding="utf-8") as handle:
+            if os.fstat(fd).st_size > _MAX_MANIFEST_BYTES:
+                name = manifest_path.name
+                msg = f"manifest exceeds {_MAX_MANIFEST_BYTES} bytes: {name}"
+                raise ValueError(msg)
+            return handle.read()
 
     def _contained_dir(self, directory: str) -> Path:
         """Return ``root/directory`` for a single validated segment, else raise.

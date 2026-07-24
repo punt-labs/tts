@@ -89,6 +89,20 @@ class TestMusicNewHandler:
         assert [f["type"] for f in sent] == ["error"]  # no 'generating' ack
         assert any("n2" in r.getMessage() for r in caplog.records)
 
+    def test_whitespace_prompt_rejected_before_ack(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A blank (whitespace-only) prompt is refused pre-ack, like an empty one,
+        rather than acking and failing later in generation."""
+        library = _library(tmp_path / "programs")
+        ws, sent = _capturing_ws()
+        msg: dict[str, object] = {"type": "music_new", "id": "n5", "prompt": "   "}
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(MusicNewHandler(library)(msg, ws))
+
+        assert [f["type"] for f in sent] == ["error"]  # no 'generating' ack
+        assert any("n5" in r.getMessage() for r in caplog.records)
+
     def test_non_string_prompt_is_a_clean_error(self, tmp_path: Path) -> None:
         """A non-string prompt yields an error before the ack; the parse must not
         escape the handler and tear the connection down."""

@@ -46,11 +46,11 @@ class MusicNewHandler:
         return self
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """Reject an empty or malformed prompt pre-ack, else ack, generate, reply."""
+        """Reject an empty, blank, or malformed prompt pre-ack, else ack and reply."""
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
             prompt = parse_optional_str(msg, "prompt")
-            if not prompt:
+            if not prompt or not prompt.strip():
                 await reply.error("music new requires a prompt")
                 return
             if not await reply.send({"type": "generating"}):
