@@ -9,9 +9,10 @@ tool by whether EVERY flow that drives it wants the panel as the whole
 response. Only the pure music-control and vibe tools qualify: on success
 ``music``/``music_play``/``music_next``/``vibe`` put a terminal stop-narration
 directive in ``additionalContext`` instead of the result JSON. Every other
-tool keeps its RESULT so the flow that needs it can reply — ``record`` returns
-saved file paths, ``unmute`` drives ``/vox model|provider``, ``speak`` drives
-``/mute``, ``notify`` drives ``/vox c``, and the query tools
+tool keeps its RESULT so the flow that needs it can reply — the
+``rec_*``/``music_new``/``music_get``/``music_remove`` verbs return ids, paths,
+and bytes the agent addresses later, ``unmute`` drives ``/vox model|provider``,
+``speak`` drives ``/mute``, ``notify`` drives ``/vox c``, and the query tools
 (``status``/``who``/``music_list``) report data. On any tool error the failure
 must still reach ``additionalContext``.
 
@@ -194,23 +195,80 @@ class TestVibeMusicHint:
         assert out["updatedMCPToolOutput"] == "♪ Skipping — generating next track..."
 
 
+class TestRecMusicCatalogVerbs:
+    """The rec_* and music-catalog verbs get purpose-built panel phrasing.
+
+    Each has its own result shape (a list for ``rec_new``; an object keyed by
+    ``recordings``/``played``/``base64``/``album_id``/etc. for the rest), and
+    each keeps its payload in ``additionalContext`` so the agent can address the
+    result later. The panel line is a compact summary — and for ``rec_get`` it
+    names the id and size only, NEVER the base64 blob, so the compact channel is
+    not flooded with an inline recording.
+    """
+
+    def test_rec_new_panel_counts_tracks_and_keeps_ids(self) -> None:
+        out = _run_hook("rec_new", [{"id": "abc123.mp3", "bytes": 10, "cached": False}])
+        assert "abc123.mp3" in out["additionalContext"]  # ids reach the agent
+        assert _STOP_MARK not in out["additionalContext"]
+        assert out["updatedMCPToolOutput"].startswith("♪")
+        assert "1" in out["updatedMCPToolOutput"]  # one track
+
+    def test_rec_list_panel_counts_recordings(self) -> None:
+        out = _run_hook("rec_list", {"recordings": [{"id": "a.mp3", "bytes": 3}]})
+        assert "a.mp3" in out["additionalContext"]
+        assert out["updatedMCPToolOutput"] == "♪ 1 recording(s) in the store"
+
+    def test_rec_play_panel_names_ref(self) -> None:
+        out = _run_hook("rec_play", {"played": "take-1.mp3"})
+        assert "take-1.mp3" in out["additionalContext"]
+        assert out["updatedMCPToolOutput"] == "♪ playing take-1.mp3"
+
+    def test_rec_get_keeps_base64_in_context_not_panel(self) -> None:
+        # HIGH regression: the blob is the agent's payload (additionalContext),
+        # but must NEVER be dumped into the compact panel line.
+        blob = "QUJDREVGR0hJSktMTU5PUA=="
+        out = _run_hook("rec_get", {"id": "clip.mp3", "bytes": 16, "base64": blob})
+        assert blob in out["additionalContext"]
+        assert blob not in out["updatedMCPToolOutput"]
+        assert out["updatedMCPToolOutput"] == "♪ fetched clip.mp3 (16 bytes)"
+
+    def test_rec_remove_panel_names_ref(self) -> None:
+        out = _run_hook("rec_remove", {"removed": "old.mp3"})
+        assert "old.mp3" in out["additionalContext"]
+        assert out["updatedMCPToolOutput"] == "♪ removed old.mp3"
+
+    def test_music_new_panel_names_album(self) -> None:
+        out = _run_hook("music_new", {"album_id": "7f3a91"})
+        assert "7f3a91" in out["additionalContext"]
+        assert out["updatedMCPToolOutput"] == "♪ generated album 7f3a91"
+
+    def test_music_get_panel_names_album_keeps_path(self) -> None:
+        out = _run_hook(
+            "music_get", {"album_id": "7f3a91", "path": "/dest/warm-7f3a91"}
+        )
+        assert "/dest/warm-7f3a91" in out["additionalContext"]  # the path reaches back
+        assert out["updatedMCPToolOutput"] == "♪ exported 7f3a91"
+
+    def test_music_remove_panel_names_album(self) -> None:
+        out = _run_hook("music_remove", {"removed": "7f3a91"})
+        assert out["updatedMCPToolOutput"] == "♪ removed album 7f3a91"
+
+    def test_rec_get_not_found_error_reaches_context(self) -> None:
+        # On failure the verbs return {"error":...}; the error guard surfaces it.
+        detail = "no recording named 'missing.mp3'"
+        out = _run_hook("rec_get", {"error": detail})
+        assert "missing.mp3" in out["additionalContext"]
+        assert _STOP_MARK not in out["additionalContext"]
+        assert out["updatedMCPToolOutput"] == f"♪ error: {detail}"
+
+
 class TestReplyToolsKeepData:
     """Tools whose slash-command flows need an agent reply keep the JSON.
 
-    record returns saved file paths (the agent must report them), unmute drives
-    ``/vox model|provider`` ("Switched … to X"), speak drives ``/mute`` (a
-    phrase reply), and notify drives ``/vox c`` (lists featured voices).
+    unmute drives ``/vox model|provider`` ("Switched … to X"), speak drives
+    ``/mute`` (a phrase reply), and notify drives ``/vox c`` (lists featured
+    voices).
     """
-
-    def test_record_paths_reach_context(self) -> None:
-        # HIGH regression: the agent needs the saved paths to report/reuse.
-        out = _run_hook(
-            "record",
-            [{"voice": "Matilda", "path": "/tmp/vox/take-1.mp3"}],
-        )
-        assert "/tmp/vox/take-1.mp3" in out["additionalContext"]
-        assert _STOP_MARK not in out["additionalContext"]
-        assert out["updatedMCPToolOutput"].startswith("♪")
 
     def test_unmute_payload_reaches_context(self) -> None:
         # MED regression: /vox model|provider derive their confirmation text
