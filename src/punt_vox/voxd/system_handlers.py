@@ -102,6 +102,12 @@ class VoicesHandler(MessageHandler):
             )
             provider = get_provider(provider_name, config_dir=None)
             voice_list = await asyncio.to_thread(provider.list_voices)
+        except ValueError as exc:
+            # A parse rejection (non-string provider) or an unknown provider name
+            # is a client request error, not an operational fault: reply.error is
+            # id-stamped, disconnect-safe, and WARNING-audited -- no full traceback.
+            await reply.error(str(exc))
+            return
         except Exception as exc:
             logger.exception("Voice listing failed for provider=%r", provider_name)
             await reply.send(
