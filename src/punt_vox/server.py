@@ -7,14 +7,13 @@ via VoxClient.
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
 import random
 import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self, final
+from typing import TYPE_CHECKING, Any, final
 
 from mcp.server.fastmcp import FastMCP
 from websockets.exceptions import WebSocketException
@@ -30,6 +29,7 @@ from punt_vox.logging_config import (
     reapply_client_log_level,
 )
 from punt_vox.music_phrases import MusicMarquee
+from punt_vox.server_audio_tools import MusicCatalogTools, RecTools
 from punt_vox.synthesis_batch import SegmentBatch
 from punt_vox.types_programs.control import SelectionRequest, StartRequest
 from punt_vox.types_programs.mode import Mode
@@ -40,7 +40,7 @@ from punt_vox.vibe_trace import VibeTraceLog
 from punt_vox.voices import VOICE_BLURBS
 
 if TYPE_CHECKING:  # annotation-only -- kept off the runtime import graph (PY-TS-7)
-    from collections.abc import Callable, Sequence
+    from collections.abc import Sequence
 
     from mcp.types import ContentBlock
 
@@ -501,222 +501,15 @@ def unmute(
     )
 
 
-@final
-class _RecTools:
-    """The recordings-store ``mic`` verbs, as thin delegates to one engine op.
-
-    Twin of the ``vox rec`` CLI (:class:`~punt_vox.cli_rec.RecCli`): every verb
-    formats a JSON reply and calls exactly one :class:`VoxClientSync` op -- the
-    same op the CLI hits, so both surfaces share one code path and no logic is
-    reimplemented here. The client factory is a seam a test replaces with an
-    in-memory stand-in. An MCP caller is an agent, not a shell, so ``get``
-    returns the recording's bytes (base64) rather than writing a host file.
-    """
-
-    __slots__ = ("_client_factory",)
-    _client_factory: Callable[[], VoxClientSync]
-
-    def __new__(cls, client_factory: Callable[[], VoxClientSync] | None = None) -> Self:
-        self = super().__new__(cls)
-        self._client_factory = client_factory or _voxd_client
-        return self
-
-    def new(
-        self,
-        text: str | None = None,
-        voice: str | None = None,
-        language: str | None = None,
-        segments: list[dict[str, str]] | None = None,
-        rate: int = 90,
-        name: str | None = None,
-        stability: float | None = None,
-        similarity: float | None = None,
-        style: float | None = None,
-        speaker_boost: bool | None = None,  # noqa: FBT001 -- MCP tool schema requires bool param
-    ) -> str:
-        """Synthesize speech into the store and return its bare store id.
-
-        Pass a simple ``text`` string or a ``segments`` list. The reply carries
-        the daemon-issued id only -- never a daemon path -- so the agent
-        addresses the recording with ``rec_play``/``rec_get``/``rec_remove``.
-
-        Args:
-            text: Simple text to synthesize. Ignored when segments is provided.
-            voice: Default voice for all segments; falls back to the session
-                voice or provider default.
-            language: Default ISO 639-1 language code (e.g. 'de', 'ko').
-            segments: Segment objects, each with "text" and optional "voice",
-                "language", and "vibe_tags".
-            rate: Speech rate as a percentage. Defaults to 90.
-            name: Bare filename to store under (no path). Content-addressed
-                when omitted. Single-segment only.
-            stability: ElevenLabs voice stability (0.0-1.0).
-            similarity: ElevenLabs voice similarity boost (0.0-1.0).
-            style: ElevenLabs voice style/expressiveness (0.0-1.0).
-            speaker_boost: ElevenLabs speaker boost toggle.
-
-        Returns:
-            JSON string: a list of ``{"id", "bytes", "cached"}`` -- one per
-            segment, the ``id`` being the bare store id.
-        """
-        _session.refresh_from_config()
-        # One validation path: reject bad voice settings before any round-trip.
-        spec = SynthesisSpec(stability=stability, similarity=similarity, style=style)
-        spec.validate()
-        if segments is None:
-            if text is None:
-                return _error("Provide text or segments.")
-            segments = [{"text": text}]
-        if name is not None and len(segments) > 1:
-            return _error("name only supported for single-segment calls")
-        # The daemon owns the store and is the sole authority on name validity:
-        # an absent (None) name is content-addressed; an explicit name --
-        # including "" -- is sent for the daemon to reject pre-ack (``is not
-        # None``, not truthiness, to match the client and the CLI).
-        single_name = name if name is not None and len(segments) == 1 else None
-        client = self._client_factory()
-
-        def _handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
-            # Bare id only -- no store path leaks to the agent (D-7, CLI parity).
-            result = client.record(seg_text, seg_spec, name=single_name)
-            return {
-                "id": result.name,
-                "bytes": result.byte_count,
-                "cached": result.cached,
-            }
-
-        defaults = SynthesisSpec(
-            voice=voice or _session.voice,
-            language=language,
-            rate=rate,
-            provider=_session.provider,
-            model=_session.model,
-            stability=stability,
-            similarity=similarity,
-            style=style,
-            speaker_boost=speaker_boost,
-            vibe_tags=_session.vibe_tags,
-        )
-        return SegmentBatch(segments, defaults).render(
-            handler=_handler, error_label="Record"
-        )
-
-    def list_recordings(self) -> str:
-        """List the store's recordings as ``{"recordings": [{"id", "bytes"}]}``."""
-        try:
-            entries = self._client_factory().rec_list()
-        except _DAEMON_ERRORS as exc:
-            return _error(str(exc))
-        rows = [{"id": e.name, "bytes": e.byte_count} for e in entries]
-        return json.dumps({"recordings": rows})
-
-    def play(self, ref: str) -> str:
-        """Play recording *ref* on the daemon host; return ``{"played": ref}``."""
-        try:
-            self._client_factory().play(ref)
-        except (ValueError, *_DAEMON_ERRORS) as exc:
-            return _error(str(exc))
-        return json.dumps({"played": ref})
-
-    def get(self, ref: str) -> str:
-        """Return recording *ref*'s bytes, base64-encoded, for the agent.
-
-        The CLI ``rec get`` writes ``./<ref>`` to the caller's directory; an MCP
-        caller is an agent with no such directory, so the bytes come back inline
-        (base64) rather than landing on the daemon host's filesystem.
-
-        Returns:
-            JSON string ``{"id", "bytes", "base64"}`` -- ``bytes`` is the decoded
-            length, ``base64`` the payload.
-        """
-        try:
-            data = self._client_factory().fetch(ref)
-        except (ValueError, *_DAEMON_ERRORS) as exc:
-            return _error(str(exc))
-        return json.dumps(
-            {"id": ref, "bytes": len(data), "base64": base64.b64encode(data).decode()}
-        )
-
-    def remove(self, ref: str) -> str:
-        """Delete recording *ref* from the store; return ``{"removed": ref}``."""
-        try:
-            self._client_factory().rec_remove(ref)
-        except (ValueError, *_DAEMON_ERRORS) as exc:
-            return _error(str(exc))
-        return json.dumps({"removed": ref})
-
-
-@final
-class _MusicCatalogTools:
-    """The catalog-authoring ``mic`` verbs (``music_new``/``get``/``remove``).
-
-    Twin of the ``vox music new``/``get``/``remove`` CLI verbs: each formats a
-    JSON reply and calls one :class:`VoxClientSync` catalog op -- the same op the
-    CLI hits. Distinct from the ``music`` on/off tool, which drives the running
-    Program; these mutate the catalog and leave the active Program untouched.
-    An album is a multi-part directory, so ``get`` exports it to an agent-named
-    destination (the locator form) rather than returning inline bytes.
-    """
-
-    __slots__ = ("_client_factory",)
-    _client_factory: Callable[[], VoxClientSync]
-
-    def __new__(cls, client_factory: Callable[[], VoxClientSync] | None = None) -> Self:
-        self = super().__new__(cls)
-        self._client_factory = client_factory or _voxd_client
-        return self
-
-    def new(self, prompt: str, name: str | None = None) -> str:
-        """Generate one track into a fresh catalog album; return its bare id.
-
-        The *prompt* is the finished ElevenLabs descriptive prompt, sent
-        verbatim -- vox never expands it. Generation runs immediately (no
-        confirmation) and parks the track in the catalog, leaving the active
-        Program's mode, pool, and playback exactly as it found them.
-
-        Returns:
-            JSON string ``{"album_id": "<id>"}``.
-        """
-        try:
-            album_id = self._client_factory().music_new(prompt, name)
-        except (ValueError, *_DAEMON_ERRORS) as exc:
-            return _error(str(exc))
-        return json.dumps({"album_id": album_id})
-
-    def get(self, album_id: str, dest: str) -> str:
-        """Export album *album_id* into directory *dest*; return the locator.
-
-        An album is a directory of parts, too large to return inline, so -- with
-        no shell CWD to default to -- the agent names *dest* and vox writes
-        ``<dest>/<album-name>/`` there, refusing a collision. The reply carries
-        the written path, the store-locator form of the CLI ``music get``.
-
-        Returns:
-            JSON string ``{"album_id", "path"}`` -- ``path`` is the written
-            album directory.
-        """
-        try:
-            target = self._client_factory().music_get(album_id, Path(dest))
-        except (ValueError, *_DAEMON_ERRORS) as exc:
-            return _error(str(exc))
-        return json.dumps({"album_id": album_id, "path": str(target)})
-
-    def remove(self, album_id: str) -> str:
-        """Delete catalog album *album_id* (a playing album is refused, D-2)."""
-        try:
-            self._client_factory().music_remove(album_id)
-        except (ValueError, *_DAEMON_ERRORS) as exc:
-            return _error(str(exc))
-        return json.dumps({"removed": album_id})
-
-
 # Register the recordings + catalog verbs as `mic` tools at parity with the CLI
 # (D-7). Each is a bound method of a humble object, so FastMCP builds the schema
 # from the method signature (minus self) and the daemon still owns containment
 # and audit -- the tool is a thin caller. Bare registration statements add no
 # module-level public name; the `_LoggingFastMCP.call_tool` override names each.
-_rec_tools = _RecTools()
-_music_catalog_tools = _MusicCatalogTools()
+# rec_new fills its synthesis defaults from a closure yielding the live session,
+# refreshed on each call; the classes themselves live in server_audio_tools.
+_rec_tools = RecTools(_voxd_client, lambda: _session)
+_music_catalog_tools = MusicCatalogTools(_voxd_client)
 
 mcp.tool(name="rec_new")(_rec_tools.new)
 mcp.tool(name="rec_list")(_rec_tools.list_recordings)

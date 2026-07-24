@@ -2,9 +2,10 @@
 
 The recordings-store verbs (``rec_new``/``rec_list``/``rec_play``/``rec_get``/
 ``rec_remove``) and the catalog-authoring verbs (``music_new``/``music_get``/
-``music_remove``) live on the :class:`~punt_vox.server._RecTools` and
-:class:`~punt_vox.server._MusicCatalogTools` humble objects. Each is driven
-directly with an in-memory client factory -- no daemon, no socket -- so the
+``music_remove``) live on the :class:`~punt_vox.server_audio_tools.RecTools`
+and :class:`~punt_vox.server_audio_tools.MusicCatalogTools` humble objects.
+Each is driven directly with an in-memory client factory -- no daemon, no
+socket -- so the
 argument passthrough, the bare-id result shape, MCP-appropriate ``get`` forms,
 error surfacing, and the rec-vs-catalog routing are asserted without a wire.
 
@@ -28,7 +29,8 @@ from punt_vox.cli_rec import ClientRecordGateway, RecCli
 from punt_vox.client import RecordingSummary, RecordResult
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.output_formatter import OutputFormatter
-from punt_vox.server import _MusicCatalogTools, _RecTools, mcp
+from punt_vox.server import mcp
+from punt_vox.server_audio_tools import MusicCatalogTools, RecTools
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -41,7 +43,7 @@ if TYPE_CHECKING:
 def _fresh_session(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
     """Reset the module session and pin config discovery to a no-op.
 
-    ``_RecTools.new`` refreshes the session from config; a fresh session plus a
+    ``RecTools.new`` refreshes the session from config; a fresh session plus a
     ``None`` config dir keeps that a pure no-op so the tests exercise only the
     tool's own logic.
     """
@@ -138,12 +140,23 @@ def _factory(client: _FakeClient) -> Callable[[], VoxClientSync]:
     return cast("Callable[[], VoxClientSync]", lambda: client)
 
 
-def _rec(client: _FakeClient) -> _RecTools:
-    return _RecTools(_factory(client))
+def _rec_tool(client_factory: Callable[[], VoxClientSync]) -> RecTools:
+    """Build a ``RecTools`` over *client_factory* and the fresh test session.
+
+    The session provider yields the module session the ``_fresh_session``
+    fixture pins fresh, so ``rec_new``'s config refresh is a pure no-op.
+    """
+    import punt_vox.server as srv
+
+    return RecTools(client_factory, lambda: srv._session)
 
 
-def _catalog(client: _FakeClient) -> _MusicCatalogTools:
-    return _MusicCatalogTools(_factory(client))
+def _rec(client: _FakeClient) -> RecTools:
+    return _rec_tool(_factory(client))
+
+
+def _catalog(client: _FakeClient) -> MusicCatalogTools:
+    return MusicCatalogTools(_factory(client))
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +237,7 @@ def test_rec_new_empty_name_single_segment_sent_to_daemon() -> None:
     client = MagicMock()
     client.record.side_effect = VoxdProtocolError("empty recording name")
 
-    result = json.loads(_RecTools(lambda: client).new(text="hi", name=""))
+    result = json.loads(_rec_tool(lambda: client).new(text="hi", name=""))
 
     assert "error" in result  # the daemon's rejection is surfaced
     assert client.record.call_args.kwargs["name"] == ""  # "" reached the wire
@@ -234,7 +247,7 @@ def test_rec_new_daemon_error_surfaces_as_clean_error() -> None:
     client = MagicMock()
     client.record.side_effect = VoxdConnectionError("not running")
 
-    result = json.loads(_RecTools(lambda: client).new(text="hi"))
+    result = json.loads(_rec_tool(lambda: client).new(text="hi"))
 
     assert "error" in result
 
@@ -266,7 +279,7 @@ def test_rec_list_daemon_error_surfaces() -> None:
     client = MagicMock()
     client.rec_list.side_effect = VoxdConnectionError("not running")
 
-    result = json.loads(_RecTools(lambda: client).list_recordings())
+    result = json.loads(_rec_tool(lambda: client).list_recordings())
 
     assert "error" in result
 
@@ -364,7 +377,7 @@ def test_music_new_bad_prompt_surfaces_error() -> None:
     client = MagicMock()
     client.music_new.side_effect = VoxdProtocolError("bad_prompt")
 
-    result = json.loads(_MusicCatalogTools(lambda: client).new("copyrighted work"))
+    result = json.loads(MusicCatalogTools(lambda: client).new("copyrighted work"))
 
     assert "error" in result
 
@@ -454,7 +467,7 @@ def test_rec_new_and_cli_issue_the_same_client_record_call() -> None:
         id="x.mp3", name="x.mp3", store_path=Path("/s/x.mp3"), byte_count=3
     )
 
-    _RecTools(lambda: tool_client).new(text="hello", name="x.mp3")
+    _rec_tool(lambda: tool_client).new(text="hello", name="x.mp3")
     cli = RecCli(
         MagicMock(spec=OutputFormatter), lambda: ClientRecordGateway(cli_client)
     )
