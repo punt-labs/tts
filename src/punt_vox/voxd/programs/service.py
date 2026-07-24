@@ -22,6 +22,7 @@ from punt_vox.voxd.programs.active_context import (
     ActiveProgram,
     ActiveSelection,
 )
+from punt_vox.voxd.programs.album_binder import AlbumBinder
 from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint, TagQuery
 from punt_vox.voxd.programs.catalog import Album, Catalog
 from punt_vox.voxd.programs.control_channel import ControlChannel
@@ -29,7 +30,6 @@ from punt_vox.voxd.programs.fill_reconciler import FillReconciler
 from punt_vox.voxd.programs.filler import Filler
 from punt_vox.voxd.programs.lifecycle_signal import TurnOff
 from punt_vox.voxd.programs.loop import ProgramLoop
-from punt_vox.voxd.programs.manifest import ManifestDraft
 from punt_vox.voxd.programs.playback_health import PlaybackHealth
 from punt_vox.voxd.programs.playback_signal import Rotate
 from punt_vox.voxd.programs.program import Program
@@ -44,9 +44,11 @@ from punt_vox.voxd.programs.switch_signal import SwitchProgram
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from punt_vox.voxd.programs.active_context import ActiveSource
     from punt_vox.voxd.programs.album_id import AlbumId
     from punt_vox.voxd.programs.filler import FillPlan
     from punt_vox.voxd.programs.part import Part
+    from punt_vox.voxd.programs.playback_source import PlaybackSource
     from punt_vox.voxd.programs.producer import Producer
     from punt_vox.voxd.programs.sleeper import Sleeper
     from punt_vox.voxd.programs.store import ProgramStore
@@ -62,6 +64,7 @@ class ProgramService:
     """Own and drive the one active source; the handler-facing daemon seam."""
 
     __slots__ = (
+        "_binder",
         "_catalog",
         "_channel",
         "_context",
@@ -74,6 +77,7 @@ class ProgramService:
     _store: ProgramStore
     _root: Path
     _catalog: Catalog
+    _binder: AlbumBinder
     _context: ActiveContext
     _channel: ControlChannel
     _filler: Filler
@@ -87,6 +91,7 @@ class ProgramService:
         self._store = store
         self._root = root
         self._catalog = Catalog(store.scan())
+        self._binder = AlbumBinder(self._catalog, store)
         self._context = ActiveContext()
         self._channel = ControlChannel(cls._idle_program())
         self._filler = Filler(producer, self._channel, sleeper)
@@ -158,15 +163,24 @@ class ProgramService:
         """Return the album locators whose Parts back the active source (D-2).
 
         ``MusicRemove`` refuses an album exactly when its locator is here: a
-        playing Program contributes its own album (only with a non-empty pool); a
-        Radio contributes every album its Selection spans; an idle daemon none.
+        generate Program contributes its own album whenever it holds ready Parts
+        *or* generation is still targeting its directory -- so the first track
+        being written in ``generating_first`` (an empty pool) is protected too,
+        and removing it cannot corrupt the in-flight generation; a Radio
+        contributes every album its Selection spans; an idle daemon none.
         """
         active = self._context.current
-        source = self._channel.source
         if active is None:
             return frozenset()
+        return self._backing_locators(self._channel.source, active)
+
+    def _backing_locators(
+        self, source: PlaybackSource, active: ActiveSource
+    ) -> frozenset[str]:
+        """Dispatch D-2 backing by source kind: a generate Program vs a replay Radio."""
         if isinstance(source, Program):
-            return frozenset({active.name.value}) if source.pool else frozenset()
+            backs = bool(source.pool) or source.wants_generation
+            return frozenset({active.name.value}) if backs else frozenset()
         if isinstance(source, SelectionPlayback):
             return frozenset(selected.locator for selected in source.selection)
         return frozenset()
@@ -197,7 +211,7 @@ class ProgramService:
         fingerprint = PromptFingerprint.from_prompts(
             prompt_set.base, prompt_set.variations
         )
-        album = self._bind(clean_style, clean_vibe, name, fingerprint)
+        album = self._binder.bind(clean_style, clean_vibe, name, fingerprint)
         active = ActiveProgram(
             album_id=album.id,
             store=self._store.open(album.locator),
@@ -259,58 +273,6 @@ class ProgramService:
         self._channel.post(
             SwitchSelection(self._channel, self._context, playback, active)
         )
-
-    def _bind(
-        self, style: str, vibe: str, name: str | None, fingerprint: PromptFingerprint
-    ) -> Album:
-        """Resolve the album to bind: named resume, tag+fingerprint resume, or mint."""
-        handle = (name or "").strip()
-        if handle:
-            existing = self._catalog.by_name(handle)
-            if existing is not None and self._safe_to_resume(existing, fingerprint):
-                return existing
-            return self._mint(style, vibe, handle, fingerprint)
-        resumed = self._catalog.resume(TagQuery(style=style, vibe=vibe), fingerprint)
-        if resumed is not None:
-            return resumed
-        return self._mint(style, vibe, None, fingerprint)
-
-    def _safe_to_resume(self, album: Album, fingerprint: PromptFingerprint) -> bool:
-        """Return whether resuming ``album`` cannot blend two prompt sets in one pool.
-
-        A named resume attaches the *incoming* prompt set to the album's continued
-        fill. Generating a partly-filled album's remaining tracks from a prompt set
-        other than the one that authored it would mix two identities in one pool,
-        so a partial album resumes only when the incoming fingerprint matches its
-        own. A full album never fills, so any prompt set is safe. On a mismatch the
-        caller mints a fresh, auto-suffixed album instead of filling foreign prompts.
-        """
-        if album.manifest.prompt_fingerprint == fingerprint:
-            return True
-        return self._is_full(album)
-
-    def _is_full(self, album: Album) -> bool:
-        """Return whether ``album`` already holds a full pool for its format."""
-        ready = self._store.open(album.locator).ready_parts()
-        return len(ready) >= album.manifest.format.pool_size
-
-    def _mint(
-        self, style: str, vibe: str, name: str | None, fingerprint: PromptFingerprint
-    ) -> Album:
-        """Create a fresh album (auto-suffixing a colliding name), register it."""
-        taken = self._catalog.taken_names()
-        final_name = None if name is None else AlbumTags.mint_unique_name(name, taken)
-        tags = AlbumTags(style=style, vibe=vibe, name=final_name)
-        draft = ManifestDraft(
-            album_id=self._catalog.mint_id(),
-            tags=tags,
-            fingerprint=fingerprint,
-            taken_names=taken,
-        )
-        store = self._store.create(draft)
-        album = Album(store.manifest(), draft.locator, self._store)
-        self._catalog.add(album)
-        return album
 
     @staticmethod
     def _radio_now_playing(source: SelectionPlayback) -> NowPlaying | None:

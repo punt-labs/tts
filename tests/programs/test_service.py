@@ -20,8 +20,10 @@ from punt_vox.types_programs import Format, Mode
 from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.programs.album_tags import PromptFingerprint, TagQuery
+from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
+from punt_vox.voxd.programs.library import MusicLibrary
 
-from .conftest import make_service, seed_album
+from .conftest import QuietProducer, make_service, seed_album
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -302,3 +304,64 @@ class TestConsumeControls:
         await service.run_once()
         service.shutdown()
         assert service.status().mode is Mode.OFF
+
+
+class TestGeneratingFirstBacking:
+    """The album generated in ``generating_first`` (empty pool) still backs it.
+
+    During ``generating_first`` the first track is being written into the album's
+    directory while the pool is still empty. The D-2 backing set must cover that
+    album *regardless of pool emptiness*, so ``music_remove`` refuses it -- deleting
+    the directory mid-generation would corrupt the in-flight first track. These
+    tests assert that named invariant, and the regression that a non-backing idle
+    album is still removable in the same state.
+    """
+
+    def _library(self, tmp_path: Path, service: ProgramService) -> MusicLibrary:
+        """Build a library sharing the service's catalog + store, as wiring does."""
+        root = tmp_path / "programs"
+        return MusicLibrary(
+            service.catalog, FilesystemProgramStore(root), root, QuietProducer()
+        )
+
+    async def _generating_first(self, tmp_path: Path) -> ProgramService:
+        """Drive a fresh service to ``generating_first`` with an empty pool."""
+        service = _service(tmp_path)
+        service.turn_on(style="techno", vibe="calm", name=None, prompts=_ONE)
+        await service.run_once()  # apply the switch that arms the background fill
+        service.shutdown()  # cancel the fill before it records the first Part
+        assert service.status().mode is Mode.GENERATING_FIRST  # pool still empty
+        return service
+
+    async def test_generating_first_album_is_in_the_backing_set(
+        self, tmp_path: Path
+    ) -> None:
+        service = await self._generating_first(tmp_path)
+        album = service.catalog_albums()[0]
+        assert service.active_backing_locators() == frozenset({album.locator})
+
+    async def test_music_remove_refused_while_generating_first(
+        self, tmp_path: Path
+    ) -> None:
+        service = await self._generating_first(tmp_path)
+        album = service.catalog_albums()[0]
+        library = self._library(tmp_path, service)
+        with pytest.raises(ValueError, match="is playing"):
+            library.remove(album.id, blocked=service.active_backing_locators())
+        # The in-flight generation is undisturbed: still generating_first, album kept.
+        assert service.status().mode is Mode.GENERATING_FIRST
+        assert album.id in {a.id for a in service.catalog_albums()}
+
+    async def test_non_backing_album_is_removable_while_generating_first(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "programs"
+        idle = seed_album(root, 1, name="idle", album_id="b1b1b1")
+        service = _service(tmp_path)  # scans the seeded idle album into the catalog
+        service.turn_on(style="techno", vibe="calm", name=None, prompts=_ONE)
+        await service.run_once()
+        service.shutdown()
+        assert service.status().mode is Mode.GENERATING_FIRST
+        library = self._library(tmp_path, service)
+        library.remove(AlbumId("b1b1b1"), blocked=service.active_backing_locators())
+        assert not (root / idle).exists()  # a non-backing album still removes
