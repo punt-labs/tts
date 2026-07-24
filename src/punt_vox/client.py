@@ -108,10 +108,10 @@ _TIMEOUT_SHORT = 5.0
 # failure surfaces, so its deadline must cover a full track. Bounded like the
 # record cap so a wedged daemon is still detected within ten minutes.
 _TIMEOUT_PLAYBACK = 600.0
-# fetch returns one near-1-MiB (base64) frame; a local daemon is instant, but
-# the documented remote/SSH-tunnel path can be slow, so a near-limit transfer
-# must not be abandoned mid-send. fetch is a cold, opt-in, one-shot retrieval,
-# so it can afford a generous wait well above the synthesis deadline.
+# fetch reassembles the chunked stream (fetch_begin -> chunk* -> fetch_end); the
+# 120s is a whole-stream deadline, not per-frame, so a large recording over the
+# documented remote/SSH-tunnel path must finish within it. A cold one-shot
+# retrieval affords the wait; raise it if a big transfer is abandoned mid-stream.
 _TIMEOUT_FETCH = 120.0
 
 # record synthesizes to a file that may take minutes for long text (a fresh
