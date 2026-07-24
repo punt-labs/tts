@@ -484,11 +484,11 @@ Provider API keys (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`) live in `~/.
 
 ### Shipped
 
-- **Mic API**: unified `unmute`/`record`/`vibe`/`who` MCP tools with segment-based input
+- **Mic API**: unified `unmute`/`vibe`/`who` plus `rec_*`/`music_*` store & catalog MCP tools with segment-based input
 - Notification layer: `/vox y|n|c`, `/mute`, `/unmute`, `/recap`, Stop + Notification hooks
 - Multi-provider TTS engine: ElevenLabs, AWS Polly, OpenAI, macOS `say`, Linux `espeak-ng`
 - Claude Code plugin: marketplace install, MCP server, slash commands
-- CLI: say, voices, record, vibe, on/off, mute, version, status, doctor
+- CLI: say, voices, rec, music, vibe, notify, mute, version, status, doctor
 - Two-channel display: `♪` panel summaries with voice/provider context
 - ElevenLabs streaming API for lower time-to-first-audio
 - `/vibe` with auto, manual, and off modes --- ElevenLabs expressive tags color every utterance
