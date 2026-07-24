@@ -294,6 +294,31 @@ def test_get_not_found_exits_and_leaves_no_partial(
     assert not (tmp_path / "missing.mp3").exists()  # no partial file
 
 
+def test_get_file_racing_in_mid_fetch_is_not_clobbered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file that appears at ./<id> after the absence check is not overwritten.
+
+    The gateway lands ./rec.mp3 during the fetch (a second process writing the
+    name), so the exclusive-link landing must refuse rather than clobber it --
+    closing the TOCTOU gap between the check and the write (D-1).
+    """
+    monkeypatch.chdir(tmp_path)
+    raced = tmp_path / "rec.mp3"
+
+    def racing_get(ref: str) -> bytes:
+        raced.write_bytes(b"RACED-IN")  # appears after get()'s absence check
+        return b"DAEMON-BYTES"
+
+    gateway = MagicMock()
+    gateway.get.side_effect = racing_get
+    cli = RecCli(MagicMock(spec=OutputFormatter), lambda: gateway)
+
+    with pytest.raises(typer.Exit):
+        cli.get("rec.mp3")
+    assert raced.read_bytes() == b"RACED-IN"  # exclusive link refused to clobber
+
+
 # ---------------------------------------------------------------------------
 # remove
 # ---------------------------------------------------------------------------

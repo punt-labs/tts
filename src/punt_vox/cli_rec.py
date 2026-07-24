@@ -182,6 +182,13 @@ class RecCli:
         typer.echo(f"Error: {message}", err=True)
         raise typer.Exit(code=1)
 
+    def _run[T](self, op: Callable[[RecordGateway], T]) -> T:
+        """Run *op* against a fresh gateway, exiting cleanly on a gateway fault."""
+        try:
+            return op(self._gateway_factory())
+        except _GATEWAY_ERRORS as exc:
+            self._fail(str(exc))
+
     def new(
         self,
         text: _TextArg = None,
@@ -236,10 +243,7 @@ class RecCli:
 
     def list_recordings(self) -> None:
         """List the store's recording ids, one per line (``--json`` for bytes)."""
-        try:
-            entries = self._gateway_factory().recordings()
-        except _GATEWAY_ERRORS as exc:
-            self._fail(str(exc))
+        entries = self._run(lambda g: g.recordings())
         if not entries:
             self._formatter.emit({"recordings": []}, "No recordings.")
             return
@@ -249,10 +253,7 @@ class RecCli:
 
     def play(self, ref: _RefArg) -> None:
         """Play recording *ref* on the daemon host."""
-        try:
-            self._gateway_factory().play(ref)
-        except _GATEWAY_ERRORS as exc:
-            self._fail(str(exc))
+        self._run(lambda g: g.play(ref))
         self._formatter.emit(
             {"played": ref}, f"played store recording {ref} on the daemon host"
         )
@@ -261,25 +262,22 @@ class RecCli:
         """Copy recording *ref* into the current directory under its store name."""
         dest = Path.cwd() / ref
         if dest.exists():
-            # The name is the store's, not the user's choosing, so a collision is
-            # theirs to resolve; a silent overwrite is a data-loss trap (D-1).
+            # Fast-fail the common case before the slow fetch; _land_no_clobber's
+            # exclusive link is the race-free guarantee. The name is the store's,
+            # not the user's choosing, so a silent overwrite is data loss (D-1).
             self._fail(f"rec get: ./{ref} exists")
+        data = self._run(lambda g: g.get(ref))
         try:
-            data = self._gateway_factory().get(ref)
-        except _GATEWAY_ERRORS as exc:
-            self._fail(str(exc))
-        try:
-            self._write_atomically(dest, data)
+            self._land_no_clobber(dest, data)
+        except FileExistsError:
+            self._fail(f"rec get: ./{ref} exists")  # raced in after the check
         except OSError as exc:
             self._fail(f"cannot write {dest}: {exc}")
         self._formatter.emit({"path": str(dest), "bytes": len(data)}, f"./{ref}")
 
     def remove(self, ref: _RefArg) -> None:
         """Delete recording *ref* from the store."""
-        try:
-            self._gateway_factory().remove(ref)
-        except _GATEWAY_ERRORS as exc:
-            self._fail(str(exc))
+        self._run(lambda g: g.remove(ref))
         self._formatter.emit({"removed": ref}, f"removed {ref}")
 
     def _validated_spec(self, spec: SynthesisSpec) -> SynthesisSpec:
@@ -300,10 +298,13 @@ class RecCli:
             self._fail("--name supports a single segment only")
 
     @staticmethod
-    def _write_atomically(dest: Path, data: bytes) -> None:
-        """Write *data* to a temp sibling then ``os.replace`` onto *dest*.
+    def _land_no_clobber(dest: Path, data: bytes) -> None:
+        """Write *data* to a temp sibling then hard-link it onto *dest*.
 
-        A mid-write failure leaves no partial file: the destination is the
+        ``os.link`` refuses to overwrite: it raises ``FileExistsError`` if
+        *dest* already exists, so a name that races into place after the
+        caller's absence check cannot be clobbered (D-1). A mid-write failure
+        leaves no partial file -- the temp is always removed, and *dest* is the
         complete file or absent, never truncated.
         """
         fd, tmp_name = tempfile.mkstemp(dir=dest.parent, suffix=".part")
@@ -311,10 +312,9 @@ class RecCli:
         try:
             with os.fdopen(fd, "wb") as handle:
                 handle.write(data)
-            tmp.replace(dest)
-        except OSError:
+            os.link(tmp, dest)
+        finally:
             tmp.unlink(missing_ok=True)
-            raise
 
 
 def build_rec_app(formatter: OutputFormatter) -> typer.Typer:
