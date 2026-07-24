@@ -127,6 +127,29 @@ class TestEnumerateAndRemove:
         names = {entry.name for entry in store.entries()}
         assert names == {"real.mp3"}
 
+    def test_entries_does_not_follow_symlink_to_real_file(
+        self, store: RecordStore, tmp_path: Path
+    ) -> None:
+        """A symlink to a real regular file is classified by lstat, never followed.
+
+        The weaker sibling test uses a broken symlink, which a follow-based
+        ``is_file()`` would also skip -- so it cannot tell a follow from a
+        non-follow. Here the target is a genuine regular file: if ``entries()``
+        followed the link (``is_file()`` semantics) it would list ``link.mp3`` as
+        a plain recording. Because it classifies from ``lstat`` (whose mode is
+        ``S_ISLNK``, not ``S_ISREG``), the link is excluded and its target is
+        never probed out of the root.
+        """
+        store.root.mkdir(parents=True)
+        target = tmp_path / "outside_target.mp3"
+        target.write_bytes(b"real-bytes")  # a genuine regular file outside root
+        (store.root / "real.mp3").write_bytes(b"12345")
+        (store.root / "link.mp3").symlink_to(target)
+
+        names = {entry.name for entry in store.entries()}
+
+        assert names == {"real.mp3"}  # link.mp3 not followed, not listed
+
     def test_entries_reports_byte_counts(self, store: RecordStore) -> None:
         store.root.mkdir(parents=True)
         (store.root / "a.mp3").write_bytes(b"1234")
