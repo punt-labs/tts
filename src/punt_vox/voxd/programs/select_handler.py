@@ -1,9 +1,10 @@
-"""The ``program_select`` wire handler -- replay a Selection by tags/name/id.
+"""The ``program_select`` wire handler -- replay a Selection by positional/tags.
 
-Replaces the name-addressed play/loop handlers: a replay resolves either by a
-direct ``id`` lookup (an id is *not* a tag axis) or by a
-:class:`TagQuery` over ``style``/``vibe``/``name``, driving ``service.replay``.
-The daemon animates the resulting Selection as a consume-only radio.
+Replaces the name-addressed play/loop handlers: a replay resolves either from
+the bare positional -- *id-or-name*: a catalogued album id is a direct lookup,
+anything else is the curated-name radio -- or by a :class:`TagQuery` over the
+``style``/``vibe``/``name`` selectors, driving ``service.replay``. The daemon
+animates the resulting Selection as a consume-only radio.
 """
 
 from __future__ import annotations
@@ -25,14 +26,16 @@ class SelectHandler(ProgramCommandHandler):
     _WIRE_TYPE = "program_select"
 
     def _run(self, msg: dict[str, object], /) -> None:
-        """Route by resolution kind: a direct id lookup, else a tag query.
+        """Route by resolution kind: the bare positional (id-or-name), else tags.
 
-        The album id rides the wire as ``album_id`` -- distinct from the ``id``
-        request-correlation field the envelope already uses.
+        The positional rides the wire as ``album_id`` -- distinct from the ``id``
+        request-correlation field the envelope already uses -- and is resolved by
+        :meth:`_replay_positional`. Absent it, the ``style``/``vibe``/``name``
+        selectors build the tag query.
         """
         album_id = self._opt_str(msg, "album_id")
         if album_id is not None:
-            self._service.replay_album(AlbumId(album_id))
+            self._replay_positional(album_id)
             return
         # Canonicalize the tags the same way the on-path mints them, so a replay
         # of " trance " matches an album minted as "trance" -- write and read agree.
@@ -43,3 +46,18 @@ class SelectHandler(ProgramCommandHandler):
                 name=self._opt_str(msg, "name"),
             )
         )
+
+    def _replay_positional(self, ref: str) -> None:
+        """Replay what the bare positional names: a saved album id, else a name radio.
+
+        A well-formed id that names a catalogued album replays that one album
+        directly, so a known-but-empty album still reports "no playable tracks
+        yet". Any other ref -- a non-hex string, or a hex string naming no album
+        -- resolves as the curated-name radio, so ``play focus-beats`` plays the
+        saved-name pool instead of raising a hex-validation error (D-3).
+        """
+        album_id = AlbumId.try_from(ref)
+        if album_id is not None and self._service.catalog.by_id(album_id) is not None:
+            self._service.replay_album(album_id)
+            return
+        self._service.replay(TagQuery.normalized(style=None, vibe=None, name=ref))

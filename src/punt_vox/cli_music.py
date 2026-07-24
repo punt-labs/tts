@@ -149,7 +149,7 @@ class MusicCli:
     def play(
         self,
         album_id: Annotated[
-            str | None, typer.Argument(help="Album id to replay (from 'music list').")
+            str | None, typer.Argument(help="Album id or saved name to replay.")
         ] = None,
         *,
         style: Annotated[
@@ -162,11 +162,11 @@ class MusicCli:
             str | None, typer.Option("--name", help="Curated album name to replay.")
         ] = None,
     ) -> None:
-        """Replay an album by its bare id, or a tag radio by style/vibe/name.
+        """Replay an album by its bare id or name, or a tag radio by style/vibe.
 
-        The bare ``<id>`` positional is the unified-verb primary form; the
-        ``--style``/``--vibe``/``--name`` selectors keep the shipped per-vibe,
-        cross-genre union radio (D-3, both resolve).
+        The bare positional is *id-or-name* (a saved id, else the saved-name
+        radio); the ``--style``/``--vibe``/``--name`` selectors keep the shipped
+        per-vibe, cross-genre union radio (D-3, both resolve).
         """
         request = SelectionRequest(style=style, vibe=vibe, name=name, id=album_id)
         try:

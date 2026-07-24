@@ -39,3 +39,18 @@ class AlbumId(HexToken):
             candidate = cls(secrets.token_hex(_ID_BYTES))
             if candidate not in taken:
                 return candidate
+
+    @classmethod
+    def try_from(cls, value: str) -> Self | None:
+        """Return the id ``value`` names, or ``None`` when it is not a well-formed id.
+
+        Unlike construction, a malformed ``value`` is not an error here: the bare
+        ``music play`` positional is *id-or-name*, so a non-hex value is a curated
+        name, not a broken id. Returning ``None`` lets the caller fall through to
+        name resolution rather than surface a hex-validation error -- the one place
+        a non-hex value is a legitimate state (a name), not a rejected input.
+        """
+        try:
+            return cls(value)
+        except ValueError:
+            return None

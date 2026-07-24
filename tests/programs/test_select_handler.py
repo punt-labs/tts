@@ -58,11 +58,42 @@ class TestSelectHandler:
         await service.run_once()
         assert service.status().now_playing is not None
 
-    async def test_unknown_id_is_a_boundary_error(self, tmp_path: Path) -> None:
+    async def test_by_name_positional_resolves_the_radio(self, tmp_path: Path) -> None:
+        # D-3: the bare positional is id-or-name. A saved NAME resolves the radio,
+        # never a hex-validation error -- the shipped ``music play <name>`` form.
+        seed_album(
+            tmp_path / "programs",
+            1,
+            2,
+            style="trance",
+            vibe="calm",
+            name="focus-beats",
+            album_id="a3f1c9",
+        )
+        service = make_service(tmp_path / "programs")
+        reply = await _reply(service, {"id": "3", "album_id": "focus-beats"})
+        assert reply == {"type": "program_select", "id": "3"}
+        await service.run_once()
+        assert service.status().now_playing is not None
+
+    async def test_nonhex_positional_is_not_a_hex_error(self, tmp_path: Path) -> None:
+        # A non-hex positional naming no album falls through to the name radio and
+        # reports the tag-miss -- never "must be lowercase hex" (the regression).
+        service = make_service(tmp_path / "programs")
+        reply = await _reply(service, {"id": "req", "album_id": "focus-beats"})
+        assert reply["type"] == "error"
+        assert "no albums match" in str(reply["message"])
+        assert "hex" not in str(reply["message"])
+
+    async def test_unknown_hex_positional_falls_through_to_name(
+        self, tmp_path: Path
+    ) -> None:
+        # A well-formed id naming no catalogued album is not a "known id"; it falls
+        # through to the name axis and reports the tag-miss, not an id-lookup error.
         service = make_service(tmp_path / "programs")
         reply = await _reply(service, {"id": "req", "album_id": "badbad"})
         assert reply["type"] == "error"
-        assert "no album with id" in str(reply["message"])
+        assert "no albums match" in str(reply["message"])
 
     async def test_no_match_is_a_boundary_error(self, tmp_path: Path) -> None:
         service = make_service(tmp_path / "programs")
