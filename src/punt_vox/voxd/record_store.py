@@ -164,11 +164,19 @@ class RecordStore:
         """Delete one in-root recording by its bare name, or raise.
 
         ``ref`` runs through the shared validator (a hostile name raises
-        ``ValueError`` before any filesystem touch); a well-formed but absent
-        recording raises ``FileNotFoundError``, so a client can trust a success.
+        ``ValueError`` before any filesystem touch). It is then acted on *in
+        place* -- ``root / ref`` without a symlink-following ``.resolve()`` -- so
+        removing a symlink entry unlinks the link, never the file it points at.
+        A delete can therefore never reach a recording elsewhere in the root or a
+        file outside it. A well-formed but absent recording raises
+        ``FileNotFoundError`` so a client can trust a success; an ``OSError`` from
+        the unlink (a permission or device fault) propagates unchanged.
         """
-        path = self.resolve_ref(ref)
-        if not path.is_file():
+        path = self._child_within_root(ref)
+        # ``is_symlink`` (no follow) accepts a link entry -- even a broken one --
+        # so its removal deletes the link; ``is_file`` accepts a real recording.
+        # A directory or an absent name matches neither and is "not found".
+        if not path.is_symlink() and not path.is_file():
             msg = f"no recording named {ref!r}"
             raise FileNotFoundError(msg)
         path.unlink()
@@ -176,6 +184,15 @@ class RecordStore:
     def _resolve_within_root(self, candidate: str) -> Path:
         """Validate a bare name and resolve it within the shared containment root."""
         return ContainmentRoot(self._root, _NAME_LABEL).resolve(candidate)
+
+    def _child_within_root(self, name: str) -> Path:
+        """Validate a bare name and return its child under the root, unfollowed.
+
+        The removal counterpart of :meth:`_resolve_within_root`: the shared
+        validator rejects a hostile name, but the entry is *not* symlink-resolved,
+        so acting on it touches the link itself rather than its target.
+        """
+        return ContainmentRoot(self._root, _NAME_LABEL).contained_child(name)
 
     @staticmethod
     def _move(source: Path, dest: Path) -> RecordWrite | None:

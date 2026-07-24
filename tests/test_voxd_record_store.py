@@ -194,6 +194,56 @@ class TestEnumerateAndRemove:
         with pytest.raises(ValueError, match="separator"):
             store.remove("../../etc/passwd")
 
+    def test_remove_symlink_deletes_link_leaves_in_root_target(
+        self, store: RecordStore
+    ) -> None:
+        """remove() of a symlink entry unlinks the link, never its in-root target.
+
+        ``resolve_ref`` follows symlinks (``.resolve()``); if ``remove`` reused it,
+        removing ``link.mp3`` would delete the real recording it points at -- data
+        loss. ``remove`` resolves the bare name *without* following, so the link
+        itself is unlinked and ``real.mp3`` survives.
+        """
+        store.root.mkdir(parents=True)
+        (store.root / "real.mp3").write_bytes(b"keep-me")
+        (store.root / "link.mp3").symlink_to(store.root / "real.mp3")
+
+        store.remove("link.mp3")
+
+        assert not (store.root / "link.mp3").is_symlink()  # the link is gone
+        assert (store.root / "real.mp3").read_bytes() == b"keep-me"  # target intact
+
+    def test_remove_symlink_never_deletes_external_target(
+        self, store: RecordStore, tmp_path: Path
+    ) -> None:
+        """A symlink to a file outside the root: remove deletes only the link.
+
+        The no-follow removal cannot reach a path the client could never have
+        named, so a delete never escapes the store.
+        """
+        store.root.mkdir(parents=True)
+        outside = tmp_path / "outside.mp3"
+        outside.write_bytes(b"external")
+        (store.root / "escape.mp3").symlink_to(outside)
+
+        store.remove("escape.mp3")
+
+        assert not (store.root / "escape.mp3").is_symlink()  # link removed
+        assert outside.read_bytes() == b"external"  # external file untouched
+
+    def test_remove_broken_symlink_deletes_link(self, store: RecordStore) -> None:
+        """A broken symlink is still an entry: remove unlinks it, does not raise.
+
+        ``is_file`` follows and would report a broken link as absent; the
+        ``is_symlink`` check accepts it so the dangling link can be cleaned up.
+        """
+        store.root.mkdir(parents=True)
+        (store.root / "dangling.mp3").symlink_to(store.root / "missing.mp3")
+
+        store.remove("dangling.mp3")
+
+        assert not (store.root / "dangling.mp3").is_symlink()
+
 
 class TestPlacement:
     """place() lands audio atomically in the root and reports its size."""

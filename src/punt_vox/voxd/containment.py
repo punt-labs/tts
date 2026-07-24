@@ -68,12 +68,37 @@ class ContainmentRoot:
         post-``resolve`` ``is_relative_to`` check catches any symlink or
         normalization that escaped the root. Every rejection raises ``ValueError``
         with a lowercase message the handler turns into a one-line error frame.
-        """
-        for is_rejected, suffix in _REJECTIONS:
-            if is_rejected(name):
-                raise ValueError(f"{self._label} {suffix}")
 
+        This *follows* symlinks (``.resolve()``), so it is the reference for a
+        read/write that must reach the file a name points at. To act on the entry
+        itself without following it out of the store, use :meth:`contained_child`.
+        """
+        self._reject_structural(name)
         resolved = (self._root / name).resolve()
         if not resolved.is_relative_to(self._root.resolve()):
             raise ValueError(f"{self._label} escapes its root")
         return resolved
+
+    def contained_child(self, name: str) -> Path:
+        """Return ``root / name`` as an immediate child, without following it.
+
+        Runs the same structural rejections as :meth:`resolve` but never calls
+        ``.resolve()``, so a symlink entry is returned as the link itself, not the
+        file it points at. The rejections forbid separators and traversal, so
+        ``root / name`` is always a direct child of the root -- there is no path
+        left to escape, hence no post-resolve containment check. Unlinking such a
+        child removes the symlink, never its target, so a delete can never reach a
+        file outside the store.
+        """
+        self._reject_structural(name)
+        return self._root / name
+
+    def _reject_structural(self, name: str) -> None:
+        """Raise ``ValueError`` on the first structural rejection of ``name``.
+
+        Shared by :meth:`resolve` and :meth:`contained_child` so a bare name is
+        judged by identical rules whether or not the caller follows it.
+        """
+        for is_rejected, suffix in _REJECTIONS:
+            if is_rejected(name):
+                raise ValueError(f"{self._label} {suffix}")
