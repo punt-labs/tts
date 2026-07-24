@@ -9,6 +9,7 @@ build_rec_app wires the group and that the old top-level verbs are gone.
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 from unittest.mock import MagicMock
@@ -138,6 +139,40 @@ def test_new_daemon_error_is_clean_exit() -> None:
 
     with pytest.raises(typer.Exit):
         cli.new(text="hi")
+
+
+def test_new_from_file_emits_one_id_per_segment(tmp_path: Path) -> None:
+    segments_file = tmp_path / "segs.json"
+    segments_file.write_text('["first line", "second line"]', encoding="utf-8")
+    fake = InMemoryRecordGateway()
+    cli, formatter = _cli(fake)
+
+    cli.new(from_file=segments_file)
+
+    assert formatter.emit.call_count == 2  # one bare id per segment
+    assert [verb for verb, _ in fake.calls] == ["new", "new"]
+
+
+def test_new_name_rejected_for_multiple_segments(tmp_path: Path) -> None:
+    segments_file = tmp_path / "segs.json"
+    segments_file.write_text('["one", "two"]', encoding="utf-8")
+    fake = InMemoryRecordGateway()
+    cli, _ = _cli(fake)
+
+    with pytest.raises(typer.Exit):
+        cli.new(from_file=segments_file, name="fixed.mp3")
+    assert fake.calls == []  # a single --name cannot address many segments
+
+
+def test_new_reads_text_from_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sys.stdin", io.StringIO("recorded from a pipe\n"))
+    fake = InMemoryRecordGateway()
+    cli, formatter = _cli(fake)
+
+    cli.new(text="-")
+
+    assert fake.calls[0][0] == "new"
+    assert formatter.emit.call_count == 1
 
 
 # ---------------------------------------------------------------------------
