@@ -93,6 +93,25 @@ class TestSynthesizeParseGuard:
         assert "must be a string" in str(sent[-1]["message"])
         mock_synth.synthesize_to_file.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_non_string_text_is_a_clean_error(self) -> None:
+        """A non-string required text yields an id-stamped error frame; 123 must
+        not coerce to "123", synthesis must not run, and the connection stays up."""
+        mock_synth = MagicMock(spec=SynthesisPipeline)
+        mock_synth.synthesize_to_file = AsyncMock()
+        handler = _make_synthesize_handler(synthesis=mock_synth)
+        sent: list[dict[str, object]] = []
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=sent.append)
+
+        msg: dict[str, object] = {"id": "1", "text": 123}
+        await handler(msg, ws)
+
+        assert sent[-1]["type"] == "error"
+        assert sent[-1]["id"] == "1"
+        assert "text must be a string" in str(sent[-1]["message"])
+        mock_synth.synthesize_to_file.assert_not_called()
+
 
 class TestHandleSynthesizeOnceFlag:
     """Integration tests for SynthesizeHandler with the once flag."""

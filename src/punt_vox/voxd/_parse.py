@@ -20,6 +20,8 @@ __all__ = [
     "parse_optional_float",
     "parse_optional_int",
     "parse_optional_str",
+    "parse_present_str",
+    "parse_required_str",
     "safe_send",
 ]
 
@@ -45,18 +47,53 @@ def parse_optional_int(msg: dict[str, object], key: str) -> int | None:
 def parse_optional_str(msg: dict[str, object], key: str) -> str | None:
     """Extract an optional string field; reject a non-string wire value.
 
-    An absent field or JSON null is absence (None). A present non-string --
-    a number, bool, list -- is a malformed frame, not a stringifiable value:
-    reject it at the boundary rather than coerce (``null`` -> ``"None"``) and
-    let a bogus ref/album/part/prompt reach a handler.
+    An absent field or JSON null is absence (None), and an explicit ``""``
+    collapses to absence too. A present non-string -- a number, bool, list --
+    is a malformed frame, not a stringifiable value: reject it at the boundary
+    rather than coerce (``null`` -> ``"None"``) and let a bogus
+    ref/album/part/prompt reach a handler.
     """
     raw = msg.get(key)
     if raw is None:
         return None
+    return _require_string(raw, key) or None
+
+
+def parse_present_str(msg: dict[str, object], key: str) -> str | None:
+    """Extract an optional string, keeping an explicit empty distinct from absence.
+
+    Like :func:`parse_optional_str`, an absent field or JSON null is absence
+    (None) and a present non-string is rejected. Unlike it, an explicit ``""``
+    is returned as ``""`` rather than collapsed to None -- for a caller that
+    must tell an absent field (a default applies, e.g. content-addressing) from
+    an explicit empty one (a value to reject downstream).
+    """
+    raw = msg.get(key)
+    if raw is None:
+        return None
+    return _require_string(raw, key)
+
+
+def parse_required_str(msg: dict[str, object], key: str) -> str:
+    """Extract a required string field; reject a non-string wire value.
+
+    An absent field or JSON null yields ``""`` so the caller applies its own
+    empty-value contract (e.g. an "empty text" rejection). A present non-string
+    is a malformed frame and is rejected rather than coerced (``123`` ->
+    ``"123"``), mirroring :func:`parse_optional_str` at the boundary.
+    """
+    raw = msg.get(key)
+    if raw is None:
+        return ""
+    return _require_string(raw, key)
+
+
+def _require_string(raw: object, key: str) -> str:
+    """Return ``raw`` narrowed to ``str``, or raise if it is not a string."""
     if not isinstance(raw, str):
         detail = f"{key} must be a string, got {type(raw).__name__}"
         raise ValueError(detail)
-    return raw or None
+    return raw
 
 
 async def safe_send(websocket: WebSocket, payload: dict[str, object]) -> bool:

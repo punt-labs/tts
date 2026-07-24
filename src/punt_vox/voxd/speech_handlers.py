@@ -20,6 +20,7 @@ from punt_vox.voxd._parse import (
     parse_optional_float,
     parse_optional_int,
     parse_optional_str,
+    parse_required_str,
 )
 from punt_vox.voxd.dedup import OnceDedup
 from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue, PlaybackResult
@@ -58,7 +59,7 @@ class _SpeechRequest:
         and empty text is rejected here, so both handlers share one validation
         point and neither needs its own text guard.
         """
-        text = str(msg.get("text", ""))
+        text = parse_required_str(msg, "text")
         if not text:
             raise ValueError("empty text")
         speaker_boost_raw = msg.get("speaker_boost")

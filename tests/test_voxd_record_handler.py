@@ -217,6 +217,45 @@ class TestRecordHandler:
         assert "must be a string" in str(sent[-1]["message"])
         assert not any(p["type"] in ("recording", "audio") for p in sent)
 
+    def test_non_string_text_is_a_clean_error(self, tmp_path: Path) -> None:
+        """A non-string required text yields an error before the ack; 123 must
+        not coerce to "123", the connection stays up, and no file lands."""
+        src = tmp_path / "src.mp3"
+        src.write_bytes(b"\x00")
+        store = _store(tmp_path)
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {"type": "record", "id": "r1", "text": 123}
+        asyncio.run(_handler(store, src)(msg, ws))
+
+        assert sent[-1]["type"] == "error"
+        assert sent[-1]["id"] == "r1"
+        assert "must be a string" in str(sent[-1]["message"])
+        assert not any(p["type"] in ("recording", "audio") for p in sent)
+        assert not store.root.exists() or not any(store.root.iterdir())
+
+    def test_non_string_name_is_a_clean_error(self, tmp_path: Path) -> None:
+        """A non-string name yields an error before the ack; 123 must not become
+        the filename "123", the connection stays up, and no file lands."""
+        src = tmp_path / "src.mp3"
+        src.write_bytes(b"\x00")
+        store = _store(tmp_path)
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {
+            "type": "record",
+            "id": "r1",
+            "text": "hi",
+            "name": 123,
+        }
+        asyncio.run(_handler(store, src)(msg, ws))
+
+        assert sent[-1]["type"] == "error"
+        assert sent[-1]["id"] == "r1"
+        assert "name must be a string" in str(sent[-1]["message"])
+        assert not any(p["type"] in ("recording", "audio") for p in sent)
+        assert not store.root.exists() or not any(store.root.iterdir())
+
     def test_empty_wire_name_rejected_before_ack(self, tmp_path: Path) -> None:
         """An explicit wire name "" is rejected, not silently content-addressed."""
         src = tmp_path / "src.mp3"

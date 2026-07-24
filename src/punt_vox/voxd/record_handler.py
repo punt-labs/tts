@@ -8,6 +8,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self
 
+from punt_vox.voxd._parse import parse_present_str
 from punt_vox.voxd.speech_handlers import _SpeechRequest
 from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.types import MessageHandler
@@ -49,19 +50,18 @@ class RecordHandler(MessageHandler):
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Synthesize speech and store it under a daemon-owned name."""
         reply = WireReply(websocket, str(msg.get("id", "")))
-        # A client supplies at most a bare name; the daemon content-addresses
-        # ONLY when the name is absent. Read it raw (not parse_optional_str,
-        # which would collapse an explicit "" to None and silently
-        # content-address it) so an explicit empty name is rejected.
-        raw_name = msg.get("name")
-        name = None if raw_name is None else str(raw_name)
-        # One pre-ack boundary: a non-string typed field, empty text (both from
-        # from_msg), or a hostile name (from _validate_name) raises ValueError,
-        # which becomes a clean error frame rather than escape the router's broad
-        # except and tear the connection down.
+        # One pre-ack boundary: a non-string typed field or empty text (from
+        # from_msg), a non-string name, or a hostile name (from _validate_name)
+        # raises ValueError, which becomes a clean error frame rather than escape
+        # the router's broad except and tear the connection down. A client
+        # supplies at most a bare name; the daemon content-addresses ONLY when
+        # the name is absent. parse_present_str keeps an explicit "" distinct
+        # from absence (unlike parse_optional_str's empty-to-None collapse) so an
+        # explicit empty name is rejected downstream rather than content-addressed.
         try:
             req = _SpeechRequest.from_msg(msg, websocket)
-            self._validate_name(name, str(msg.get("text", "")))
+            name = parse_present_str(msg, "name")
+            self._validate_name(name, req.text)
         except ValueError as exc:
             await reply.error(str(exc))
             return
