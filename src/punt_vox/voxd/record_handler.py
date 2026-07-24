@@ -48,17 +48,22 @@ class RecordHandler(MessageHandler):
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Synthesize speech and store it under a daemon-owned name."""
-        req = _SpeechRequest.from_msg(msg, websocket)
+        reply = WireReply(websocket, str(msg.get("id", "")))
         # A client supplies at most a bare name; the daemon content-addresses
         # ONLY when the name is absent. Read it raw (not parse_optional_str,
         # which would collapse an explicit "" to None and silently
-        # content-address it) so an explicit empty name reaches _accept and is
-        # rejected. Accept only after empty text and the name are validated, so
-        # a hostile name (absolute, traversing, separated, empty) or empty text
-        # surfaces as a clean error frame *before* the ack.
+        # content-address it) so an explicit empty name is rejected.
         raw_name = msg.get("name")
         name = None if raw_name is None else str(raw_name)
-        if not await self._accept(req, name):
+        # One pre-ack boundary: a non-string typed field, empty text (both from
+        # from_msg), or a hostile name (from _validate_name) raises ValueError,
+        # which becomes a clean error frame rather than escape the router's broad
+        # except and tear the connection down.
+        try:
+            req = _SpeechRequest.from_msg(msg, websocket)
+            self._validate_name(name, str(msg.get("text", "")))
+        except ValueError as exc:
+            await reply.error(str(exc))
             return
 
         logger.info(
@@ -70,7 +75,6 @@ class RecordHandler(MessageHandler):
             len(req.text),
         )
 
-        reply = WireReply(req.websocket, req.request_id)
         # Ack immediately so a long synthesis does not trip the client's response
         # timeout; the client then waits for the terminal 'audio' frame. If the
         # ack could not be delivered the client is already gone -- skip synthesis
@@ -101,30 +105,17 @@ class RecordHandler(MessageHandler):
             }
         )
 
-    async def _accept(self, req: _SpeechRequest, name: str | None) -> bool:
-        """Reject empty text or a hostile name before the ack; else accept.
+    def _validate_name(self, name: str | None, text: str) -> None:
+        """Raise ``ValueError`` if a client-supplied *name* is hostile.
 
-        Resolving the candidate name once here is the single pre-ack gate: it
-        raises on any name that is absolute, separated, traversing, empty,
-        NUL-bearing, or non-printable, which becomes a one-line error frame --
-        logged as a rejected op so a blocked probe of the store is not silent.
+        The single pre-ack name gate: ``store.resolve`` raises on any name that
+        is absolute, separated, traversing, empty, NUL-bearing, or non-printable.
+        A no-name request is content-addressed by ``place()`` daemon-side, so it
+        skips the resolve -- otherwise the full text would be MD5'd here and again
+        in ``place()``, a double hash on the hot path before the ack.
         """
-        reply = WireReply(req.websocket, req.request_id)
-        if not req.text:
-            await reply.error("empty text")
-            return False
-        # Only a client-supplied name carries hostile input to reject pre-ack.
-        # The no-name case is content-addressed by place() daemon-side (no
-        # hostile input), so skip the pre-ack resolve -- otherwise it would MD5
-        # the full text here and again in place(), a double hash on the hot path
-        # before the ack for a large record.
         if name is not None:
-            try:
-                self._store.resolve(name, req.text)
-            except ValueError as exc:
-                await reply.error(str(exc))
-                return False
-        return True
+            self._store.resolve(name, text)
 
     async def _store_outcome(
         self, req: _SpeechRequest, name: str | None, outcome: SynthesisOutcome
@@ -142,9 +133,7 @@ class RecordHandler(MessageHandler):
             # Any place() failure (not just OSError) must reach the already-ack'd
             # client as an error frame -- otherwise it waits out the full timeout.
             logger.exception("Record write failed for id=%r", req.request_id)
-            await WireReply(req.websocket, req.request_id).send(
-                {"type": "error", "message": str(exc)}
-            )
+            await WireReply(req.websocket, req.request_id).error(str(exc))
             return None
 
     async def _synthesize(self, req: _SpeechRequest) -> SynthesisOutcome | None:
@@ -153,7 +142,5 @@ class RecordHandler(MessageHandler):
             return await self._synthesis.synthesize_to_file(req.text, req.spec)
         except Exception as exc:
             logger.exception("Record synthesis failed for id=%r", req.request_id)
-            await WireReply(req.websocket, req.request_id).send(
-                {"type": "error", "message": str(exc)}
-            )
+            await WireReply(req.websocket, req.request_id).error(str(exc))
             return None

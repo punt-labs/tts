@@ -52,7 +52,15 @@ class _SpeechRequest:
 
     @classmethod
     def from_msg(cls, msg: dict[str, object], websocket: WebSocket) -> Self:
-        """Parse a wire message into a request; ``auto_detect`` fills the provider."""
+        """Parse a wire message into a request, validating at the boundary.
+
+        A non-string typed field raises ``ValueError`` (via the parse helpers)
+        and empty text is rejected here, so both handlers share one validation
+        point and neither needs its own text guard.
+        """
+        text = str(msg.get("text", ""))
+        if not text:
+            raise ValueError("empty text")
         speaker_boost_raw = msg.get("speaker_boost")
         spec = SynthesisSpec(
             voice=parse_optional_str(msg, "voice"),
@@ -70,7 +78,7 @@ class _SpeechRequest:
             api_key=parse_optional_str(msg, "api_key"),
         )
         return cls(
-            text=str(msg.get("text", "")),
+            text=text,
             spec=spec,
             request_id=str(msg.get("id", "")),
             websocket=websocket,
@@ -113,13 +121,17 @@ class SynthesizeHandler(MessageHandler):
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Synthesize speech and enqueue for playback."""
-        req = _SpeechRequest.from_msg(msg, websocket)
-        if not req.text:
-            await req.error("empty text")
+        # Parse at the boundary: a non-string wire field (or empty text) is an
+        # id-stamped error frame, never a ValueError that tears the connection down.
+        try:
+            req = _SpeechRequest.from_msg(msg, websocket)
+            once = parse_optional_int(msg, "once")
+        except ValueError as exc:
+            await websocket.send_json(
+                {"id": str(msg.get("id", "")), "type": "error", "message": str(exc)}
+            )
             return
 
-        # Opt-in dedup: only when the caller sets `once` to a positive TTL.
-        once = parse_optional_int(msg, "once")
         dedup_recorded = await self._respond_if_deduped(req, once)
         if dedup_recorded is None:
             return
@@ -131,7 +143,10 @@ class SynthesizeHandler(MessageHandler):
             req.spec.voice or "",
             len(req.text),
         )
+        await self._dispatch(req, dedup_recorded=dedup_recorded)
 
+    async def _dispatch(self, req: _SpeechRequest, *, dedup_recorded: bool) -> None:
+        """Play a local provider directly, else synthesize to a file and enqueue."""
         local = (req.spec.provider or "") in _LOCAL_PROVIDERS
         if local and await self._play_local(req, dedup_recorded=dedup_recorded):
             return

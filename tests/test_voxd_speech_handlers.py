@@ -71,6 +71,29 @@ class TestHandleSynthesizeShortCircuit:
         assert spec.provider == "espeak"
 
 
+class TestSynthesizeParseGuard:
+    """A malformed wire field is a clean error frame, not a torn connection."""
+
+    @pytest.mark.asyncio
+    async def test_non_string_voice_is_a_clean_error(self) -> None:
+        """A non-string typed field yields an id-stamped error frame; the parse
+        must not escape the handler and tear the connection down."""
+        mock_synth = MagicMock(spec=SynthesisPipeline)
+        mock_synth.synthesize_to_file = AsyncMock()
+        handler = _make_synthesize_handler(synthesis=mock_synth)
+        sent: list[dict[str, object]] = []
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=sent.append)
+
+        msg: dict[str, object] = {"id": "1", "text": "hello", "voice": 123}
+        await handler(msg, ws)
+
+        assert sent[-1]["type"] == "error"
+        assert sent[-1]["id"] == "1"
+        assert "must be a string" in str(sent[-1]["message"])
+        mock_synth.synthesize_to_file.assert_not_called()
+
+
 class TestHandleSynthesizeOnceFlag:
     """Integration tests for SynthesizeHandler with the once flag."""
 
