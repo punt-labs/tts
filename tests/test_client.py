@@ -13,7 +13,7 @@ from punt_vox.client import (
     read_port_file,
     read_token_file,
 )
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError, VoxError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.paths import run_dir
 from punt_vox.types_programs.status import ProgramStatus
@@ -1020,6 +1020,48 @@ class TestVoxClientRecMusic:
 
         with pytest.raises(FileExistsError):
             await client.music_get("7f3a91", tmp_path)
+
+    @pytest.mark.asyncio
+    async def test_music_get_rejects_traversing_part(self, tmp_path: Path) -> None:
+        """A manifest naming a traversing part raises and writes nothing."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "manifest",
+                    "id": "m1",
+                    "album": "warm-pads-7f3a91",
+                    "parts": [{"part": "../escape.mp3", "bytes": 3}],
+                }
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxError):
+            await client.music_get("7f3a91", tmp_path)
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.asyncio
+    async def test_music_get_rejects_absolute_album_name(self, tmp_path: Path) -> None:
+        """A manifest with an absolute album name raises and writes nothing."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "manifest",
+                    "id": "m1",
+                    "album": "/etc/pwned",
+                    "parts": [{"part": "001.mp3", "bytes": 3}],
+                }
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxError):
+            await client.music_get("7f3a91", tmp_path)
+        assert list(tmp_path.iterdir()) == []
 
 
 class TestVoxClientVoices:

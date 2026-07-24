@@ -27,6 +27,7 @@ import websockets.asyncio.client
 if TYPE_CHECKING:
     from types import TracebackType
 
+from punt_vox.bare_name import BareName
 from punt_vox.client_env import DaemonEnv
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.paths import run_dir as _user_run_dir
@@ -772,9 +773,14 @@ class VoxClient:
         manifest = await self._command("music_manifest", album=album_id)
         with self._wire_guard():
             obj = JsonObject.coerce(manifest, "music_manifest")
-            album_name = obj.require_str("album")
+            # Validate daemon-supplied names as bare filenames before joining, so
+            # a tampered frame cannot write outside dest_dir (guard raises pre-mkdir).
+            album_name = BareName(obj.require_str("album"), "album name").value
             parts = [
-                JsonObject.coerce(item, "manifest.parts").require_str("part")
+                BareName(
+                    JsonObject.coerce(item, "manifest.parts").require_str("part"),
+                    "part name",
+                ).value
                 for item in obj.require_list("parts")
             ]
         target = dest_dir / album_name
