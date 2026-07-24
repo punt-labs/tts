@@ -59,7 +59,8 @@ class HandlerRegistry:
         """Return the canonical handler dispatch dict (speech + system + programs).
 
         ``record``, ``play``, and ``fetch`` share one :class:`RecordStore` so the
-        containment root and its path checks are defined in exactly one place.
+        containment root and its path checks are defined in exactly one place;
+        ``fetch`` also resolves music parts through the programs' catalog library.
         """
         store = RecordStore(recordings_dir())
         return {
@@ -70,7 +71,7 @@ class HandlerRegistry:
             ),
             "record": RecordHandler(synthesis=self._synthesis, store=store),
             "play": PlayHandler(playback=self._playback, store=store),
-            "fetch": FetchHandler(store=store),
+            "fetch": FetchHandler(store=store, music=self._programs.library),
             "chime": ChimeHandler(
                 chimes=ChimeResolver(),
                 chime_dedup=ChimeDedup(),

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import hashlib
 import json
 import logging
 import uuid
@@ -320,6 +321,86 @@ class _VoxdTransport:
             raise VoxdProtocolError(str(resp.get("message", "unknown error")))
         return resp
 
+    async def fetch_stream(
+        self, msg: dict[str, object], *, timeout: float = _TIMEOUT_FETCH
+    ) -> bytes:
+        """Send a fetch request and reassemble the chunked stream into bytes.
+
+        Consumes ``fetch_begin`` -> ordered ``chunk``* -> ``fetch_end``, appending
+        one frame at a time so client memory holds only the reassembled file plus
+        a single chunk. The running total is checked against the declared byte
+        count and the sha256 is verified, so a short, reordered, or corrupted
+        stream raises. A mid-stream ``error`` frame surfaces through ``_decode`` as
+        a :class:`VoxdProtocolError`, and the partial buffer is discarded.
+        """
+        ws = await self._ensure_connected()
+        await self._send_frame(ws, msg)
+        deadline = asyncio.get_running_loop().time() + timeout
+        begin = self._decode(await self._recv(ws, deadline, "fetch_begin", msg))
+        if begin.get("type") != "fetch_begin":
+            got = begin.get("type")
+            raise VoxdProtocolError(f"expected 'fetch_begin', got {got!r}")
+        declared, expected_chunks, digest = self._begin_fields(begin)
+        buffer, hasher = bytearray(), hashlib.sha256()
+        for seq in range(expected_chunks):
+            frame = self._decode(await self._recv(ws, deadline, "chunk", msg))
+            self._append_chunk(frame, seq, buffer, hasher)
+        end = self._decode(await self._recv(ws, deadline, "fetch_end", msg))
+        if end.get("type") != "fetch_end":
+            raise VoxdProtocolError(f"expected 'fetch_end', got {end.get('type')!r}")
+        self._verify(buffer, declared, hasher, digest)
+        return bytes(buffer)
+
+    async def _recv(
+        self,
+        ws: websockets.asyncio.client.ClientConnection,
+        deadline: float,
+        expected: str,
+        msg: dict[str, object],
+    ) -> object:
+        """Receive one frame before *deadline*, or raise a timeout protocol error."""
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            raise VoxdProtocolError(f"timeout waiting for '{expected}' in a fetch")
+        return await self._recv_frame(
+            ws, remaining, f"timeout waiting for '{expected}' in a fetch", msg
+        )
+
+    @staticmethod
+    def _begin_fields(begin: dict[str, Any]) -> tuple[int, int, str]:
+        """Return ``(declared_bytes, chunk_count, sha256)`` from a fetch_begin frame."""
+        try:
+            return int(begin["bytes"]), int(begin["chunks"]), str(begin["sha256"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise VoxdProtocolError(f"malformed 'fetch_begin': {exc}") from exc
+
+    @staticmethod
+    def _append_chunk(
+        frame: dict[str, Any], seq: int, buffer: bytearray, hasher: Any
+    ) -> None:
+        """Validate one chunk's order and append its decoded bytes to *buffer*."""
+        if frame.get("type") != "chunk" or frame.get("seq") != seq:
+            raise VoxdProtocolError(
+                f"expected chunk seq {seq}, got "
+                f"{frame.get('type')!r} seq {frame.get('seq')!r}"
+            )
+        try:
+            data = base64.b64decode(str(frame["data"]), validate=True)
+        except (KeyError, ValueError, TypeError) as exc:
+            raise VoxdProtocolError(f"chunk {seq} has invalid base64: {exc}") from exc
+        buffer.extend(data)
+        hasher.update(data)
+
+    @staticmethod
+    def _verify(buffer: bytearray, declared: int, hasher: Any, digest: str) -> None:
+        """Raise unless the reassembly matches the declared byte count and sha256."""
+        if len(buffer) != declared:
+            raise VoxdProtocolError(
+                f"fetch byte-count mismatch: got {len(buffer)}, declared {declared}"
+            )
+        if hasher.hexdigest() != digest:
+            raise VoxdProtocolError("fetch sha256 mismatch: stream corrupted")
+
     async def send_and_drain(
         self,
         msg: dict[str, object],
@@ -581,56 +662,36 @@ class VoxClient:
         )
 
     async def fetch(self, ref: str) -> bytes:
-        """Return a stored recording's bytes for a client that lacks the store.
+        """Return a stored recording's bytes, reassembled from the chunked stream.
 
-        *ref* is a bare store name. The daemon resolves it inside the recordings
-        root and returns the bytes in a single frame; a recording above the
-        frame budget is refused with an error rather than truncated.
+        *ref* is a bare store name. The daemon streams the file as
+        ``fetch_begin`` -> ``chunk``* -> ``fetch_end`` in bounded per-frame memory,
+        so a recording of any size retrieves in full; the transport reassembles
+        the chunks in order and verifies the byte count and sha256 before
+        returning. A mid-stream fault raises a :class:`~punt_vox.VoxdProtocolError`
+        and the partial is discarded.
         """
         msg: dict[str, object] = {
             "type": "fetch",
             "id": uuid.uuid4().hex[:12],
             "ref": ref,
         }
-        responses = await self._transport.send_and_drain(
-            msg, timeout=_TIMEOUT_FETCH, terminal_type="bytes"
-        )
-        terminal = responses[-1] if responses else {}
-        if terminal.get("type") != "bytes" or "data" not in terminal:
-            raise VoxdProtocolError(
-                f"Expected 'bytes' response with data, got '{terminal.get('type')}'"
-            )
-        # The reply must name the ref it carries and it must be the one we asked
-        # for: a misroute or a stale frame with someone else's bytes must not be
-        # written out as this recording.
-        returned_ref = terminal.get("ref")
-        if returned_ref != ref:
-            raise VoxdProtocolError(
-                f"fetch reply ref mismatch: requested {ref!r}, got {returned_ref!r}"
-            )
-        try:
-            data = base64.b64decode(str(terminal["data"]), validate=True)
-        except (ValueError, TypeError) as exc:
-            msg_err = f"'bytes' response has invalid base64: {exc}"
-            raise VoxdProtocolError(msg_err) from exc
-        # Byte-correct delivery (parity with record): 'bytes' is required -- a
-        # missing count would let possibly-truncated data be written unchecked --
-        # must be an int, and must equal the decoded payload length, so a
-        # truncated or corrupted frame is caught rather than written to disk.
-        if "bytes" not in terminal:
-            raise VoxdProtocolError("'bytes' response missing 'bytes'")
-        try:
-            declared_int = int(terminal["bytes"])
-        except (TypeError, ValueError) as exc:
-            msg_err = f"'bytes' response has non-integer 'bytes': {terminal['bytes']!r}"
-            raise VoxdProtocolError(msg_err) from exc
-        if len(data) != declared_int:
-            msg_err = (
-                f"fetch byte-count mismatch: got {len(data)}, "
-                f"daemon declared {declared_int}"
-            )
-            raise VoxdProtocolError(msg_err)
-        return data
+        return await self._transport.fetch_stream(msg, timeout=_TIMEOUT_FETCH)
+
+    async def fetch_part(self, album_id: str, part: str) -> bytes:
+        """Return one album part's bytes, reassembled from the chunked stream.
+
+        The album is addressed by its catalog id and the *part* by its bare name;
+        the daemon catalog-resolves the album and validates the part inside it.
+        Reassembly, ordering, and integrity checks are the recording ``fetch`` path.
+        """
+        msg: dict[str, object] = {
+            "type": "fetch",
+            "id": uuid.uuid4().hex[:12],
+            "album": album_id,
+            "part": part,
+        }
+        return await self._transport.fetch_stream(msg, timeout=_TIMEOUT_FETCH)
 
     async def voices(self, provider: str | None = None) -> list[str]:
         """List available voices; a missing ``voices`` key is a protocol error.

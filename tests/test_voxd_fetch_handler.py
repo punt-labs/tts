@@ -1,271 +1,165 @@
-"""Tests for punt_vox.voxd.fetch_handler -- single-frame store retrieval."""
+"""Tests for punt_vox.voxd.fetch_handler -- chunked store/album-part retrieval.
+
+The handler resolves a bare recording ``ref`` or a catalog ``album`` id + bare
+``part`` name once (containment-checked before the first byte), then delegates to
+``ChunkedTransfer``. These tests assert the resolution and the reused containment
++ audit invariants AT THE FETCH OP: a hostile ref/part is refused before any
+``fetch_begin`` and audit-logged (F2 -- the album id is a catalog key, the part a
+validated name); a not-found ref/album is a clean error.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import base64
 import logging
-from pathlib import Path
-from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock, MagicMock
+from typing import TYPE_CHECKING, final
 
-from punt_vox.types_audio import FETCH_FRAME_LIMIT_BYTES
 from punt_vox.voxd.fetch_handler import FetchHandler
+from punt_vox.voxd.programs.catalog import Catalog
+from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
+from punt_vox.voxd.programs.library import MusicLibrary
+from punt_vox.voxd.programs.part import Part
 from punt_vox.voxd.record_store import RecordStore
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import pytest
 
+    from punt_vox.voxd.programs.producer import PartSpec
 
-def _capturing_ws() -> tuple[MagicMock, list[dict[str, object]]]:
+
+@final
+class _QuietProducer:
+    """Write a byte to the target and return a ready Part."""
+
+    __slots__ = ()
+
+    async def produce(self, spec: PartSpec, target: Path) -> Part:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"audio")
+        return Part(target.name, spec.index)
+
+
+def _capturing_ws() -> tuple[object, list[dict[str, object]]]:
     sent: list[dict[str, object]] = []
 
-    async def _send(payload: dict[str, object]) -> None:
-        sent.append(payload)
+    @final
+    class _WS:
+        async def send_json(self, payload: dict[str, object]) -> None:
+            sent.append(payload)
 
-    ws = MagicMock()
-    ws.send_json = AsyncMock(side_effect=_send)
-    return ws, sent
+    return _WS(), sent
 
 
-class TestFetchHandler:
-    """fetch returns a store recording's bytes, contained to the root."""
+def _handler(tmp_path: Path) -> tuple[FetchHandler, RecordStore, MusicLibrary]:
+    store = RecordStore(tmp_path / "recordings")
+    store.root.mkdir(parents=True)
+    programs = tmp_path / "programs"
+    prog_store = FilesystemProgramStore(programs)
+    lib = MusicLibrary(
+        Catalog(prog_store.scan()), prog_store, programs, _QuietProducer()
+    )
+    return FetchHandler(store=store, music=lib), store, lib
 
-    def test_remote_fetch_delivers_bytes(self, tmp_path: Path) -> None:
-        store = RecordStore(tmp_path / "recordings")
-        store.root.mkdir(parents=True)
-        data = b"\xff\xfb\x90\x00" * 100
-        (store.root / "a1b2c3.mp3").write_bytes(data)
+
+def _reassemble(frames: list[dict[str, object]]) -> bytes:
+    data = b""
+    for frame in frames:
+        if frame["type"] == "chunk":
+            data += base64.b64decode(str(frame["data"]))
+    return data
+
+
+class TestRecordingFetch:
+    def test_streams_a_recording(self, tmp_path: Path) -> None:
+        handler, store, _ = _handler(tmp_path)
+        blob = b"\xff\xfb\x90\x00" * 100
+        (store.root / "a1b2c3.mp3").write_bytes(blob)
         ws, sent = _capturing_ws()
+        msg: dict[str, object] = {"id": "f1", "ref": "a1b2c3.mp3"}
+        asyncio.run(handler(msg, ws))  # type: ignore[arg-type]
 
-        msg: dict[str, object] = {"type": "fetch", "id": "f1", "ref": "a1b2c3.mp3"}
-        asyncio.run(FetchHandler(store=store)(msg, ws))
-
-        reply = sent[-1]
-        assert reply["type"] == "bytes"
-        assert reply["bytes"] == len(data)
-        assert base64.b64decode(str(reply["data"])) == data
-        assert reply["ref"] == "a1b2c3.mp3"
-
-    def test_reply_echoes_requested_ref_not_ondisk_name(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The reply echoes the requested ref, not the on-disk name.
-
-        On a case-insensitive filesystem a mixed-case ref resolves to a
-        differently-cased on-disk file; the reply must carry the ref the client
-        asked for so its exact-match check holds after a successful read. Stub
-        resolve_ref so the on-disk name provably differs from the requested ref
-        (deterministic on any filesystem).
-        """
-        store = RecordStore(tmp_path / "recordings")
-        store.root.mkdir(parents=True)
-        ondisk = store.root / "actual.mp3"
-        ondisk.write_bytes(b"\xff\xfb\x90\x00" * 4)
-
-        def stub_resolve(_self: RecordStore, _ref: str) -> Path:
-            return ondisk
-
-        monkeypatch.setattr(RecordStore, "resolve_ref", stub_resolve)
-        ws, sent = _capturing_ws()
-
-        msg: dict[str, object] = {"type": "fetch", "id": "f1", "ref": "REQUESTED.mp3"}
-        asyncio.run(FetchHandler(store=store)(msg, ws))
-
-        reply = sent[-1]
-        assert reply["type"] == "bytes"
-        assert reply["ref"] == "REQUESTED.mp3"  # the requested ref, not "actual.mp3"
-
-    def test_fetch_ref_outside_root_rejected(self, tmp_path: Path) -> None:
-        store = RecordStore(tmp_path / "recordings")
-        ws, sent = _capturing_ws()
-
-        msg: dict[str, object] = {"type": "fetch", "id": "f1", "ref": "/etc/passwd"}
-        asyncio.run(FetchHandler(store=store)(msg, ws))
-
-        assert sent[-1]["type"] == "error"
-        assert "absolute" in str(sent[-1]["message"])
-
-    def test_fetch_traversal_ref_rejected(self, tmp_path: Path) -> None:
-        store = RecordStore(tmp_path / "recordings")
-        ws, sent = _capturing_ws()
-
-        msg: dict[str, object] = {"type": "fetch", "id": "f1", "ref": "../../etc/x"}
-        asyncio.run(FetchHandler(store=store)(msg, ws))
-
-        assert sent[-1]["type"] == "error"
+        assert sent[0]["type"] == "fetch_begin"
+        assert sent[0]["ref"] == "a1b2c3.mp3"
+        assert sent[-1]["type"] == "fetch_end"
+        assert _reassemble(sent) == blob
 
     def test_unknown_recording_is_an_error(self, tmp_path: Path) -> None:
-        store = RecordStore(tmp_path / "recordings")
-        store.root.mkdir(parents=True)
+        handler, _, _ = _handler(tmp_path)
         ws, sent = _capturing_ws()
-
-        msg: dict[str, object] = {"type": "fetch", "id": "f1", "ref": "nope.mp3"}
-        asyncio.run(FetchHandler(store=store)(msg, ws))
+        msg: dict[str, object] = {"id": "f1", "ref": "nope.mp3"}
+        asyncio.run(handler(msg, ws))  # type: ignore[arg-type]
 
         assert sent[-1]["type"] == "error"
         assert "no recording" in str(sent[-1]["message"])
+        # No fetch_begin was ever sent for a missing recording.
+        assert not [f for f in sent if f["type"] == "fetch_begin"]
 
-    def test_oversized_recording_refused_not_truncated(self, tmp_path: Path) -> None:
-        """A recording above the single-frame budget is refused with a clear error."""
-        store = RecordStore(tmp_path / "recordings")
-        store.root.mkdir(parents=True)
-        (store.root / "big.mp3").write_bytes(b"\x00" * (FETCH_FRAME_LIMIT_BYTES + 1))
-        ws, sent = _capturing_ws()
-
-        msg: dict[str, object] = {"type": "fetch", "id": "f1", "ref": "big.mp3"}
-        asyncio.run(FetchHandler(store=store)(msg, ws))
-
-        assert sent[-1]["type"] == "error"
-        assert "too large" in str(sent[-1]["message"])
-
-    def test_oversize_rejection_logs_info(
+    def test_hostile_ref_refused_before_begin_and_audited(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """An oversize refusal logs at INFO -- a legitimate large file, not a probe."""
-        store = RecordStore(tmp_path / "recordings")
-        store.root.mkdir(parents=True)
-        (store.root / "big.mp3").write_bytes(b"\x00" * (FETCH_FRAME_LIMIT_BYTES + 1))
-        ws, _sent = _capturing_ws()
-
-        msg: dict[str, object] = {"type": "fetch", "id": "f9", "ref": "big.mp3"}
-        with caplog.at_level(logging.INFO):
-            asyncio.run(FetchHandler(store=store)(msg, ws))
-
-        infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
-        assert any("oversize" in m and "f9" in m for m in infos)
-        assert not [r for r in caplog.records if r.levelno == logging.WARNING]
-
-    def test_grown_between_stat_and_read_is_bounded_and_rejected(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A file grown past the limit after the stat is read bounded, then rejected.
-
-        The pre-read stat sees a small size (passes the fast-path), but the file
-        has grown; the handler reads at most FETCH_FRAME_LIMIT_BYTES + 1, so the
-        worst-case allocation is bounded (no memory/DoS), and len > limit rejects
-        it as oversize -- a token-holding remote caller can't drive an
-        arbitrarily large allocation via a concurrent record place().
-        """
-        store = RecordStore(tmp_path / "recordings")
-        store.root.mkdir(parents=True)
-        target = store.root / "x.mp3"
-        target.write_bytes(b"\x00" * 10)  # small on disk -> pre-read stat passes
+        handler, _, _ = _handler(tmp_path)
         ws, sent = _capturing_ws()
-
-        class _FakeHandle:
-            def __init__(self) -> None:
-                self.read_arg: int | None = None
-
-            def read(self, size: int = -1) -> bytes:
-                self.read_arg = size  # a huge file returns exactly what is asked
-                return b"\x00" * size
-
-            def __enter__(self) -> _FakeHandle:
-                return self
-
-            def __exit__(self, *_exc: object) -> None:
-                return None
-
-        handles: list[_FakeHandle] = []
-
-        def fake_open(self: Path, *_a: object, **_k: object) -> _FakeHandle:
-            assert self == target, f"unexpected open of {self}"
-            handle = _FakeHandle()
-            handles.append(handle)
-            return handle
-
-        monkeypatch.setattr(Path, "open", fake_open)
-
-        msg: dict[str, object] = {"type": "fetch", "id": "f1", "ref": "x.mp3"}
-        asyncio.run(FetchHandler(store=store)(msg, ws))
-
-        assert sent[-1]["type"] == "error"
-        assert "too large" in str(sent[-1]["message"])
-        # The read never asked for more than limit + 1 bytes (bounded allocation).
-        assert handles[0].read_arg == FETCH_FRAME_LIMIT_BYTES + 1
-
-    def test_declared_bytes_match_payload(self, tmp_path: Path) -> None:
-        """The reply's declared 'bytes' equals the decoded payload length."""
-        store = RecordStore(tmp_path / "recordings")
-        store.root.mkdir(parents=True)
-        data = b"\xff\xfb\x90\x00" * 7
-        (store.root / "x.mp3").write_bytes(data)
-        ws, sent = _capturing_ws()
-
-        msg: dict[str, object] = {"type": "fetch", "id": "f1", "ref": "x.mp3"}
-        asyncio.run(FetchHandler(store=store)(msg, ws))
-
-        reply = sent[-1]
-        assert reply["type"] == "bytes"
-        assert reply["bytes"] == len(base64.b64decode(str(reply["data"]))) == len(data)
-
-    def test_read_error_is_a_clean_error_frame(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A ref that passes containment but errors on read → error frame, no traceback.
-
-        Simulates the race where the file is deleted (or becomes unreadable)
-        between is_file() and the open/read: the client must get a clean error,
-        not a server-side exception.
-        """
-        store = RecordStore(tmp_path / "recordings")
-        store.root.mkdir(parents=True)
-        (store.root / "x.mp3").write_bytes(b"\xff\xfb\x90\x00" * 4)
-        ws, sent = _capturing_ws()
-
-        def boom(_self: Path, *_a: object, **_k: object) -> object:
-            raise OSError("vanished mid-read")
-
-        monkeypatch.setattr(Path, "open", boom)
-
-        msg: dict[str, object] = {"type": "fetch", "id": "f1", "ref": "x.mp3"}
-        asyncio.run(FetchHandler(store=store)(msg, ws))
-
-        assert sent[-1]["type"] == "error"
-        assert "cannot read recording" in str(sent[-1]["message"])
-
-    def test_client_disconnect_on_send_does_not_raise(self, tmp_path: Path) -> None:
-        """A client gone when the bytes frame is sent ends the request quietly."""
-        from starlette.websockets import WebSocketDisconnect
-
-        store = RecordStore(tmp_path / "recordings")
-        store.root.mkdir(parents=True)
-        (store.root / "x.mp3").write_bytes(b"\xff\xfb\x90\x00" * 4)
-        ws = MagicMock()
-        ws.send_json = AsyncMock(side_effect=WebSocketDisconnect())
-
-        msg: dict[str, object] = {"type": "fetch", "id": "f1", "ref": "x.mp3"}
-        # Must not raise -- a normal disconnect is a quiet end-of-request.
-        asyncio.run(FetchHandler(store=store)(msg, ws))
-
-    def test_unknown_recording_logs_warning(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """A not-found ref is audit-logged once at WARNING with the request id."""
-        store = RecordStore(tmp_path / "recordings")
-        store.root.mkdir(parents=True)
-        ws, _sent = _capturing_ws()
-
-        msg: dict[str, object] = {"type": "fetch", "id": "f7", "ref": "nope.mp3"}
+        msg: dict[str, object] = {"id": "f8", "ref": "../../etc/passwd"}
         with caplog.at_level(logging.WARNING):
-            asyncio.run(FetchHandler(store=store)(msg, ws))
+            asyncio.run(handler(msg, ws))  # type: ignore[arg-type]
 
-        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert len(warnings) == 1
-        assert "f7" in warnings[0].getMessage()
+        assert sent[-1]["type"] == "error"
+        assert not [f for f in sent if f["type"] == "fetch_begin"]
+        assert any("f8" in r.getMessage() for r in caplog.records)
 
-    def test_traversal_ref_logs_warning(
+    def test_missing_ref_and_album_is_an_error(self, tmp_path: Path) -> None:
+        handler, _, _ = _handler(tmp_path)
+        ws, sent = _capturing_ws()
+        asyncio.run(handler({"id": "f1"}, ws))  # type: ignore[arg-type]
+        assert sent[-1]["type"] == "error"
+
+
+class TestMusicPartFetch:
+    def test_streams_an_album_part(self, tmp_path: Path) -> None:
+        handler, _, lib = _handler(tmp_path)
+        album_id = asyncio.run(lib.new("a prompt", None)).value
+        ws, sent = _capturing_ws()
+        msg: dict[str, object] = {"id": "f1", "album": album_id, "part": "001.mp3"}
+        asyncio.run(handler(msg, ws))  # type: ignore[arg-type]
+
+        assert sent[0]["type"] == "fetch_begin"
+        assert sent[0]["ref"] == "001.mp3"
+        assert sent[-1]["type"] == "fetch_end"
+        assert _reassemble(sent) == b"audio"
+
+    def test_unknown_album_is_an_error(self, tmp_path: Path) -> None:
+        handler, _, _ = _handler(tmp_path)
+        ws, sent = _capturing_ws()
+        msg: dict[str, object] = {"id": "f1", "album": "abcdef", "part": "001.mp3"}
+        asyncio.run(handler(msg, ws))  # type: ignore[arg-type]
+
+        assert sent[-1]["type"] == "error"
+        assert "no album named" in str(sent[-1]["message"])
+        assert not [f for f in sent if f["type"] == "fetch_begin"]
+
+    def test_hostile_part_name_refused_and_audited(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
-        """A blocked path-escape ref leaves an audit WARNING carrying the id."""
-        store = RecordStore(tmp_path / "recordings")
-        ws, _sent = _capturing_ws()
-
-        msg: dict[str, object] = {"type": "fetch", "id": "f8", "ref": "../../etc/x"}
+        """A part-name escape is refused inside the resolved album dir (F2)."""
+        handler, _, lib = _handler(tmp_path)
+        album_id = asyncio.run(lib.new("a prompt", None)).value
+        ws, sent = _capturing_ws()
+        msg: dict[str, object] = {"id": "f9", "album": album_id, "part": "../../etc/x"}
         with caplog.at_level(logging.WARNING):
-            asyncio.run(FetchHandler(store=store)(msg, ws))
+            asyncio.run(handler(msg, ws))  # type: ignore[arg-type]
 
-        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert len(warnings) == 1
-        assert "f8" in warnings[0].getMessage()
+        assert sent[-1]["type"] == "error"
+        assert not [f for f in sent if f["type"] == "fetch_begin"]
+        assert any("f9" in r.getMessage() for r in caplog.records)
+
+    def test_album_without_part_is_an_error(self, tmp_path: Path) -> None:
+        handler, _, lib = _handler(tmp_path)
+        album_id = asyncio.run(lib.new("a prompt", None)).value
+        ws, sent = _capturing_ws()
+        msg: dict[str, object] = {"id": "f1", "album": album_id}
+        asyncio.run(handler(msg, ws))  # type: ignore[arg-type]
+        assert sent[-1]["type"] == "error"
+        assert "requires a part" in str(sent[-1]["message"])

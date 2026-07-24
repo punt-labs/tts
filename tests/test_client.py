@@ -72,6 +72,30 @@ def _make_mock_ws() -> AsyncMock:
     return ws
 
 
+def _fetch_frames(blob: bytes, *, chunk: int) -> list[dict[str, object]]:
+    """Build a valid chunked-fetch frame sequence (begin, chunk*, end) for *blob*."""
+    import base64
+    import hashlib
+
+    slices = [blob[i : i + chunk] for i in range(0, len(blob), chunk)]
+    frames: list[dict[str, object]] = [
+        {
+            "type": "fetch_begin",
+            "id": "f1",
+            "ref": "x.mp3",
+            "bytes": len(blob),
+            "chunks": len(slices),
+            "sha256": hashlib.sha256(blob).hexdigest(),
+        }
+    ]
+    frames.extend(
+        {"type": "chunk", "id": "f1", "seq": seq, "data": base64.b64encode(s).decode()}
+        for seq, s in enumerate(slices)
+    )
+    frames.append({"type": "fetch_end", "id": "f1", "ref": "x.mp3", "bytes": len(blob)})
+    return frames
+
+
 class TestVoxClientConnect:
     """Test connection lifecycle."""
 
@@ -749,58 +773,48 @@ class TestVoxClientPlayFetch:
             await client.play("a1b2c3.mp3")
 
     @pytest.mark.asyncio
-    async def test_fetch_returns_decoded_bytes(self) -> None:
-        import base64
-
-        payload = base64.b64encode(b"\xff\xfb\x90\x00" * 4).decode("ascii")
+    async def test_fetch_reassembles_chunked_stream(self) -> None:
+        """fetch reassembles fetch_begin -> chunk* -> fetch_end into the file bytes."""
+        blob = b"\xff\xfb\x90\x00" * 4  # 16 bytes
         mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {
-                    "type": "bytes",
-                    "id": "f1",
-                    "ref": "x.mp3",
-                    "data": payload,
-                    "bytes": 16,
-                }
-            )
-        )
+        frames = [json.dumps(f) for f in _fetch_frames(blob, chunk=6)]
+        mock_ws.recv = AsyncMock(side_effect=frames)
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        data = await client.fetch("x.mp3")
-        assert data == b"\xff\xfb\x90\x00" * 4
+        assert await client.fetch("x.mp3") == blob
+
+    @pytest.mark.asyncio
+    async def test_fetch_part_reassembles_stream(self) -> None:
+        """fetch_part addresses an album id + part and reassembles the same way."""
+        blob = b"music-bytes"
+        mock_ws = _make_mock_ws()
+        frames = [json.dumps(f) for f in _fetch_frames(blob, chunk=4)]
+        mock_ws.recv = AsyncMock(side_effect=frames)
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        assert await client.fetch_part("7f3a91", "001.mp3") == blob
+        sent = json.loads(mock_ws.send.call_args.args[0])
+        assert sent["album"] == "7f3a91"
+        assert sent["part"] == "001.mp3"
 
     @pytest.mark.asyncio
     async def test_fetch_uses_generous_fetch_timeout(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """fetch waits on the dedicated _TIMEOUT_FETCH, not the synthesis one."""
-        import base64
-
         from punt_vox.client import _TIMEOUT_FETCH
 
         captured: dict[str, float] = {}
-        payload = base64.b64encode(b"\xff\xfb\x90\x00" * 4).decode("ascii")
 
-        async def fake_drain(
-            _self: object,
-            _msg: dict[str, object],
-            *,
-            timeout: float,
-            terminal_type: str,
-        ) -> list[dict[str, object]]:
+        async def fake_stream(
+            _self: object, _msg: dict[str, object], *, timeout: float
+        ) -> bytes:
             captured["timeout"] = timeout
-            frame: dict[str, object] = {
-                "type": "bytes",
-                "id": "f1",
-                "ref": "x.mp3",
-                "data": payload,
-                "bytes": 16,
-            }
-            return [frame]
+            return b""
 
-        monkeypatch.setattr("punt_vox.client._VoxdTransport.send_and_drain", fake_drain)
+        monkeypatch.setattr("punt_vox.client._VoxdTransport.fetch_stream", fake_stream)
         client = VoxClient(port=8421, token="tok")
 
         await client.fetch("x.mp3")
@@ -808,75 +822,39 @@ class TestVoxClientPlayFetch:
         assert captured["timeout"] == _TIMEOUT_FETCH
         assert captured["timeout"] > 30.0  # clearly larger than synthesis
 
-    async def test_fetch_ref_mismatch_raises(self) -> None:
-        """A reply naming a different ref must not be written as this recording."""
-        import base64
-
-        payload = base64.b64encode(b"\xff\xfb\x90\x00" * 4).decode("ascii")
+    @pytest.mark.asyncio
+    async def test_fetch_wrong_first_frame_raises(self) -> None:
+        """A stream not opening with fetch_begin is a protocol error."""
         mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {
-                    "type": "bytes",
-                    "id": "f1",
-                    "ref": "OTHER.mp3",  # not what we asked for
-                    "data": payload,
-                    "bytes": 16,
-                }
-            )
-        )
+        mock_ws.recv = AsyncMock(return_value=json.dumps({"type": "done", "id": "f1"}))
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        with pytest.raises(VoxdProtocolError, match="ref mismatch"):
+        with pytest.raises(VoxdProtocolError, match="fetch_begin"):
             await client.fetch("x.mp3")
 
     @pytest.mark.asyncio
-    async def test_fetch_without_data_raises(self) -> None:
+    async def test_fetch_out_of_order_chunk_raises(self) -> None:
+        """A chunk whose seq is not the next expected is rejected."""
+        blob = b"abcdefgh"
+        frames = _fetch_frames(blob, chunk=4)
+        frames[2]["seq"] = 5  # corrupt the second chunk's order
         mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(return_value=json.dumps({"type": "bytes", "id": "f1"}))
+        mock_ws.recv = AsyncMock(side_effect=[json.dumps(f) for f in frames])
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        with pytest.raises(VoxdProtocolError, match="with data"):
-            await client.fetch("x.mp3")
-
-    @pytest.mark.asyncio
-    async def test_fetch_missing_bytes_raises(self) -> None:
-        """A 'bytes' reply without the count is a protocol error, not a silent write."""
-        import base64
-
-        payload = base64.b64encode(b"\xff\xfb\x90\x00" * 4).decode("ascii")
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "bytes", "id": "f1", "ref": "x.mp3", "data": payload}
-            )
-        )
-        client = VoxClient(port=8421, token="tok")
-        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
-
-        with pytest.raises(VoxdProtocolError, match="missing 'bytes'"):
+        with pytest.raises(VoxdProtocolError, match="chunk seq"):
             await client.fetch("x.mp3")
 
     @pytest.mark.asyncio
     async def test_fetch_byte_count_mismatch_raises(self) -> None:
-        """A decoded length disagreeing with the declared count is a protocol error."""
-        import base64
-
-        payload = base64.b64encode(b"\xff\xfb\x90\x00" * 4).decode("ascii")  # 16 bytes
+        """A declared byte count disagreeing with the reassembly is an error."""
+        blob = b"abcdefgh"
+        frames = _fetch_frames(blob, chunk=4)
+        frames[0]["bytes"] = 99  # lie about the total
         mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {
-                    "type": "bytes",
-                    "id": "f1",
-                    "ref": "x.mp3",
-                    "data": payload,
-                    "bytes": 99,
-                }
-            )
-        )
+        mock_ws.recv = AsyncMock(side_effect=[json.dumps(f) for f in frames])
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
@@ -884,27 +862,32 @@ class TestVoxClientPlayFetch:
             await client.fetch("x.mp3")
 
     @pytest.mark.asyncio
-    async def test_fetch_non_integer_bytes_raises(self) -> None:
-        """A non-int 'bytes' is a clear protocol error, not a misleading mismatch."""
-        import base64
-
-        payload = base64.b64encode(b"\xff\xfb\x90\x00" * 4).decode("ascii")
+    async def test_fetch_sha_mismatch_raises(self) -> None:
+        """A stream whose bytes do not match the declared sha256 is discarded."""
+        blob = b"abcdefgh"
+        frames = _fetch_frames(blob, chunk=4)
+        frames[0]["sha256"] = "0" * 64  # wrong digest
         mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {
-                    "type": "bytes",
-                    "id": "f1",
-                    "ref": "x.mp3",
-                    "data": payload,
-                    "bytes": "notanumber",
-                }
-            )
-        )
+        mock_ws.recv = AsyncMock(side_effect=[json.dumps(f) for f in frames])
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        with pytest.raises(VoxdProtocolError, match="non-integer 'bytes'"):
+        with pytest.raises(VoxdProtocolError, match="sha256 mismatch"):
+            await client.fetch("x.mp3")
+
+    @pytest.mark.asyncio
+    async def test_fetch_mid_stream_error_discards_partial(self) -> None:
+        """An error frame mid-stream raises, so no partial is returned to a caller."""
+        blob = b"abcdefgh"
+        frames = _fetch_frames(blob, chunk=4)
+        # Replace the last chunk with an abort error terminal.
+        frames[-2] = {"type": "error", "id": "f1", "message": "read fault"}
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(side_effect=[json.dumps(f) for f in frames[:-1]])
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="read fault"):
             await client.fetch("x.mp3")
 
 
