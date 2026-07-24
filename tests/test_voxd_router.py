@@ -326,5 +326,8 @@ class TestHandlerRegistration:
             "program_select",
             "program_list",
             "program_status",
+            "music_new",
+            "music_manifest",
+            "music_remove",
         }
         assert set(router.handlers.keys()) == expected

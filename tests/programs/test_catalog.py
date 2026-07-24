@@ -110,12 +110,13 @@ class TestByTags:
 class TestResumeFingerprint:
     def test_same_fingerprint_resumes(self) -> None:
         catalog = Catalog((_album("a3f1c9", "trance", "calm", fingerprint=_FP_ONE),))
-        assert catalog.resume("trance", "calm", _FP_ONE) is not None
+        query = TagQuery(style="trance", vibe="calm")
+        assert catalog.resume(query, _FP_ONE) is not None
 
     def test_different_fingerprint_is_a_miss(self) -> None:
         # A (style, vibe) hit with a foreign fingerprint does not resume.
         catalog = Catalog((_album("a3f1c9", "trance", "calm", fingerprint=_FP_ONE),))
-        assert catalog.resume("trance", "calm", _FP_TWO) is None
+        assert catalog.resume(TagQuery(style="trance", vibe="calm"), _FP_TWO) is None
 
     def test_resume_prefers_the_newest_matching_fingerprint(self) -> None:
         older = _album("a3f1c9", "trance", "calm", fingerprint=_FP_ONE, created=_BASE)
@@ -127,7 +128,7 @@ class TestResumeFingerprint:
             created=_BASE + timedelta(hours=1),
         )
         catalog = Catalog((older, newer))
-        assert catalog.resume("trance", "calm", _FP_ONE) == newer
+        assert catalog.resume(TagQuery(style="trance", vibe="calm"), _FP_ONE) == newer
 
 
 class TestMutationAndSelect:

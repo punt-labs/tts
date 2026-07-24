@@ -587,6 +587,13 @@
     "max_lcom": 0.644,
     "avg_lcom": 0.644
   },
+  "src/punt_vox/voxd/containment.py": {
+    "efferent_coupling": 0.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
   "src/punt_vox/voxd/crash_logging.py": {
     "efferent_coupling": 1.0,
     "public_names": 1.0,
@@ -794,8 +801,8 @@
     "efferent_coupling": 3.0,
     "public_names": 2.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.533,
-    "avg_lcom": 0.406
+    "max_lcom": 0.491,
+    "avg_lcom": 0.385
   },
   "src/punt_vox/voxd/programs/command_handler.py": {
     "efferent_coupling": 0.0,
@@ -822,8 +829,8 @@
     "efferent_coupling": 6.0,
     "public_names": 2.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.571,
-    "avg_lcom": 0.452
+    "max_lcom": 0.611,
+    "avg_lcom": 0.472
   },
   "src/punt_vox/voxd/programs/fill_guard.py": {
     "efferent_coupling": 0.0,
@@ -894,6 +901,20 @@
     "circular_imports": 0.0,
     "max_lcom": 0.182,
     "avg_lcom": 0.182
+  },
+  "src/punt_vox/voxd/programs/library.py": {
+    "efferent_coupling": 7.0,
+    "public_names": 3.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.464,
+    "avg_lcom": 0.464
+  },
+  "src/punt_vox/voxd/programs/library_handlers.py": {
+    "efferent_coupling": 3.0,
+    "public_names": 3.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
   },
   "src/punt_vox/voxd/programs/lifecycle_signal.py": {
     "efferent_coupling": 2.0,
@@ -1067,8 +1088,8 @@
     "efferent_coupling": 22.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.649,
-    "avg_lcom": 0.649
+    "max_lcom": 0.638,
+    "avg_lcom": 0.638
   },
   "src/punt_vox/voxd/programs/sleeper.py": {
     "efferent_coupling": 0.0,
@@ -1092,7 +1113,7 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/voxd/programs/store.py": {
-    "efferent_coupling": 3.0,
+    "efferent_coupling": 0.0,
     "public_names": 2.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
@@ -1120,11 +1141,11 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/voxd/programs/wiring.py": {
-    "efferent_coupling": 9.0,
+    "efferent_coupling": 11.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.0,
-    "avg_lcom": 0.0
+    "max_lcom": 0.167,
+    "avg_lcom": 0.167
   },
   "src/punt_vox/voxd/record_handler.py": {
     "efferent_coupling": 4.0,

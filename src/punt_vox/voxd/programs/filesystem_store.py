@@ -11,6 +11,7 @@ seam that dereferences an opaque locator to a ``Path``.
 from __future__ import annotations
 
 import logging
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Self, final
@@ -135,6 +136,16 @@ class FilesystemProgramStore:
         store = FilesystemPartStore(directory, draft.stamped(datetime.now(UTC)))
         store.save_manifest()
         return store
+
+    def delete(self, directory: str) -> None:
+        """Remove a scan/create-validated album directory and every Part within it.
+
+        ``directory`` is a locator produced by :meth:`scan`/:meth:`create`, so the
+        single-segment + containment guard of :meth:`_contained_dir` reconfirms it
+        cannot escape the root before the recursive unlink.
+        """
+        path = self._contained_dir(directory)
+        shutil.rmtree(path)
 
     def _scan_one(self, manifest_path: Path) -> Album | None:
         """Return the Album for one manifest, or ``None`` to skip the directory.

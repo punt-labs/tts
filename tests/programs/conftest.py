@@ -260,6 +260,12 @@ class InMemoryProgramStore:
         self._stores[draft.locator] = store
         return store
 
+    def delete(self, directory: str) -> None:
+        store = self._stores.pop(directory, None)
+        if store is None:
+            msg = f"no saved album at directory {directory!r}"
+            raise LookupError(msg)
+
 
 @pytest.fixture
 def program_store() -> InMemoryProgramStore:

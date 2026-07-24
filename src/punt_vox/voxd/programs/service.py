@@ -149,6 +149,28 @@ class ProgramService:
         """Return every catalog album, newest first (the ``list`` view)."""
         return self._catalog.by_tags(TagQuery())
 
+    @property
+    def catalog(self) -> Catalog:
+        """Return the one catalog the play machine and the library both mutate."""
+        return self._catalog
+
+    def active_backing_locators(self) -> frozenset[str]:
+        """Return the album locators whose Parts back the active source (D-2).
+
+        ``MusicRemove`` refuses an album exactly when its locator is here: a
+        playing Program contributes its own album (only with a non-empty pool); a
+        Radio contributes every album its Selection spans; an idle daemon none.
+        """
+        active = self._context.current
+        source = self._channel.source
+        if active is None:
+            return frozenset()
+        if isinstance(source, Program):
+            return frozenset({active.name.value}) if source.pool else frozenset()
+        if isinstance(source, SelectionPlayback):
+            return frozenset(selected.locator for selected in source.selection)
+        return frozenset()
+
     # -- handler-facing mutators (each POSTs one serialized command) --------
 
     def turn_on(
@@ -248,7 +270,7 @@ class ProgramService:
             if existing is not None and self._safe_to_resume(existing, fingerprint):
                 return existing
             return self._mint(style, vibe, handle, fingerprint)
-        resumed = self._catalog.resume(style, vibe, fingerprint)
+        resumed = self._catalog.resume(TagQuery(style=style, vibe=vibe), fingerprint)
         if resumed is not None:
             return resumed
         return self._mint(style, vibe, None, fingerprint)

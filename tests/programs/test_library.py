@@ -1,0 +1,257 @@
+"""Tests for ``MusicLibrary`` -- catalog authoring, manifest, remove, part resolve.
+
+The library shares one live ``Catalog`` and ``ProgramStore`` with the
+``ProgramService`` (a real filesystem store under ``tmp_path``; a fake Producer),
+so these tests assert both the wire-op behaviour and the Z model's Catalog/System
+delta by name: ``MusicNew`` frames the running Program unchanged;
+``MusicNewBadPrompt`` never fails the Program; ``MusicRemove`` refuses an album
+backing the active source; every live Part stays catalogued (F5).
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, NamedTuple, final
+
+import pytest
+
+from punt_vox.types_programs import Format
+from punt_vox.types_programs.mode import Mode
+from punt_vox.voxd.programs.album_id import AlbumId
+from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
+from punt_vox.voxd.programs.library import MusicLibrary
+from punt_vox.voxd.programs.producer import (
+    PartSpec,
+    ProducerBadInputError,
+    ProducerTransientError,
+)
+from punt_vox.voxd.programs.service import ProgramService
+
+from .conftest import FakeSleeper, QuietProducer, seed_album
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from punt_vox.voxd.programs.part import Part
+    from punt_vox.voxd.programs.producer import Producer
+
+_POOL_SIZE = Format.PLAYLIST.pool_size
+_HOSTILE_PARTS = ["/etc/passwd", "../../../etc/x", "a/b.mp3", "..", "", "n\x00.mp3"]
+
+
+@final
+class _BadPromptProducer:
+    """A Producer that always rejects permanently (a ``bad_prompt``/ToS refusal)."""
+
+    __slots__ = ()
+
+    async def produce(self, spec: PartSpec, target: Path) -> Part:
+        del spec, target
+        raise ProducerBadInputError("bad_prompt: rejected by provider")
+
+
+@final
+class _TransientProducer:
+    """A Producer that always fails transiently (429/5xx)."""
+
+    __slots__ = ()
+
+    async def produce(self, spec: PartSpec, target: Path) -> Part:
+        del spec, target
+        raise ProducerTransientError("429 rate limited")
+
+
+class _Fx(NamedTuple):
+    """A service + a library sharing one catalog/store rooted under ``tmp_path``."""
+
+    library: MusicLibrary
+    service: ProgramService
+    root: Path
+
+
+def _fx(tmp_path: Path, producer: Producer | None = None) -> _Fx:
+    root = tmp_path / "programs"
+    store = FilesystemProgramStore(root)
+    service = ProgramService(QuietProducer(), store, root, FakeSleeper())
+    library = MusicLibrary(service.catalog, store, root, producer or QuietProducer())
+    return _Fx(library, service, root)
+
+
+class TestMusicNew:
+    """Authoring one track files a fresh single-track album (``MusicNew``)."""
+
+    async def test_new_files_a_single_track_album(self, tmp_path: Path) -> None:
+        fx = _fx(tmp_path)
+        album_id = await fx.library.new("warm analog pads, D minor", name=None)
+        album = fx.service.catalog.by_id(album_id)
+        assert album is not None
+        assert len(album.ready_parts()) == 1
+        assert (fx.root / album.locator / "001.mp3").is_file()
+
+    async def test_new_mints_a_six_hex_id(self, tmp_path: Path) -> None:
+        fx = _fx(tmp_path)
+        album_id = await fx.library.new("a prompt", name=None)
+        assert len(album_id.value) == 6
+        assert all(c in "0123456789abcdef" for c in album_id.value)
+
+    async def test_new_honours_a_curated_name(self, tmp_path: Path) -> None:
+        fx = _fx(tmp_path)
+        album_id = await fx.library.new("a prompt", name="my-track")
+        album = fx.service.catalog.by_id(album_id)
+        assert album is not None
+        assert album.manifest.tags.name == "my-track"
+
+    async def test_empty_prompt_is_rejected(self, tmp_path: Path) -> None:
+        fx = _fx(tmp_path)
+        with pytest.raises(ValueError, match="empty prompt"):
+            await fx.library.new("   ", name=None)
+        assert fx.service.catalog_albums() == ()
+
+    async def test_bad_prompt_leaves_catalog_unchanged(self, tmp_path: Path) -> None:
+        fx = _fx(tmp_path, _BadPromptProducer())
+        with pytest.raises(ValueError, match="bad_prompt"):
+            await fx.library.new("rejected", name=None)
+        assert fx.service.catalog_albums() == ()
+        # The half-authored directory was discarded, not left behind.
+        assert list(fx.root.glob("*")) == []
+
+    async def test_transient_failure_leaves_catalog_unchanged(
+        self, tmp_path: Path
+    ) -> None:
+        fx = _fx(tmp_path, _TransientProducer())
+        with pytest.raises(ValueError, match="rate limited"):
+            await fx.library.new("later", name=None)
+        assert fx.service.catalog_albums() == ()
+
+
+class TestModelAlignment:
+    """The audio-programs Catalog/System delta, asserted by name."""
+
+    async def test_music_new_leaves_full_pool_playing(self, tmp_path: Path) -> None:
+        """``MusicNew`` frames ``ΞProgram``: a full playing pool is unchanged."""
+        seed_album(
+            tmp_path / "programs",
+            *range(1, _POOL_SIZE + 1),
+            name="live",
+            album_id="a3f1c9",
+        )
+        fx = _fx(tmp_path)
+        fx.service.turn_on(style="techno", vibe="calm", name="live", prompts=None)
+        await fx.service.run_once()
+        fx.service.shutdown()
+        before = fx.service.status().to_dict()
+        assert fx.service.status().mode is Mode.PLAYING_ROTATING
+
+        await fx.library.new("a parked track", name=None)
+
+        assert fx.service.status().to_dict() == before
+        assert len(fx.service.catalog_albums()) == 2  # the parked track was added
+
+    async def test_music_new_bad_prompt_does_not_fail_program(
+        self, tmp_path: Path
+    ) -> None:
+        """``MusicNewBadPrompt``: the Program's mode/lastError are untouched."""
+        fx = _fx(tmp_path, _BadPromptProducer())
+        fx.service.turn_on(style="techno", vibe="calm", name=None, prompts=None)
+        await fx.service.run_once()
+        fx.service.shutdown()
+        before = fx.service.status().to_dict()
+
+        with pytest.raises(ValueError, match="bad_prompt"):
+            await fx.library.new("rejected", name=None)
+
+        after = fx.service.status()
+        assert after.mode is not Mode.FAILED
+        assert after.to_dict() == before
+
+    async def test_music_remove_refuses_playing_album(self, tmp_path: Path) -> None:
+        """``MusicRemove``: an album backing the active radio is refused (D-2)."""
+        root = tmp_path / "programs"
+        locator = seed_album(root, 1, 2, name="live", album_id="a3f1c9")
+        fx = _fx(tmp_path)
+        fx.service.replay_album(AlbumId("a3f1c9"))
+        await fx.service.run_once()
+        fx.service.shutdown()
+
+        with pytest.raises(ValueError, match="is playing; stop it first"):
+            fx.library.remove(
+                AlbumId("a3f1c9"), blocked=fx.service.active_backing_locators()
+            )
+        assert (fx.root / locator).is_dir()  # nothing deleted
+
+    async def test_live_parts_stay_catalogued(self, tmp_path: Path) -> None:
+        """F5: after an accepted new + remove, every live Part is still catalogued."""
+        root = tmp_path / "programs"
+        seed_album(root, 1, 2, name="live", album_id="a3f1c9")
+        idle = seed_album(root, 1, name="idle", album_id="bbbbbb")
+        fx = _fx(tmp_path)
+        fx.service.replay_album(AlbumId("a3f1c9"))
+        await fx.service.run_once()
+        fx.service.shutdown()
+
+        await fx.library.new("a parked track", name=None)
+        blocked = fx.service.active_backing_locators()
+        fx.library.remove(AlbumId("bbbbbb"), blocked=blocked)
+
+        # The active radio's album is still catalogued; the idle one is gone.
+        assert fx.service.catalog.by_id(AlbumId("a3f1c9")) is not None
+        assert fx.service.catalog.by_id(AlbumId("bbbbbb")) is None
+        assert not (fx.root / idle).exists()
+
+
+class TestManifestAndResolve:
+    """``music get`` manifest + per-part resolution (catalog id, bare part name)."""
+
+    async def test_manifest_lists_parts_with_bytes(self, tmp_path: Path) -> None:
+        fx = _fx(tmp_path)
+        album_id = await fx.library.new("a prompt", name="pads")
+        contents = fx.library.manifest(album_id)
+        assert contents.name.endswith(album_id.value)
+        assert [p.name for p in contents.parts] == ["001.mp3"]
+        assert contents.parts[0].byte_count > 0
+
+    def test_unknown_album_id_is_a_clean_error(self, tmp_path: Path) -> None:
+        fx = _fx(tmp_path)
+        with pytest.raises(ValueError, match="no album named"):
+            fx.library.manifest(AlbumId("abcdef"))
+
+    async def test_resolve_part_contains_within_album(self, tmp_path: Path) -> None:
+        fx = _fx(tmp_path)
+        album_id = await fx.library.new("a prompt", name=None)
+        resolved = fx.library.resolve_part(album_id, "001.mp3")
+        album = fx.service.catalog.by_id(album_id)
+        assert album is not None
+        assert resolved == (fx.root / album.locator / "001.mp3").resolve()
+
+    @pytest.mark.parametrize("hostile", _HOSTILE_PARTS)
+    async def test_resolve_part_rejects_hostile_names(
+        self, tmp_path: Path, hostile: str
+    ) -> None:
+        """A part-name escape is refused inside the resolved album dir (F2)."""
+        fx = _fx(tmp_path)
+        album_id = await fx.library.new("a prompt", name=None)
+        with pytest.raises(ValueError):
+            fx.library.resolve_part(album_id, hostile)
+
+    def test_resolve_part_unknown_album_rejected(self, tmp_path: Path) -> None:
+        """An id with no catalog entry is a clean error, never a filesystem probe."""
+        fx = _fx(tmp_path)
+        with pytest.raises(ValueError, match="no album named"):
+            fx.library.resolve_part(AlbumId("abcdef"), "001.mp3")
+
+
+class TestRemove:
+    """``music_remove`` deletes an idle album and forgets it."""
+
+    async def test_remove_deletes_idle_album(self, tmp_path: Path) -> None:
+        fx = _fx(tmp_path)
+        locator = seed_album(fx.root, 1, 2, name="idle", album_id="a3f1c9")
+        # Rebuild the fixture's catalog to see the seeded album (scan at construct).
+        fx2 = _fx(tmp_path)
+        fx2.library.remove(AlbumId("a3f1c9"), blocked=frozenset())
+        assert fx2.service.catalog.by_id(AlbumId("a3f1c9")) is None
+        assert not (fx.root / locator).exists()
+
+    def test_remove_unknown_album_rejected(self, tmp_path: Path) -> None:
+        fx = _fx(tmp_path)
+        with pytest.raises(ValueError, match="no album named"):
+            fx.library.remove(AlbumId("abcdef"), blocked=frozenset())

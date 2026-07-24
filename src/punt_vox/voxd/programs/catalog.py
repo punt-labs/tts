@@ -108,6 +108,15 @@ class Catalog:
         """Register a freshly created album so it is queryable without a re-scan."""
         self._by_id[album.id] = album
 
+    def remove(self, album_id: AlbumId) -> None:
+        """Drop the album with ``album_id`` from the index (idempotent on absence).
+
+        The on-disk delete is the store's; this keeps the in-memory index in step
+        so a removed album stops appearing in ``list`` and can never resolve for
+        ``play``/``get`` afterward.
+        """
+        self._by_id.pop(album_id, None)
+
     def mint_id(self) -> AlbumId:
         """Return a fresh id absent from the catalog (delegates to AlbumId.mint)."""
         return AlbumId.mint(self._by_id.keys())
@@ -154,16 +163,13 @@ class Catalog:
         matches = self.by_tags(query)
         return matches[0] if matches else None
 
-    def resume(
-        self, style: str, vibe: str, fingerprint: PromptFingerprint
-    ) -> Album | None:
-        """Return the newest ``(style, vibe)`` album sharing ``fingerprint``.
+    def resume(self, query: TagQuery, fingerprint: PromptFingerprint) -> Album | None:
+        """Return the newest album matching ``query`` and sharing ``fingerprint``.
 
         A tag match with a *different* fingerprint is a miss, so the caller mints
         a fresh album rather than filling a foreign prompt-set's pool. ``None`` is
         the documented "no resumable pool" contract.
         """
-        query = TagQuery(style=style, vibe=vibe)
         for album in self.by_tags(query):
             if album.manifest.prompt_fingerprint == fingerprint:
                 return album
