@@ -13,7 +13,6 @@ path.
 from __future__ import annotations
 
 import os
-import tempfile
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -290,7 +289,7 @@ class RecCli:
 
     def _guard_name(self, name: str | None, segments: list[str]) -> None:
         """Reject an empty name, or ``--name`` given for multiple segments."""
-        if name is not None and not name:
+        if name == "":
             # The daemon is the single authority on name validity; the CLI
             # fast-fails an empty name before a wasted round-trip.
             self._fail("--name must not be empty")
@@ -299,22 +298,21 @@ class RecCli:
 
     @staticmethod
     def _land_no_clobber(dest: Path, data: bytes) -> None:
-        """Write *data* to a temp sibling then hard-link it onto *dest*.
+        """Write *data* to *dest*, refusing to clobber a file already there.
 
-        ``os.link`` refuses to overwrite: it raises ``FileExistsError`` if
-        *dest* already exists, so a name that races into place after the
-        caller's absence check cannot be clobbered (D-1). A mid-write failure
-        leaves no partial file -- the temp is always removed, and *dest* is the
-        complete file or absent, never truncated.
+        ``os.open`` with ``O_CREAT | O_EXCL`` atomically reserves the name and
+        raises ``FileExistsError`` if it already exists, so a file racing in
+        after the caller's absence check is never clobbered (D-1). Unlike
+        ``os.link``, it needs no hard-link support (FAT/exFAT, network, FUSE). A
+        mid-write fault unlinks *dest* and re-raises, leaving no partial file.
         """
-        fd, tmp_name = tempfile.mkstemp(dir=dest.parent, suffix=".part")
-        tmp = Path(tmp_name)
+        fd = os.open(dest, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         try:
             with os.fdopen(fd, "wb") as handle:
                 handle.write(data)
-            os.link(tmp, dest)
-        finally:
-            tmp.unlink(missing_ok=True)
+        except OSError:
+            dest.unlink(missing_ok=True)
+            raise
 
 
 def build_rec_app(formatter: OutputFormatter) -> typer.Typer:

@@ -86,7 +86,7 @@ class ClientCatalogGateway:
 
 @final
 class MusicCli:
-    """The consume-only music command implementations (a humble object)."""
+    """The music commands: playback verbs plus catalog authoring (new/get/remove)."""
 
     __slots__ = ("_catalog_factory", "_formatter", "_gateway_factory")
     _formatter: OutputFormatter

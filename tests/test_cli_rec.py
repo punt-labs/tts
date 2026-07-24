@@ -9,9 +9,10 @@ build_rec_app wires the group and that the old top-level verbs are gone.
 
 from __future__ import annotations
 
+import errno
 import io
 from pathlib import Path
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, NoReturn, Self, final
 from unittest.mock import MagicMock
 
 import pytest
@@ -317,6 +318,29 @@ def test_get_file_racing_in_mid_fetch_is_not_clobbered(
     with pytest.raises(typer.Exit):
         cli.get("rec.mp3")
     assert raced.read_bytes() == b"RACED-IN"  # exclusive link refused to clobber
+
+
+def test_get_does_not_require_hardlink_support(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The landing uses O_EXCL, not os.link, so it works on FAT/network mounts.
+
+    ``os.link`` raises ENOTSUP/EPERM on filesystems without hard-link support.
+    Poisoning it proves the no-clobber landing never reaches for a hard link.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    def no_hardlinks(*_args: object, **_kwargs: object) -> NoReturn:
+        raise OSError(errno.ENOTSUP, "hard links unsupported")
+
+    monkeypatch.setattr("punt_vox.cli_rec.os.link", no_hardlinks)
+    payload_bytes = b"\xff\xfb\x90\x00" * 5
+    cli, _ = _cli(InMemoryRecordGateway({"rec.mp3": payload_bytes}))
+
+    cli.get("rec.mp3")
+
+    assert (tmp_path / "rec.mp3").read_bytes() == payload_bytes
 
 
 # ---------------------------------------------------------------------------
