@@ -43,8 +43,19 @@ def parse_optional_int(msg: dict[str, object], key: str) -> int | None:
 
 
 def parse_optional_str(msg: dict[str, object], key: str) -> str | None:
-    """Extract an optional string field, returning None for empty strings."""
-    raw = str(msg.get(key, ""))
+    """Extract an optional string field; reject a non-string wire value.
+
+    An absent field or JSON null is absence (None). A present non-string --
+    a number, bool, list -- is a malformed frame, not a stringifiable value:
+    reject it at the boundary rather than coerce (``null`` -> ``"None"``) and
+    let a bogus ref/album/part/prompt reach a handler.
+    """
+    raw = msg.get(key)
+    if raw is None:
+        return None
+    if not isinstance(raw, str):
+        detail = f"{key} must be a string, got {type(raw).__name__}"
+        raise ValueError(detail)
     return raw or None
 
 

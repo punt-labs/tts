@@ -4,17 +4,39 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from starlette.websockets import WebSocketDisconnect
 
-from punt_vox.voxd._parse import safe_send
-
-if TYPE_CHECKING:
-    import pytest
+from punt_vox.voxd._parse import parse_optional_str, safe_send
 
 _LOGGER = "punt_vox.voxd._parse"
+
+
+class TestParseOptionalStr:
+    """parse_optional_str rejects a non-string wire value at the boundary."""
+
+    def test_absent_key_is_none(self) -> None:
+        assert parse_optional_str({}, "ref") is None
+
+    def test_json_null_is_none(self) -> None:
+        assert parse_optional_str({"ref": None}, "ref") is None
+
+    def test_empty_string_is_none(self) -> None:
+        assert parse_optional_str({"ref": ""}, "ref") is None
+
+    def test_string_value_passes_through(self) -> None:
+        assert parse_optional_str({"ref": "take-1.mp3"}, "ref") == "take-1.mp3"
+
+    def test_non_string_rejected(self) -> None:
+        # A number would once have coerced to "5"; now it is a malformed frame.
+        with pytest.raises(ValueError, match="ref must be a string, got int"):
+            parse_optional_str({"ref": 5}, "ref")
+
+    def test_bool_rejected(self) -> None:
+        with pytest.raises(ValueError, match="album must be a string, got bool"):
+            parse_optional_str({"album": True}, "album")
 
 
 class TestSafeSend:
