@@ -27,6 +27,7 @@ from typing import (
 import typer
 from websockets.exceptions import WebSocketException
 
+from punt_vox.bare_name import BareName
 from punt_vox.cli_io import TextInput
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
@@ -259,7 +260,8 @@ class RecCli:
 
     def get(self, ref: _RefArg) -> None:
         """Copy recording *ref* into the current directory under its store name."""
-        dest = Path.cwd() / ref
+        safe = self._bare_ref(ref)
+        dest = Path.cwd() / safe
         if dest.exists():
             # Fast-fail the common case before the slow fetch; _land_no_clobber's
             # exclusive link is the race-free guarantee. The name is the store's,
@@ -286,6 +288,19 @@ class RecCli:
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
         return spec
+
+    def _bare_ref(self, ref: str) -> str:
+        """Return *ref* as a bare filename, failing cleanly if it escapes the CWD.
+
+        ``rec get`` joins *ref* onto the working directory to land the fetched
+        bytes, so a ref with a separator, a ``.``/``..`` token, or an absolute
+        path would write outside it. :class:`BareName` rejects those before the
+        join, so the destination is always a plain file in the CWD.
+        """
+        try:
+            return BareName(ref, "recording id").value
+        except ValueError as exc:
+            self._fail(str(exc))
 
     def _guard_name(self, name: str | None, segments: list[str]) -> None:
         """Reject an empty name, or ``--name`` given for multiple segments."""

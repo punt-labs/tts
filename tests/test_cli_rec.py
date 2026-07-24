@@ -343,6 +343,29 @@ def test_get_does_not_require_hardlink_support(
     assert (tmp_path / "rec.mp3").read_bytes() == payload_bytes
 
 
+@pytest.mark.parametrize(
+    "hostile",
+    ["../escape.mp3", "/etc/passwd", "sub/dir.mp3", "..", ".", "a\\b.mp3", ""],
+)
+def test_get_rejects_non_bare_ref_and_writes_nothing(
+    hostile: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A ref with a separator, ``.``/``..``, or absolute path escapes the CWD.
+
+    ``rec get`` joins the ref onto the working directory, so a hostile ref
+    would write outside it. BareName rejects it before the dest is computed or
+    the fetch runs: the command exits cleanly and nothing lands anywhere.
+    """
+    monkeypatch.chdir(tmp_path)
+    fake = InMemoryRecordGateway({"rec.mp3": b"DATA"})
+    cli, _ = _cli(fake)
+
+    with pytest.raises(typer.Exit):
+        cli.get(hostile)
+    assert fake.calls == []  # rejected before the fetch -- no daemon round-trip
+    assert list(tmp_path.iterdir()) == []  # nothing written into the CWD
+
+
 # ---------------------------------------------------------------------------
 # remove
 # ---------------------------------------------------------------------------
