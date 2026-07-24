@@ -56,12 +56,16 @@ _PART_LABEL: Final = "part name"
 class MusicLibrary:
     """Author, describe, resolve, and remove catalog albums (never the Program)."""
 
-    __slots__ = ("_catalog", "_producer", "_root", "_store")
+    __slots__ = ("_catalog", "_producer", "_reserving", "_root", "_store")
 
     _catalog: Catalog
     _store: ProgramStore
     _root: Path
     _producer: Producer
+    # Curated names reserved by an in-flight ``new`` whose generation await has
+    # not yet catalogued the album -- the synchronous guard that two overlapping
+    # same-name ``new`` calls cannot both pass the duplicate check (D-1 TOCTOU).
+    _reserving: set[str]
 
     def __new__(
         cls, catalog: Catalog, store: ProgramStore, root: Path, producer: Producer
@@ -71,6 +75,7 @@ class MusicLibrary:
         self._store = store
         self._root = root
         self._producer = producer
+        self._reserving = set()
         return self
 
     async def new(self, prompt: str, name: str | None) -> AlbumId:
@@ -86,16 +91,19 @@ class MusicLibrary:
         if not clean:
             raise ValueError("empty prompt")
         tags = AlbumTags(style=_AUTHORED_TAG, vibe=_AUTHORED_TAG, name=name)
-        self._reject_duplicate_name(tags.name)
-        draft = ManifestDraft(
-            album_id=self._catalog.mint_id(),
-            tags=tags,
-            fingerprint=PromptFingerprint.from_prompts(clean, ()),
-            taken_names=self._catalog.taken_names(),
-        )
-        store = await self._materialise(draft, clean)
-        self._catalog.add(Album(store.manifest(), draft.locator, self._store))
-        return draft.album_id
+        self._reserve_name(tags.name)
+        try:
+            draft = ManifestDraft(
+                album_id=self._catalog.mint_id(),
+                tags=tags,
+                fingerprint=PromptFingerprint.from_prompts(clean, ()),
+                taken_names=self._catalog.taken_names(),
+            )
+            store = await self._materialise(draft, clean)
+            self._catalog.add(Album(store.manifest(), draft.locator, self._store))
+            return draft.album_id
+        finally:
+            self._release_name(tags.name)
 
     def manifest(self, album_id: AlbumId) -> AlbumContents:
         """Return the album's on-disk name and ready parts, resolved by catalog id.
@@ -134,12 +142,19 @@ class MusicLibrary:
     async def _materialise(self, draft: ManifestDraft, prompt: str) -> PartStore:
         """Create the album directory and generate its Part, returning the store.
 
-        On any creation failure the fresh directory is discarded so no orphan is
-        left; a provider rejection becomes a ``ValueError``, an ``OSError`` re-raises.
+        A failure *after* this call created the directory discards it so no orphan
+        is left. A locator collision (``FileExistsError`` from
+        ``mkdir(exist_ok=False)``) means the directory already existed -- this
+        call did NOT create it, so the pre-existing album is left intact and the
+        collision is surfaced as a ``ValueError``. A provider rejection becomes a
+        ``ValueError``; any other post-create ``OSError`` re-raises after discard.
         """
         try:
             store = self._store.create(draft)
             await self._generate(store, prompt)
+        except FileExistsError as exc:
+            msg = f"album directory {draft.locator!r} already exists"
+            raise ValueError(msg) from exc
         except (ProducerBadInputError, ProducerTransientError) as exc:
             self._discard(draft.locator)
             raise ValueError(str(exc)) from exc
@@ -163,13 +178,38 @@ class MusicLibrary:
         await self._producer.produce(spec, target)
         store.record(PartEntry(index=1, file=target.name, status=PartStatus.READY))
 
-    def _reject_duplicate_name(self, name: str | None) -> None:
-        """Refuse a curated name already taken (keeps ``by_name`` 0-or-1).
+    def _reserve_name(self, name: str | None) -> None:
+        """Reserve a curated name synchronously, refusing a taken/reserved one.
 
-        ``taken_names`` holds only curated names, so an unnamed pool (``None``,
-        which gets a disambiguated auto-name at stamp time) never collides here.
+        The reservation happens before the multi-second generation await, so two
+        overlapping ``new`` calls for the same curated name cannot both pass the
+        duplicate check while neither is catalogued yet (D-1 TOCTOU). ``None`` (an
+        unnamed pool, auto-named at stamp time) reserves nothing and never
+        collides.
         """
-        if name in self._catalog.taken_names():
+        self._reject_duplicate_name(name)
+        if name is not None:
+            self._reserving.add(name)
+
+    def _release_name(self, name: str | None) -> None:
+        """Release a reservation on both the success and failure paths of ``new``.
+
+        On success the name is now in ``taken_names`` (the catalogue owns the
+        block); on failure it frees the name for a later ``new``. Idempotent.
+        """
+        if name is not None:
+            self._reserving.discard(name)
+
+    def _reject_duplicate_name(self, name: str | None) -> None:
+        """Refuse a curated name already taken or reserved (keeps ``by_name`` 0-or-1).
+
+        ``taken_names`` holds only catalogued curated names; ``_reserving`` holds
+        those an in-flight ``new`` has claimed but not yet catalogued. An unnamed
+        pool (``None``) is in neither, so it never collides here.
+        """
+        if name in self._catalog.taken_names() or (
+            name is not None and name in self._reserving
+        ):
             raise ValueError(f"album named {name!r} already exists")
 
     def _discard(self, locator: str) -> None:

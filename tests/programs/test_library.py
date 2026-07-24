@@ -10,6 +10,7 @@ backing the active source; every live Part stays catalogued (F5).
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, NamedTuple, Self, final
 
 import pytest
@@ -22,7 +23,7 @@ from punt_vox.voxd.programs.catalog import Catalog
 from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
 from punt_vox.voxd.programs.library import MusicLibrary
 from punt_vox.voxd.programs.manifest import ManifestDraft, PartEntry
-from punt_vox.voxd.programs.part import PartStatus
+from punt_vox.voxd.programs.part import Part, PartStatus
 from punt_vox.voxd.programs.producer import (
     PartSpec,
     ProducerBadInputError,
@@ -37,7 +38,6 @@ if TYPE_CHECKING:
 
     from punt_vox.voxd.programs.catalog import Album
     from punt_vox.voxd.programs.manifest import AlbumManifest
-    from punt_vox.voxd.programs.part import Part
     from punt_vox.voxd.programs.producer import Producer
     from punt_vox.voxd.programs.store import PartStore, ProgramStore
 
@@ -66,6 +66,32 @@ class _TransientProducer:
     async def produce(self, spec: PartSpec, target: Path) -> Part:
         del spec, target
         raise ProducerTransientError("429 rate limited")
+
+
+@final
+class _GatedProducer:
+    """A Producer whose ``produce`` blocks on a gate.
+
+    Lets a test hold one ``new`` inside its generation await while a second
+    concurrent ``new`` runs, exercising the reserve-before-await TOCTOU guard.
+    """
+
+    __slots__ = ("_gate", "entered")
+    _gate: asyncio.Event
+    entered: asyncio.Event
+
+    def __new__(cls, gate: asyncio.Event) -> Self:
+        self = super().__new__(cls)
+        self._gate = gate
+        self.entered = asyncio.Event()
+        return self
+
+    async def produce(self, spec: PartSpec, target: Path) -> Part:
+        self.entered.set()
+        await self._gate.wait()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"audio")
+        return Part(target.name, spec.index)
 
 
 class _Fx(NamedTuple):
@@ -129,6 +155,63 @@ class TestMusicNew:
         with pytest.raises(ValueError, match="rate limited"):
             await fx.library.new("later", name=None)
         assert fx.service.catalog_albums() == ()
+
+
+class TestMusicNewReservation:
+    """The curated-name reservation guards the generation await (D-1 TOCTOU)."""
+
+    async def test_overlapping_same_name_new_reserves(self, tmp_path: Path) -> None:
+        """Two concurrent same-name ``new`` calls: exactly one album is created."""
+        gate = asyncio.Event()
+        producer = _GatedProducer(gate)
+        fx = _fx(tmp_path, producer)
+
+        first = asyncio.create_task(fx.library.new("first prompt", name="dup"))
+        await producer.entered.wait()  # first has reserved and is mid-generation
+
+        # The second reserves synchronously, sees the reservation, and rejects --
+        # neither album is catalogued yet, so this is the TOCTOU the guard closes.
+        with pytest.raises(ValueError, match="already exists"):
+            await fx.library.new("second prompt", name="dup")
+
+        gate.set()
+        album_id = await first
+        assert fx.service.catalog.by_id(album_id) is not None
+        assert len(fx.service.catalog_albums()) == 1
+
+    async def test_reservation_released_after_failure(self, tmp_path: Path) -> None:
+        """A failed ``new`` releases its name, so a retry is not blocked as a dup."""
+        fx = _fx(tmp_path, _BadPromptProducer())
+        with pytest.raises(ValueError, match="bad_prompt"):
+            await fx.library.new("rejected", name="retry")
+        # A leaked reservation would raise "already exists"; instead the name is
+        # free and the retry reaches the producer (bad_prompt again).
+        with pytest.raises(ValueError, match="bad_prompt"):
+            await fx.library.new("rejected", name="retry")
+
+
+class TestMaterialiseDiscard:
+    """``_materialise`` discards only the directory *this* call created (3.2)."""
+
+    async def test_locator_collision_preserves_existing_album(
+        self, tmp_path: Path
+    ) -> None:
+        """A locator collision leaves the pre-existing album on disk untouched."""
+        fx = _fx(tmp_path)
+        draft = ManifestDraft(
+            album_id=AlbumId("a3f1c9"),
+            tags=AlbumTags(style="custom", vibe="custom", name="dup"),
+            fingerprint=PromptFingerprint.from_prompts("p", ()),
+            taken_names=frozenset(),
+        )
+        existing = fx.root / draft.locator
+        existing.mkdir(parents=True)
+        (existing / "keep.txt").write_bytes(b"precious")
+
+        with pytest.raises(ValueError, match="already exists"):
+            await fx.library._materialise(draft, "prompt")  # pyright: ignore[reportPrivateUsage]
+
+        assert (existing / "keep.txt").read_bytes() == b"precious"
 
 
 class TestModelAlignment:
