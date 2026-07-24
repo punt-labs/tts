@@ -112,3 +112,35 @@ class TestErrorHandling:
 
         assert result == {"error": "bad value"}
         assert "Record failed" in caplog.text
+
+
+class TestPartialFailure:
+    """A partway failure surfaces the landed ids beside the error."""
+
+    def test_landed_results_ride_with_the_error(self) -> None:
+        # Segment 1 lands, segment 2 raises: the recorded id must not be lost.
+        seen: list[str] = []
+
+        def handler(text: str, _spec: SynthesisSpec) -> dict[str, object]:
+            seen.append(text)
+            if len(seen) == 2:
+                raise VoxdProtocolError("segment 2 died")
+            return {"id": f"{text}.mp3", "bytes": 3}
+
+        batch = SegmentBatch([{"text": "one"}, {"text": "two"}], SynthesisSpec())
+
+        result = json.loads(batch.render(handler=handler, error_label="Record"))
+
+        assert result["error"] == "segment 2 died"
+        assert result["results"] == [{"id": "one.mp3", "bytes": 3}]
+
+    def test_total_failure_omits_empty_results(self) -> None:
+        # Nothing landed: the envelope carries no empty ``results`` key.
+        def boom(_text: str, _spec: SynthesisSpec) -> dict[str, object]:
+            raise VoxdConnectionError("voxd down")
+
+        batch = SegmentBatch([{"text": "one"}], SynthesisSpec())
+
+        result = json.loads(batch.render(handler=boom, error_label="Record"))
+
+        assert result == {"error": "voxd down"}
