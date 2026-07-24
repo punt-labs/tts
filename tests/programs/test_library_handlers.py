@@ -88,6 +88,17 @@ class TestMusicNewHandler:
         assert [f["type"] for f in sent] == ["error"]  # no 'generating' ack
         assert any("n2" in r.getMessage() for r in caplog.records)
 
+    def test_non_string_prompt_is_a_clean_error(self, tmp_path: Path) -> None:
+        """A non-string prompt yields an error before the ack; the parse must not
+        escape the handler and tear the connection down."""
+        library = _library(tmp_path / "programs")
+        ws, sent = _capturing_ws()
+        msg: dict[str, object] = {"type": "music_new", "id": "n4", "prompt": 123}
+        asyncio.run(MusicNewHandler(library)(msg, ws))  # type: ignore[arg-type]
+
+        assert [f["type"] for f in sent] == ["error"]  # no 'generating' ack
+        assert "must be a string" in str(sent[-1]["message"])
+
     def test_bad_prompt_acks_then_errors_and_audits(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:

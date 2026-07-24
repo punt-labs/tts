@@ -46,15 +46,15 @@ class MusicNewHandler:
         return self
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """Reject an empty prompt pre-ack, else ack, generate, and reply."""
+        """Reject an empty or malformed prompt pre-ack, else ack, generate, reply."""
         reply = WireReply(websocket, str(msg.get("id", "")))
-        prompt = parse_optional_str(msg, "prompt")
-        if not prompt:
-            await reply.error("music new requires a prompt")
-            return
-        if not await reply.send({"type": "generating"}):
-            return
         try:
+            prompt = parse_optional_str(msg, "prompt")
+            if not prompt:
+                await reply.error("music new requires a prompt")
+                return
+            if not await reply.send({"type": "generating"}):
+                return
             album_id = await self._library.new(prompt, parse_optional_str(msg, "name"))
         except _LIBRARY_FAILURES as exc:
             await reply.error(str(exc))
@@ -77,11 +77,11 @@ class MusicManifestHandler:
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Catalog-resolve the album id and reply with its on-disk name and parts."""
         reply = WireReply(websocket, str(msg.get("id", "")))
-        album = parse_optional_str(msg, "album")
-        if not album:
-            await reply.error("music get requires an album")
-            return
         try:
+            album = parse_optional_str(msg, "album")
+            if not album:
+                await reply.error("music get requires an album")
+                return
             contents = self._library.manifest(AlbumId(album))
         except _LIBRARY_FAILURES as exc:
             await reply.error(str(exc))
@@ -117,11 +117,11 @@ class MusicRemoveHandler:
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Catalog-resolve the album id and remove it unless it backs the source."""
         reply = WireReply(websocket, str(msg.get("id", "")))
-        album = parse_optional_str(msg, "album")
-        if not album:
-            await reply.error("music remove requires an album")
-            return
         try:
+            album = parse_optional_str(msg, "album")
+            if not album:
+                await reply.error("music remove requires an album")
+                return
             self._library.remove(AlbumId(album), blocked=self._blocked())
         except _LIBRARY_FAILURES as exc:
             await reply.error(str(exc))
