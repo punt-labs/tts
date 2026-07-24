@@ -1008,8 +1008,14 @@ orchestration seam.
 \begin{schema}{System}
   catalog : Catalog \\
   program : Program \\
-  radio : Radio
+  radio : Radio \\
+  genTarget : \power ALBUM
   \where
+  \# genTarget \leq 1 \\
+  genTarget \cap \dom catalog.albums = \emptyset \\
+  genTarget \neq \emptyset \iff \\
+  \quad~ (program.mode = generatingFirst \\
+  \quad~ \lor (program.mode = retrying \land program.pool = \emptyset)) \\
   program.pool \cup radio.selection \subseteq \bigcup (\ran catalog.albums)
 \end{schema}
 
@@ -1022,6 +1028,27 @@ preserved): the invariant couples the resolved sets to the catalog they were
 resolved from, but no Program or Radio operation reads \texttt{catalog}. The
 coupling is a fact about reachable system states, discharged at the seam that
 resolves a pool, not a new input to the play/fill machine.
+
+The containment invariant reaches every album that backs the running program
+\emph{through its ready Parts}, and only those. It does not reach the album a
+Program is generating its \emph{first} Part into: in \texttt{generatingFirst},
+and in the empty-pool \texttt{retrying} backoff that follows a transient
+first-track error, the pool is empty, so the target directory holds no ready
+Part, sits outside $\bigcup (\ran catalog.albums)$, and is invisible to a test
+phrased over $pool \cup selection$. The component \texttt{genTarget} --- an
+optional \texttt{ALBUM}, at most one --- names that directory. Its invariant
+$genTarget \neq \emptyset \iff (program.mode = generatingFirst \lor
+(program.mode = retrying \land program.pool = \emptyset))$ pins it to exactly the
+two empty-pool generation states; its emptiness, not its identity, is
+determined by the mode, since \emph{which} directory is being filled is fixed by
+the operation that resolved the empty pool, not by the mode. The disjointness
+$genTarget \cap \dom catalog.albums = \emptyset$ records why the pool test could
+not protect it: a directory with no ready Part is not a catalogued album. When
+the pool is non-empty --- \texttt{playingFilling}, or the \texttt{retrying}
+backoff of a fill --- the album being filled \emph{is} the catalogued pool
+album, already protected by its ready Parts, so \texttt{genTarget} is empty
+there. The pair ``in the pool, or the empty-pool generation target'' is exactly
+the implementation's \texttt{pool OR wants\_generation} backing predicate.
 
 \subsection{MusicNew --- author one track into a fresh album}
 
@@ -1038,14 +1065,19 @@ picture of ``authoring a catalog track does not disturb the running program''.
   \where
   program' = program \\
   radio' = radio \\
+  genTarget' = genTarget \\
   newId? \notin \dom catalog.albums \\
+  newId? \notin genTarget \\
   track? \notin \bigcup (\ran catalog.albums) \\
   catalog'.albums = catalog.albums \oplus \{ newId? \mapsto \{ track? \} \}
 \end{schema}
 
-The new id is fresh ($newId? \notin \dom albums$), the incoming \texttt{track?}
-is not already catalogued ($track? \notin \bigcup (\ran albums)$), and the new
-album is non-empty (its single Part \texttt{track?}). The freshness of
+The new id is fresh --- absent from the catalogue ($newId? \notin \dom albums$)
+\emph{and} from the directory being generated into ($newId? \notin genTarget$),
+so authoring never collides with an in-progress first-track generation --- the
+incoming \texttt{track?} is not already catalogued
+($track? \notin \bigcup (\ran albums)$), and the new album is non-empty (its
+single Part \texttt{track?}). The freshness of
 \texttt{track?} is not a redundancy: without it the \texttt{Catalog} partition
 invariant --- distinct albums share no Part --- would silently \emph{disable}
 \texttt{MusicNew} whenever \texttt{track?} already lived in another album, since
@@ -1089,7 +1121,14 @@ catalog authoring is a side channel that cannot hard-fail the program.
 \label{sec:removederived}
 
 \texttt{MusicRemove} deletes an album from the Catalog. Its precondition forbids
-removing an album whose Parts back the active Program pool or Radio selection.
+removing an album that backs the running program: one whose ready Parts are in
+the active Program pool or Radio selection, \emph{or} the directory a Program is
+currently generating its first Part into. The disjunction
+$victim? \in \dom catalog.albums \lor victim? \in genTarget$ makes both listable
+--- a catalogued album, and the empty mid-generation directory that
+\texttt{vox music list} shows but the ready Catalogue does not hold --- so each
+is a well-formed removal target that the operation may refuse, rather than an id
+it silently cannot name.
 
 \begin{schema}{MusicRemove}
   \Delta System \\
@@ -1097,15 +1136,19 @@ removing an album whose Parts back the active Program pool or Radio selection.
   \where
   program' = program \\
   radio' = radio \\
-  victim? \in \dom catalog.albums \\
+  genTarget' = genTarget \\
+  (victim? \in \dom catalog.albums \lor victim? \in genTarget) \\
+  victim? \notin genTarget \\
   catalog.albums~victim? \cap (program.pool \cup radio.selection) = \emptyset \\
   catalog'.albums = \{ victim? \} \ndres catalog.albums
 \end{schema}
 
-The intersection precondition is written explicitly, for readability, but it is
-not a free-standing assumption: it is forced by the \texttt{System} invariant.
-Consider the same operation with the intersection line struck out --- just the
-frame, $victim? \in \dom albums$, and the removal equation. Its after-state must
+The two backing guards have different standing, and the difference is the point.
+The \emph{ready-Parts} guard --- the intersection line --- is written
+explicitly, for readability, but it is not a free-standing assumption: it is
+forced by the \texttt{System} invariant. Consider the same operation with the
+intersection line struck out --- just the frame, the listability disjunct, and
+the removal equation, with $victim?$ a catalogued album. Its after-state must
 still be a valid \texttt{System}, so
 $program'.pool \cup radio'.selection \subseteq \bigcup (\ran catalog'.albums)$.
 Substituting the frame ($program' = program$, $radio' = radio$) and the removal
@@ -1113,31 +1156,60 @@ Substituting the frame ($program' = program$, $radio' = radio$) and the removal
 partition invariant --- distinct albums share no Part, so removing
 \texttt{victim?} drops exactly $albums~victim?$ from the union --- the
 containment can hold only if $albums~victim?$ is disjoint from
-$pool \cup selection$. The precondition is therefore the calculated
-\texttt{pre}~\texttt{MusicRemove}, not an added guard.
+$pool \cup selection$. The ready-Parts guard is therefore the calculated
+\texttt{pre}~\texttt{MusicRemove} over catalogued albums, not an added guard.
 
-Stated as a proof obligation: for any before- and after-\texttt{System} related
-by the frame $program' = program \land radio' = radio$, by
-$victim? \in \dom catalog.albums$, and by the removal
+The \emph{generation-target} guard --- $victim? \notin genTarget$ --- is
+different: it is an explicit protection the containment invariant does
+\emph{not} discharge. The directory a Program is generating its first Part into
+holds no ready Part, so it lies outside $\bigcup (\ran catalog.albums)$, and the
+containment invariant --- which speaks only of what is \emph{in} the union ---
+says nothing that would forbid its removal. This is exactly the empty-pool blind
+spot the informal design carried: a test phrased over $pool \cup selection$ is
+vacuously satisfied in \texttt{generatingFirst} and empty-pool
+\texttt{retrying}, where $pool = \emptyset$, so removal would be permitted
+mid-generation. The model therefore names the target in \texttt{genTarget} and
+refuses it outright. The disjointness invariant
+$genTarget \cap \dom catalog.albums = \emptyset$ keeps the two guards from
+overlapping: a catalogued $victim?$ is never in \texttt{genTarget}, so for it
+$victim? \notin genTarget$ is automatic and the ready-Parts guard alone decides;
+a $victim?$ in \texttt{genTarget} is never catalogued, so it reaches the
+operation only through the listability disjunct and is refused by
+$victim? \notin genTarget$ alone. The net precondition over catalogued albums is
+unchanged; what is new is that the mid-generation directory is now a nameable
+removal target the model explicitly protects.
+
+Stated as a proof obligation for the ready-Parts guard: for any before- and
+after-\texttt{System} related by the frame $program' = program \land radio' =
+radio$, by $victim? \in \dom catalog.albums$, and by the removal
 $catalog'.albums = \{victim?\} \ndres catalog.albums$, it follows that
 \[
   catalog.albums~victim? \cap (program.pool \cup radio.selection) = \emptyset.
 \]
-The obligation is a consequence of the two \texttt{System} invariants together
-with the Catalog partition; \texttt{fuzz} type-checks the schemas but does not
-discharge it. It was therefore exercised by \texttt{probcli} over a bounded,
-flattened image of the \texttt{System} state (\texttt{catalog.albums},
-\texttt{program.pool}, and \texttt{radio.selection} carried as flat components,
-with $|ALBUM| = |PART| = 4$), in which \texttt{MusicRemove} appears \emph{with
-its intersection guard struck out}. Exhaustive state-space exploration ($505$
-reachable states, $2185$ transitions, every operation covered) finds no
-reachable after-state in which a removed album's Parts still intersect
-$pool \cup selection$: with the guard absent, the $\Delta$-framing's demand that
-the after-state satisfy the \texttt{System} invariant leaves an attempted
-removal of a live album with no valid after-state, so the operation is simply
-not enabled there. The explicit precondition is thus the calculated
-\texttt{pre}~\texttt{MusicRemove}, confirmed by exploration, not an added guard
-asserted in the schema text.
+The obligation is a consequence of the containment and Catalog-partition
+invariants together; \texttt{fuzz} type-checks the schemas but does not discharge
+it. It was exercised by \texttt{probcli} over a bounded, flattened image of the
+\texttt{System} state (\texttt{catalog.albums}, \texttt{program.pool}, and
+\texttt{radio.selection} carried as flat components, with $|ALBUM| = |PART| =
+4$), in which \texttt{MusicRemove} appears \emph{with its intersection guard
+struck out}. Exhaustive state-space exploration ($505$ reachable states, $2185$
+transitions, every operation covered) finds no reachable after-state in which a
+removed album's Parts still intersect $pool \cup selection$: with the guard
+absent, the $\Delta$-framing's demand that the after-state satisfy the
+\texttt{System} invariant leaves an attempted removal of a live album with no
+valid after-state, so the operation is simply not enabled there.
+
+The generation-target guard is not covered by that obligation and cannot be:
+the containment invariant is silent about a directory outside the union, so
+striking $victim? \notin genTarget$ leaves the removal of \texttt{genTarget}
+\emph{enabled}, with a perfectly valid after-\texttt{System}. Its correctness
+rests instead on the coupling invariant --- \texttt{genTarget} is non-empty in
+exactly the empty-pool generation states --- which guarantees the guard is
+armed precisely when, and only when, a first-track generation is in flight. It
+is thus an asserted guard, honestly so, and the one place the ``deletion is
+impossible by construction'' story does not reach; the model states it in the
+schema rather than leaving it to prose or to a check the implementation must
+remember.
 
 \texttt{vox music get} generates nothing and mutates no state: it is a pure read
 over $albums~victim?$, modelled --- if at all --- as \texttt{$\Xi System$},
@@ -1239,13 +1311,22 @@ postconditions; they are the intended proof obligations for animation.
     $(newId?, track?)$ pair exists, and with it the after-state satisfies both
     \texttt{Catalog} invariants, so the operation is total on fresh input and is
     never silently disabled by the partition invariant.
-  \item \textbf{Cannot delete a playing album}
-    (\texttt{test\_music\_remove\_refuses\_live\_album}): \texttt{MusicRemove}'s
-    precondition $albums~victim? \cap (pool \cup selection) = \emptyset$ is
-    forced by the \texttt{System} invariant, not merely asserted --- an attempted
-    removal of an album backing the active Program pool or Radio selection has no
-    valid after-\texttt{System}, confirmed by \texttt{probcli}
-    (Section~\ref{sec:removederived}).
+  \item \textbf{Cannot delete a backing album}
+    (\texttt{test\_music\_remove\_refuses\_live\_album}): \texttt{MusicRemove}
+    refuses an album that backs the running program on either of two counts. The
+    ready-Parts guard $albums~victim? \cap (pool \cup selection) = \emptyset$ is
+    \emph{forced} by the \texttt{System} invariant, not merely asserted --- an
+    attempted removal of an album backing the active Program pool or Radio
+    selection has no valid after-\texttt{System}, confirmed by \texttt{probcli}
+    (Section~\ref{sec:removederived}). The generation-target guard
+    $victim? \notin genTarget$ is an \emph{explicit} protection --- the directory
+    a Program is generating its first Part into holds no ready Part, so it
+    escapes the containment invariant and must be guarded outright ---
+    armed exactly in the empty-pool generation states (\texttt{generatingFirst}
+    and empty-pool \texttt{retrying}) by the \texttt{genTarget} coupling
+    invariant. Together they are the model's ``in the pool, or being generated
+    into'' backing set, matching the implementation's
+    \texttt{pool OR wants\_generation}.
   \item \textbf{Authoring cannot hard-fail the program}
     (\texttt{test\_music\_new\_bad\_prompt\_local}): \texttt{MusicNewBadPrompt}
     is \texttt{$\Xi System$} --- a generation rejection while authoring a catalog
