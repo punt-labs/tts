@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **One verb vocabulary for both audio stores (vox-jei3).** `vox rec` and `vox music` are now parallel command groups sharing `new` / `list` / `play <id>` / `get <id>` / `remove <id>` (music keeps `next` / `status`). `vox rec new "text"` synthesizes into the daemon-owned recordings store and prints the bare id; `vox rec list` enumerates it; `vox rec get <id>` writes the recording into the current directory under its store name; `vox rec remove <id>` deletes it. `vox music new "<prompt>"` generates one track from a verbatim ElevenLabs prompt into a fresh single-track catalog album (it does not disturb the running program); `vox music get <id>` / `vox music remove <id>` export/delete an album by its catalog id. The same verbs are exposed on the MCP `mic` surface at parity (`mic:rec_new`/`rec_list`/`rec_play`/`rec_get`/`rec_remove`, `mic:music_new`/`music_get`/`music_remove`), each routing through the one engine.
+- **Chunked `get` transport — any size.** Fetching a recording or album part streams the bytes in bounded, ordered, sha256-verified chunks and lands atomically, so a long recording or a real multi-MB music track transfers in full.
+
+### Changed
+
+- **`vox music play` accepts a bare `<id>` positional** in addition to the shipped `--style`/`--vibe`/`--name` tag selection (both resolve).
+- **`get` never names an output path** — it writes into the current directory under the store's own name, refusing to clobber an existing target.
+
+### Removed
+
+- **The scattered top-level `vox record`, `vox play`, and `vox fetch` commands, the `-o`/`--output` flag on the old `fetch`, and `vox play <localfile>`** — superseded by the `vox rec` group (forward integration, no aliases). Local files are played with the OS tool (`afplay`/`ffplay`); `vox say` stays the ephemeral speak-now verb. The 700 000-byte single-frame fetch ceiling (`FETCH_FRAME_LIMIT_BYTES`) is gone with the chunked transport.
+
 ## [4.13.1] - 2026-07-22
 
 ### Security
