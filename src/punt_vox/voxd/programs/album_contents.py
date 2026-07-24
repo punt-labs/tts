@@ -10,6 +10,7 @@ or ``..`` can never stat a file outside the album directory.
 
 from __future__ import annotations
 
+import stat
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self, final
 
@@ -31,9 +32,19 @@ class PartFile:
 
     @classmethod
     def measured(cls, root: ContainmentRoot, part: Part) -> Self:
-        """Return ``part`` sized from disk, validating its name within ``root``."""
+        """Return ``part`` sized from disk, validating its name within ``root``.
+
+        Sizes the part with ``lstat`` (no symlink follow) and requires a regular
+        file: a manifest entry that resolves to a symlink or directory is corrupt
+        and raises ``ValueError`` (the manifest handler turns it into a clean wire
+        error) rather than leaking the byte count of whatever the link targets.
+        """
         contained = root.contained_child(part.identity)
-        return cls(part.identity, contained.stat().st_size)
+        info = contained.lstat()
+        if not stat.S_ISREG(info.st_mode):
+            msg = f"part {part.identity!r} is not a regular file"
+            raise ValueError(msg)
+        return cls(part.identity, info.st_size)
 
 
 @final

@@ -44,6 +44,15 @@ class TestPartFileMeasured:
         with pytest.raises(ValueError):
             PartFile.measured(root, Part(identity, 1))
 
+    def test_rejects_symlink_part_without_following(self, tmp_path: Path) -> None:
+        """A part that is a symlink is refused -- its target's size never leaks."""
+        secret = tmp_path / "secret.bin"
+        secret.write_bytes(b"x" * 4096)
+        (tmp_path / "001.mp3").symlink_to(secret)
+        root = ContainmentRoot(tmp_path, _LABEL)
+        with pytest.raises(ValueError, match="not a regular file"):
+            PartFile.measured(root, Part("001.mp3", 1))
+
 
 class TestAlbumContentsFromAlbum:
     """``AlbumContents.from_album`` builds the get manifest from a catalog album."""
