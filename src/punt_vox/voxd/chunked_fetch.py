@@ -40,6 +40,9 @@ class ChunkedTransfer:
     _chunk_bytes: int
 
     def __new__(cls, reply: WireReply, chunk_bytes: int) -> Self:
+        if chunk_bytes <= 0:
+            msg = f"chunk_bytes must be positive, got {chunk_bytes}"
+            raise ValueError(msg)
         self = super().__new__(cls)
         self._reply = reply
         self._chunk_bytes = chunk_bytes

@@ -17,6 +17,7 @@ import io
 import logging
 from typing import TYPE_CHECKING, final
 
+import pytest
 from starlette.websockets import WebSocketDisconnect
 
 from punt_vox.voxd.chunked_fetch import ChunkedTransfer
@@ -24,8 +25,6 @@ from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 _CHUNK = 4  # a tiny bound so a handful of bytes spans several frames
 
@@ -75,6 +74,28 @@ def _reassemble(frames: list[dict[str, object]]) -> bytes:
         assert frame["type"] == "chunk"
         data += base64.b64decode(str(frame["data"]))
     return data
+
+
+class TestChunkBoundValidation:
+    def test_positive_bound_constructs(self) -> None:
+        """A positive chunk bound instantiates the transport."""
+        ws, _ = _capturing_ws()
+        reply = WireReply(ws, "f1")  # type: ignore[arg-type]
+        assert ChunkedTransfer(reply, 1) is not None
+
+    def test_zero_bound_rejected(self) -> None:
+        """A zero chunk bound is refused -- it would divide by zero in _measure."""
+        ws, _ = _capturing_ws()
+        reply = WireReply(ws, "f1")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="chunk_bytes must be positive"):
+            ChunkedTransfer(reply, 0)
+
+    def test_negative_bound_rejected(self) -> None:
+        """A negative chunk bound is refused -- it breaks the bounded-memory read."""
+        ws, _ = _capturing_ws()
+        reply = WireReply(ws, "f1")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="chunk_bytes must be positive"):
+            ChunkedTransfer(reply, -1)
 
 
 class TestOrderedDelivery:

@@ -163,11 +163,15 @@ class ProgramService:
         """Return the album locators whose Parts back the active source (D-2).
 
         ``MusicRemove`` refuses an album exactly when its locator is here: a
-        generate Program contributes its own album whenever it holds ready Parts
-        *or* generation is still targeting its directory -- so the first track
-        being written in ``generating_first`` (an empty pool) is protected too,
-        and removing it cannot corrupt the in-flight generation; a Radio
-        contributes every album its Selection spans; an idle daemon none.
+        generate Program contributes its own album while it is *live* -- playing
+        a ready Part (``advances_on_end``) or generating into its directory
+        (``wants_generation``) -- so the first track being written in
+        ``generating_first`` (an empty pool) is protected too, and removing it
+        cannot corrupt the in-flight generation; a Radio contributes every album
+        its Selection spans; an idle daemon none. A Program stopped by ``off``
+        is neither playing nor generating, so its retained pool -- kept only for
+        a later re-``on`` -- backs nothing and must not block removal, mirroring
+        how Radio ``off`` clears its selection.
         """
         active = self._context.current
         if active is None:
@@ -177,9 +181,14 @@ class ProgramService:
     def _backing_locators(
         self, source: PlaybackSource, active: ActiveSource
     ) -> frozenset[str]:
-        """Dispatch D-2 backing by source kind: a generate Program vs a replay Radio."""
+        """Dispatch D-2 backing by source kind: a generate Program vs a replay Radio.
+
+        A generate Program backs its album while it is live -- playing a ready
+        Part or generating one. A stopped Program (``off``) is neither, so its
+        retained pool contributes nothing and the album becomes removable.
+        """
         if isinstance(source, Program):
-            backs = bool(source.pool) or source.wants_generation
+            backs = source.advances_on_end or source.wants_generation
             return frozenset({active.name.value}) if backs else frozenset()
         if isinstance(source, SelectionPlayback):
             return frozenset(selected.locator for selected in source.selection)

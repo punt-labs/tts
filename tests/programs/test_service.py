@@ -365,3 +365,70 @@ class TestGeneratingFirstBacking:
         library = self._library(tmp_path, service)
         library.remove(AlbumId("b1b1b1"), blocked=service.active_backing_locators())
         assert not (root / idle).exists()  # a non-backing album still removes
+
+
+class TestStoppedProgramBacking:
+    """A Program stopped by ``off`` backs nothing, so its album becomes removable.
+
+    ``turn_off`` keeps the saved pool for a later re-``on`` (Z ``TurnOff``), but a
+    stopped Program neither plays a ready Part nor generates one. D-2 must drop
+    its album from the backing set: otherwise the retained non-empty pool would
+    wedge ``music remove`` with "is playing; stop it first" on a program that is
+    already stopped, leaving the operator no way to remove the album. The
+    contrast tests confirm a *live* program (playing a full pool) still backs its
+    album, so removal remains refused while it plays.
+    """
+
+    def _library(self, tmp_path: Path, service: ProgramService) -> MusicLibrary:
+        """Build a library sharing the service's catalog + store, as wiring does."""
+        root = tmp_path / "programs"
+        return MusicLibrary(
+            service.catalog, FilesystemProgramStore(root), root, QuietProducer()
+        )
+
+    async def _played_then_stopped(self, tmp_path: Path) -> tuple[ProgramService, str]:
+        """Resume a full saved pool (playing_rotating), then ``off`` it (pool kept).
+
+        Seeding a full album and resuming it reaches ``playing_rotating`` with a
+        non-empty pool and no armed fill -- the exact retained-pool state the D-2
+        off fix concerns -- via a single queued switch, so one ``run_once`` per
+        transition applies deterministically.
+        """
+        root = tmp_path / "programs"
+        locator = seed_album(
+            root, *range(1, _POOL_SIZE + 1), name="live", album_id="c1c1c1"
+        )
+        service = _service(tmp_path)  # scans the full seeded album into the catalog
+        service.turn_on(style="techno", vibe="ambient", name="live", prompts=_ONE)
+        await service.run_once()  # apply the switch onto the restored full pool
+        service.shutdown()  # a full pool arms no fill; cancel defensively
+        assert service.status().mode is Mode.PLAYING_ROTATING
+        # A live program playing a full pool backs its album (removal is refused).
+        assert service.active_backing_locators() == frozenset({locator})
+        service.off()
+        await service.run_once()
+        assert service.status().mode is Mode.OFF
+        return service, locator
+
+    async def test_stopped_program_backs_nothing(self, tmp_path: Path) -> None:
+        service, _ = await self._played_then_stopped(tmp_path)
+        # The retained pool must no longer back the album once playback is off.
+        assert service.active_backing_locators() == frozenset()
+
+    async def test_music_remove_succeeds_after_off(self, tmp_path: Path) -> None:
+        service, locator = await self._played_then_stopped(tmp_path)
+        album = service.catalog_albums()[0]
+        library = self._library(tmp_path, service)
+        library.remove(album.id, blocked=service.active_backing_locators())
+        assert not (tmp_path / "programs" / locator).exists()
+
+    async def test_music_remove_refused_while_playing(self, tmp_path: Path) -> None:
+        service = _service(tmp_path)
+        service.turn_on(style="techno", vibe="calm", name=None, prompts=_ONE)
+        await _drive_fill_to_full(service)
+        album = service.catalog_albums()[0]
+        library = self._library(tmp_path, service)
+        # No regression: a live, playing program still refuses removal of its album.
+        with pytest.raises(ValueError, match="is playing"):
+            library.remove(album.id, blocked=service.active_backing_locators())
+        assert album.id in {a.id for a in service.catalog_albums()}
