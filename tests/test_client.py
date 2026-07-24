@@ -1063,6 +1063,107 @@ class TestVoxClientRecMusic:
             await client.music_get("7f3a91", tmp_path)
         assert list(tmp_path.iterdir()) == []
 
+    @pytest.mark.asyncio
+    async def test_music_get_empty_album_raises_and_writes_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """A zero-ready-part album raises before mkdir, leaving dest_dir untouched.
+
+        The manifest lists only ready parts, so an empty list means the album is
+        still generating. Exporting it must not leave a hollow ``<album>/`` dir,
+        which would then block a real export on the collision guard (D-1).
+        """
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "manifest",
+                    "id": "m1",
+                    "album": "warm-pads-7f3a91",
+                    "parts": [],
+                }
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(ValueError, match="no ready parts"):
+            await client.music_get("7f3a91", tmp_path)
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.asyncio
+    async def test_music_get_after_empty_succeeds_once_parts_exist(
+        self, tmp_path: Path
+    ) -> None:
+        """A get that failed empty leaves nothing, so a later real get still works."""
+        empty_ws = _make_mock_ws()
+        empty_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "manifest",
+                    "id": "m1",
+                    "album": "warm-pads-7f3a91",
+                    "parts": [],
+                }
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = empty_ws  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(ValueError, match="no ready parts"):
+            await client.music_get("7f3a91", tmp_path)
+
+        part = b"track-bytes"
+        ready_ws = _make_mock_ws()
+        ready_ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps(
+                    {
+                        "type": "manifest",
+                        "id": "m2",
+                        "album": "warm-pads-7f3a91",
+                        "parts": [{"part": "001.mp3", "bytes": len(part)}],
+                    }
+                ),
+                *[json.dumps(f) for f in _fetch_frames(part, chunk=4)],
+            ]
+        )
+        client._transport._ws = ready_ws  # pyright: ignore[reportPrivateUsage]
+
+        target = await client.music_get("7f3a91", tmp_path)
+        assert target == tmp_path / "warm-pads-7f3a91"
+        assert (target / "001.mp3").read_bytes() == part
+
+    @pytest.mark.asyncio
+    async def test_music_get_writes_all_parts_of_multi_part_album(
+        self, tmp_path: Path
+    ) -> None:
+        """A multi-part album chunk-fetches and writes every ready part."""
+        first, second = b"first-track", b"second"
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps(
+                    {
+                        "type": "manifest",
+                        "id": "m1",
+                        "album": "warm-pads-7f3a91",
+                        "parts": [
+                            {"part": "001.mp3", "bytes": len(first)},
+                            {"part": "002.mp3", "bytes": len(second)},
+                        ],
+                    }
+                ),
+                *[json.dumps(f) for f in _fetch_frames(first, chunk=4)],
+                *[json.dumps(f) for f in _fetch_frames(second, chunk=4)],
+            ]
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        target = await client.music_get("7f3a91", tmp_path)
+        assert (target / "001.mp3").read_bytes() == first
+        assert (target / "002.mp3").read_bytes() == second
+
 
 class TestVoxClientVoices:
     """Test voices method."""

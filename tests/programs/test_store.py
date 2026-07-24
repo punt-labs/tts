@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable
 from pathlib import Path
+from typing import IO, Self, final
 
 import pytest
 
@@ -12,6 +14,7 @@ from punt_vox.voxd.programs import Part
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint
 from punt_vox.voxd.programs.filesystem_store import (
+    _MAX_MANIFEST_BYTES,
     FilesystemPartStore,
     FilesystemProgramStore,
 )
@@ -24,6 +27,35 @@ from .conftest import InMemoryProgramStore, make_manifest
 EntryFactory = Callable[..., PartEntry]
 
 _FINGERPRINT = PromptFingerprint("deadbeef")
+
+
+@final
+class _ReadSpy:
+    """A binary file-handle wrapper that records the size of each read call.
+
+    Used to prove ``_read_manifest_text`` bounds its read rather than pulling a
+    whole file into memory: the manifest read must ask for at most one byte past
+    the ceiling, regardless of how large the file on disk actually is.
+    """
+
+    _handle: IO[bytes]
+    _sizes: list[int]
+
+    def __new__(cls, handle: IO[bytes], sizes: list[int]) -> Self:
+        self = super().__new__(cls)
+        self._handle = handle
+        self._sizes = sizes
+        return self
+
+    def read(self, size: int = -1) -> bytes:
+        self._sizes.append(size)
+        return self._handle.read(size)
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._handle.close()
 
 
 def _draft(
@@ -143,6 +175,42 @@ class TestCreateAndScan:
         manifest.symlink_to(secret)
         with pytest.raises(OSError):
             store.open(draft.locator)
+
+    def test_open_bounds_the_manifest_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The manifest read is capped at the ceiling+1, never the file's size.
+
+        A trusted ``fstat`` size could be stale if the file grows between the
+        stat and the read (TOCTOU); the fix reads a bounded slice and rejects on
+        its length. Here a file eight times the ceiling is refused after a single
+        ``read`` of exactly ceiling+1 bytes -- it is never pulled in whole.
+        """
+        store = FilesystemProgramStore(tmp_path)
+        draft = _draft("a3f1c9", "techno", "ambient")
+        store.create(draft)
+        manifest = tmp_path / draft.locator / "manifest.json"
+        manifest.write_bytes(b"x" * (_MAX_MANIFEST_BYTES * 8))
+
+        requested: list[int] = []
+        real_fdopen = os.fdopen
+
+        def spy_fdopen(fd: int, mode: str = "rb") -> _ReadSpy:
+            return _ReadSpy(real_fdopen(fd, mode), requested)
+
+        monkeypatch.setattr(os, "fdopen", spy_fdopen)
+        with pytest.raises(ValueError, match="exceeds"):
+            store.open(draft.locator)
+        assert requested == [_MAX_MANIFEST_BYTES + 1]
+
+    def test_read_manifest_text_accepts_a_manifest_at_the_ceiling(
+        self, tmp_path: Path
+    ) -> None:
+        """A file of exactly the ceiling in bytes is read in full, not rejected."""
+        manifest = tmp_path / "manifest.json"
+        manifest.write_bytes(b"x" * _MAX_MANIFEST_BYTES)
+        text = FilesystemProgramStore._read_manifest_text(manifest)
+        assert len(text) == _MAX_MANIFEST_BYTES
 
     def test_manifest_written_utf8(self, tmp_path: Path) -> None:
         store = FilesystemProgramStore(tmp_path)

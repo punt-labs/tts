@@ -180,18 +180,21 @@ class FilesystemProgramStore:
 
         The manifest is opened ``O_NOFOLLOW`` so a symlinked ``manifest.json`` (a
         planted file pointing at an arbitrary target) raises ``OSError`` instead
-        of being read through. ``fstat`` on that same descriptor enforces the
-        ceiling before any bytes are pulled into memory, so an oversized (corrupt
-        or planted) manifest raises ``ValueError``. ``_scan_one`` catches both and
-        skips the album; ``open`` lets them surface as the corrupt-album error.
+        of being read through. The read itself is bounded to one byte past the
+        ceiling: a file that grows between the open and the read (a TOCTOU that a
+        trusted ``fstat`` size would miss) still cannot pull an unbounded amount
+        into memory, and a result over the ceiling raises ``ValueError``.
+        ``_scan_one`` catches both and skips the album; ``open`` lets them
+        surface as the corrupt-album error.
         """
         fd = os.open(manifest_path, os.O_RDONLY | os.O_NOFOLLOW)
-        with os.fdopen(fd, encoding="utf-8") as handle:
-            if os.fstat(fd).st_size > _MAX_MANIFEST_BYTES:
-                name = manifest_path.name
-                msg = f"manifest exceeds {_MAX_MANIFEST_BYTES} bytes: {name}"
-                raise ValueError(msg)
-            return handle.read()
+        with os.fdopen(fd, "rb") as handle:
+            raw = handle.read(_MAX_MANIFEST_BYTES + 1)
+        if len(raw) > _MAX_MANIFEST_BYTES:
+            name = manifest_path.name
+            msg = f"manifest exceeds {_MAX_MANIFEST_BYTES} bytes: {name}"
+            raise ValueError(msg)
+        return raw.decode("utf-8")
 
     def _contained_dir(self, directory: str) -> Path:
         """Return ``root/directory`` for a single validated segment, else raise.

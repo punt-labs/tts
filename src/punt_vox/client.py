@@ -766,9 +766,13 @@ class VoxClient:
     async def music_get(self, album_id: str, dest_dir: Path) -> Path:
         """Copy an album into *dest_dir* as ``<album-name>/`` of its parts.
 
-        Fetches the manifest, creates the album directory (refusing a collision,
-        D-1), then chunk-fetches every part and writes it atomically. On any
-        failure the half-written directory is removed, so a fault leaves nothing.
+        Fetches the manifest and refuses an album with no ready parts before
+        touching *dest_dir* -- exporting an empty album would leave a hollow
+        directory that then blocks a real export of the same album on the
+        collision guard. With parts to write, it creates the album directory
+        (refusing a collision, D-1), then chunk-fetches every part and writes it
+        atomically. On any failure the half-written directory is removed, so a
+        fault leaves nothing.
         """
         manifest = await self._command("music_manifest", album=album_id)
         with self._wire_guard():
@@ -783,6 +787,11 @@ class VoxClient:
                 ).value
                 for item in obj.require_list("parts")
             ]
+        if not parts:
+            # The manifest lists only ready parts, so an empty list means the album
+            # is still generating -- fail before mkdir so the CWD is left untouched.
+            msg = f"album {album_id} has no ready parts to export (still generating)"
+            raise ValueError(msg)
         target = dest_dir / album_name
         target.mkdir(parents=True)  # exist_ok=False: a collision raises (D-1)
         try:
