@@ -10,15 +10,19 @@ backing the active source; every live Part stays catalogued (F5).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NamedTuple, final
+from typing import TYPE_CHECKING, NamedTuple, Self, final
 
 import pytest
 
 from punt_vox.types_programs import Format
 from punt_vox.types_programs.mode import Mode
 from punt_vox.voxd.programs.album_id import AlbumId
+from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint
+from punt_vox.voxd.programs.catalog import Catalog
 from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
 from punt_vox.voxd.programs.library import MusicLibrary
+from punt_vox.voxd.programs.manifest import ManifestDraft, PartEntry
+from punt_vox.voxd.programs.part import PartStatus
 from punt_vox.voxd.programs.producer import (
     PartSpec,
     ProducerBadInputError,
@@ -31,11 +35,15 @@ from .conftest import FakeSleeper, QuietProducer, seed_album
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from punt_vox.voxd.programs.catalog import Album
+    from punt_vox.voxd.programs.manifest import AlbumManifest
     from punt_vox.voxd.programs.part import Part
     from punt_vox.voxd.programs.producer import Producer
+    from punt_vox.voxd.programs.store import PartStore, ProgramStore
 
 _POOL_SIZE = Format.PLAYLIST.pool_size
 _HOSTILE_PARTS = ["/etc/passwd", "../../../etc/x", "a/b.mp3", "..", "", "n\x00.mp3"]
+_HOSTILE_IDENTITIES = ["../../../etc/passwd", "a/b.mp3", ".."]
 
 
 @final
@@ -255,3 +263,136 @@ class TestRemove:
         fx = _fx(tmp_path)
         with pytest.raises(ValueError, match="no album named"):
             fx.library.remove(AlbumId("abcdef"), blocked=frozenset())
+
+
+@final
+class _RecordFailsPartStore:
+    """Wrap a real PartStore but raise ``OSError`` on ``record`` (a write fault)."""
+
+    __slots__ = ("_inner",)
+    _inner: PartStore
+
+    def __new__(cls, inner: PartStore) -> Self:
+        self = super().__new__(cls)
+        self._inner = inner
+        return self
+
+    def ready_parts(self) -> tuple[Part, ...]:
+        return self._inner.ready_parts()
+
+    def next_index(self) -> int:
+        return self._inner.next_index()
+
+    def write_target(self, index: int) -> Path:
+        return self._inner.write_target(index)
+
+    def record(self, entry: PartEntry) -> None:
+        del entry
+        raise OSError("disk full")
+
+    def manifest(self) -> AlbumManifest:
+        return self._inner.manifest()
+
+    def prepare(self) -> None:
+        self._inner.prepare()
+
+
+@final
+class _RecordFailsStore:
+    """A ProgramStore delegating to a real one whose created Part write faults."""
+
+    __slots__ = ("_inner",)
+    _inner: ProgramStore
+
+    def __new__(cls, inner: ProgramStore) -> Self:
+        self = super().__new__(cls)
+        self._inner = inner
+        return self
+
+    def scan(self) -> tuple[Album, ...]:
+        return self._inner.scan()
+
+    def open(self, directory: str) -> PartStore:
+        return self._inner.open(directory)
+
+    def create(self, draft: ManifestDraft) -> PartStore:
+        return _RecordFailsPartStore(self._inner.create(draft))
+
+    def delete(self, directory: str) -> None:
+        self._inner.delete(directory)
+
+
+def _seed_hostile_manifest(root: Path, identity: str, album_id: str = "cccccc") -> None:
+    """Persist an album whose manifest names a hostile Part file (as a corrupt disk)."""
+    draft = ManifestDraft(
+        album_id=AlbumId(album_id),
+        tags=AlbumTags(style="techno", vibe="ambient", name="hostile"),
+        fingerprint=PromptFingerprint("deadbeef"),
+        parts=(
+            PartEntry(index=1, file=identity, status=PartStatus.READY, duration_ms=1),
+        ),
+    )
+    FilesystemProgramStore(root).create(draft)
+
+
+class TestDuplicateName:
+    """``music_new`` refuses a curated name already in the catalog."""
+
+    async def test_duplicate_curated_name_is_rejected(self, tmp_path: Path) -> None:
+        fx = _fx(tmp_path)
+        await fx.library.new("first", name="dup")
+        with pytest.raises(ValueError, match="already exists"):
+            await fx.library.new("second", name="dup")
+        # The colliding second authoring created no album.
+        assert len(fx.service.catalog_albums()) == 1
+
+    async def test_unique_curated_name_still_succeeds(self, tmp_path: Path) -> None:
+        fx = _fx(tmp_path)
+        await fx.library.new("first", name="alpha")
+        await fx.library.new("second", name="beta")
+        assert len(fx.service.catalog_albums()) == 2
+
+    async def test_unnamed_pools_never_collide(self, tmp_path: Path) -> None:
+        """Two unnamed authorings get distinct auto-names -- no false rejection."""
+        fx = _fx(tmp_path)
+        await fx.library.new("first", name=None)
+        await fx.library.new("second", name=None)
+        assert len(fx.service.catalog_albums()) == 2
+
+
+class TestNewOrphanCleanup:
+    """A write fault during ``music_new`` leaves no orphan album directory."""
+
+    async def test_oserror_during_write_leaves_no_orphan(self, tmp_path: Path) -> None:
+        root = tmp_path / "programs"
+        inner = FilesystemProgramStore(root)
+        catalog = Catalog(inner.scan())
+        library = MusicLibrary(catalog, _RecordFailsStore(inner), root, QuietProducer())
+
+        with pytest.raises(OSError, match="disk full"):
+            await library.new("a prompt", name=None)
+
+        # The just-created directory was discarded: no orphan on disk or in scan.
+        assert list(root.glob("*")) == []
+        assert inner.scan() == ()
+
+
+class TestManifestContainment:
+    """``manifest`` refuses a hostile on-disk Part identity rather than stat outside."""
+
+    @pytest.mark.parametrize("identity", _HOSTILE_IDENTITIES)
+    async def test_manifest_rejects_hostile_part_identity(
+        self, tmp_path: Path, identity: str
+    ) -> None:
+        _seed_hostile_manifest(tmp_path / "programs", identity)
+        fx = _fx(tmp_path)  # scans the seeded album into the shared catalog
+        with pytest.raises(ValueError):
+            fx.library.manifest(AlbumId("cccccc"))
+
+    async def test_manifest_lists_a_normal_part(self, tmp_path: Path) -> None:
+        """A well-formed manifest still lists its parts with byte counts."""
+        fx = _fx(tmp_path)
+        album_id = await fx.library.new("a prompt", name="clean")
+        contents = fx.library.manifest(album_id)
+        assert [p.name for p in contents.parts] == ["001.mp3"]
+        assert contents.parts[0].byte_count > 0
