@@ -105,6 +105,18 @@ class TestRecRemove:
         asyncio.run(RecRemoveHandler(_store(tmp_path))({"id": "r1"}, ws))  # type: ignore[arg-type]
         assert sent[-1]["type"] == "error"
 
+    def test_non_string_ref_is_a_clean_error(self, tmp_path: Path) -> None:
+        """A non-string ``ref`` yields an error frame; the parse must not escape
+        the handler and tear the connection down."""
+        store = _store(tmp_path)
+        (store.root / "gone.mp3").write_bytes(b"bytes")
+        ws, sent = _capturing_ws()
+        asyncio.run(RecRemoveHandler(store)({"id": "r1", "ref": 123}, ws))  # type: ignore[arg-type]
+
+        assert sent[-1]["type"] == "error"
+        assert "must be a string" in str(sent[-1]["message"])
+        assert (store.root / "gone.mp3").exists()  # nothing removed
+
     @pytest.mark.parametrize(("kind", "ref"), sorted(_HOSTILE.items()))
     def test_hostile_ref_rejected_and_audited(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture, kind: str, ref: str

@@ -116,6 +116,16 @@ class TestRecordingFetch:
         asyncio.run(handler({"id": "f1"}, ws))  # type: ignore[arg-type]
         assert sent[-1]["type"] == "error"
 
+    def test_non_string_album_is_a_clean_error(self, tmp_path: Path) -> None:
+        """A non-string ``album`` yields an error frame -- the parse must not
+        escape the handler and tear the connection down."""
+        handler, _, _ = _handler(tmp_path)
+        ws, sent = _capturing_ws()
+        asyncio.run(handler({"id": "f1", "album": 123}, ws))  # type: ignore[arg-type]
+        assert sent[-1]["type"] == "error"
+        assert "must be a string" in str(sent[-1]["message"])
+        assert not [f for f in sent if f["type"] == "fetch_begin"]
+
 
 class TestMusicPartFetch:
     def test_streams_an_album_part(self, tmp_path: Path) -> None:

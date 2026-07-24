@@ -49,8 +49,8 @@ class FetchHandler(MessageHandler):
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Resolve the reference once (containment-checked), then stream in chunks."""
         reply = WireReply(websocket, str(msg.get("id", "")))
-        album = parse_optional_str(msg, "album")
         try:
+            album = parse_optional_str(msg, "album")
             path, label, kind = self._resolve(album, msg)
         except ValueError as exc:
             await reply.error(str(exc))

@@ -149,6 +149,20 @@ class TestPlayHandler:
         assert sent[-1]["type"] == "error"
         assert "requires a ref" in str(sent[-1]["message"])
 
+    def test_non_string_ref_is_a_clean_error(self, tmp_path: Path) -> None:
+        """A non-string ``ref`` yields an error frame; the parse must not escape
+        the handler and tear the connection down."""
+        store = RecordStore(tmp_path / "recordings")
+        playback = _playback_that_completes()
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {"type": "play", "id": "p1", "ref": 123}
+        asyncio.run(PlayHandler(playback=playback, store=store)(msg, ws))
+
+        assert sent[-1]["type"] == "error"
+        assert "must be a string" in str(sent[-1]["message"])
+        playback.enqueue.assert_not_awaited()
+
     def test_unknown_recording_is_an_error(self, tmp_path: Path) -> None:
         """A well-formed ref that does not exist in the store is refused."""
         store = RecordStore(tmp_path / "recordings")

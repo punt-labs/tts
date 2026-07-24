@@ -50,11 +50,11 @@ class PlayHandler(MessageHandler):
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Resolve a store reference, then hand it to the daemon-host playback."""
         reply = WireReply(websocket, str(msg.get("id", "")))
-        ref = parse_optional_str(msg, "ref")
-        if not ref:
-            await reply.error("play requires a ref")
-            return
         try:
+            ref = parse_optional_str(msg, "ref")
+            if not ref:
+                await reply.error("play requires a ref")
+                return
             path = self._store.resolve_ref(ref)
         except ValueError as exc:
             await reply.error(str(exc))

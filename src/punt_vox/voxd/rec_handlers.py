@@ -65,11 +65,11 @@ class RecRemoveHandler:
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Validate the ref, unlink the recording, and reply -- or error."""
         reply = WireReply(websocket, str(msg.get("id", "")))
-        ref = parse_optional_str(msg, "ref")
-        if not ref:
-            await reply.error("rec remove requires a ref")
-            return
         try:
+            ref = parse_optional_str(msg, "ref")
+            if not ref:
+                await reply.error("rec remove requires a ref")
+                return
             self._store.remove(ref)
         except (ValueError, FileNotFoundError) as exc:
             await reply.error(str(exc))
