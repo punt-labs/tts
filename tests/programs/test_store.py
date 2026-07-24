@@ -86,6 +86,34 @@ class TestCreateAndScan:
         assert [a.id.value for a in albums] == ["a3f1c9"]  # the healthy album survives
         assert any("corrupt manifest" in r.getMessage() for r in caplog.records)
 
+    def test_scan_skips_an_oversized_manifest(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # A giant planted manifest is rejected before read_text pulls it into
+        # memory, so one oversized file cannot OOM the daemon at boot scan; the
+        # rest of the catalog survives.
+        planted = tmp_path / "planted-dir"
+        planted.mkdir(parents=True)
+        (planted / "manifest.json").write_text(
+            "x" * (1024 * 1024 + 1), encoding="utf-8"
+        )
+        FilesystemProgramStore(tmp_path).create(_draft("a3f1c9", "lofi", "calm"))
+        with caplog.at_level(logging.ERROR):
+            albums = FilesystemProgramStore(tmp_path).scan()
+        assert [a.id.value for a in albums] == ["a3f1c9"]  # the healthy album survives
+        assert any("exceeds" in r.getMessage() for r in caplog.records)
+
+    def test_open_rejects_an_oversized_manifest(self, tmp_path: Path) -> None:
+        """``open`` refuses a manifest above the ceiling before reading it."""
+        store = FilesystemProgramStore(tmp_path)
+        draft = _draft("a3f1c9", "techno", "ambient")
+        store.create(draft)
+        (tmp_path / draft.locator / "manifest.json").write_text(
+            "x" * (1024 * 1024 + 1), encoding="utf-8"
+        )
+        with pytest.raises(ValueError, match="exceeds"):
+            store.open(draft.locator)
+
     def test_manifest_written_utf8(self, tmp_path: Path) -> None:
         store = FilesystemProgramStore(tmp_path)
         store.create(_draft("a3f1c9", "techno", "ambient", 1))

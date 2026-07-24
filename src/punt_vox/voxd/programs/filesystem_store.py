@@ -28,6 +28,10 @@ __all__ = ["FilesystemPartStore", "FilesystemProgramStore"]
 logger = logging.getLogger(__name__)
 
 _MANIFEST_NAME = "manifest.json"
+# A manifest is small JSON (album tags + up to a pool of Part entries); anything
+# past this ceiling is corrupt or a planted file, and is rejected before the read
+# so one giant manifest cannot exhaust daemon memory at scan time.
+_MAX_MANIFEST_BYTES = 1024 * 1024
 
 
 @final
@@ -120,7 +124,7 @@ class FilesystemProgramStore:
         if not manifest_path.is_file():
             msg = f"no saved album at directory {directory!r}"
             raise LookupError(msg)
-        manifest = AlbumManifest.from_json(manifest_path.read_text(encoding="utf-8"))
+        manifest = AlbumManifest.from_json(self._read_manifest_text(manifest_path))
         return FilesystemPartStore(path, manifest)
 
     def create(self, draft: ManifestDraft) -> FilesystemPartStore:
@@ -160,7 +164,7 @@ class FilesystemProgramStore:
             logger.debug("skipping album dir outside root: %s", directory)
             return None
         try:
-            obj = JsonObject.parse(manifest_path.read_text("utf-8"), "manifest")
+            obj = JsonObject.parse(self._read_manifest_text(manifest_path), "manifest")
             if obj.opt_str("id") is None:
                 logger.debug("skipping idless legacy album dir: %s", directory)
                 return None
@@ -168,6 +172,20 @@ class FilesystemProgramStore:
         except (ValueError, OSError) as exc:
             logger.error("skipping corrupt manifest in %s: %s", directory.name, exc)
             return None
+
+    @staticmethod
+    def _read_manifest_text(manifest_path: Path) -> str:
+        """Return a manifest's UTF-8 text, rejecting a file above the ceiling.
+
+        The ``stat`` guard runs before ``read_text`` so an oversized (corrupt or
+        planted) manifest raises ``ValueError`` without ever being pulled into
+        memory. ``_scan_one`` catches that and skips the album; ``open`` lets it
+        surface as the corrupt-album error.
+        """
+        if manifest_path.stat().st_size > _MAX_MANIFEST_BYTES:
+            msg = f"manifest exceeds {_MAX_MANIFEST_BYTES} bytes: {manifest_path.name}"
+            raise ValueError(msg)
+        return manifest_path.read_text(encoding="utf-8")
 
     def _contained_dir(self, directory: str) -> Path:
         """Return ``root/directory`` for a single validated segment, else raise.

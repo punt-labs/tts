@@ -1562,10 +1562,10 @@
   "src/punt_vox/voxd/programs/filesystem_store.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.61,
+    "avg_params": 0.63,
     "max_complexity": 5.0,
-    "avg_complexity": 1.67,
-    "module_size": 160.0,
+    "avg_complexity": 1.68,
+    "module_size": 176.0,
     "classes_per_module": 2.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
