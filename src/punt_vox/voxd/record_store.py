@@ -201,8 +201,13 @@ class RecordStore:
         Only a cross-filesystem rename (``EXDEV``) warrants the copy fallback;
         for any other ``OSError`` (``EACCES``, ``ENOENT``, ...) the copy path
         would not help and would mask the real cause, so re-raise it.
+
+        The byte count is read from the *source* before the rename: reading
+        ``dest`` afterwards would report a concurrent same-name write's size, not
+        the bytes this call landed (mirrors the cached copy path).
         """
         try:
+            byte_count = source.stat().st_size
             source.replace(dest)
         except OSError as exc:
             if exc.errno == errno.EXDEV:
@@ -211,7 +216,7 @@ class RecordStore:
         # An ephemeral source may not be private; the copy path's mkstemp temp is
         # 0600, so match that here to keep the recording private.
         dest.chmod(0o600)
-        return RecordWrite(path=dest, byte_count=dest.stat().st_size)
+        return RecordWrite(path=dest, byte_count=byte_count)
 
     @staticmethod
     def _copy(source: Path, dest: Path, *, cached: bool) -> RecordWrite:

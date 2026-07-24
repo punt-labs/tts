@@ -287,6 +287,30 @@ class TestPlacement:
 
         assert not src.exists()
 
+    def test_move_reports_this_calls_bytes_not_a_racing_write(
+        self, store: RecordStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The reported size is the bytes this call wrote, not a racing dest write."""
+        src = tmp_path / "mine.mp3"
+        src.write_bytes(b"mine!")  # 5 bytes -- what THIS call lands
+
+        real_replace = Path.replace
+
+        def racing_replace(self: Path, target: str | Path) -> Path:
+            # A concurrent same-name write lands a larger file at dest right after
+            # our rename; a byte count read from dest afterwards would misreport it.
+            result = real_replace(self, target)
+            Path(target).write_bytes(b"someone-elses-larger-bytes")
+            return result
+
+        monkeypatch.setattr(Path, "replace", racing_replace)
+
+        write = store.place(source=src, text="t", name="out.mp3", cached=False)
+
+        assert write.byte_count == 5
+
+        assert not src.exists()
+
     def test_fresh_uses_move_and_lands_0600(
         self, store: RecordStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
