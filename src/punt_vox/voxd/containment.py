@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Self, final
 
 from punt_vox.bare_name import BareName
+from punt_vox.voxd.path_status import PathStatus
 
 __all__ = ["ContainmentRoot"]
 
@@ -78,3 +79,19 @@ class ContainmentRoot:
         file outside the store.
         """
         return self._root / BareName(name, self._label).value
+
+    def contained_regular_file(self, name: str) -> Path:
+        """Return the direct child ``name`` only if it is a regular file, unfollowed.
+
+        The read counterpart of :meth:`contained_child`: it takes the same
+        bare-name gate, then requires the child be a regular file via a no-follow
+        stat. A symlink (even one pointing at an in-root file), a directory, or a
+        well-formed but absent name raises ``ValueError`` rather than being
+        followed to whatever it targets -- the no-symlink read invariant a
+        fetch/measure shares, so an entry is served for itself and never a link's
+        target. Any other stat ``OSError`` (a permission/device fault) propagates.
+        """
+        child = self.contained_child(name)
+        if not PathStatus.of(child, follow_symlinks=False).is_regular_file:
+            raise ValueError(f"no {self._label} {name!r}")
+        return child

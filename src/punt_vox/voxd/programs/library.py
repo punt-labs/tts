@@ -132,15 +132,14 @@ class MusicLibrary:
         return AlbumContents.from_album(album, root)
 
     def resolve_part(self, album_id: AlbumId, part_name: str) -> Path:
-        """Resolve one album part to a contained path (catalog id + bare part name).
+        """Resolve one album part to a contained regular file, never a symlink.
 
-        Catalog-resolve the album, then bare-name-validate ``part_name`` *inside*
-        the resolved album directory -- the album id is never a validated path,
-        the part name always is (design F2).
+        Validates ``part_name`` inside the catalog-resolved album dir, requiring a
+        non-symlink regular file (design F2, ``contained_regular_file``).
         """
         album = self._require(album_id)
         album_dir = self._root / album.locator
-        return ContainmentRoot(album_dir, _PART_LABEL).resolve(part_name)
+        return ContainmentRoot(album_dir, _PART_LABEL).contained_regular_file(part_name)
 
     def remove(self, album_id: AlbumId, *, blocked: frozenset[str]) -> None:
         """Delete a catalog album, refusing one whose parts back the active source.

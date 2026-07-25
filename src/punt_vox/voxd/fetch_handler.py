@@ -72,14 +72,14 @@ class FetchHandler(MessageHandler):
     def _resolve_existing(self, msg: dict[str, object]) -> tuple[Path, str]:
         """Return ``(path, echo_ref)`` for an existing regular file, or raise.
 
-        Resolves the reference once (containment-checked), then classifies the
-        result via :class:`PathStatus`: an absent path (``ENOENT``) is a client
-        rejection (``ValueError`` -> "no such recording/part"), while any other
-        stat ``OSError`` propagates to the caller as an operational fault.
+        Resolves the reference once (containment-checked), then classifies it via
+        :class:`PathStatus` with ``follow_symlinks=False`` -- a symlink entry is
+        non-regular and rejected (never served its target), an absent path is a
+        client "no such recording/part", and any other stat ``OSError`` faults.
         """
         album = parse_optional_str(msg, "album")
         path, label, kind = self._resolve(album, msg)
-        if not PathStatus.of(path).is_regular_file:
+        if not PathStatus.of(path, follow_symlinks=False).is_regular_file:
             raise ValueError(f"no {kind} named {label!r}")
         return path, label
 

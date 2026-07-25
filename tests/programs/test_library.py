@@ -312,7 +312,36 @@ class TestManifestAndResolve:
         resolved = fx.library.resolve_part(album_id, "001.mp3")
         album = fx.service.catalog.by_id(album_id)
         assert album is not None
-        assert resolved == (fx.root / album.locator / "001.mp3").resolve()
+        # Resolved as an immediate child (no ``.resolve()`` follow), so a symlink
+        # part is never dereferenced -- the path is the direct child itself.
+        assert resolved == fx.root / album.locator / "001.mp3"
+        assert resolved.read_bytes()  # a real regular file, streamable
+
+    async def test_resolve_part_rejects_symlink_without_following(
+        self, tmp_path: Path
+    ) -> None:
+        """A part that is a symlink is refused -- its target is never served.
+
+        Mirrors ``PartFile.measured`` rejecting a symlink: ``resolve_part`` must
+        not follow a symlinked part to whatever it points at, even an in-root
+        file, because the store's no-symlink invariant forbids symlink parts.
+        """
+        fx = _fx(tmp_path)
+        album_id = await fx.library.new("a prompt", name=None)
+        album = fx.service.catalog.by_id(album_id)
+        assert album is not None
+        secret = tmp_path / "secret.bin"
+        secret.write_bytes(b"x" * 4096)
+        (fx.root / album.locator / "link.mp3").symlink_to(secret)
+        with pytest.raises(ValueError, match="no part name"):
+            fx.library.resolve_part(album_id, "link.mp3")
+
+    async def test_resolve_part_missing_is_a_clean_error(self, tmp_path: Path) -> None:
+        """A well-formed but absent part is the clean not-found, not a probe."""
+        fx = _fx(tmp_path)
+        album_id = await fx.library.new("a prompt", name=None)
+        with pytest.raises(ValueError, match="no part name"):
+            fx.library.resolve_part(album_id, "999.mp3")
 
     @pytest.mark.parametrize("hostile", _HOSTILE_PARTS)
     async def test_resolve_part_rejects_hostile_names(

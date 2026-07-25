@@ -214,3 +214,27 @@ class TestMusicPartFetch:
         asyncio.run(handler(msg, ws))
         assert sent[-1]["type"] == "error"
         assert "requires a part" in str(sent[-1]["message"])
+
+    def test_symlink_part_is_refused_not_followed(self, tmp_path: Path) -> None:
+        """A symlink part is rejected before the first byte -- its target's bytes
+        are never streamed.
+
+        The fetch path classifies without following symlinks, the same no-symlink
+        invariant the record store's ``entries``/``remove`` enforce; a part that
+        is a symlink -- even to an in-root file -- is a non-regular file and yields
+        a clean error, so a caller can never read a file through an aliasing link.
+        """
+        handler, _, lib = _handler(tmp_path)
+        aid = asyncio.run(lib.new("a prompt", None))
+        album = lib.manifest(aid)
+        secret = tmp_path / "secret.bin"
+        secret.write_bytes(b"top-secret-bytes")
+        (tmp_path / "programs" / album.name / "link.mp3").symlink_to(secret)
+
+        ws, sent = _capturing_ws()
+        msg: dict[str, object] = {"id": "f9", "album": aid.value, "part": "link.mp3"}
+        asyncio.run(handler(msg, ws))
+
+        assert sent[-1]["type"] == "error"
+        assert not [f for f in sent if f["type"] == "fetch_begin"]
+        assert b"top-secret-bytes" not in _reassemble(sent)
