@@ -23,10 +23,13 @@ class WireReply:
 
     Every store handler -- record, play, fetch -- replies through this one
     object. :meth:`send` stamps the request id and survives a client that has
-    already disconnected; :meth:`error` additionally audit-logs the rejection at
-    WARNING, so a blocked probe (a hostile record name, or a play/fetch ref that
-    escapes the store or names no recording) is greppable in vox.log instead of
-    silent, while a clean disconnect stays a quiet end-of-request.
+    already disconnected. Two audit-logged failure paths share one wire frame
+    but classify the cause differently: :meth:`error` records a rejected client
+    request at WARNING (a hostile record name, or a play/fetch ref that escapes
+    the store or names no recording), while :meth:`fault` records a server-side
+    operational failure at ERROR (synthesis or a store write broke). Both are
+    greppable in vox.log instead of silent, while a clean disconnect stays a
+    quiet end-of-request.
     """
 
     __slots__ = ("_request_id", "_websocket")
@@ -54,7 +57,13 @@ class WireReply:
         return await safe_send(self._websocket, {**payload, "id": self._request_id})
 
     async def error(self, message: str) -> bool:
-        """Log this rejection at WARNING (sanitized) and send its error frame.
+        """Audit a rejected CLIENT request at WARNING (sanitized) and send its frame.
+
+        A rejection means the daemon refused a malformed or hostile request --
+        a hostile record name, a play/fetch ref that escapes the store or names
+        no recording. For a server-side operational failure (synthesis or a
+        store write broke) use :meth:`fault` instead, so the audit trail does
+        not blame the client for a daemon-side error.
 
         *message* may embed an attacker-controlled name or ref, so it is
         sanitized before it reaches the log -- newlines and control characters
@@ -65,6 +74,22 @@ class WireReply:
         """
         logger.warning(
             "rejected op id=%r: %s", self._request_id, self._sanitize(message)
+        )
+        return await self.send({"type": "error", "message": message})
+
+    async def fault(self, message: str) -> bool:
+        """Audit a server-side OPERATIONAL failure at ERROR and send its frame.
+
+        A fault is a daemon-side error -- synthesis failed, a store write failed
+        -- as opposed to :meth:`error`, which records a rejected client request.
+        The client-facing frame is byte-for-byte identical to :meth:`error`'s;
+        only the audit classification differs, so a debugger reading vox.log
+        sees a server fault logged as "operation failed", never mislabeled
+        "rejected op". The message is sanitized on the same log-injection path,
+        and logged even when the peer has gone.
+        """
+        logger.error(
+            "operation failed id=%r: %s", self._request_id, self._sanitize(message)
         )
         return await self.send({"type": "error", "message": message})
 

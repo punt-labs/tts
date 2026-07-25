@@ -56,9 +56,9 @@ class _SpeechRequest:
     def from_msg(cls, msg: dict[str, object], websocket: WebSocket) -> Self:
         """Parse a wire message into a request, validating at the boundary.
 
-        A non-string typed field raises ``ValueError`` (via the parse helpers)
-        and empty text is rejected here, so both handlers share one validation
-        point and neither needs its own text guard.
+        A string-typed field raises ``ValueError`` on a non-string value while a
+        numeric field accepts a JSON number (via the parse helpers); empty text
+        is rejected here, so both handlers share one text-validation point.
         """
         text = parse_required_str(msg, "text")
         if not text:
