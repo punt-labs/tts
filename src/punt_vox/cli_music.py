@@ -1,10 +1,9 @@
-"""The consume-only ``vox music`` CLI -- play and manage saved audio albums.
+"""The ``vox music`` CLI -- play saved albums and author the catalog.
 
-The CLI never authors (no LLM, no generation): it lists, plays a Selection,
-advances, and shows status. :class:`MusicCli` is a humble object testable with an
-in-memory gateway and formatter; every read and command crosses to ``voxd`` via a
-:class:`ProgramGateway`. The daemon owns the catalog -- the CLI never touches the
-store directly (R2 layering fix).
+Playback verbs (list, play, next, status) drive a Selection on the running
+Program; authoring verbs (new, get, remove) mutate the saved-album catalog.
+:class:`MusicCli` is a humble object -- every read and command crosses to
+``voxd`` via a gateway; the daemon owns the catalog, the CLI never touches it.
 """
 
 from __future__ import annotations
@@ -27,7 +26,7 @@ from punt_vox.types_programs.status import ProgramStatus
 __all__ = ["MusicCli", "build_music_app"]
 
 # A client error, a raw WebSocket failure (stale-token handshake / mid-request
-# close -- matching the MCP tools, F1), or a bad name (ValueError) fails cleanly.
+# close, matching the MCP tools), or a bad name (ValueError) fails cleanly.
 _GATEWAY_ERRORS = (
     VoxdConnectionError,
     VoxdProtocolError,
@@ -166,7 +165,7 @@ class MusicCli:
 
         The bare positional is *id-or-name* (a saved id, else the saved-name
         radio); the ``--style``/``--vibe``/``--name`` selectors keep the shipped
-        per-vibe, cross-genre union radio (D-3, both resolve).
+        per-vibe, cross-genre union radio -- both resolve.
         """
         request = SelectionRequest(style=style, vibe=vibe, name=name, id=album_id)
         try:
@@ -213,7 +212,7 @@ class MusicCli:
         self,
         album_id: Annotated[str, typer.Argument(help="Album id to delete.")],
     ) -> None:
-        """Delete a catalog album by id (a playing album is refused, D-2)."""
+        """Delete a saved album by id; a playing album is refused."""
         try:
             self._catalog_factory().remove(album_id)
         except _GATEWAY_ERRORS as exc:
@@ -258,7 +257,7 @@ def build_music_app(formatter: OutputFormatter) -> typer.Typer:
     """Return the ``vox music`` Typer group with bound methods (no wrappers)."""
     cli = MusicCli(formatter)
     app = typer.Typer(
-        help="Play and manage saved audio albums (consume-only).",
+        help="Play saved albums and author the catalog (new/get/remove).",
         no_args_is_help=True,
     )
     app.command("new")(cli.new)

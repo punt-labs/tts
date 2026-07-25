@@ -1,4 +1,4 @@
-"""Tests for the consume-only ``vox music`` CLI (cli_music.MusicCli).
+"""Tests for the ``vox music`` CLI (cli_music.MusicCli).
 
 MusicCli is a humble object: each command method is driven directly with an
 in-memory FakeProgramGateway and a mock formatter -- no daemon, no store -- so
@@ -9,12 +9,14 @@ CliRunner smoke tests confirm build_music_app wires the Typer group.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Self, final
 from unittest.mock import MagicMock
 
 import pytest
 import typer
+from _cli_introspect import app_help_texts
 from _program_fakes import FakeProgramGateway
 from typer.testing import CliRunner
 from websockets.exceptions import WebSocketException
@@ -219,6 +221,17 @@ def test_music_group_exposes_the_unified_verb_set() -> None:
     app = build_music_app(OutputFormatter())
     names = {c.name for c in app.registered_commands if c.name is not None}
     assert names == {"new", "list", "play", "get", "remove", "next", "status"}
+
+
+# A design-decision label (D-1..D-9, DES-0xx) or the stale "consume-only" claim
+# in user-facing help is a defect: help is the manual, so it must read plainly.
+_INTERNAL_LABEL = re.compile(r"\bD-[0-9]\b|\bDES-|consume-only")
+
+
+def test_music_help_carries_no_internal_labels() -> None:
+    """No group/verb/option help leaks a design label or stale phrasing."""
+    for text in app_help_texts(build_music_app(OutputFormatter())):
+        assert not _INTERNAL_LABEL.search(text), text
 
 
 # ---------------------------------------------------------------------------

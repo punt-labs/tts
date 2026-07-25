@@ -265,7 +265,7 @@ class RecCli:
         if dest.exists():
             # Fast-fail the common case before the slow fetch; _land_no_clobber's
             # exclusive link is the race-free guarantee. The name is the store's,
-            # not the user's choosing, so a silent overwrite is data loss (D-1).
+            # not the user's choosing, so a silent overwrite is data loss.
             self._fail(f"rec get: ./{ref} exists")
         data = self._run(lambda g: g.get(ref))
         try:
@@ -317,7 +317,7 @@ class RecCli:
 
         ``os.open`` with ``O_CREAT | O_EXCL`` atomically reserves the name and
         raises ``FileExistsError`` if it already exists, so a file racing in
-        after the caller's absence check is never clobbered (D-1). Unlike
+        after the caller's absence check is never clobbered. Unlike
         ``os.link``, it needs no hard-link support (FAT/exFAT, network, FUSE). A
         mid-write fault unlinks *dest* and re-raises, leaving no partial file.
         """

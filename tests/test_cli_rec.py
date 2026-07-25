@@ -2,7 +2,7 @@
 
 RecCli is a humble object: each verb is driven directly with an in-memory
 RecordGateway and a mock formatter -- no daemon, no socket -- so new/list/play/
-get/remove behaviour (bare-id output, the D-1 collision refusal, byte-correct
+get/remove behaviour (bare-id output, the collision refusal, byte-correct
 get, error paths) is asserted without a wire. CliRunner tests confirm
 build_rec_app wires the group and that the old top-level verbs are gone.
 """
@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import errno
 import io
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, Self, final
 from unittest.mock import MagicMock
 
 import pytest
 import typer
-from _cli_introspect import command_opts
+from _cli_introspect import app_help_texts, command_opts
 from typer.testing import CliRunner
 from websockets.exceptions import WebSocketException
 
@@ -237,7 +238,7 @@ def test_play_websocket_error_is_clean_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# get -- write ./<id>, refuse collision (D-1), byte-correct, no partial
+# get -- write ./<id>, refuse collision, byte-correct, no partial
 # ---------------------------------------------------------------------------
 
 
@@ -280,7 +281,7 @@ def test_get_collision_errors_and_leaves_existing_file(
 
     with pytest.raises(typer.Exit):
         cli.get("rec.mp3")
-    assert existing.read_bytes() == b"ORIGINAL"  # untouched (D-1)
+    assert existing.read_bytes() == b"ORIGINAL"  # untouched
     assert fake.calls == []  # refused before the fetch
 
 
@@ -302,7 +303,7 @@ def test_get_file_racing_in_mid_fetch_is_not_clobbered(
 
     The gateway lands ./rec.mp3 during the fetch (a second process writing the
     name), so the exclusive-link landing must refuse rather than clobber it --
-    closing the TOCTOU gap between the check and the write (D-1).
+    closing the TOCTOU gap between the check and the write.
     """
     monkeypatch.chdir(tmp_path)
     raced = tmp_path / "rec.mp3"
@@ -431,3 +432,14 @@ def test_output_dir_kept_only_on_install_desktop() -> None:
 def test_rec_app_no_subcommand_shows_help() -> None:
     result = CliRunner().invoke(build_rec_app(OutputFormatter()), [])
     assert result.exit_code != 0 or "Usage" in result.output
+
+
+# A design-decision label (D-1..D-9, DES-0xx) in user-facing help is a defect:
+# help is the manual and must read plainly, with no internal shorthand.
+_INTERNAL_LABEL = re.compile(r"\bD-[0-9]\b|\bDES-")
+
+
+def test_rec_help_carries_no_internal_labels() -> None:
+    """No group/verb/option help leaks a design label."""
+    for text in app_help_texts(build_rec_app(OutputFormatter())):
+        assert not _INTERNAL_LABEL.search(text), text
