@@ -260,8 +260,7 @@ class RecCli:
 
     def get(self, ref: _RefArg) -> None:
         """Copy recording *ref* into the current directory under its store name."""
-        safe = self._bare_ref(ref)
-        dest = Path.cwd() / safe
+        dest = Path.cwd() / self._bare_ref(ref)
         if dest.exists():
             # Fast-fail the common case before the slow fetch; _land_no_clobber's
             # exclusive link is the race-free guarantee. The name is the store's,
@@ -319,13 +318,14 @@ class RecCli:
         raises ``FileExistsError`` if it already exists, so a file racing in
         after the caller's absence check is never clobbered. Unlike
         ``os.link``, it needs no hard-link support (FAT/exFAT, network, FUSE). A
-        mid-write fault unlinks *dest* and re-raises, leaving no partial file.
+        mid-write fault *or* interrupt unlinks *dest* and re-raises, leaving none.
         """
         fd = os.open(dest, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         try:
             with os.fdopen(fd, "wb") as handle:
                 handle.write(data)
-        except OSError:
+        except BaseException:
+            # BaseException, not just OSError: a SIGINT mid-write must strand nothing.
             dest.unlink(missing_ok=True)
             raise
 

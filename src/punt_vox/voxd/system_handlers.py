@@ -88,12 +88,8 @@ class VoicesHandler(MessageHandler):
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """List available voices for the requested provider."""
-        # Reply through WireReply so both frames survive a gone peer -- a send on
-        # a disconnected socket no-ops rather than raising WebSocketDisconnect out
-        # of the handler and tearing the connection down, matching the store
-        # handlers. Parse inside the try so the expected domain failures classify
-        # the same way the store handlers do (library_handlers, rec_handlers): a
-        # ValueError is a rejected request, a LookupError/OSError an operational fault.
+        # Reply via WireReply (a gone peer no-ops, not a teardown), and parse inside
+        # the try so domain failures classify like the store handlers.
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
             provider_name = (
@@ -101,18 +97,16 @@ class VoicesHandler(MessageHandler):
             )
             provider = get_provider(provider_name, config_dir=None)
             voice_list = await asyncio.to_thread(provider.list_voices)
-        except ValueError as exc:
-            # A parse rejection (non-string provider) or an unknown provider name
-            # is a client request error, not an operational fault: reply.error is
-            # id-stamped, disconnect-safe, and WARNING-audited -- no full traceback.
-            await reply.error(str(exc))
+        except (ValueError, LookupError, OSError) as exc:
+            # Shared taxonomy: ValueError = rejected client request (WARNING),
+            # LookupError/OSError = server-side fault (ERROR).
+            await reply.reject_or_fault(exc)
             return
-        except (LookupError, OSError) as exc:
-            # An operational failure resolving the provider or reading its voice
-            # list -- not a client rejection but a server-side fault: reply.fault is
-            # the id-stamped ERROR "operation failed" audit, matching the split the
-            # store handlers use. A type outside this set propagates to the router.
-            await reply.fault(str(exc))
+        except Exception:  # PY-EH-6 request-handler boundary: must not tear the socket
+            # A provider SDK can raise outside the trio (boto3 ClientError); the
+            # router has no guard, so log the traceback and reply a generic fault.
+            logger.exception("voices op failed id=%r", reply.request_id)
+            await reply.fault("operation failed")
             return
         await reply.send(
             {"type": "voices", "provider": provider_name, "voices": voice_list}

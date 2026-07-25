@@ -157,6 +157,45 @@ class TestVoicesHandler:
         assert not any("rejected op" in r.getMessage() for r in caplog.records)
 
     @pytest.mark.asyncio
+    async def test_unexpected_provider_exception_is_a_fault_not_a_teardown(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A provider exception outside the trio is caught, faulted, and logged.
+
+        A vendor SDK can raise outside ValueError/LookupError/OSError (boto3's
+        ClientError, an ElevenLabs client error). The router awaits this handler
+        with no guard of its own, so the broad boundary catch must convert the
+        escape into an id-stamped fault frame -- connection intact -- and log the
+        traceback, never let it propagate and tear the shared socket down.
+        Reaching the assertions without a raise is the connection-intact check.
+        The wire message stays generic; the vendor detail lives in the log only.
+        """
+
+        def boom(*_args: object, **_kwargs: object) -> object:
+            raise RuntimeError("unexpected vendor failure")
+
+        monkeypatch.setattr("punt_vox.voxd.system_handlers.get_provider", boom)
+        ws = _CollectingWs()
+        with caplog.at_level(logging.ERROR, logger="punt_vox.voxd"):
+            await VoicesHandler()(
+                {"id": "v3", "provider": "polly"}, cast("WebSocket", ws)
+            )
+
+        assert ws.sent[-1]["type"] == "error"
+        assert ws.sent[-1]["id"] == "v3"
+        # Generic on the wire -- the RuntimeError text never leaks to the client.
+        assert ws.sent[-1]["message"] == "operation failed"
+        # The full traceback is logged for the audit trail (logger.exception)...
+        assert any(
+            r.levelno == logging.ERROR
+            and r.name == "punt_vox.voxd.system_handlers"
+            and r.exc_info is not None
+            for r in caplog.records
+        )
+        # ...and it audits as an operational fault, never a client rejection.
+        assert not any("rejected op" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
     async def test_gone_peer_during_send_does_not_raise(self) -> None:
         """A peer gone while the handler replies is absorbed by WireReply.
 

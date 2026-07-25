@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import errno
 import io
+import os
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, Self, final
@@ -319,6 +320,42 @@ def test_get_file_racing_in_mid_fetch_is_not_clobbered(
     with pytest.raises(typer.Exit):
         cli.get("rec.mp3")
     assert raced.read_bytes() == b"RACED-IN"  # exclusive link refused to clobber
+
+
+def test_get_interrupt_mid_write_leaves_no_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A KeyboardInterrupt mid-write strands no file, so a retry is not blocked.
+
+    O_EXCL reserves the final path before the write, so a non-OSError interrupt
+    (SIGINT) partway through would otherwise leave a truncated file that the
+    guard reads as an existing target -- a retry then fails "exists". The
+    BaseException cleanup unlinks *dest* on ANY interruption, so nothing is left
+    and the guard stays honest.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    class _Interrupting:
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def write(self, _data: bytes) -> int:
+            raise KeyboardInterrupt
+
+    def fake_fdopen(fd: int, *_args: object, **_kwargs: object) -> _Interrupting:
+        os.close(fd)  # release the real descriptor the O_EXCL open reserved
+        return _Interrupting()
+
+    monkeypatch.setattr("punt_vox.cli_rec.os.fdopen", fake_fdopen)
+    cli, _ = _cli(InMemoryRecordGateway({"rec.mp3": b"DATA"}))
+
+    with pytest.raises(KeyboardInterrupt):
+        cli.get("rec.mp3")
+    # The interrupt left nothing at the final path -- the O_EXCL guard is clear.
+    assert not (tmp_path / "rec.mp3").exists()
 
 
 def test_get_does_not_require_hardlink_support(
