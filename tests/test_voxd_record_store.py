@@ -259,6 +259,51 @@ class TestEnumerateAndRemove:
 
         assert not (store.root / "dangling.mp3").is_symlink()
 
+    def test_entries_access_fault_propagates_not_empty(
+        self, store: RecordStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A root that exists but cannot be stat'd raises, never a false empty list.
+
+        A boolean ``is_dir()`` swallows the ``PermissionError`` and reports an
+        empty store; classifying through PathStatus lets the fault propagate so
+        ``RecListHandler`` turns it into a fault frame rather than silence.
+        """
+        store.root.mkdir(parents=True)
+        real_stat = Path.stat
+
+        def denied(self: Path, *, follow_symlinks: bool = True) -> object:
+            if self == store.root:
+                raise PermissionError(errno.EACCES, "permission denied")
+            return real_stat(self, follow_symlinks=follow_symlinks)
+
+        monkeypatch.setattr(Path, "stat", denied)
+        with pytest.raises(PermissionError, match="permission denied"):
+            store.entries()
+
+    def test_remove_access_fault_propagates_not_not_found(
+        self, store: RecordStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A classify ``PermissionError`` propagates instead of reading "not found".
+
+        ``is_symlink``/``is_file`` both answer False on ``EACCES``, mislabeling an
+        access fault as a benign missing recording (a client-error rejection);
+        classifying through PathStatus lets the ``OSError`` surface so
+        ``RecRemoveHandler`` faults it.
+        """
+        store.root.mkdir(parents=True)
+        target = store.root / "guarded.mp3"
+        target.write_bytes(b"x")
+        real_stat = Path.stat
+
+        def denied(self: Path, *, follow_symlinks: bool = True) -> object:
+            if self == target:
+                raise PermissionError(errno.EACCES, "permission denied")
+            return real_stat(self, follow_symlinks=follow_symlinks)
+
+        monkeypatch.setattr(Path, "stat", denied)
+        with pytest.raises(PermissionError, match="permission denied"):
+            store.remove("guarded.mp3")
+
 
 class TestPlacement:
     """place() lands audio atomically in the root and reports its size."""

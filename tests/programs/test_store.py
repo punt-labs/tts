@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 from collections.abc import Callable
@@ -88,6 +89,27 @@ class TestCreateAndScan:
 
     def test_scan_empty_root(self, tmp_path: Path) -> None:
         assert FilesystemProgramStore(tmp_path / "missing").scan() == ()
+
+    def test_scan_access_fault_propagates_not_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A root that exists but cannot be stat'd raises, never a false empty scan.
+
+        A boolean ``is_dir()`` swallows the ``PermissionError`` and boots with a
+        silently empty catalog; classifying through PathStatus lets the fault
+        surface at startup instead of masquerading as an empty music library.
+        """
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        real_stat = Path.stat
+
+        def denied(self: Path, *, follow_symlinks: bool = True) -> object:
+            if self == tmp_path:
+                raise PermissionError(errno.EACCES, "permission denied")
+            return real_stat(self, follow_symlinks=follow_symlinks)
+
+        monkeypatch.setattr(Path, "stat", denied)
+        with pytest.raises(PermissionError, match="permission denied"):
+            FilesystemProgramStore(tmp_path).scan()
 
     def test_scan_skips_idless_legacy_dir(self, tmp_path: Path) -> None:
         # A pre-change directory with no id in its manifest is invisible to scan.
@@ -235,6 +257,30 @@ class TestOpen:
         store = FilesystemProgramStore(tmp_path)
         with pytest.raises(LookupError, match="no saved album"):
             store.open("ghost-000000")
+
+    def test_open_access_fault_propagates_not_lookup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A manifest that cannot be stat'd raises ``OSError``, not ``LookupError``.
+
+        A boolean ``is_file()`` swallows the ``PermissionError`` and reports "no
+        saved album" -- a client rejection; classifying through PathStatus lets the
+        fault surface so the command boundary faults it as a server-side failure.
+        """
+        store = FilesystemProgramStore(tmp_path)
+        draft = _draft("a3f1c9", "techno", "ambient")
+        store.create(draft)
+        manifest = tmp_path / draft.locator / "manifest.json"
+        real_stat = Path.stat
+
+        def denied(self: Path, *, follow_symlinks: bool = True) -> object:
+            if self == manifest:
+                raise PermissionError(errno.EACCES, "permission denied")
+            return real_stat(self, follow_symlinks=follow_symlinks)
+
+        monkeypatch.setattr(Path, "stat", denied)
+        with pytest.raises(PermissionError, match="permission denied"):
+            store.open(draft.locator)
 
     def test_create_rejects_a_duplicate_directory(self, tmp_path: Path) -> None:
         store = FilesystemProgramStore(tmp_path)

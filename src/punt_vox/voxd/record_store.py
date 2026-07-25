@@ -30,6 +30,7 @@ from typing import Self, final
 
 from punt_vox.types import generate_filename
 from punt_vox.voxd.containment import ContainmentRoot
+from punt_vox.voxd.path_status import PathStatus
 
 __all__ = ["RecordStore", "RecordWrite"]
 
@@ -130,9 +131,11 @@ class RecordStore:
 
         Lists only the files directly in the ``0700`` root -- no recursion and no
         following a symlink out of it -- so the enumeration cannot leak a path the
-        client could never have named. A missing root is an empty store.
+        client could never have named. A missing root is an empty store; a root
+        that exists but cannot be read raises, so an access fault is never masked
+        as an empty listing (``RecListHandler`` turns the ``OSError`` into a fault).
         """
-        if not self._root.is_dir():
+        if not PathStatus.of(self._root).is_directory:
             return ()
         # Build the shared bare-name validator once; every child is judged by the
         # same rules ``resolve_ref``/``remove`` apply, so list and operate agree.
@@ -183,13 +186,16 @@ class RecordStore:
         A delete can therefore never reach a recording elsewhere in the root or a
         file outside it. A well-formed but absent recording raises
         ``FileNotFoundError`` so a client can trust a success; an ``OSError`` from
-        the unlink (a permission or device fault) propagates unchanged.
+        the classify or the unlink (a permission or device fault) propagates
+        unchanged -- an access fault is never mislabeled a benign "not found".
         """
         path = self._child_within_root(ref)
-        # ``is_symlink`` (no follow) accepts a link entry -- even a broken one --
-        # so its removal deletes the link; ``is_file`` accepts a real recording.
-        # A directory or an absent name matches neither and is "not found".
-        if not path.is_symlink() and not path.is_file():
+        # A no-follow classify accepts a link entry (even a broken one) so its
+        # removal deletes the link, and a real recording; a directory or an absent
+        # name matches neither and is "not found". Classifying from one stat means
+        # a ``PermissionError`` surfaces rather than reading as a false "absent".
+        status = PathStatus.of(path, follow_symlinks=False)
+        if not (status.is_symlink or status.is_regular_file):
             msg = f"no recording named {ref!r}"
             raise FileNotFoundError(msg)
         path.unlink()

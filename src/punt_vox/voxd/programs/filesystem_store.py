@@ -21,6 +21,7 @@ from typing import Self, final
 from punt_vox.atomic_file import AtomicFile
 from punt_vox.types_programs.identifiers import ProgramName
 from punt_vox.types_programs.wire import JsonObject
+from punt_vox.voxd.path_status import PathStatus
 from punt_vox.voxd.programs.catalog import Album
 from punt_vox.voxd.programs.manifest import AlbumManifest, ManifestDraft, PartEntry
 from punt_vox.voxd.programs.part import Part
@@ -109,8 +110,11 @@ class FilesystemProgramStore:
         The one startup disk walk. Each ``*/manifest.json`` is scanned alone, so a
         single escaping, idless-legacy, or corrupt directory is skipped without
         aborting the walk -- one torn file can never brick the catalog or daemon.
+        A missing root is an empty catalog; a root that exists but cannot be read
+        raises, so an access fault surfaces at startup rather than masquerading as
+        an empty music library.
         """
-        if not self._root.is_dir():
+        if not PathStatus.of(self._root).is_directory:
             return ()
         albums = [
             album
@@ -120,10 +124,18 @@ class FilesystemProgramStore:
         return tuple(albums)
 
     def open(self, directory: str) -> FilesystemPartStore:
-        """Return the PartStore for a scan/create-validated directory, else raise."""
+        """Return the PartStore for a scan/create-validated directory, else raise.
+
+        A missing manifest is a clean ``LookupError`` (the album was deleted); a
+        manifest that exists but cannot be stat'd raises the underlying ``OSError``,
+        so an access fault surfaces as a server-side fault rather than a false
+        "no saved album". A symlinked manifest still classifies as a regular file
+        (the follow matches the old ``is_file``) and is refused later by the
+        ``O_NOFOLLOW`` read.
+        """
         path = self._contained_dir(directory)
         manifest_path = path / _MANIFEST_NAME
-        if not manifest_path.is_file():
+        if not PathStatus.of(manifest_path).is_regular_file:
             msg = f"no saved album at directory {directory!r}"
             raise LookupError(msg)
         manifest = AlbumManifest.from_json(self._read_manifest_text(manifest_path))
