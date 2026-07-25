@@ -1403,6 +1403,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/voxd/path_status.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.6,
+    "max_complexity": 2.0,
+    "avg_complexity": 1.2,
+    "module_size": 58.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/voxd/play_handler.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
