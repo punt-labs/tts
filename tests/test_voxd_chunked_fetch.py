@@ -282,9 +282,15 @@ class TestGrownFile:
 
 
 class TestAudit:
-    def test_measure_fault_logs_warning(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: object
+    """A read fault is a server-side operational failure, audited as a fault."""
+
+    def test_measure_fault_audits_operation_failed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
+        """A fault before fetch_begin routes through fault: ERROR "operation failed"."""
         path = tmp_path / "r.mp3"
         path.write_bytes(b"abc")
 
@@ -292,7 +298,40 @@ class TestAudit:
             raise OSError("nope")
 
         monkeypatch.setattr(type(path), "open", boom)
-        with caplog.at_level(logging.WARNING):  # type: ignore[attr-defined]
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
             _run(path, "r.mp3")
-        records = caplog.records  # type: ignore[attr-defined]
-        assert any("f1" in r.getMessage() for r in records)
+        assert any(
+            r.levelno == logging.ERROR
+            and "operation failed" in r.getMessage()
+            and "f1" in r.getMessage()
+            for r in caplog.records
+        )
+        assert not any("rejected op" in r.getMessage() for r in caplog.records)
+
+    def test_mid_stream_fault_audits_operation_failed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A fault after fetch_begin also audits as a fault, never a rejection."""
+        path = tmp_path / "r.mp3"
+        path.write_bytes(b"abcdefghij")
+        contents = path.read_bytes()
+        calls = {"n": 0}
+
+        def flaky_open(self: Path, *args: object, **kwargs: object) -> object:
+            del self, args, kwargs
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                raise OSError("vanished mid-stream")
+            return io.BytesIO(contents)
+
+        monkeypatch.setattr(type(path), "open", flaky_open)
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            _run(path, "r.mp3")
+        assert any(
+            r.levelno == logging.ERROR and "operation failed" in r.getMessage()
+            for r in caplog.records
+        )
+        assert not any("rejected op" in r.getMessage() for r in caplog.records)

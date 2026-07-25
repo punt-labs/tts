@@ -341,3 +341,17 @@ class TestParity:
         for store in (fs, program_store):
             store.create(_draft("a3f1c9", "techno", "ambient", 1))
         assert [a.id for a in fs.scan()] == [a.id for a in program_store.scan()]
+
+    def test_delete_is_idempotent_parity(
+        self, tmp_path: Path, program_store: InMemoryProgramStore
+    ) -> None:
+        # Both stores treat delete of an already-gone album as a clean no-op, so
+        # the in-memory fake exercises the real idempotent contract rather than
+        # diverging by raising LookupError on a missing directory.
+        fs = FilesystemProgramStore(tmp_path)
+        draft = _draft("a3f1c9", "techno", "ambient", 1)
+        for store in (fs, program_store):
+            store.create(draft)
+            store.delete(draft.locator)
+            store.delete(draft.locator)  # already gone -- no error
+        assert fs.scan() == () == program_store.scan()

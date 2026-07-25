@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Self, cast, final
 
 from punt_vox.voxd.programs.select_handler import SelectHandler
@@ -11,6 +12,7 @@ from .conftest import make_service, seed_album
 if TYPE_CHECKING:
     from pathlib import Path
 
+    import pytest
     from starlette.websockets import WebSocket
 
     from punt_vox.voxd.programs.service import ProgramService
@@ -100,3 +102,61 @@ class TestSelectHandler:
         reply = await _reply(service, {"id": "req", "style": "ghost"})
         assert reply["type"] == "error"
         assert "no albums match" in str(reply["message"])
+
+    async def test_blank_album_id_is_rejected_not_union_radio(
+        self, tmp_path: Path
+    ) -> None:
+        # A present-but-blank album_id ("") is malformed input, not a name. It must
+        # be rejected -- NOT collapse into a blank-name query that resolves nothing
+        # and unions the whole catalog into an accidental play-everything radio.
+        seed_album(tmp_path / "programs", 1, style="trance", vibe="calm")
+        seed_album(
+            tmp_path / "programs", 1, style="ambient", vibe="dark", album_id="bbbbbb"
+        )
+        service = make_service(tmp_path / "programs")
+        reply = await _reply(service, {"id": "b", "album_id": ""})
+        # Rejected before any replay -- an error frame, NOT a program_select ack.
+        # A blank id never reaches service.replay, so no union selection is posted.
+        assert reply["type"] == "error"
+        assert "album_id must not be blank" in str(reply["message"])
+
+    async def test_absent_album_id_is_the_union_radio(self, tmp_path: Path) -> None:
+        # Absence of album_id (and no tag selectors) is the legitimate "no specific
+        # album -> union radio" path: it is accepted (program_select over the whole
+        # catalog), not rejected -- the contrast with the blank-id error above.
+        seed_album(tmp_path / "programs", 1, style="trance", vibe="calm")
+        seed_album(
+            tmp_path / "programs", 1, style="ambient", vibe="dark", album_id="bbbbbb"
+        )
+        service = make_service(tmp_path / "programs")
+        reply = await _reply(service, {"id": "u"})
+        assert reply == {"type": "program_select", "id": "u"}
+
+    async def test_service_os_error_is_an_operational_fault(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # The ProgramCommandHandler boundary now splits fault-vs-error via
+        # WireReply.reject_or_fault: an OSError from the service is a server-side
+        # operational failure audited as a fault (ERROR "operation failed"), never
+        # a WARNING "rejected op" -- and it still replies a clean error frame.
+        seed_album(tmp_path / "programs", 1, style="trance", vibe="calm")
+        service = make_service(tmp_path / "programs")
+
+        def disk_fault(_self: ProgramService, _query: object) -> None:
+            raise OSError("selection store fault")
+
+        monkeypatch.setattr(type(service), "replay", disk_fault)
+        ws = FakeWebSocket()
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            await SelectHandler(service)(
+                {"id": "x", "style": "trance"}, cast("WebSocket", ws)
+            )
+        assert ws.sent[-1]["type"] == "error"
+        assert any(
+            r.levelno == logging.ERROR and "operation failed" in r.getMessage()
+            for r in caplog.records
+        )
+        assert not any("rejected op" in r.getMessage() for r in caplog.records)

@@ -125,24 +125,42 @@ class TestRecRemove:
         assert sent[-1] == {"type": "removed", "id": "r1", "name": "gone.mp3"}
         assert not (store.root / "gone.mp3").exists()
 
-    def test_not_found_is_an_error(self, tmp_path: Path) -> None:
+    def test_not_found_is_a_client_rejection(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A well-formed ref that names no recording is a rejection, not a fault.
+
+        ``remove`` raises ``FileNotFoundError`` ("names no recording"); the handler
+        classifies it as a client rejection -- ``error`` (WARNING "rejected op") --
+        matching how ``play``/``fetch`` answer a ref that names no recording, never
+        the ERROR "operation failed" reserved for a daemon-side fault.
+        """
         store = _store(tmp_path)
         ws, sent = _capturing_ws()
-        asyncio.run(RecRemoveHandler(store)({"id": "r1", "ref": "nope.mp3"}, ws))
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            asyncio.run(RecRemoveHandler(store)({"id": "r1", "ref": "nope.mp3"}, ws))
         assert sent[-1]["type"] == "error"
         assert "no recording named" in str(sent[-1]["message"])
+        assert any(
+            "rejected op" in r.getMessage() and "r1" in r.getMessage()
+            for r in caplog.records
+        )
+        assert not any("operation failed" in r.getMessage() for r in caplog.records)
 
-    def test_oserror_on_unlink_is_a_clean_error_frame(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    def test_oserror_on_unlink_is_an_operational_fault(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """A PermissionError (an OSError) from remove() replies cleanly, no teardown.
+        """A PermissionError (an OSError) from the unlink is a fault, not a rejection.
 
-        remove() can raise OSError beyond FileNotFoundError -- a denied unlink
-        (PermissionError) or a race. The handler catches OSError (the parent of
-        both) so the fault becomes an id-stamped error frame instead of escaping
-        to the router's broad except, which logs and drops the socket. This test
-        reaching its assertions (no raise out of the call) is the connection-
-        intact check.
+        ``remove`` can raise an ``OSError`` beyond ``FileNotFoundError`` -- a denied
+        unlink (``PermissionError``) or a device error. That is a server-side
+        operational failure, distinct from the not-found rejection, so it routes
+        through ``fault`` (ERROR "operation failed") never WARNING "rejected op",
+        and replies an id-stamped frame instead of escaping to a router teardown
+        (reaching the assertions without a raise is the connection-intact check).
         """
         store = _store(tmp_path)
         (store.root / "denied.mp3").write_bytes(b"bytes")
@@ -152,10 +170,16 @@ class TestRecRemove:
 
         monkeypatch.setattr(RecordStore, "remove", denied_remove)
         ws, sent = _capturing_ws()
-        asyncio.run(RecRemoveHandler(store)({"id": "r7", "ref": "denied.mp3"}, ws))
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            asyncio.run(RecRemoveHandler(store)({"id": "r7", "ref": "denied.mp3"}, ws))
         assert sent[-1]["type"] == "error"
         assert sent[-1]["id"] == "r7"
         assert "Permission denied" in str(sent[-1]["message"])
+        assert any(
+            r.levelno == logging.ERROR and "operation failed" in r.getMessage()
+            for r in caplog.records
+        )
+        assert not any("rejected op" in r.getMessage() for r in caplog.records)
 
     def test_missing_ref_is_an_error(self, tmp_path: Path) -> None:
         ws, sent = _capturing_ws()

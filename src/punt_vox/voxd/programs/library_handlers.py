@@ -27,9 +27,12 @@ if TYPE_CHECKING:
 
 __all__ = ["MusicManifestHandler", "MusicNewHandler", "MusicRemoveHandler"]
 
-# The library rejections a handler turns into a clean wire error rather than a
-# torn socket: a bad request/precondition (ValueError), a deleted album dir
-# (LookupError), or a filesystem fault (OSError).
+# The library failures a handler turns into a clean wire reply rather than a torn
+# socket. They split by fault-vs-error: a bad request/precondition (ValueError)
+# is a client rejection audited as ``error``; a deleted album dir (LookupError)
+# or a filesystem fault (OSError) is a server-side operational failure audited as
+# ``fault``. ``WireReply.reject_or_fault`` applies that split in one place so all
+# three handlers classify identically.
 _LIBRARY_FAILURES = (ValueError, LookupError, OSError)
 
 
@@ -57,7 +60,7 @@ class MusicNewHandler:
                 return
             album_id = await self._library.new(prompt, parse_optional_str(msg, "name"))
         except _LIBRARY_FAILURES as exc:
-            await reply.error(str(exc))
+            await reply.reject_or_fault(exc)
             return
         await reply.send({"type": "album", "album_id": album_id.value, "parts": 1})
 
@@ -84,7 +87,7 @@ class MusicManifestHandler:
                 return
             contents = self._library.manifest(AlbumId(album))
         except _LIBRARY_FAILURES as exc:
-            await reply.error(str(exc))
+            await reply.reject_or_fault(exc)
             return
         await reply.send(
             {
@@ -124,6 +127,6 @@ class MusicRemoveHandler:
                 return
             self._library.remove(AlbumId(album), blocked=self._blocked())
         except _LIBRARY_FAILURES as exc:
-            await reply.error(str(exc))
+            await reply.reject_or_fault(exc)
             return
         await reply.send({"type": "removed", "album_id": album})

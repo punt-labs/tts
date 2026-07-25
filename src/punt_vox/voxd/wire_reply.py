@@ -93,6 +93,26 @@ class WireReply:
         )
         return await self.send({"type": "error", "message": message})
 
+    async def reject_or_fault(self, exc: ValueError | LookupError | OSError) -> bool:
+        """Route a domain failure to :meth:`error` or :meth:`fault` by its type.
+
+        The one place the fault-vs-error taxonomy is decided for handlers whose
+        boundary catches the same trio: a ``ValueError`` is a rejected client
+        request (a bad field, a lost-race guard, a backing refusal) and audits as
+        ``error``; a ``LookupError`` (a resolve that found nothing) or an
+        ``OSError`` (a filesystem fault) is a server-side operational failure and
+        audits as ``fault``. Centralising it here keeps every such handler
+        classifying identically instead of drifting apart one boundary at a time.
+
+        A handler whose not-found is a *client* rejection rather than an
+        operational fault -- ``rec_remove``, where a ``FileNotFoundError`` means
+        "names no recording", matching ``play``/``fetch`` -- must classify
+        explicitly instead of using this helper.
+        """
+        if isinstance(exc, ValueError):
+            return await self.error(str(exc))
+        return await self.fault(str(exc))
+
     @staticmethod
     def _sanitize(message: str) -> str:
         """Return *message* escaped by the shared log sanitizer and length-capped.

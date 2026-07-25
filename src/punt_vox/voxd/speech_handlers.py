@@ -87,12 +87,23 @@ class _SpeechRequest:
         )
 
     async def reply(self, payload: dict[str, object]) -> None:
-        """Send *payload* to the client, stamped with this request's id."""
-        await self.websocket.send_json({"id": self.request_id, **payload})
+        """Send *payload* stamped with this request's id, safe on a gone peer.
 
-    async def error(self, message: str) -> None:
-        """Send an error reply for this request."""
-        await self.reply({"type": "error", "message": message})
+        Routing through :class:`WireReply` gives this request the same id-stamped,
+        disconnect-safe send the store handlers use, instead of a raw
+        ``send_json`` that raises out of the handler when the client has left.
+        """
+        await WireReply(self.websocket, self.request_id).send(payload)
+
+    async def fault(self, message: str) -> None:
+        """Audit a server-side OPERATIONAL failure and send its frame.
+
+        A failed synthesis or a nonzero direct-play exit is a daemon-side fault,
+        not a client rejection, so it routes through :meth:`WireReply.fault` (the
+        ERROR "operation failed" audit) -- matching the record handler's
+        store-write fault -- never a WARNING "rejected op" that blames the client.
+        """
+        await WireReply(self.websocket, self.request_id).fault(message)
 
 
 class SynthesizeHandler(MessageHandler):
@@ -198,12 +209,12 @@ class SynthesizeHandler(MessageHandler):
             return False
         if isinstance(result, Exception):
             self._rollback(req, dedup_recorded=dedup_recorded)
-            await req.error(str(result))
+            await req.fault(str(result))
         elif result == 0:
             await req.reply({"type": "done"})
         else:
             self._rollback(req, dedup_recorded=dedup_recorded)
-            await req.error(f"play_directly failed with rc={result}")
+            await req.fault(f"play_directly failed with rc={result}")
         return True
 
     async def _synthesize_and_enqueue(
@@ -215,7 +226,7 @@ class SynthesizeHandler(MessageHandler):
         except Exception as exc:
             self._rollback(req, dedup_recorded=dedup_recorded)
             logger.exception("Synthesis failed for id=%r", req.request_id)
-            await req.error(str(exc))
+            await req.fault(str(exc))
             return
 
         # `cached` rides the 'playing' response (the client's terminal).

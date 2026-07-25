@@ -175,3 +175,36 @@ class TestFaultLogging:
             delivered = asyncio.run(WireReply(ws, "r1").fault("gone"))
         assert delivered is False
         assert _errors(caplog)
+
+
+class TestRejectOrFault:
+    """reject_or_fault routes ValueError to error, LookupError/OSError to fault."""
+
+    def test_value_error_audits_rejected_op(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ws, sent = _capturing_ws()
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(WireReply(ws, "r1").reject_or_fault(ValueError("bad field")))
+        logged = _warnings(caplog)[-1].getMessage()
+        assert "rejected op" in logged
+        assert not _errors(caplog)
+        assert sent[-1] == {"id": "r1", "type": "error", "message": "bad field"}
+
+    def test_lookup_error_audits_operation_failed(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ws, _sent = _capturing_ws()
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(WireReply(ws, "r1").reject_or_fault(LookupError("gone dir")))
+        assert "operation failed" in _errors(caplog)[-1].getMessage()
+        assert not _warnings(caplog)
+
+    def test_os_error_audits_operation_failed(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ws, _sent = _capturing_ws()
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(WireReply(ws, "r1").reject_or_fault(OSError("disk full")))
+        assert "operation failed" in _errors(caplog)[-1].getMessage()
+        assert not _warnings(caplog)

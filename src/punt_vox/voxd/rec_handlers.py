@@ -74,12 +74,17 @@ class RecRemoveHandler:
         return self
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """Validate the ref, unlink the recording, and reply -- or error.
+        """Validate the ref, unlink the recording, and reply -- or error/fault.
 
-        ``remove`` raises ``ValueError`` for a hostile ref and ``OSError`` for a
-        filesystem fault (absent recording, denied unlink, or a race). Catching
-        ``OSError`` -- the parent of ``FileNotFoundError`` and ``PermissionError``
-        -- keeps a fault an id-stamped error frame instead of a router teardown.
+        Three failure classes reply on the same wire frame but audit differently.
+        A hostile or non-string ``ref`` (``ValueError``) and a well-formed ref
+        that names no recording (``FileNotFoundError`` from ``remove``) are both
+        client rejections -- ``error`` (WARNING) -- and the not-found reply
+        matches how ``play``/``fetch`` answer "names no recording". A genuine
+        unlink fault -- a denied delete or a device error (any other ``OSError``)
+        -- is a server-side operational failure, so it routes through ``fault``
+        (ERROR "operation failed"), never mislabeled a client rejection. Every
+        path replies an id-stamped frame rather than escaping to a router teardown.
         """
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
@@ -88,7 +93,13 @@ class RecRemoveHandler:
                 await reply.error("rec remove requires a ref")
                 return
             self._store.remove(ref)
-        except (ValueError, OSError) as exc:
+        except ValueError as exc:
             await reply.error(str(exc))
+            return
+        except FileNotFoundError as exc:
+            await reply.error(str(exc))
+            return
+        except OSError as exc:
+            await reply.fault(str(exc))
             return
         await reply.send({"type": "removed", "name": ref})

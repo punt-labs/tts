@@ -155,7 +155,12 @@ class TestMusicManifestHandler:
 
         assert sent[-1]["type"] == "error"
         assert "no album named" in str(sent[-1]["message"])
-        assert any("m2" in r.getMessage() for r in caplog.records)
+        # A not-found album id is a client rejection (ValueError), not a fault.
+        assert any(
+            "rejected op" in r.getMessage() and "m2" in r.getMessage()
+            for r in caplog.records
+        )
+        assert not any("operation failed" in r.getMessage() for r in caplog.records)
 
 
 class TestMusicRemoveHandler:
@@ -186,7 +191,12 @@ class TestMusicRemoveHandler:
         assert sent[-1]["type"] == "error"
         assert "is playing" in str(sent[-1]["message"])
         assert (root / locator).is_dir()  # nothing deleted
-        assert any("r2" in r.getMessage() for r in caplog.records)
+        # The D-2 backing refusal is a client rejection (ValueError), not a fault.
+        assert any(
+            "rejected op" in r.getMessage() and "r2" in r.getMessage()
+            for r in caplog.records
+        )
+        assert not any("operation failed" in r.getMessage() for r in caplog.records)
 
     def test_token_does_not_grant_fs_delete(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -203,3 +213,65 @@ class TestMusicRemoveHandler:
                 asyncio.run(MusicRemoveHandler(library, frozenset)(msg, ws))
             assert sent[-1]["type"] == "error"
         assert outside.read_text() == "keep me"
+
+
+class TestLibraryFaultClassification:
+    """A LookupError/OSError from the library audits as a fault, not a rejection.
+
+    The handlers split ``_LIBRARY_FAILURES`` via ``WireReply.reject_or_fault``: a
+    deleted album dir (``LookupError``) or a filesystem fault (``OSError``) is a
+    server-side operational failure, distinct from the ``ValueError`` rejections
+    the other tests cover. Both still reply a clean id-stamped error frame rather
+    than escaping to the router teardown.
+    """
+
+    def test_lookup_error_is_an_operational_fault(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        library = _library(tmp_path / "programs")
+
+        def vanished(_self: MusicLibrary, _album_id: object) -> object:
+            raise LookupError("album dir vanished mid-op")
+
+        monkeypatch.setattr(MusicLibrary, "manifest", vanished)
+        ws, sent = _capturing_ws()
+        msg: dict[str, object] = {"id": "m9", "album": "a3f1c9"}
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            asyncio.run(MusicManifestHandler(library)(msg, ws))
+        assert sent[-1]["type"] == "error"
+        assert any(
+            r.levelno == logging.ERROR and "operation failed" in r.getMessage()
+            for r in caplog.records
+        )
+        assert not any("rejected op" in r.getMessage() for r in caplog.records)
+
+    def test_os_error_is_an_operational_fault(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        root = tmp_path / "programs"
+        seed_album(root, 1, name="idle", album_id="a3f1c9")
+        library = _library(root)
+
+        def disk_fault(
+            _self: MusicLibrary, _album_id: object, *, blocked: object
+        ) -> object:
+            del blocked
+            raise OSError("disk failure removing album")
+
+        monkeypatch.setattr(MusicLibrary, "remove", disk_fault)
+        ws, sent = _capturing_ws()
+        msg: dict[str, object] = {"type": "music_remove", "id": "r9", "album": "a3f1c9"}
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            asyncio.run(MusicRemoveHandler(library, frozenset)(msg, ws))
+        assert sent[-1]["type"] == "error"
+        assert any(
+            r.levelno == logging.ERROR and "operation failed" in r.getMessage()
+            for r in caplog.records
+        )
+        assert not any("rejected op" in r.getMessage() for r in caplog.records)

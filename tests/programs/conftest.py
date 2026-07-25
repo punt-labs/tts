@@ -261,10 +261,10 @@ class InMemoryProgramStore:
         return store
 
     def delete(self, directory: str) -> None:
-        store = self._stores.pop(directory, None)
-        if store is None:
-            msg = f"no saved album at directory {directory!r}"
-            raise LookupError(msg)
+        # Idempotent, matching the ProgramStore contract: deleting an
+        # already-missing album is a no-op, not an error, so a caller can forget
+        # its catalog entry without a stale directory leaving a ghost id.
+        self._stores.pop(directory, None)
 
 
 @pytest.fixture

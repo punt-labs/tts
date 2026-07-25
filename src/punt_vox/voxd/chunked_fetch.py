@@ -142,25 +142,21 @@ class ChunkedTransfer:
         return sent
 
     async def _abort_before_begin(self, ref: str, exc: OSError) -> None:
-        """Refuse a transfer that faulted before any byte -- an error, no begin."""
-        logger.warning(
-            "Fetch measure failed for id=%r ref=%r: %s",
-            self._reply.request_id,
-            ref,
-            exc,
-        )
-        await self._reply.send(
-            {"type": "error", "message": f"cannot read {ref!r}: {exc}"}
-        )
+        """Refuse a transfer that faulted before any byte -- no begin, a fault frame.
+
+        A read fault measuring the file is a server-side operational failure, not
+        a client rejection, so it routes through ``fault`` (the ERROR "operation
+        failed" audit) rather than a bare error frame -- the debugger reading
+        vox.log sees a daemon fault, never a mislabeled rejected request.
+        """
+        await self._reply.fault(f"cannot read {ref!r}: {exc}")
 
     async def _abort_mid_stream(self, ref: str, exc: OSError) -> None:
-        """End a started stream with an error terminal so the client discards it."""
-        logger.warning(
-            "Fetch aborted mid-stream for id=%r ref=%r: %s",
-            self._reply.request_id,
-            ref,
-            exc,
-        )
-        await self._reply.send(
-            {"type": "error", "message": f"fetch of {ref!r} failed: {exc}"}
-        )
+        """End a started stream with a fault terminal so the client discards it.
+
+        A read fault (or a file that changed size) after ``fetch_begin`` is a
+        server-side operational failure: it routes through ``fault`` for the same
+        reason as :meth:`_abort_before_begin`, so an interrupted transfer is
+        audited as a daemon fault and no complete file is ever claimed for it.
+        """
+        await self._reply.fault(f"fetch of {ref!r} failed: {exc}")

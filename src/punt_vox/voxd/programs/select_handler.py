@@ -55,9 +55,30 @@ class SelectHandler(ProgramCommandHandler):
         yet". Any other ref -- a non-hex string, or a hex string naming no album
         -- resolves as the curated-name radio, so ``play focus-beats`` plays the
         saved-name pool instead of raising a hex-validation error (D-3).
+
+        A present-but-blank positional ("") is malformed input, not a name: it is
+        rejected so it cannot collapse into a blank-name query that resolves
+        nothing and unions the whole catalog into an accidental play-everything
+        radio. Absence of the field (``None``, handled by the caller) is the only
+        legitimate "no specific album -> union radio" path.
         """
-        album_id = AlbumId.try_from(ref)
-        if album_id is not None and self._service.catalog.by_id(album_id) is not None:
-            self._service.replay_album(album_id)
+        if not ref:
+            msg = "album_id must not be blank"
+            raise ValueError(msg)
+        catalogued = self._catalogued(ref)
+        if catalogued is not None:
+            self._service.replay_album(catalogued)
             return
         self._service.replay(TagQuery.normalized(style=None, vibe=None, name=ref))
+
+    def _catalogued(self, ref: str) -> AlbumId | None:
+        """Return the catalogued album id ``ref`` names, or ``None`` for a name/miss.
+
+        A non-hex ``ref`` or a well-formed id absent from the catalog both mean
+        "not a direct album" -- the caller falls through to the curated-name
+        radio -- so neither is an error here (D-3, the id-or-name positional).
+        """
+        album_id = AlbumId.try_from(ref)
+        if album_id is None:
+            return None
+        return album_id if self._service.catalog.by_id(album_id) is not None else None
