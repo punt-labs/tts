@@ -1,0 +1,32 @@
+mission_id: m-2026-07-23-004
+status: closed
+type: implement
+created_at: "2026-07-23T04:53:52Z"
+updated_at: "2026-07-23T05:45:39Z"
+closed_at: "2026-07-23T05:45:39Z"
+leader: claude
+worker: jms
+evaluator:
+    handle: rmh
+    pinned_at: "2026-07-23T04:53:52Z"
+    hash: 5b496cf24ebb9b95b94676bb1d6671dcc6f8eb7d56747e0648efc9f7ae36a953
+inputs:
+    files:
+        - docs/rec-music-cli.md
+        - docs/audio-programs.tex
+        - docs/vox-dvri-record-store.tex
+        - docs/vox-notify.tex
+write_set:
+    - docs/audio-programs.tex
+    - docs/vox-chunked-transfer.tex
+success_criteria:
+    - On branch docs/rec-music-cli (git checkout it; it carries the ratified design docs/rec-music-cli.md). Make the formal model for the vox-jei3 rec/music CLI change fuzz-clean BEFORE implementation dispatches — this is the stateful-audio formal-modeling gate.
+    - 'Update docs/audio-programs.tex with the Catalog delta specified in docs/rec-music-cli.md §"Audio-programs Z-model delta": the [ALBUM] basic type, the Catalog state schema (albums : ALBUM ⇸ ℙ PART, with "a catalogued album has at least one Part"), the combined System schema carrying the global invariant `Program.pool ∪ Radio.selection ⊆ ⋃ (ran Catalog.albums)`, and the operation schemas MusicNew (ΔCatalog, ΞProgram, ΞRadio — grows only the Catalog), MusicNewBadPrompt (ΞCatalog, ΞProgram — does NOT enter failed, contrast FirstTrackBadPrompt), and MusicRemove (ΔCatalog with the precondition albums(victim?) ∩ (Program.pool ∪ Radio.selection) = ∅, derived from the System invariant, not merely asserted). music_get is a pure read (ΞCatalog ∧ ΞProgram ∧ ΞRadio), no new schema. Preserve finding #7: the Program/Radio still consume a RESOLVED pool, not the Catalog directly.'
+    - 'Create docs/vox-chunked-transfer.tex: a minimal Z model of the chunked get/ fetch transport specified in docs/rec-music-cli.md §"Chunked transfer" (fetch_begin → ordered chunk frames ≤ FETCH_CHUNK_BYTES → fetch_end). Model the integrity invariants that a mid-stream fault must not violate: chunks delivered in strictly increasing contiguous seq, the reassembled byte total equals the declared `bytes`, containment is checked once before the first byte, and the terminal state is atomic — either the complete file lands or nothing does (a fault yields an error terminal, never a partial file). Keep it small and standalone (a Transfer/Reassembly state + begin/chunk/end/abort operation schemas); it is transport, deliberately kept out of audio-programs.tex.'
+    - Both specs pass `fuzz -t` with exit 0. For the higher-stakes invariants (the System global invariant + MusicRemove; the transfer atomicity/ordering) prefer a probcli model-check (z-spec:test) over type-check alone where practical, and note what you exercised. Align every schema/type name with the terms used in docs/rec-music-cli.md so the implementation can assert the modeled properties by name.
+    - Commit incrementally; each commit's specs are fuzz-clean; do not accumulate more than 30 minutes of uncommitted work. Report the branch + SHA(s), the `fuzz -t` (and any probcli) results, and any finding where the design doc's stated model delta is unsatisfiable or under-specified — flag it rather than silently diverging.
+budget:
+    rounds: 2
+    reflection_after_each: false
+current_round: 1
+context: 'Bead vox-jei3. The ratified design docs/rec-music-cli.md unifies vox''s rec and music CLI stores and, per operator ruling, replaces the 700 KB single-frame fetch with a chunked transfer so get works for any-size files. Two stateful concerns need the formal-modeling gate satisfied before implementation: (1) music new/remove mutate a Catalog the current audio-programs model abstracts away (finding #7) — the model must make the Catalog explicit while keeping the Program/Radio on a resolved pool, and must derive "cannot remove a playing album" from a global invariant; (2) the chunked get transport must guarantee ordered, complete, atomic delivery (no partial file on a mid-stream fault). Your specs are the model the implementation''s tests will assert by name; the design doc''s §"Audio-programs Z-model delta" and §"Chunked transfer" give the exact deltas. This is the design phase — implementation waits on a fuzz-clean model.'

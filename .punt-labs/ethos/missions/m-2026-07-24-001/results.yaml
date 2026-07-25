@@ -1,0 +1,121 @@
+results:
+    - mission: m-2026-07-24-001
+      round: 1
+      created_at: "2026-07-24T05:32:13Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/types_audio.py
+          added: 0
+          removed: 0
+        - path: src/punt_vox/client.py
+          added: 0
+          removed: 0
+        - path: src/punt_vox/client_sync.py
+          added: 0
+          removed: 0
+        - path: src/punt_vox/voxd/containment.py
+          added: 0
+          removed: 0
+        - path: src/punt_vox/voxd/record_store.py
+          added: 0
+          removed: 0
+        - path: src/punt_vox/voxd/chunked_fetch.py
+          added: 0
+          removed: 0
+        - path: src/punt_vox/voxd/fetch_handler.py
+          added: 0
+          removed: 0
+        - path: src/punt_vox/voxd/handler_registry.py
+          added: 0
+          removed: 0
+        - path: src/punt_vox/voxd/rec_handlers.py
+          added: 0
+          removed: 0
+        - path: src/punt_vox/voxd/programs/catalog.py
+          added: 0
+          removed: 0
+        - path: src/punt_vox/voxd/programs/store.py
+          added: 0
+          removed: 0
+        - path: src/punt_vox/voxd/programs/filesystem_store.py
+          added: 0
+          removed: 0
+        - path: src/punt_vox/voxd/programs/service.py
+          added: 0
+          removed: 0
+        - path: src/punt_vox/voxd/programs/wiring.py
+          added: 0
+          removed: 0
+        - path: src/punt_vox/voxd/programs/library.py
+          added: 0
+          removed: 0
+        - path: src/punt_vox/voxd/programs/library_handlers.py
+          added: 0
+          removed: 0
+        - path: tests/test_voxd_containment.py
+          added: 0
+          removed: 0
+        - path: tests/test_voxd_chunked_fetch.py
+          added: 0
+          removed: 0
+        - path: tests/test_voxd_fetch_handler.py
+          added: 0
+          removed: 0
+        - path: tests/test_voxd_rec_handlers.py
+          added: 0
+          removed: 0
+        - path: tests/test_voxd_record_store.py
+          added: 0
+          removed: 0
+        - path: tests/test_client.py
+          added: 0
+          removed: 0
+        - path: tests/programs/test_library.py
+          added: 0
+          removed: 0
+        - path: tests/programs/test_library_handlers.py
+          added: 0
+          removed: 0
+        - path: tests/programs/test_catalog.py
+          added: 0
+          removed: 0
+        - path: tests/programs/test_wiring.py
+          added: 0
+          removed: 0
+        - path: tests/programs/conftest.py
+          added: 0
+          removed: 0
+        - path: tests/test_voxd_router.py
+          added: 0
+          removed: 0
+      evidence:
+        - name: make check green on every commit; raw merge-base OO ratchet exits 0
+          status: pass
+        - name: coverage 93.63%->93.66% (rising); tests 2864->2946 (+82); no INTERNALERROR
+          status: pass
+        - name: suppression ratchet unchanged (213); no new noqa/type-ignore (cast used)
+          status: pass
+        - name: chunked-transfer properties by name (ordered-contiguous-seq, total=declared, containment-once, atomic-terminal/no-partial-on-abort, empty, sha256, grown/shrunk)
+          status: pass
+        - name: audio-programs delta by name (MusicNew frames Program, MusicNewBadPrompt no fail, MusicRemove refuses playing album D-2, live-parts-stay-catalogued F5)
+          status: pass
+        - name: containment corpus + token-does-not-grant-fs-delete re-asserted at rec_remove, music_remove, and fetch music-part ops
+          status: pass
+      open_questions:
+        - 'types_audio.FETCH_FRAME_LIMIT_BYTES kept live: __main__.py:498 (record locator, CLI mission''s file, outside this write-set) still references it. Daemon fetch no longer uses it; its final deletion with _emit_record_locator is the CLI mission''s per the design.'
+      prose: |
+        Daemon + client + transport layer of vox-jei3 across 5 commits (SHAs
+        7268ff1, 880ac8d, 9ee8673, de855d3, 82d1f1f). Chunked fetch replaces the
+        700KB single-frame cap outright on the daemon (no size-limited daemon path
+        left). New wire ops rec_list, rec_remove, music_new, music_manifest,
+        music_remove reuse the DES-049 containment (extracted to ContainmentRoot) and
+        vox-1hbo WireReply audit logging. music_new parks a fresh single-track album
+        via the normal AlbumId/catalog machinery without disturbing the Program;
+        music ops catalog-resolve by AlbumId (never a path segment). Client methods on
+        both VoxClient and VoxClientSync; fetch converted to chunked reassembly with
+        ordered/total/sha verification and atomic album writes. Feature-driven
+        module_size/LCOM growth on touched files is scope-relaxed with per-file
+        justification in the audit; record_store and fetch_handler carry genuine
+        complexity/size paydown.

@@ -1,0 +1,60 @@
+results:
+    - mission: m-2026-07-24-014
+      round: 1
+      created_at: "2026-07-24T06:58:11Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/server.py
+          added: 218
+          removed: 87
+        - path: tests/test_server.py
+          added: 6
+          removed: 111
+        - path: tests/test_server_rec_music.py
+          added: 466
+          removed: 0
+      evidence:
+        - name: MCP D-7 parity — 8 verbs on mic (rec_new/rec_list/rec_play/rec_get/rec_remove + music_new/music_get/music_remove) alongside music/music_play/music_list/music_next; list_tools() returns 18
+          status: pass
+        - name: 'rec_new returns bare store id, no daemon path/host — verified [{"id": "a1b2c3.mp3", "bytes": 18, "cached": false}]; record tool renamed to rec_new, no compat alias'
+          status: pass
+        - name: 'rec_get returns recording bytes base64 (round-trip verified: SUQzBGF1ZGlvLWJ5dGVz == b''ID3\x04audio-bytes''); music_get exports album to agent-named dest and returns {album_id, path}'
+          status: pass
+        - name: each tool delegates to the same VoxClientSync op its CLI twin uses — one code path; test_rec_new_and_cli_issue_the_same_client_record_call asserts identical client.record call
+          status: pass
+        - name: make check green — lint, format, shellcheck, mypy, pyright, markdown, 2969 tests pass (was 2948; +21), no INTERNALERROR
+          status: pass
+        - name: check-oo PASS — server.py method_ratio .615->.708, class_to_func_ratio .118->.222, avg_params 1.49->1.40, avg_complexity 2.66->2.56 IMPROVED; module_size 807->917, classes_per_module 2->4 scope-RELAXED with justification
+          status: pass
+        - name: raw merge-base ratchet verified unpiped — oo_score.py src/punt_vox/ --check --base-ref $(git merge-base origin/main HEAD) --require-base exits 0
+          status: pass
+        - name: check-coupling PASS (server.py public_names 15->14, avg_lcom .748->.249 IMPROVED, efferent unchanged); check-suppressions PASS (-2)
+          status: pass
+        - name: coverage rising — server.py 89.71% -> 91.44%; full-suite branch total 93.55% (2969 tests)
+          status: pass
+      open_questions:
+        - hooks/suppress-output.sh (plugin, outside write-set) special-cases TOOL_NAME == 'record' for panel phrasing; the record->rec_new rename means the leader must update that hook to 'rec_new'. The other new tools fall through to the default object handler.
+        - server.py is a single-file MCP surface; the 8 new verbs push module_size to 917 and classes_per_module to 4 (>3 threshold), scope-relaxed. The OO-correct fix is a dedicated tools module (server_audio_tools.py), outside this mission's server.py-only write-set — recommend a follow-up extraction bead.
+        - music_get requires the agent to name a destination directory (no shell CWD to default to); it writes <dest>/<album-name>/ and returns the path — the coherent agent form for a multi-part album too large for inline base64, unlike rec_get.
+      prose: |
+        Step 3 of 3 (MCP parity) for vox-jei3 is code-complete on feat/vox-jei3-impl
+        (commit 76da5f7). The mic surface exposes the recordings-store and
+        catalog-authoring verbs at parity with the vox rec/music CLI. Each tool is a
+        thin bound method on a _RecTools / _MusicCatalogTools humble object that
+        delegates to the same VoxClientSync engine op its CLI twin uses — one code
+        path, no reimplemented logic; containment and audit stay daemon-side.
+
+        Forward integration: the record tool became rec_new and returns the bare store
+        id (no daemon path), with no compat alias. Agent-facing get forms: rec_get
+        returns the recording bytes (base64) since an MCP caller has no shell CWD;
+        music_get exports the multi-part album to an agent-named destination and
+        returns the locator.
+
+        Extracting the tools into humble objects improved server.py on method_ratio,
+        class_to_func_ratio, avg_params, avg_complexity, public_names, and avg_lcom;
+        module_size and classes_per_module grew to carry the 8 verbs and are
+        scope-relaxed. Not pushed; no PR; make install / daemon restart not run
+        (daemon-dependent verbs were surface-verified against in-memory clients, not
+        exercised end-to-end).

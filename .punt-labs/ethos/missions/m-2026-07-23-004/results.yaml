@@ -1,0 +1,49 @@
+results:
+    - mission: m-2026-07-23-004
+      round: 1
+      created_at: "2026-07-23T05:45:39Z"
+      author: claude
+      verdict: pass
+      confidence: 0.85
+      files_changed:
+        - path: docs/audio-programs.tex
+          added: 260
+          removed: 4
+        - path: docs/vox-chunked-transfer.tex
+          added: 360
+          removed: 0
+      evidence:
+        - name: fuzz -t docs/audio-programs.tex exits 0 (leader re-verified)
+          status: pass
+        - name: fuzz -t docs/vox-chunked-transfer.tex exits 0 (leader re-verified)
+          status: pass
+        - name: Catalog/System delta + MusicNew/MusicNewBadPrompt/MusicRemove per the design doc; MusicRemove 'cannot delete a playing album' derived from the System invariant (pool ∪ selection ⊆ ⋃ ran catalog.albums), not asserted
+          status: pass
+        - name: MusicNew freshness precondition (track? ∉ ⋃ ran catalog.albums) added per rmh model review — closes the satisfiability gap the added Catalog partition invariant created
+          status: pass
+        - name: 'probcli exploration recorded in-doc: audio-programs 505 states (MusicRemove obligation discharged, MusicNew reachable on a full playing Program); transfer 356 states (atomicity invariant holds, 0 counterexamples)'
+          status: pass
+        - name: 'rmh evaluator review: accept-with-changes; the one required edit (MusicNew precondition) applied; the vacuity note addressed by the recorded probcli runs'
+          status: pass
+      prose: |
+        The stateful-audio formal-modeling gate for vox-jei3. Two specs on branch
+        docs/rec-music-cli: docs/audio-programs.tex gains the Catalog delta ([ALBUM],
+        Catalog with a distinct-albums-share-no-Part partition invariant, a combined
+        System schema carrying pool ∪ selection ⊆ ⋃ ran catalog.albums, and
+        MusicNew / MusicNewBadPrompt / MusicRemove); docs/vox-chunked-transfer.tex is
+        a standalone model of the chunked get transport with ordered-contiguous-seq,
+        total = declared bytes, containment-checked-once, and an atomic terminal (no
+        reachable state carries a landed partial). Both fuzz -t clean; probcli
+        exploration recorded per the doc. rmh reviewed accept-with-changes and the
+        required MusicNew freshness precondition was applied (commit b2cf1d5).
+
+        PROCESS CAVEAT (leader): the worker (jms) was interrupted twice by the leader
+        — once misjudged as hung during a long probcli run, once to hand off a simple
+        edit — and never submitted its own result. Its committed deliverables
+        (bcfef49, 463e85e) plus the leader-committed precondition (b2cf1d5) are
+        intact and independently fuzz-verified; the probcli state counts (505 / 356)
+        are as recorded in-doc by the worker, not re-run by the leader. Result
+        authored by the leader on the worker's behalf. Follow-up (non-blocking,
+        noted for implementation): independently re-confirm the transfer non-vacuity
+        (EF delivered / EF failed) and the audio-programs System probcli pass with
+        the restored jra formal-methods evaluator.
