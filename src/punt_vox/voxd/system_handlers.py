@@ -91,11 +91,10 @@ class VoicesHandler(MessageHandler):
         # Reply through WireReply so both frames survive a gone peer -- a send on
         # a disconnected socket no-ops rather than raising WebSocketDisconnect out
         # of the handler and tearing the connection down, matching the store
-        # handlers. Parse inside the try so a non-string provider or a provider
-        # fault is an id-stamped error frame; provider_name is bound first so the
-        # except message is always defined.
+        # handlers. Parse inside the try so the expected domain failures classify
+        # the same way the store handlers do (library_handlers, rec_handlers): a
+        # ValueError is a rejected request, a LookupError/OSError an operational fault.
         reply = WireReply(websocket, str(msg.get("id", "")))
-        provider_name = ""
         try:
             provider_name = (
                 parse_optional_str(msg, "provider") or auto_detect_provider()
@@ -108,11 +107,12 @@ class VoicesHandler(MessageHandler):
             # id-stamped, disconnect-safe, and WARNING-audited -- no full traceback.
             await reply.error(str(exc))
             return
-        except Exception as exc:
-            logger.exception("Voice listing failed for provider=%r", provider_name)
-            await reply.send(
-                {"type": "error", "message": f"voice listing failed: {exc}"}
-            )
+        except (LookupError, OSError) as exc:
+            # An operational failure resolving the provider or reading its voice
+            # list -- not a client rejection but a server-side fault: reply.fault is
+            # the id-stamped ERROR "operation failed" audit, matching the split the
+            # store handlers use. A type outside this set propagates to the router.
+            await reply.fault(str(exc))
             return
         await reply.send(
             {"type": "voices", "provider": provider_name, "voices": voice_list}

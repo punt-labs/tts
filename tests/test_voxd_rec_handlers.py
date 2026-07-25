@@ -69,16 +69,21 @@ class TestRecList:
         pairs = {(e["name"], e["bytes"]) for e in entries}
         assert pairs == {("a.mp3", 5), ("b.mp3", 2)}
 
-    def test_listing_io_error_is_a_clean_error_frame(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    def test_listing_io_error_is_an_operational_fault(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """An OSError enumerating the root is an id-stamped error frame, not a teardown.
+        """An OSError enumerating the root is an operational fault, not a rejection.
 
         Per-entry stat faults are skipped in the store, but a fault reading the
-        root itself must not escape to the router's broad except (which logs and
-        drops the socket). The handler catches it and replies cleanly -- matching
-        RecRemoveHandler -- and this test reaching its assertions (no raise out of
-        the call) is itself the "connection intact" check.
+        root itself is a server-side failure -- it must not escape to the router's
+        broad except (which logs and drops the socket), and it is not a client
+        rejection. The handler routes it through WireReply.fault: an id-stamped
+        clean error frame audited at ERROR "operation failed", never WARNING
+        "rejected op". Reaching the assertions without a raise is the connection-
+        intact check.
         """
         store = _store(tmp_path)
 
@@ -87,10 +92,16 @@ class TestRecList:
 
         monkeypatch.setattr(RecordStore, "entries", boom)
         ws, sent = _capturing_ws()
-        asyncio.run(RecListHandler(store)({"id": "l9"}, ws))
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            asyncio.run(RecListHandler(store)({"id": "l9"}, ws))
         assert sent[-1]["type"] == "error"
         assert sent[-1]["id"] == "l9"
         assert "permission denied" in str(sent[-1]["message"])
+        assert any(
+            r.levelno == logging.ERROR and "operation failed" in r.getMessage()
+            for r in caplog.records
+        )
+        assert not any("rejected op" in r.getMessage() for r in caplog.records)
 
     def test_does_not_recurse_into_subdirs(self, tmp_path: Path) -> None:
         store = _store(tmp_path)
@@ -177,10 +188,15 @@ class TestRecRemove:
         victim = tmp_path / "victim.txt"
         victim.write_text("keep me")
         ws, sent = _capturing_ws()
-        with caplog.at_level(logging.WARNING):
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
             asyncio.run(RecRemoveHandler(store)({"id": "r9", "ref": ref}, ws))
         assert sent[-1]["type"] == "error"
-        assert any("r9" in r.getMessage() for r in caplog.records)
+        # A hostile ref is a client rejection: audited "rejected op", not "fault".
+        assert any(
+            "rejected op" in r.getMessage() and "r9" in r.getMessage()
+            for r in caplog.records
+        )
+        assert not any("operation failed" in r.getMessage() for r in caplog.records)
         assert victim.read_text() == "keep me"  # nothing outside root deleted
 
     def test_token_does_not_grant_fs_delete(self, tmp_path: Path) -> None:

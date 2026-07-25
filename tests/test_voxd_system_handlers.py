@@ -103,16 +103,58 @@ class TestVoicesHandler:
     """The voices handler rejects a malformed provider without tearing the socket."""
 
     @pytest.mark.asyncio
-    async def test_non_string_provider_is_a_clean_error(self) -> None:
-        """A non-string ``provider`` yields an id-stamped error frame -- the parse
-        must not escape the handler and tear the connection down."""
+    async def test_non_string_provider_is_a_rejected_op(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A non-string ``provider`` is a rejected client request, not a fault.
+
+        The ValueError from the parse is caught and replied as an id-stamped error
+        frame -- the parse must not escape the handler and tear the connection
+        down -- and it audits at WARNING "rejected op", never ERROR "operation
+        failed", because the client sent a bad request, not the daemon failing.
+        """
         ws = _CollectingWs()
-        # Must not raise: the ValueError is caught and replied as an error frame.
-        await VoicesHandler()({"id": "v1", "provider": 123}, cast("WebSocket", ws))
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            await VoicesHandler()({"id": "v1", "provider": 123}, cast("WebSocket", ws))
 
         assert ws.sent[-1]["type"] == "error"
         assert ws.sent[-1]["id"] == "v1"
         assert "must be a string" in str(ws.sent[-1]["message"])
+        assert any("rejected op" in r.getMessage() for r in caplog.records)
+        assert not any("operation failed" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_operational_failure_is_a_fault_not_a_rejection(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An OSError resolving the provider is a server fault, not a rejected op.
+
+        A provider that cannot be resolved or listed (an I/O or lookup fault) is a
+        server-side failure, so the reply routes through WireReply.fault -- an
+        id-stamped clean error frame the client can read, audited at ERROR
+        "operation failed", never WARNING "rejected op" (which would blame the
+        client). Reaching the assertions without a raise is the connection-intact
+        check.
+        """
+
+        def boom(*_args: object, **_kwargs: object) -> object:
+            raise OSError("voice service unreachable")
+
+        monkeypatch.setattr("punt_vox.voxd.system_handlers.get_provider", boom)
+        ws = _CollectingWs()
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            await VoicesHandler()(
+                {"id": "v2", "provider": "polly"}, cast("WebSocket", ws)
+            )
+
+        assert ws.sent[-1]["type"] == "error"
+        assert ws.sent[-1]["id"] == "v2"
+        assert "voice service unreachable" in str(ws.sent[-1]["message"])
+        assert any(
+            r.levelno == logging.ERROR and "operation failed" in r.getMessage()
+            for r in caplog.records
+        )
+        assert not any("rejected op" in r.getMessage() for r in caplog.records)
 
     @pytest.mark.asyncio
     async def test_gone_peer_during_send_does_not_raise(self) -> None:
