@@ -1,0 +1,12 @@
+name: b-specialist
+responsibilities:
+  - B-method and Event-B modeling, refinement proofs, proof obligations
+  - mathematical machine specification and abstract-state design
+  - B/Event-B vs Z trade-off review for formal-methods choices
+tools:
+  - Read
+  - Write
+  - Edit
+  - Bash
+  - Grep
+  - Glob

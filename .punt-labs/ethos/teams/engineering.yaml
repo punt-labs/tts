@@ -34,6 +34,8 @@ members:
   # Formal methods
   - identity: jms
     role: z-specialist
+  - identity: jra
+    role: b-specialist
   # UX / info design
   - identity: edt
     role: ux-designer
@@ -76,6 +78,9 @@ collaborations:
   - from: z-specialist
     to: coo
     type: reports_to
+  - from: b-specialist
+    to: coo
+    type: reports_to
   - from: ux-designer
     to: coo
     type: reports_to
@@ -94,4 +99,7 @@ collaborations:
     type: collaborates_with
   - from: ux-cognitive
     to: ux-designer
+    type: collaborates_with
+  - from: b-specialist
+    to: z-specialist
     type: collaborates_with
