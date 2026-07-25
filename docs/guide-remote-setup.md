@@ -14,8 +14,8 @@ finishes a task, you want to hear it on A.
 This setup is for **playback that voxd drives**: `vox say`, task
 notifications, chimes, and `/music` all play on the daemon host (machine A) —
 that is the whole point, so you hear your agent on the machine with speakers.
-`vox record`, `vox play`, and `vox fetch` also work against a remote daemon —
-see [Recording and playback over a remote daemon](#recording-and-playback-over-a-remote-daemon)
+`vox rec new`, `vox rec play`, and `vox rec get` also work against a remote
+daemon — see [Recording and playback over a remote daemon](#recording-and-playback-over-a-remote-daemon)
 below.
 
 ## Quick decision
@@ -202,43 +202,41 @@ The daemon is the audio host: it owns the recordings store and plays audio on
 its own machine (the one with speakers). Recording and playback are coherent
 whether the daemon is local or remote.
 
-**Record** captures into the daemon's store and prints a locator — it does not
-write a file on the client and takes no `-o`:
+**`vox rec new`** captures speech into the daemon's store and prints the bare
+store id — it does not write a file on the client, and takes no `-o`:
 
 ```bash
 # On machine B (driving A's daemon):
-vox record "the build is green"
-# → a1b2c3d4e5f6.mp3 on the daemon
-#   (play: vox play a1b2c3d4e5f6.mp3; fetch: vox fetch a1b2c3d4e5f6.mp3 -o <path>)
+vox rec new "the build is green"
+# → a1b2c3d4e5f6.mp3   (the recording's id in the daemon store)
 ```
 
-Against a local daemon the same command prints the on-disk store path, which you
-can play or copy directly. Pass `--name greeting.mp3` to store under a chosen
-bare filename (no directories, no `..`).
+Pass `--name greeting.mp3` to store under a chosen bare filename (no
+directories, no `..`). `vox rec list` enumerates the store.
 
-**Play** a stored recording on the daemon host by its id — audio comes out of
-A's speakers even though you ran the command on B:
+**`vox rec play <id>`** plays a stored recording on the daemon host by its id —
+audio comes out of A's speakers even though you ran the command on B:
 
 ```bash
-vox play a1b2c3d4e5f6.mp3     # plays on machine A
+vox rec play a1b2c3d4e5f6.mp3     # plays on machine A
 ```
 
-`vox play` with an **existing local file path** still plays on the machine you
-run it on (a loopback convenience). A store id/name that is not a local file
-routes to the daemon host.
+(To play a local file on the machine you're sitting at, use the OS player —
+`afplay`/`ffplay`. `vox rec play` is for recordings in the daemon store.)
 
-**Fetch** copies a stored recording to the client when you want the bytes on B:
+**`vox rec get <id>`** copies a stored recording to the client, writing it into
+the current directory under its store name — no `-o`, and it refuses to
+overwrite an existing file:
 
 ```bash
-vox fetch a1b2c3d4e5f6.mp3 -o ./build-green.mp3   # writes the file on B
+vox rec get a1b2c3d4e5f6.mp3     # writes ./a1b2c3d4e5f6.mp3 on B
 ```
 
-This always retrieves the bytes from the daemon over the wire, bounded to a
-single frame — a very large recording is refused, so retrieve it from the daemon
-host directly instead.
+The bytes stream from the daemon in bounded, sha256-verified chunks, so a
+recording of any size transfers in full.
 
 The client never names a path on the daemon's filesystem: a recording is
-referenced only by its store id, and the daemon confines every record/play/fetch
+referenced only by its store id, and the daemon confines every rec operation
 to its own `0700` recordings root.
 
 ---
