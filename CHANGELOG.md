@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.14.0] - 2026-07-25
+
 ### Added
 
 - **One verb vocabulary for both audio stores (vox-jei3).** `vox rec` and `vox music` are now parallel command groups sharing `new` / `list` / `play <id>` / `get <id>` / `remove <id>` (music keeps `next` / `status`). `vox rec new "text"` synthesizes into the daemon-owned recordings store and prints the bare id; `vox rec list` enumerates it; `vox rec get <id>` writes the recording into the current directory under its store name; `vox rec remove <id>` deletes it. `vox music new "<prompt>"` generates one track from a verbatim ElevenLabs prompt into a fresh single-track catalog album (it does not disturb the running program); `vox music get <id>` / `vox music remove <id>` export/delete an album by its catalog id. The same verbs are exposed on the MCP `mic` surface at parity (`mic:rec_new`/`rec_list`/`rec_play`/`rec_get`/`rec_remove`, `mic:music_new`/`music_get`/`music_remove`), each routing through the one engine.

@@ -1,0 +1,42 @@
+mission_id: m-2026-07-24-013
+status: closed
+type: implement
+created_at: "2026-07-24T05:35:28Z"
+updated_at: "2026-07-24T06:24:43Z"
+closed_at: "2026-07-24T06:24:43Z"
+leader: claude
+worker: mdm
+evaluator:
+    handle: rmh
+    pinned_at: "2026-07-24T05:35:28Z"
+    hash: 5b496cf24ebb9b95b94676bb1d6671dcc6f8eb7d56747e0648efc9f7ae36a953
+inputs:
+    files:
+        - docs/rec-music-cli.md
+        - src/punt_vox/__main__.py
+        - src/punt_vox/cli_music.py
+        - src/punt_vox/client_sync.py
+        - src/punt_vox/client.py
+        - src/punt_vox/types_audio.py
+        - src/punt_vox/voxd/rec_handlers.py
+        - src/punt_vox/voxd/programs/library_handlers.py
+write_set:
+    - src/punt_vox/__main__.py
+    - src/punt_vox/cli_music.py
+    - src/punt_vox/cli_rec.py
+    - src/punt_vox/types_audio.py
+    - tests/
+success_criteria:
+    - 'Implement the CLI SURFACE of vox-jei3 on branch feat/vox-jei3-impl per the ratified design docs/rec-music-cli.md §"The unified surface", §"Command semantics", and §"CLI decomposition". The daemon + client layer already exists (step 1, merged into this branch): VoxClient/VoxClientSync now expose rec_list, rec_remove, music_new, music_get, music_remove, and the chunked fetch/get. You wire the CLI to those; do NOT modify src/punt_vox/voxd/, src/punt_vox/client.py, src/punt_vox/client_sync.py, or src/punt_vox/server.py.'
+    - 'Build the `rec` Typer sub-app: a build_rec_app(formatter) factory + a @final RecCli humble object of thin verb methods (new/list/play/get/remove), MIRRORING cli_music.py''s MusicCli/build_music_app shape exactly, delegating through a RecordGateway protocol (production impl wraps VoxClientSync; in-memory impl for tests). Module: src/punt_vox/cli_rec.py. Mount it in __main__.py with one line — app.add_typer(build_rec_app(_formatter), name="rec") — the twin of the music line.'
+    - 'Extend cli_music.py''s MusicCli/group with new/get/remove (same thin shape, delegating to the client). `music play` KEEPS its shipped tag radio (--style/--vibe/--name) AND gains the bare-`<id>` positional — both resolve (design D-3, resolved: keep both); no shipped behavior removed.'
+    - 'Verb semantics per the design: `new` prints ONLY the bare store id (no path, no host); `list` prints one id per line (human) or --json; `get <id>` writes into the CWD under the store name (rec = one file <id>; music = a directory named for the album with its parts), refuse-on-collision (error, exit 1, D-1), NO -o / no path argument, streaming via the client''s chunked get so any-size files transfer; `remove <id>` deletes (music remove refuses a live album with the D-2 message); `play <id>` plays on the daemon host.'
+    - 'Forward integration, no shims: DELETE from __main__.py the top-level `record`, `play`, and `fetch` commands; the -o/--output option on the old fetch; the _emit_record_locator daemon-path-probe helper and the fetch _atomic_write_bytes helper; and delete the now-unused FETCH_FRAME_LIMIT_BYTES constant from types_audio.py (this mission removes its last reference — the daemon fetch is already chunked). KEEP --output-dir/-d (it belongs to install-desktop, not the audio stores). No aliases, no deprecation hints.'
+    - 'STRUCTURE (operator directive): this must LOWER complexity on __main__.py, not grow a god-module — the extraction of record/play/fetch bodies + deletion of _emit_record_locator (the branch-heavy locator) IS the paydown. The raw merge-base OO ratchet must exit 0 with a GENUINE improvement on __main__.py (module_size + max_complexity down), verified unpiped: `uv run python tools/oo_score.py src/punt_vox/ --check --base-ref $(git merge-base origin/main HEAD) --require-base; echo $?` prints 0.'
+    - 'TESTS (design §"Test surface", command + registration sections): humble-object unit tests over an in-memory RecordGateway / program gateway (no subprocess, no socket) for every verb (rec new/list/play/get/remove, music new/get/remove, music play id-vs-tag) covering the collision (D-1), the live-album refusal (D-2), empty/oversize/not-found paths, and bare-id output. Registration tests: `vox rec` and `vox music` expose exactly the verb set; the top-level record/ play/fetch commands DO NOT EXIST (assert the forward-integration guard); no -o/--output anywhere in the audio-store surface (only --output-dir on install-desktop). `make coverage` before/after must show coverage RISING and the test count UP; full pytest no INTERNALERROR; suppression ratchet unchanged; no # noqa / # type: ignore.'
+    - Commit incrementally — one logical slice per commit, each green on make check; ≤30 min uncommitted. Do NOT push, PR, run make install, or restart the daemon. Submit via `ethos mission result` and report the SHA(s), the coverage delta, and the raw ratchet exit. Flag any design detail that is unspecified or conflicts with what step 1 built, rather than diverging silently.
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 1
+context: 'Bead vox-jei3, step 2 of 3 (CLI surface; MCP parity follows). The design is operator-ratified; step 1 (daemon + client + chunked transport) is done and on this branch. You give recordings the same coherent Typer-group shape music already has and make both share one verb vocabulary, deleting the scattered old top-level verbs outright. The engine boundary: RecCli/MusicCli are humble objects that parse args, call ONE client/gateway method, and format via the shared OutputFormatter — no business logic in the CLI (the daemon decides). The invariants: client never names daemon paths (bare ids only); no migration/ compat/shim; one engine / thin CLI client (dependency arrow CLI -> gateway -> client -> daemon). The structural paydown on __main__.py and the coverage rise are hard success criteria, not nice-to-haves.'

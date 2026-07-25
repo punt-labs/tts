@@ -1,0 +1,41 @@
+results:
+    - mission: m-2026-07-23-002
+      round: 1
+      created_at: "2026-07-23T04:29:19Z"
+      author: mdm
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: docs/rec-music-cli.md
+          added: 692
+          removed: 0
+      evidence:
+        - name: docs/rec-music-cli.md — full design of the unified rec/music verb vocabulary (new/list/play/get/remove + music next/status); ratified surface honored verbatim, no -o, new prints the bare id, get writes into CWD under the store name.
+          status: pass
+        - name: 'Old->new mapping + outright removals (forward integration, no shims): record->rec new, play<id>->rec play, fetch -o->rec get; play<localfile>, record/play/fetch top-level, _emit_record_locator, _atomic_write_bytes all deleted.'
+          status: pass
+        - name: Daemon wire-op contracts specified for rec_list, rec_remove, music_new, music_manifest (get), music_remove; rec new/play/get reuse unchanged record/play/fetch. All reuse vox-dvri containment + vox-1hbo WireReply audit logging; music get extends the validator per-segment for <album>/<part>.
+          status: pass
+        - name: 'Music generation: music new takes the finished ElevenLabs prompt verbatim (no CLI expansion), one track per call, fresh single-track catalog album, does not disturb the running program.'
+          status: pass
+        - name: 'CLI decomposition (operator addendum #1): Typer sub-app per noun, RecCli humble object mirroring MusicCli over a RecordGateway protocol; names the __main__ paydown (removes highest-CC helper _emit_record_locator) so the OO ratchet improves.'
+          status: pass
+        - name: 'Test surface (operator addendum #2): per-command + per-op unit/integration coverage, reused containment + WireReply audit assertions re-asserted at the new ops, get-into-CWD + collision, music-new landing, empty/oversize/not-found paths, model-alignment tests.'
+          status: pass
+        - name: 'Audio-programs Z-model delta specified (not edited): [ALBUM] type, Catalog schema, MusicNew / MusicNewBadPrompt / MusicRemove operation schemas + preserved properties, for the jms z-spec mission.'
+          status: pass
+        - name: make check green on both commits a7aab23 and 647fdc2; markdownlint clean; 2864 tests pass.
+          status: pass
+      open_questions:
+        - 'D-3: music play tag radio. Ratified surface is ''play <id>''; the shipped tag-radio (--style/--vibe/--name union) would be silently dropped. Recommend keeping <id> positional AND preserving the tag selection on the same play command. Stretches the literal ratified surface — leader/operator call.'
+        - 'D-7: MCP mic parity. Recommend NOT adding rec/music new/list/get/remove MCP tools now (CLI is the management surface); only required MCP change is the record tool result losing the client path to return the bare id. Leader to confirm the lean surface.'
+      prose: |
+        Design phase for vox-jei3 complete on branch docs/rec-music-cli. Write-set
+        is exactly docs/rec-music-cli.md. Resolved design calls in-doc: D-1 get
+        collision -> ERROR (no clobber); D-2 music remove of the live album ->
+        REFUSE; D-4 music new landing -> fresh single-track album; D-5 music new ->
+        catalog, not the active pool (does not disrupt the program); D-6 vox play
+        <localfile> -> DROP (afplay/ffplay cover it); play/say -> KEEP vox say as
+        the ephemeral speak-now, top-level, unchanged. Two items flagged for the
+        leader as open_questions (D-3, D-7) because they stretch the ratified
+        surface. Not pushed; no PR — the leader owns git/GitHub.

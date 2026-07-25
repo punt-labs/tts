@@ -1,0 +1,46 @@
+mission_id: m-2026-07-24-001
+status: closed
+type: implement
+created_at: "2026-07-24T03:09:23Z"
+updated_at: "2026-07-24T05:33:40Z"
+closed_at: "2026-07-24T05:33:40Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: bwk
+    pinned_at: "2026-07-24T03:09:23Z"
+    hash: b106f88d6d76d24f00c3960e9b2b7a7dbc94e7ef98c1036ccd20074c9e9bf944
+inputs:
+    files:
+        - docs/rec-music-cli.md
+        - docs/vox-chunked-transfer.tex
+        - docs/audio-programs.tex
+        - src/punt_vox/voxd/fetch_handler.py
+        - src/punt_vox/voxd/record_handler.py
+        - src/punt_vox/voxd/play_handler.py
+        - src/punt_vox/voxd/record_store.py
+        - src/punt_vox/voxd/wire_reply.py
+        - src/punt_vox/voxd/_parse.py
+        - src/punt_vox/client.py
+        - src/punt_vox/client_sync.py
+        - src/punt_vox/types_audio.py
+write_set:
+    - src/punt_vox/voxd/
+    - src/punt_vox/client.py
+    - src/punt_vox/client_sync.py
+    - src/punt_vox/types_audio.py
+    - tests/
+success_criteria:
+    - Implement the DAEMON + CLIENT layer of vox-jei3 on branch feat/vox-jei3-impl per the ratified design docs/rec-music-cli.md §"Daemon wire-op contracts" and §"Chunked transfer", and the fuzz-clean models docs/vox-chunked-transfer.tex and docs/audio-programs.tex (Catalog/System delta). This is the daemon/client/ transport ONLY — do NOT touch src/punt_vox/__main__.py, src/punt_vox/cli_music.py, or src/punt_vox/server.py (those are the follow-on CLI and MCP missions).
+    - 'Chunked transfer: replace the single-frame 700 000-byte fetch outright (forward integration, delete the cap — no size-limited path left behind) with fetch_begin → ordered contiguous `chunk` frames (each ≤ a fixed small FETCH_CHUNK_BYTES in types_audio.py) → fetch_end, arbitrary total size, bounded per-frame memory. Daemon reads the file in slices and emits strictly increasing seq; client reassembles in seq order, checks the running total against declared bytes, verifies the sha256, and writes ATOMICALLY (temp in the destination dir + os.replace) so a mid-stream fault never leaves a partial file (a fault ends with an error frame, client discards the partial, exits non-zero). Containment is checked ONCE before the first byte. Every frame is WireReply-stamped. This must satisfy docs/vox-chunked-transfer.tex — the tests assert the modeled properties BY NAME (ordered-contiguous-seq, total=declared, containment-once, atomic-terminal / no-partial-on-abort).'
+    - 'New daemon wire ops with handlers + handler-registry registration, each reusing the DES-049 RecordStore containment validator and the vox-1hbo WireReply audit logging (do NOT reinvent either): rec_list (enumerate immediate in-root recordings, no recursion), rec_remove (delete one in-root recording; not-found is an error; hostile ref rejected + audit-logged), music_new (generate ONE track from the verbatim prompt into a FRESH single-track catalog album with a normal bare AlbumId via the existing id/catalog machinery — no trk- scheme; a `generating` ack precedes the long generation; empty/bad prompt is an audit-logged error), music_manifest (the `music get` album manifest: catalog-resolve the album by AlbumId through Catalog.by_id -> its <slug>-<id> locator, then per-part chunked fetch; filesystem-validate only the part segment), music_remove (delete a catalog album; REFUSE when its parts back the active Program pool or Radio selection — the MusicRemove precondition).'
+    - 'music_new must not disturb the running Program: it parks the track in the catalog and leaves the Program''s mode/pool/playback/lastError untouched (model MusicNew frames ΞProgram ∧ ΞRadio); a generation failure is reported to the caller and does NOT put the Program into `failed` (model MusicNewBadPrompt — contrast FirstTrackBadPrompt). music_new mints a fresh AlbumId not already in the catalog and a track not already catalogued (the MusicNew freshness precondition).'
+    - 'Add the client methods on BOTH VoxClient (async) and VoxClientSync: rec_list, rec_remove, music_new, music_get (drive the manifest + per-part chunked fetch, reassemble each part, write the album directory), music_remove; and convert the existing fetch/get client path to the chunked reassembly. Wrap transport faults (ConnectionClosed/WebSocketException/OSError) as VoxdProtocolError — no silent failure. The record/play ops stay as-is on the wire.'
+    - 'Tests (the design''s §"Test surface", daemon-op section): each new op tested against a real RecordStore/catalog under tmp_path with a fake WebSocket capturing frames (the tests/voxd/test_*_handler.py pattern). Re-assert the containment corpus AT THE NEW OPS (absolute/traversal/separator/empty/NUL/ non-printable -> error frame + a WireReply WARNING line + nothing deleted outside root), including the two-segment <album>/<part> extension for music_manifest. Add the model-alignment tests by name: test_music_new_leaves_full_pool_playing, test_music_new_bad_prompt_does_not_fail_program, test_music_remove_refuses_playing_album, and the chunked-transfer cases (ordered reassembly; a file grown between stat and read still transfers or is bounded; a mid-stream abort leaves no partial file; empty file; sha mismatch). test_token_does_not_grant_fs_delete (the trust-model twin of DES-049''s write test).'
+    - 'QUALITY (operator directive, recorded on vox-jei3): the change must make code structure AND coverage genuinely better, not just pass. `make check` green on every commit; the merge-base OO ratchet exits 0 with a GENUINE improvement on touched files (lower complexity, not minimum-gaming) — verify RAW/unpiped: `uv run python tools/oo_score.py src/punt_vox/ --check --base-ref $(git merge-base origin/main HEAD) --require-base; echo $?` prints 0; run `make coverage` before and after and report the delta — coverage % must RISE and the test count must go UP; full `uv run pytest` shows NO INTERNALERROR; suppression ratchet unchanged; no # noqa / # type: ignore. Stage .oo-baseline.json / .oo-audit.jsonl / coupling baselines with the commits that move them.'
+    - Commit incrementally — one commit per logical slice, each passing make check; never more than 30 minutes of uncommitted work. Do NOT push, open PRs, or touch review threads (leader's job). Do NOT run make install / daemon restart (would clobber the operator's live daemon). Submit via `ethos mission result` and report the SHA(s) + the coverage before/after + the raw ratchet exit. If a design detail is unspecified or the model conflicts with the code, state your choice and flag it for the leader rather than diverging silently.
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 1
+context: 'Bead vox-jei3, step 1 of 3 (daemon layer; CLI + MCP follow). The design is operator-ratified and rmh-reviewed; the formal model is fuzz-clean and probcli-explored. You implement the daemon-side wire ops + the chunked get transport + the client methods; the CLI (mdm) and MCP (rmh) missions wire the surfaces to what you build, so keep the client method signatures clean and documented. Invariants to preserve: the daemon owns the stores and every path decision (clients pass bare ids/refs, never daemon paths); reuse the vox-dvri containment + vox-1hbo WireReply audit logging; music albums are addressed by AlbumId through the Catalog, never by treating the id as a path segment; no migration/compat/shim code; one engine / thin clients. The chunked transfer and the music catalog mutations are the two modeled stateful concerns — your tests assert those modeled properties by name.'

@@ -1,0 +1,41 @@
+mission_id: m-2026-07-23-002
+status: closed
+type: implement
+created_at: "2026-07-23T04:12:39Z"
+updated_at: "2026-07-23T04:52:49Z"
+closed_at: "2026-07-23T04:52:49Z"
+leader: claude
+worker: mdm
+evaluator:
+    handle: rmh
+    pinned_at: "2026-07-23T04:12:39Z"
+    hash: 5b496cf24ebb9b95b94676bb1d6671dcc6f8eb7d56747e0648efc9f7ae36a953
+inputs:
+    files:
+        - src/punt_vox/__main__.py
+        - src/punt_vox/voxd/record_store.py
+        - src/punt_vox/voxd/record_handler.py
+        - src/punt_vox/voxd/play_handler.py
+        - src/punt_vox/voxd/fetch_handler.py
+        - src/punt_vox/voxd/wire_reply.py
+        - docs/audio-programs.tex
+        - docs/vox-dvri-daemon-audio-host.md
+        - .punt-labs/vox/CLAUDE.md
+        - DESIGN.md
+write_set:
+    - docs/rec-music-cli.md
+success_criteria:
+    - 'Produce docs/rec-music-cli.md: the design for unifying vox''s two audio stores under one CLI verb vocabulary. This is a DESIGN doc (the WHAT + the command/protocol shape), not an implementation — do NOT prescribe module structure beyond the daemon op contracts; the implementation mission decides modules.'
+    - 'Honor the operator-ratified surface VERBATIM (do not relitigate it): `vox rec  new "text" · list · play <id> · get <id> · remove <id>` and `vox music new "prompt" · list · play <id> · get <id> · remove <id> · next · status`. One verb vocabulary; list/remove spelled out (not ls/rm); NO -o anywhere; `new` prints the bare store id (never a daemon path); `get <id>` writes into CWD under the store name (rec = one file named <id>; music = a directory named for the album containing its parts). The client never names paths — the daemon owns them. music addresses albums by the id shown in `music list` (already used by play). rec has no next/status.'
+    - 'Specify the daemon wire-op contracts for the new/changed operations on BOTH stores — list, get, remove — and music `new`. Reuse the existing record/play/ fetch store containment + WireReply audit-logging (vox-1hbo, vox-dvri): every op resolves through the daemon-owned store, bare-id only, rejects absolute/separator/traversal/empty/NUL/non-printable, logs rejections. Do not reinvent containment or the sanitizer.'
+    - 'music `new "prompt"` takes the FINISHED ElevenLabs descriptive prompt verbatim — there is no LLM style->prompt expansion in the CLI (the invoker, human or agent, supplies what Claude would author inside the MCP flow). One track per call. Resolve and document: where the new track lands (recommend a fresh single-track album addressable by its own id) and whether generation enters the running program (recommend: park it in the catalog; do not disrupt the active program).'
+    - 'Resolve the remaining design calls with a recommendation + rationale each: (a) `get` collision when the CWD target exists — recommend error with a clear message over silent clobber; (b) play/say reconciliation — recommend dropping `vox play <localfile>` (afplay covers it) and keeping `vox say` as the distinct ephemeral speak-now; state the final decision.'
+    - 'Forward integration, no compat: `vox record`/`vox play`/`vox fetch` and the -o flag are renamed/removed OUTRIGHT — no aliases, no deprecation shims, no migration hints (PY-RF-6; ~no install base). The design must list the exact old->new mapping and the removals.'
+    - 'Identify every surface the change touches beyond the CLI: the MCP `mic` tools (record/music), docs/guide-remote-setup.md, the vox usage guide (.punt-labs/vox/CLAUDE.md is generated — note the source), README, CHANGELOG, prfaq if direction shifts. List them; the leader authors the doc-set files.'
+    - 'FORMAL-MODELING GATE (stateful-audio): `new`/`remove` mutate the music pool/program, whose state machine is modeled in docs/audio-programs.tex (off->generating->playing->rotating, pool<=12, "playing in pool", etc.). The design must SPECIFY the exact model changes required (new operation schemas, changed invariants/preconditions for adding/removing a pool member or a catalog album) so a follow-on z-spec mission (jms) can update audio-programs.tex fuzz-clean BEFORE any implementation dispatches. Do not edit the .tex here; specify the delta.'
+    - Commit the design doc incrementally; `make check` (markdownlint et al.) must pass on each commit; do not accumulate more than 30 minutes of uncommitted work. The design doc's content IS the write-set the implementation mission will use.
+budget:
+    rounds: 2
+    reflection_after_each: false
+current_round: 1
+context: 'Bead vox-jei3. vox has two daemon-owned audio stores — recordings (flat mp3s, reached today by the top-level verbs vox record/play/fetch, one release old, vox-dvri/vox-1hbo) and music albums (reached by the coherent `vox music` Typer group: list/play/next/status). The recordings verbs are scattered, have gaps (no list, no remove), overload `play` (store id AND local file), and leak a daemon path from `record`. The goal is CLI coherence: give recordings the same group shape as music and make BOTH share one verb vocabulary so the same verbs mean the same thing across stores. The surface is already operator-ratified (see success criteria) — your job is the design doc that makes it real: the group structure, the daemon op contracts, music-generation semantics, the play/say reconciliation, the outright removal of the old verbs, the full touched-surface list, and the precise audio-programs Z-model delta. Invariants to preserve: the daemon owns the stores and every path decision (clients use bare ids, never daemon paths); reuse the vox-dvri containment + vox-1hbo WireReply audit logging; no migration/compat/shim code anywhere; one engine, thin CLI client. This is the design phase — the implementation mission (and the jms model mission) come after the leader reviews this design and the operator ratifies it.'

@@ -1,0 +1,74 @@
+results:
+    - mission: m-2026-07-24-013
+      round: 1
+      created_at: "2026-07-24T06:23:24Z"
+      author: mdm
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/__main__.py
+          added: 9
+          removed: 247
+        - path: src/punt_vox/cli_rec.py
+          added: 332
+          removed: 0
+        - path: src/punt_vox/cli_music.py
+          added: 115
+          removed: 8
+        - path: src/punt_vox/types_audio.py
+          added: 8
+          removed: 6
+        - path: tests/test_cli_rec.py
+          added: 358
+          removed: 0
+        - path: tests/test_cli_music.py
+          added: 173
+          removed: 5
+        - path: tests/test_cli.py
+          added: 0
+          removed: 594
+        - path: tests/test_playback.py
+          added: 0
+          removed: 37
+      evidence:
+        - name: make check (lint, type, test, docs, check-oo, check-coupling, check-suppressions)
+          status: pass
+        - name: raw merge-base OO ratchet — oo_score --check --base-ref $(git merge-base origin/main HEAD) --require-base (exit 0)
+          status: pass
+        - name: coverage rose 92.32% -> 93.46% (missed 796 -> 675); test count 2946 -> 2948
+          status: pass
+        - name: pytest full suite — 2948 passed, no INTERNALERROR
+          status: pass
+        - name: surface verified — vox rec/music expose new/list/play/get/remove (+next/status for music); record/play/fetch gone; no -o in the store surface; --output-dir kept on install-desktop; music play takes bare <id> + --style/--vibe/--name
+          status: pass
+      open_questions:
+        - 'Grammar change to flag: music play''s style/vibe moved from positional Arguments to --style/--vibe options so the bare <id> can be the sole positional (per the mission''s ''--style/--vibe/--name tag radio + bare-<id> positional''). Capability unchanged; spelling changed. Confirm acceptable.'
+        - 'Write-set note: program_gateway.py/client_gateway.py are outside the write_set, so the music authoring verbs use a new CatalogGateway/ClientCatalogGateway in cli_music.py rather than extending the existing ProgramGateway. This is also cleaner by SRP (catalog authoring vs playback control), but differs from a literal ''reuse the program gateway'' reading.'
+      prose: |
+        CLI surface of vox-jei3. rec is a new Typer group (cli_rec.py): a @final RecCli
+        humble object over a RecordGateway protocol (production ClientRecordGateway wraps
+        VoxClientSync; tests use an in-memory store), with new/list/play/get/remove. get
+        writes ./<id> in the CWD, refusing on collision (D-1), streaming via the chunked
+        client fetch and landing atomically. Mounted with one line in __main__.py.
+
+        Music gains catalog authoring: MusicCli.new/get/remove route through a new
+        CatalogGateway protocol + ClientCatalogGateway (mirrors ProgramGateway /
+        ClientProgramGateway, since the write-set excludes program_gateway.py). new prints
+        the bare album id and leaves the active Program untouched (D-5); remove refuses a
+        playing album (D-2); get refuses a directory collision (D-1). play gained the bare
+        <id> positional and keeps the --style/--vibe/--name tag radio (D-3).
+
+        Forward integration, no shims: deleted the top-level record/play/fetch commands,
+        the -o/--output option, _emit_record_locator, _atomic_write_bytes, vox play
+        <localfile> (D-6), and the now-unused FETCH_FRAME_LIMIT_BYTES constant.
+
+        Structural paydown on __main__.py (the operator hard bar): module_size 1072 -> 857
+        (-215), avg_params 2.26 -> 1.88, avg_complexity 3.58 -> 3.46, all IMPROVED against
+        the merge-base baseline; cli_music.py method_ratio/class_to_func_ratio/avg_complexity
+        also improved. A scoped, audited relaxation on cli_music.py (module_size,
+        classes_per_module, avg_params) carries the genuine feature growth of the authoring
+        verbs + gateway seam.
+
+        Commits: 494b95e (rec group + deletions), 836b848 (music verbs + play), 93dff34
+        (added rec-new coverage). Not pushed; no PR; make install / daemon restart not run
+        (daemon-dependent verbs were surface-verified, not exercised end-to-end).

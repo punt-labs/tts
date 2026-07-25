@@ -1,0 +1,36 @@
+mission_id: m-2026-07-24-014
+status: closed
+type: implement
+created_at: "2026-07-24T06:25:32Z"
+updated_at: "2026-07-24T07:00:15Z"
+closed_at: "2026-07-24T07:00:15Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: mdm
+    pinned_at: "2026-07-24T06:25:32Z"
+    hash: cfb39e35cedde7372a1f0b92ae7c2d4b25a2db5ec0c3e44760ce00d094133a04
+inputs:
+    files:
+        - docs/rec-music-cli.md
+        - src/punt_vox/server.py
+        - src/punt_vox/cli_rec.py
+        - src/punt_vox/cli_music.py
+        - src/punt_vox/client.py
+        - ../punt-kit/standards/architecture.md
+write_set:
+    - src/punt_vox/server.py
+    - tests/
+success_criteria:
+    - 'Implement MCP PARITY for vox-jei3 on branch feat/vox-jei3-impl per the design docs/rec-music-cli.md §"Old → new mapping", §"Touched surfaces" (D-7 resolved: MCP at parity per the architecture.md projection model — one engine, thin clients, one code path). The CLI (step 2) and daemon/client (step 1) already exist on this branch. Touch ONLY src/punt_vox/server.py and tests/ — do NOT modify __main__.py, cli_rec.py, cli_music.py, voxd/, or the client modules.'
+    - 'Expose the recording + music management verbs on the `mic` MCP surface at parity with the CLI, each MCP tool delegating to the SAME VoxClient engine op the CLI uses (one code path — no reimplemented logic in server.py; it translates MCP calls to client calls and formats results): rec new/list/play/ get/remove and music new/list/play/get/remove (+ the existing next/status). Reuse the existing mic tool patterns in server.py.'
+    - The record/rec-new MCP tool result returns the BARE store id (drop any client-path/daemon-path field), matching `vox rec new`. Update any existing `record`/`music` mic tools to the unified shape; delete no-longer-valid fields (forward integration, no compat shim in the tool schema).
+    - 'MCP-appropriate output forms: an MCP caller is an agent, not a shell, so where a verb''s CLI form writes a file to CWD (`get`), choose the sensible agent-facing form (return the bytes/base64 or the store locator rather than writing the daemon host''s CWD) and document why. Where a verb doesn''t map cleanly to the agent surface, implement the closest coherent form and note it in the result''s open_questions rather than forcing a shell-only semantic. Containment + audit logging still happen daemon-side (unchanged) — the MCP tool is a thin caller.'
+    - 'TESTS: MCP tool tests (the tests/ server-tool pattern) for each new/changed tool — argument passthrough, the bare-id result shape, error surfacing (a daemon error frame becomes a clean MCP error, not a silent success), and the music-vs-rec routing. `make coverage` before/after shows coverage RISING and the test count UP; full pytest no INTERNALERROR; suppression ratchet unchanged; no # noqa / # type: ignore.'
+    - 'QUALITY (operator directive): make check green each commit; the RAW merge-base OO ratchet exits 0 with a genuine (not minimum-gamed) improvement on server.py or a touched file — verify unpiped: `uv run python tools/oo_score.py src/punt_vox/ --check --base-ref $(git merge-base origin/main HEAD) --require-base; echo $?` prints 0. Keep server.py thin/cohesive.'
+    - Commit incrementally, each green on make check; ≤30 min uncommitted. Do NOT push, PR, run make install, or restart the daemon. Submit via `ethos mission result` and report SHA(s), coverage delta, raw ratchet exit, and the FINAL branch coverage vs origin/main. Flag anything that doesn't map cleanly to MCP rather than diverging silently.
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 1
+context: Bead vox-jei3, step 3 of 3 (final — MCP parity). The design is operator- ratified; the daemon/client (step 1) and CLI (step 2) are done on this branch. vox is agent-facing, so per the projection model the MCP surface is first-class and gets the same capabilities as the CLI, all routing through the one engine (VoxClient -> daemon). server.py is a thin translator — no business logic. After this mission the whole vox-jei3 feature (design + model + daemon + CLI + MCP) is code-complete on feat/vox-jei3-impl, ready for the leader's full-diff local review + PR. Report the final branch coverage vs origin/main so the leader can confirm the coverage-rises bar before the PR.
