@@ -13,6 +13,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, cast, final
 
+from starlette.websockets import WebSocketDisconnect
+
 from punt_vox.voxd.programs.catalog import Catalog
 from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
 from punt_vox.voxd.programs.library import MusicLibrary
@@ -126,6 +128,117 @@ class TestMusicNewHandler:
         assert sent[0]["type"] == "generating"
         assert sent[-1]["type"] == "error"
         assert any("n3" in r.getMessage() for r in caplog.records)
+
+    def test_duplicate_name_rejected_before_ack(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A curated name already taken is refused BEFORE any 'generating' ack,
+        joining the blank-prompt rejection ahead of the ack rather than acking and
+        only failing once generation begins."""
+        library = _library(tmp_path / "programs")
+        ws0, _ = _capturing_ws()
+        first: dict[str, object] = {
+            "type": "music_new",
+            "id": "d0",
+            "prompt": "pads",
+            "name": "dup",
+        }
+        asyncio.run(MusicNewHandler(library)(first, ws0))
+
+        ws1, sent = _capturing_ws()
+        second: dict[str, object] = {
+            "type": "music_new",
+            "id": "d1",
+            "prompt": "more",
+            "name": "dup",
+        }
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(MusicNewHandler(library)(second, ws1))
+
+        assert [f["type"] for f in sent] == ["error"]  # no 'generating' ack precedes
+        assert "already exists" in str(sent[-1]["message"])
+        assert any("d1" in r.getMessage() for r in caplog.records)
+
+    def test_non_string_name_rejected_before_ack(self, tmp_path: Path) -> None:
+        """A non-string name is a malformed frame refused pre-ack, like a
+        non-string prompt -- the name parse now runs before the ack, not after."""
+        library = _library(tmp_path / "programs")
+        ws, sent = _capturing_ws()
+        msg: dict[str, object] = {
+            "type": "music_new",
+            "id": "n6",
+            "prompt": "pads",
+            "name": 123,
+        }
+        asyncio.run(MusicNewHandler(library)(msg, ws))
+
+        assert [f["type"] for f in sent] == ["error"]  # no 'generating' ack
+        assert "must be a string" in str(sent[-1]["message"])
+
+    def test_duplicate_rejection_leaks_no_reservation(self, tmp_path: Path) -> None:
+        """A pre-ack duplicate rejection holds nothing new, so authoring a distinct
+        name straight after still acks and generates -- the rejected request left
+        no phantom hold behind."""
+        library = _library(tmp_path / "programs")
+        ws0, _ = _capturing_ws()
+        taken: dict[str, object] = {
+            "type": "music_new",
+            "id": "k0",
+            "prompt": "pads",
+            "name": "keep",
+        }
+        asyncio.run(MusicNewHandler(library)(taken, ws0))
+
+        ws1, _ = _capturing_ws()
+        dup: dict[str, object] = {
+            "type": "music_new",
+            "id": "k1",
+            "prompt": "more",
+            "name": "keep",
+        }
+        asyncio.run(MusicNewHandler(library)(dup, ws1))  # rejected pre-ack
+
+        ws2, sent = _capturing_ws()
+        other: dict[str, object] = {
+            "type": "music_new",
+            "id": "k2",
+            "prompt": "more",
+            "name": "other",
+        }
+        asyncio.run(MusicNewHandler(library)(other, ws2))
+        assert sent[0]["type"] == "generating"
+        assert sent[-1]["type"] == "album"
+
+    def test_reservation_released_when_ack_undeliverable(self, tmp_path: Path) -> None:
+        """If the peer vanishes before the ack lands, the reservation's context
+        frees the held name so a retry is not falsely rejected as a duplicate."""
+        library = _library(tmp_path / "programs")
+
+        @final
+        class _GoneOnAck:
+            async def send_json(self, payload: dict[str, object]) -> None:
+                if payload.get("type") == "generating":
+                    raise WebSocketDisconnect(code=1000)
+
+        gone = cast("WebSocket", _GoneOnAck())
+        lost: dict[str, object] = {
+            "type": "music_new",
+            "id": "g1",
+            "prompt": "pads",
+            "name": "again",
+        }
+        asyncio.run(MusicNewHandler(library)(lost, gone))
+
+        ws, sent = _capturing_ws()
+        retry: dict[str, object] = {
+            "type": "music_new",
+            "id": "g2",
+            "prompt": "pads",
+            "name": "again",
+        }
+        asyncio.run(MusicNewHandler(library)(retry, ws))
+        assert sent[0]["type"] == "generating"
+        assert sent[-1]["type"] == "album"  # "again" was free, not a phantom dup
 
 
 class TestMusicManifestHandler:

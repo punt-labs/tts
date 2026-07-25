@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.voxd.containment import ContainmentRoot
 from punt_vox.voxd.programs.album_contents import AlbumContents
+from punt_vox.voxd.programs.album_reservation import NameReservations
 from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint
 from punt_vox.voxd.programs.catalog import Album
 from punt_vox.voxd.programs.manifest import ManifestDraft, PartEntry
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from punt_vox.voxd.programs.album_id import AlbumId
+    from punt_vox.voxd.programs.album_reservation import AlbumReservation
     from punt_vox.voxd.programs.catalog import Catalog
     from punt_vox.voxd.programs.producer import Producer
     from punt_vox.voxd.programs.store import PartStore, ProgramStore
@@ -56,16 +58,15 @@ _PART_LABEL: Final = "part name"
 class MusicLibrary:
     """Author, describe, resolve, and remove catalog albums (never the Program)."""
 
-    __slots__ = ("_catalog", "_producer", "_reserving", "_root", "_store")
+    __slots__ = ("_catalog", "_names", "_producer", "_root", "_store")
 
     _catalog: Catalog
     _store: ProgramStore
     _root: Path
     _producer: Producer
-    # Curated names reserved by an in-flight ``new`` whose generation await has
-    # not yet catalogued the album -- the synchronous guard that two overlapping
-    # same-name ``new`` calls cannot both pass the duplicate check (D-1 TOCTOU).
-    _reserving: set[str]
+    # The synchronous curated-name guard: two overlapping same-name ``new`` calls
+    # cannot both pass the duplicate check while neither is catalogued (D-1 TOCTOU).
+    _names: NameReservations
 
     def __new__(
         cls, catalog: Catalog, store: ProgramStore, root: Path, producer: Producer
@@ -75,35 +76,55 @@ class MusicLibrary:
         self._store = store
         self._root = root
         self._producer = producer
-        self._reserving = set()
+        self._names = NameReservations(catalog.taken_names)
         return self
 
-    async def new(self, prompt: str, name: str | None) -> AlbumId:
-        """Generate one track into a fresh single-track album; return its id.
+    def reserve(self, prompt: str, name: str | None) -> AlbumReservation:
+        """Validate the prompt and reserve the curated name before any generation.
 
-        ``MusicNew``: mint the id, file the album with its one Part, leave the
-        running Program untouched. An empty prompt, a curated name already taken,
-        or a generation rejection raises ``ValueError`` (``MusicNewBadPrompt``)
-        and leaves the Catalog unchanged. The name is refused before any
-        directory is minted, so ``Catalog.by_name`` resolution stays unambiguous.
+        All pre-generation input rejection is synchronous and happens here: an
+        empty prompt, or a curated name already taken or held by another in-flight
+        ``new``, raises ``ValueError`` (``MusicNewBadPrompt``). A wire caller runs
+        this *before* acking, so a malformed or duplicate request never receives a
+        ``generating`` ack it will only fail after. The returned reservation holds
+        the name until its context exits (see :meth:`produce`).
         """
         clean = prompt.strip()
         if not clean:
             raise ValueError("empty prompt")
         tags = AlbumTags(style=_AUTHORED_TAG, vibe=_AUTHORED_TAG, name=name)
-        self._reserve_name(tags.name)
-        try:
-            draft = ManifestDraft(
-                album_id=self._catalog.mint_id(),
-                tags=tags,
-                fingerprint=PromptFingerprint.from_prompts(clean, ()),
-                taken_names=self._catalog.taken_names(),
-            )
-            store = await self._materialise(draft, clean)
-            self._catalog.add(Album(store.manifest(), draft.locator, self._store))
-            return draft.album_id
-        finally:
-            self._release_name(tags.name)
+        return self._names.hold(clean, tags)
+
+    async def produce(self, reservation: AlbumReservation) -> AlbumId:
+        """Generate the reserved album's one track and catalog it; return its id.
+
+        ``MusicNew`` proper: mint the id, file the album with its one Part, leave
+        the running Program untouched. The prompt and curated name were already
+        validated and held by :meth:`reserve`; the caller owns releasing the
+        reservation (its context manager) on every path, so a rejection here
+        (``MusicNewBadPrompt``) frees the name and leaves the Catalog unchanged.
+        """
+        draft = ManifestDraft(
+            album_id=self._catalog.mint_id(),
+            tags=reservation.tags,
+            fingerprint=PromptFingerprint.from_prompts(reservation.prompt, ()),
+            taken_names=self._catalog.taken_names(),
+        )
+        store = await self._materialise(draft, reservation.prompt)
+        self._catalog.add(Album(store.manifest(), draft.locator, self._store))
+        return draft.album_id
+
+    async def new(self, prompt: str, name: str | None) -> AlbumId:
+        """Author one track into a fresh album in one call: reserve, generate, file.
+
+        A convenience over :meth:`reserve` + :meth:`produce` for callers that do
+        not interpose work -- a wire ``generating`` ack -- between reserving the
+        name and generating. Rejection semantics are identical: an empty prompt, a
+        duplicate curated name, or a generation rejection raises ``ValueError`` and
+        leaves the Catalog unchanged, and the held name is always released.
+        """
+        with self.reserve(prompt, name) as reservation:
+            return await self.produce(reservation)
 
     def manifest(self, album_id: AlbumId) -> AlbumContents:
         """Return the album's on-disk name and ready parts, resolved by catalog id.
@@ -177,40 +198,6 @@ class MusicLibrary:
         )
         await self._producer.produce(spec, target)
         store.record(PartEntry(index=1, file=target.name, status=PartStatus.READY))
-
-    def _reserve_name(self, name: str | None) -> None:
-        """Reserve a curated name synchronously, refusing a taken/reserved one.
-
-        The reservation happens before the multi-second generation await, so two
-        overlapping ``new`` calls for the same curated name cannot both pass the
-        duplicate check while neither is catalogued yet (D-1 TOCTOU). ``None`` (an
-        unnamed pool, auto-named at stamp time) reserves nothing and never
-        collides.
-        """
-        self._reject_duplicate_name(name)
-        if name is not None:
-            self._reserving.add(name)
-
-    def _release_name(self, name: str | None) -> None:
-        """Release a reservation on both the success and failure paths of ``new``.
-
-        On success the name is now in ``taken_names`` (the catalogue owns the
-        block); on failure it frees the name for a later ``new``. Idempotent.
-        """
-        if name is not None:
-            self._reserving.discard(name)
-
-    def _reject_duplicate_name(self, name: str | None) -> None:
-        """Refuse a curated name already taken or reserved (keeps ``by_name`` 0-or-1).
-
-        ``taken_names`` holds only catalogued curated names; ``_reserving`` holds
-        those an in-flight ``new`` has claimed but not yet catalogued. An unnamed
-        pool (``None``) is in neither, so it never collides here.
-        """
-        if name in self._catalog.taken_names() or (
-            name is not None and name in self._reserving
-        ):
-            raise ValueError(f"album named {name!r} already exists")
 
     def _discard(self, locator: str) -> None:
         """Best-effort remove a half-authored album directory after a failed gen."""

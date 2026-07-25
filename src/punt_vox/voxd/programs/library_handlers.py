@@ -49,16 +49,23 @@ class MusicNewHandler:
         return self
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """Reject an empty, blank, or malformed prompt pre-ack, else ack and reply."""
+        """Reject every bad pre-generation input pre-ack, else ack and reply.
+
+        A blank/non-string prompt, a non-string or duplicate name -- all input
+        rejection runs through :meth:`MusicLibrary.reserve` *before* the
+        ``generating`` ack, so a malformed request never gets an ack it only fails
+        after. The reservation's context frees the held name on every exit path.
+        """
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
             prompt = parse_optional_str(msg, "prompt")
             if not prompt or not prompt.strip():
                 await reply.error("music new requires a prompt")
                 return
-            if not await reply.send({"type": "generating"}):
-                return
-            album_id = await self._library.new(prompt, parse_optional_str(msg, "name"))
+            with self._library.reserve(prompt, parse_optional_str(msg, "name")) as res:
+                if not await reply.send({"type": "generating"}):
+                    return
+                album_id = await self._library.produce(res)
         except _LIBRARY_FAILURES as exc:
             await reply.reject_or_fault(exc)
             return
