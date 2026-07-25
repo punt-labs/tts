@@ -76,8 +76,8 @@ class AlbumBinder:
     def _mint(
         self, style: str, vibe: str, name: str | None, fingerprint: PromptFingerprint
     ) -> Album:
-        """Create a fresh album (auto-suffixing a colliding name), register it."""
-        taken = self._catalog.taken_names()
+        """Create a fresh album, register it, suffixing around reserved names."""
+        taken = self._catalog.reserved_names()
         final_name = None if name is None else AlbumTags.mint_unique_name(name, taken)
         tags = AlbumTags(style=style, vibe=vibe, name=final_name)
         draft = ManifestDraft(

@@ -75,6 +75,28 @@ class TestByIdAndName:
         assert catalog.taken_names() == frozenset({"mix"})
 
 
+class TestReservedNames:
+    """The mint-collision set unions catalogued names with in-flight ``new`` holds.
+
+    ``reserved_names`` is the single held-names authority both authoring paths
+    read: ``music new`` holds a curated name across its generation await, and a
+    concurrent ``music on --name`` unions those holds with the catalogued names,
+    so neither path can duplicate a name the other has claimed but not yet filed.
+    """
+
+    def test_reserved_names_unions_held_and_catalogued(self) -> None:
+        catalog = Catalog((_album("a3f1c9", "lofi", "focus", name="mix"),))
+        held = AlbumTags(style="custom", vibe="custom", name="focus")
+        with catalog.reservations.hold("pads", held):
+            # A name still generating is reserved even though it is not catalogued.
+            assert catalog.reserved_names() == frozenset({"mix", "focus"})
+        assert catalog.reserved_names() == frozenset({"mix"})  # released on exit
+
+    def test_reserved_names_matches_taken_when_no_hold_is_in_flight(self) -> None:
+        catalog = Catalog((_album("a3f1c9", "lofi", "focus", name="mix"),))
+        assert catalog.reserved_names() == catalog.taken_names()
+
+
 class TestByTags:
     def test_returns_many_albums_sharing_tags_newest_first(self) -> None:
         older = _album("a3f1c9", "trance", "calm", created=_BASE)

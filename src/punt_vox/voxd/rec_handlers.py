@@ -102,4 +102,4 @@ class RecRemoveHandler:
         except OSError as exc:
             await reply.fault(str(exc))
             return
-        await reply.send({"type": "removed", "name": ref})
+        await reply.send({"type": "removed", "removed": ref})

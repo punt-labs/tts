@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.voxd.containment import ContainmentRoot
 from punt_vox.voxd.programs.album_contents import AlbumContents
-from punt_vox.voxd.programs.album_reservation import NameReservations
 from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint
 from punt_vox.voxd.programs.catalog import Album
 from punt_vox.voxd.programs.manifest import ManifestDraft, PartEntry
@@ -58,15 +57,12 @@ _PART_LABEL: Final = "part name"
 class MusicLibrary:
     """Author, describe, resolve, and remove catalog albums (never the Program)."""
 
-    __slots__ = ("_catalog", "_names", "_producer", "_root", "_store")
+    __slots__ = ("_catalog", "_producer", "_root", "_store")
 
     _catalog: Catalog
     _store: ProgramStore
     _root: Path
     _producer: Producer
-    # The synchronous curated-name guard: two overlapping same-name ``new`` calls
-    # cannot both pass the duplicate check while neither is catalogued (D-1 TOCTOU).
-    _names: NameReservations
 
     def __new__(
         cls, catalog: Catalog, store: ProgramStore, root: Path, producer: Producer
@@ -76,7 +72,6 @@ class MusicLibrary:
         self._store = store
         self._root = root
         self._producer = producer
-        self._names = NameReservations(catalog.taken_names)
         return self
 
     def reserve(self, prompt: str, name: str | None) -> AlbumReservation:
@@ -93,7 +88,7 @@ class MusicLibrary:
         if not clean:
             raise ValueError("empty prompt")
         tags = AlbumTags(style=_AUTHORED_TAG, vibe=_AUTHORED_TAG, name=name)
-        return self._names.hold(clean, tags)
+        return self._catalog.reservations.hold(clean, tags)
 
     async def produce(self, reservation: AlbumReservation) -> AlbumId:
         """Generate the reserved album's one track and catalog it; return its id.

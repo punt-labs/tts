@@ -122,7 +122,9 @@ class TestRecRemove:
         (store.root / "gone.mp3").write_bytes(b"bytes")
         ws, sent = _capturing_ws()
         asyncio.run(RecRemoveHandler(store)({"id": "r1", "ref": "gone.mp3"}, ws))
-        assert sent[-1] == {"type": "removed", "id": "r1", "name": "gone.mp3"}
+        # The removed-id key is ``removed`` -- uniform with ``music remove`` and
+        # the CLI/MCP readers, not the store-local ``name``.
+        assert sent[-1] == {"type": "removed", "id": "r1", "removed": "gone.mp3"}
         assert not (store.root / "gone.mp3").exists()
 
     def test_not_found_is_a_client_rejection(

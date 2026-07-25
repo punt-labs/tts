@@ -58,6 +58,10 @@ class NameReservations:
             self._held.add(name)
         return AlbumReservation(prompt, tags, self._release)
 
+    def held_names(self) -> frozenset[str]:
+        """Return the curated names in-flight ``new`` calls hold but have not filed."""
+        return frozenset(self._held)
+
     def _release(self, name: str | None) -> None:
         """Free a held name once its album is catalogued or its generation failed.
 

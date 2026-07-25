@@ -432,3 +432,49 @@ class TestStoppedProgramBacking:
         with pytest.raises(ValueError, match="is playing"):
             library.remove(album.id, blocked=service.active_backing_locators())
         assert album.id in {a.id for a in service.catalog_albums()}
+
+
+class TestConcurrentNameReservation:
+    """A curated name an in-flight ``music new`` holds blocks a colliding mint.
+
+    ``music new --name X`` holds X in the catalog's shared reservations across
+    its multi-second generation await, before X is catalogued. A concurrent
+    ``program on --name X`` shares that catalog, so its binder sees the hold and
+    auto-suffixes rather than minting a second album also named X -- which would
+    break the ``by_name`` 0-or-1 invariant. The hold releases on the
+    reservation's context exit, whether the ``new`` succeeded or failed, freeing
+    the name for a later mint.
+    """
+
+    def _library(self, tmp_path: Path, service: ProgramService) -> MusicLibrary:
+        """Build a library sharing the service's catalog, as wiring does."""
+        root = tmp_path / "programs"
+        return MusicLibrary(
+            service.catalog, FilesystemProgramStore(root), root, QuietProducer()
+        )
+
+    def test_in_flight_new_name_forces_the_binder_to_suffix(
+        self, tmp_path: Path
+    ) -> None:
+        service = _service(tmp_path)
+        library = self._library(tmp_path, service)
+        # ``music new --name focus`` is mid-generation: focus is held, not filed.
+        with library.reserve("pads", "focus"):
+            service.turn_on(style="techno", vibe="calm", name="focus", prompts=_ONE)
+            service.shutdown()  # cancel the fill the mint armed
+            names = {a.manifest.tags.name for a in service.catalog_albums()}
+        assert "focus" not in names  # the held name was not duplicated
+        assert "focus1" in names  # the binder auto-suffixed around the hold
+        assert service.catalog.by_name("focus") is None  # by_name stays 0-or-1
+
+    def test_released_reservation_frees_the_name_for_a_later_mint(
+        self, tmp_path: Path
+    ) -> None:
+        service = _service(tmp_path)
+        library = self._library(tmp_path, service)
+        with library.reserve("pads", "focus"):
+            pass  # an aborted/failed ``new`` releases the hold on context exit
+        service.turn_on(style="techno", vibe="calm", name="focus", prompts=_ONE)
+        service.shutdown()
+        names = {a.manifest.tags.name for a in service.catalog_albums()}
+        assert names == {"focus"}  # the freed name is minted unsuffixed
