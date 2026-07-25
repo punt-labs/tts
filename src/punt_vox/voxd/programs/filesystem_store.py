@@ -21,6 +21,7 @@ from typing import Self, final
 from punt_vox.atomic_file import AtomicFile
 from punt_vox.types_programs.identifiers import ProgramName
 from punt_vox.types_programs.wire import JsonObject
+from punt_vox.voxd.containment import ContainmentRoot
 from punt_vox.voxd.path_status import PathStatus
 from punt_vox.voxd.programs.catalog import Album
 from punt_vox.voxd.programs.manifest import AlbumManifest, ManifestDraft, PartEntry
@@ -31,6 +32,9 @@ __all__ = ["FilesystemPartStore", "FilesystemProgramStore"]
 logger = logging.getLogger(__name__)
 
 _MANIFEST_NAME = "manifest.json"
+# What a client supplies when it names an album: one bare directory segment.
+# The label heads every structural rejection so it reads in the caller's terms.
+_LOCATOR_LABEL = "album locator"
 # A manifest is small JSON (album tags + up to a pool of Part entries); anything
 # past this ceiling is corrupt or a planted file, and is rejected before the read
 # so one giant manifest cannot exhaust daemon memory at scan time.
@@ -235,23 +239,17 @@ class FilesystemProgramStore:
             raise OSError(msg) from exc
 
     def _contained_dir(self, directory: str) -> Path:
-        """Return ``root/directory`` for a single validated segment, else raise.
+        """Return ``root/directory`` for a single bare directory name, else raise.
 
         A locator is always one plain directory-name segment produced by ``scan``
-        or ``create``, never a path. Rejecting anything that is not *already* its
-        own sole canonical component before the containment check restores that
-        single-segment invariant (defense in depth): empty, ``.``, ``..``, ``a/b``,
-        and non-canonical spellings like ``./foo`` or ``foo/`` are all refused,
-        rather than silently normalized to ``foo`` and resolved under the root.
+        or ``create``, never a path. The shared :class:`ContainmentRoot` gate --
+        the same :class:`~punt_vox.bare_name.BareName` structural check every
+        store surface uses -- rejects anything that is not one filename segment:
+        empty, ``.``, ``..``, ``a/b``, an absolute path, and separator-bearing
+        spellings like ``./foo`` or ``foo/`` are all refused, so a locator can
+        only ever name one album directory directly under the root.
         """
-        if Path(directory).parts != (directory,) or directory == "..":
-            msg = f"album locator must be a single path segment: {directory!r}"
-            raise ValueError(msg)
-        path = self._root / directory
-        if not self._is_contained(path):
-            msg = f"album directory escapes the programs root: {directory!r}"
-            raise ValueError(msg)
-        return path
+        return ContainmentRoot(self._root, _LOCATOR_LABEL).contained_child(directory)
 
     def _is_contained(self, directory: Path) -> bool:
         """Return whether ``directory`` resolves to a path under the root."""

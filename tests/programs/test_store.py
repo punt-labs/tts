@@ -335,9 +335,10 @@ class TestDelete:
 
     def test_delete_still_guards_a_hostile_locator(self, tmp_path: Path) -> None:
         # Idempotence does not weaken the containment guard: a traversal locator is
-        # refused before any unlink, even though the "directory" does not exist.
+        # refused by the shared BareName gate before any unlink, even though the
+        # "directory" does not exist.
         store = FilesystemProgramStore(tmp_path / "root")
-        with pytest.raises(ValueError, match="single path segment"):
+        with pytest.raises(ValueError, match="album locator"):
             store.delete("../../etc")
 
 
@@ -356,7 +357,7 @@ class TestPartStore:
 
 
 class TestPathTraversalGuard:
-    """A locator must be a single safe segment produced by scan()/create()."""
+    """A locator must be a single bare directory name, gated by BareName."""
 
     @pytest.mark.parametrize(
         "locator",
@@ -367,20 +368,27 @@ class TestPathTraversalGuard:
             "sub/mix-a3f1c9",
             "",
             ".",
-            "./foo",  # normalizes to "foo" -- rejected as non-canonical
-            "foo/",  # trailing separator -- rejected as non-canonical
+            "./foo",  # separator-bearing -- rejected by the BareName gate
+            "foo/",  # trailing separator -- rejected by the BareName gate
         ],
     )
-    def test_open_rejects_non_canonical_locator(
-        self, tmp_path: Path, locator: str
-    ) -> None:
+    def test_open_rejects_non_bare_locator(self, tmp_path: Path, locator: str) -> None:
         # Only a plain single segment (exactly as scan()/create() produce) is
-        # accepted. Empty, ".", "..", multi-segment, and non-canonical spellings
-        # that would silently normalize to a segment are all refused up front,
-        # before the containment check (defense in depth).
+        # accepted. Empty, ".", "..", multi-segment, absolute, and any
+        # separator-bearing spelling are refused by the shared BareName gate --
+        # the same structural check every store surface uses -- before any
+        # filesystem touch. Every rejection reads in the locator's own vocabulary.
         store = FilesystemProgramStore(tmp_path / "root")
-        with pytest.raises(ValueError, match="single path segment"):
+        with pytest.raises(ValueError, match="album locator"):
             store.open(locator)
+
+    def test_contained_dir_resolves_a_bare_locator(self, tmp_path: Path) -> None:
+        # A legitimate <slug>-<id> locator names one album directory directly
+        # under the root -- no traversal, no resolution beyond a single join.
+        root = tmp_path / "root"
+        path = FilesystemProgramStore(root)._contained_dir("techno--ambient-a3f1c9")
+        assert path == root / "techno--ambient-a3f1c9"
+        assert path.parent == root
 
 
 class TestProtocolConformance:
