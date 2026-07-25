@@ -179,6 +179,21 @@ class TestEnumerateAndRemove:
         names = {entry.name for entry in store.entries()}
         assert names == {"good.mp3"}  # the racing entry skipped, listing survives
 
+    def test_entries_skips_names_a_ref_would_reject(self, store: RecordStore) -> None:
+        """A planted file whose name BareName refuses is not listed.
+
+        entries() must surface only names resolve_ref/remove would accept, so
+        list and operate stay consistent -- a backslash- or non-printable-bearing
+        name that ``rec get``/``rec remove`` reject can never appear in ``rec
+        list``. A normal recording alongside it still lists.
+        """
+        store.root.mkdir(parents=True)
+        (store.root / "good.mp3").write_bytes(b"12345")
+        (store.root / "bad\\name.mp3").write_bytes(b"planted")  # backslash: rejected
+        (store.root / "tab\tname.mp3").write_bytes(b"planted")  # non-printable
+        names = {entry.name for entry in store.entries()}
+        assert names == {"good.mp3"}
+
     def test_remove_unlinks_an_in_root_file(self, store: RecordStore) -> None:
         store.root.mkdir(parents=True)
         (store.root / "gone.mp3").write_bytes(b"x")

@@ -890,6 +890,69 @@ class TestVoxClientPlayFetch:
         with pytest.raises(VoxdProtocolError, match="read fault"):
             await client.fetch("x.mp3")
 
+    @pytest.mark.asyncio
+    async def test_fetch_fault_taints_and_closes_connection(self) -> None:
+        """A mid-stream fault closes the connection and nulls it for a reconnect.
+
+        The daemon may still be sending this fetch's remaining chunk frames; the
+        poisoned socket must be discarded so those stale frames cannot be read by
+        the next request. The failure still surfaces as a VoxdProtocolError.
+        """
+        blob = b"abcdefgh"
+        frames = _fetch_frames(blob, chunk=4)
+        frames[0]["sha256"] = "0" * 64  # force a mid-stream integrity fault
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(side_effect=[json.dumps(f) for f in frames])
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="sha256 mismatch"):
+            await client.fetch("x.mp3")
+
+        mock_ws.close.assert_awaited_once()
+        assert client._transport._ws is None  # pyright: ignore[reportPrivateUsage]
+
+    @pytest.mark.asyncio
+    async def test_subsequent_fetch_after_fault_reads_no_stale_frames(self) -> None:
+        """After a fault, the next fetch reconnects and reads a clean stream.
+
+        The first connection carries a corrupt stream followed by leftover chunk
+        frames the daemon was still sending. If that socket were reused, the next
+        fetch would read those stale frames and desync. Tainting the connection
+        forces a reconnect, so the second fetch reads only the fresh stream.
+        """
+        good = b"clean-bytes"
+        # First socket: a sha-mismatch fault, then stale frames that would poison
+        # a reused connection (the daemon still flushing the aborted fetch).
+        bad = _fetch_frames(b"abcdefgh", chunk=4)
+        bad[0]["sha256"] = "0" * 64
+        stale = _fetch_frames(b"STALE!!!", chunk=4)  # would be misread if reused
+        first_ws = _make_mock_ws()
+        first_ws.recv = AsyncMock(side_effect=[json.dumps(f) for f in (*bad, *stale)])
+        # Second socket (post-reconnect): the clean stream the caller asked for.
+        second_ws = _make_mock_ws()
+        second_ws.recv = AsyncMock(
+            side_effect=[json.dumps(f) for f in _fetch_frames(good, chunk=4)]
+        )
+
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = first_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="sha256 mismatch"):
+            await client.fetch("x.mp3")
+
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=second_ws,
+        ):
+            assert await client.fetch("x.mp3") == good
+
+        # The second fetch never touched the first (stale) socket's leftover
+        # frames -- only fetch_begin/chunk/fetch_end were read from it (5 frames).
+        assert first_ws.recv.call_count == len(bad)
+        assert client._transport._ws is second_ws  # pyright: ignore[reportPrivateUsage]
+
 
 class TestVoxClientRecMusic:
     """The rec/music catalog client methods over a mock WebSocket."""

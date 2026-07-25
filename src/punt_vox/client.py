@@ -349,10 +349,42 @@ class _VoxdTransport:
         count and the sha256 is verified, so a short, reordered, or corrupted
         stream raises. A mid-stream ``error`` frame surfaces through ``_decode`` as
         a :class:`VoxdProtocolError`, and the partial buffer is discarded.
+
+        On ANY mid-stream fault the connection is *tainted and closed* before the
+        error propagates: the daemon may still be sending this fetch's remaining
+        chunk frames, and on a reused persistent connection those stale frames
+        would be read by the NEXT request and desync the protocol (a
+        sha256/byte-count mismatch or an out-of-order frame on a later, unrelated
+        fetch or command). Discarding the poisoned socket makes the next request
+        reconnect to a clean one via :meth:`_ensure_connected`, so a fault leaves
+        no partial file and no stale frames behind.
         """
         ws = await self._ensure_connected()
         await self._send_frame(ws, msg)
         deadline = asyncio.get_running_loop().time() + timeout
+        try:
+            return await self._reassemble(ws, deadline, msg)
+        except BaseException:
+            # Poison the connection: stale chunk frames from this failed fetch
+            # must not be read by the next request. Suppress close errors -- the
+            # socket may already be gone; nulling _ws forces a clean reconnect.
+            with contextlib.suppress(Exception):
+                await ws.close()
+            self._ws = None
+            raise
+
+    async def _reassemble(
+        self,
+        ws: websockets.asyncio.client.ClientConnection,
+        deadline: float,
+        msg: dict[str, object],
+    ) -> bytes:
+        """Consume ``fetch_begin`` -> ordered ``chunk``* -> ``fetch_end`` into bytes.
+
+        Verifies the frame order, the declared byte count, and the sha256 before
+        returning, so a short, reordered, or corrupted stream raises. The caller
+        owns the connection-tainting on any raise from here.
+        """
         begin = self._decode(await self._recv(ws, deadline, "fetch_begin", msg))
         if begin.get("type") != "fetch_begin":
             got = begin.get("type")

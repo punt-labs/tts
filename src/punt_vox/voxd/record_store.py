@@ -134,29 +134,42 @@ class RecordStore:
         """
         if not self._root.is_dir():
             return ()
+        # Build the shared bare-name validator once; every child is judged by the
+        # same rules ``resolve_ref``/``remove`` apply, so list and operate agree.
+        validator = ContainmentRoot(self._root, _NAME_LABEL)
         found = [
             entry
             for child in self._root.iterdir()
-            if (entry := self._entry_for(child)) is not None
+            if (entry := self._entry_for(child, validator)) is not None
         ]
         return tuple(sorted(found, key=attrgetter("name")))
 
     @staticmethod
-    def _entry_for(child: Path) -> RecordingEntry | None:
-        """Return *child*'s entry, or ``None`` to skip a non-file or a lost race.
+    def _entry_for(child: Path, validator: ContainmentRoot) -> RecordingEntry | None:
+        """Return *child*'s entry, or ``None`` to skip an unlistable child.
 
         One ``lstat`` (no symlink follow) both classifies and sizes the child, so
         a symlink or directory is excluded and the name+size come from the same
         syscall -- no second stat to race. A child unlinked mid-scan (a TOCTOU
         race) raises ``OSError`` here and is skipped, so a listing is best-effort
-        and never fails on a concurrent delete. ``None`` means "skip this entry",
-        not a give-up on producing a value (PY-EH-8).
+        and never fails on a concurrent delete.
+
+        A name *validator* would refuse (a backslash-, separator-, or
+        non-printable-bearing planted file) is skipped too, so ``entries`` surfaces
+        only names ``resolve_ref``/``remove`` would accept -- list and operate stay
+        consistent, never showing an id that ``rec get``/``rec remove`` then reject.
+        ``None`` means "skip this entry", not a give-up on producing a value
+        (PY-EH-8).
         """
         try:
             info = child.lstat()
         except OSError:
             return None
         if not stat.S_ISREG(info.st_mode):
+            return None
+        try:
+            validator.contained_child(child.name)
+        except ValueError:
             return None
         return RecordingEntry(child.name, info.st_size)
 
