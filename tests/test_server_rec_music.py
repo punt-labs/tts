@@ -29,7 +29,7 @@ from punt_vox.client import RecordingSummary, RecordResult
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.server import mcp
-from punt_vox.server_audio_tools import RecTools
+from punt_vox.server_audio_tools import RecTool
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -113,18 +113,73 @@ def _factory(client: _FakeClient) -> Callable[[], VoxClientSync]:
     return cast("Callable[[], VoxClientSync]", lambda: client)
 
 
-def _rec_tool(client_factory: Callable[[], VoxClientSync]) -> RecTools:
-    """Build a ``RecTools`` over *client_factory* and the fresh test session.
+@final
+class _RecFacade:
+    """Expose the old per-verb names, forwarding to :meth:`RecTool.dispatch`.
+
+    The five ``rec`` verbs collapsed to one subcommand-dispatched tool; this thin
+    adapter keeps the verb-per-method test surface, so each test still reads as a
+    direct call while exercising the real ``dispatch`` routing.
+    """
+
+    __slots__ = ("_tool",)
+    _tool: RecTool
+
+    def __new__(cls, tool: RecTool) -> Self:
+        self = super().__new__(cls)
+        self._tool = tool
+        return self
+
+    def new(
+        self,
+        text: str | None = None,
+        voice: str | None = None,
+        language: str | None = None,
+        segments: list[dict[str, str]] | None = None,
+        rate: int = 90,
+        name: str | None = None,
+        stability: float | None = None,
+        similarity: float | None = None,
+        style: float | None = None,
+    ) -> str:
+        return self._tool.dispatch(
+            "new",
+            text=text,
+            voice=voice,
+            language=language,
+            segments=segments,
+            rate=rate,
+            name=name,
+            stability=stability,
+            similarity=similarity,
+            style=style,
+        )
+
+    def list_recordings(self) -> str:
+        return self._tool.dispatch("list")
+
+    def play(self, ref: str) -> str:
+        return self._tool.dispatch("play", ref=ref)
+
+    def get(self, ref: str) -> str:
+        return self._tool.dispatch("get", ref=ref)
+
+    def remove(self, ref: str) -> str:
+        return self._tool.dispatch("remove", ref=ref)
+
+
+def _rec_tool(client_factory: Callable[[], VoxClientSync]) -> _RecFacade:
+    """Build a ``RecTool`` facade over *client_factory* and the test session.
 
     The session provider yields the module session the ``_fresh_session``
-    fixture pins fresh, so ``rec_new``'s config refresh is a pure no-op.
+    fixture pins fresh, so ``rec new``'s config refresh is a pure no-op.
     """
     import punt_vox.server as srv
 
-    return RecTools(client_factory, lambda: srv._session)
+    return _RecFacade(RecTool(client_factory, lambda: srv._session))
 
 
-def _rec(client: _FakeClient) -> RecTools:
+def _rec(client: _FakeClient) -> _RecFacade:
     return _rec_tool(_factory(client))
 
 
@@ -134,9 +189,13 @@ def _rec(client: _FakeClient) -> RecTools:
 
 
 @pytest.mark.asyncio
-async def test_all_rec_verbs_registered() -> None:
+async def test_rec_folds_to_a_single_tool() -> None:
+    """The five rec verbs collapse to one `rec` tool; the old names are gone."""
     names = {tool.name for tool in await mcp.list_tools()}
-    assert {"rec_new", "rec_list", "rec_play", "rec_get", "rec_remove"} <= names
+    assert "rec" in names
+    assert names.isdisjoint(
+        {"rec_new", "rec_list", "rec_play", "rec_get", "rec_remove"}
+    )
 
 
 @pytest.mark.asyncio

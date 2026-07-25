@@ -121,44 +121,43 @@ if [[ "$TOOL_NAME" == "unmute" ]]; then
   exit 0
 fi
 
-# rec_new returns a LIST of {id,bytes,cached}, one per synthesized segment;
-# the agent addresses each recording later by its bare id, so keep the RESULT.
-if [[ "$TOOL_NAME" == "rec_new" ]]; then
-  COUNT=$(printf '%s' "$RESULT" | jq -r 'length' 2>/dev/null || echo "?")
-  extract_voice "$RESULT"
-  PHRASES=(
-    "♪ ${VOICE} recorded ${COUNT} track(s)"
-    "♪ ${COUNT} track(s) saved"
-  )
-  emit "$(pick_random "${PHRASES[@]}")" "$RESULT"
-  exit 0
-fi
-
-if [[ "$TOOL_NAME" == "rec_list" ]]; then
-  COUNT=$(printf '%s' "$RESULT" | jq -r '.recordings | length' 2>/dev/null || echo "?")
-  emit "♪ ${COUNT} recording(s) in the store" "$RESULT"
-  exit 0
-fi
-
-if [[ "$TOOL_NAME" == "rec_play" ]]; then
-  REF=$(printf '%s' "$RESULT" | jq -r '.played // "the recording"' 2>/dev/null)
-  emit "♪ playing ${REF}" "$RESULT"
-  exit 0
-fi
-
-# rec_get returns {id,bytes,base64}. The base64 payload is for the agent via
-# additionalContext ONLY -- the panel line names the id and size, never the
+# The single `rec` tool routes on its subcommand. Every rec verb keeps its
+# RESULT for the agent to act on -- a bare store id, a base64 clip -- so none is
+# a silent control action. rec get names the id and size only, NEVER the base64
 # blob, so the compact channel is not flooded with an inline recording.
-if [[ "$TOOL_NAME" == "rec_get" ]]; then
-  ID=$(printf '%s' "$RESULT" | jq -r '.id // "the recording"' 2>/dev/null)
-  BYTES=$(printf '%s' "$RESULT" | jq -r '.bytes // "?"' 2>/dev/null)
-  emit "♪ fetched ${ID} (${BYTES} bytes)" "$RESULT"
-  exit 0
-fi
-
-if [[ "$TOOL_NAME" == "rec_remove" ]]; then
-  REF=$(printf '%s' "$RESULT" | jq -r '.removed // "the recording"' 2>/dev/null)
-  emit "♪ removed ${REF}" "$RESULT"
+if [[ "$TOOL_NAME" == "rec" ]]; then
+  case "$SUBCOMMAND" in
+    new)
+      # rec new returns a LIST of {id,bytes,cached}, one per synthesized segment.
+      COUNT=$(printf '%s' "$RESULT" | jq -r 'length' 2>/dev/null || echo "?")
+      extract_voice "$RESULT"
+      PHRASES=(
+        "♪ ${VOICE} recorded ${COUNT} track(s)"
+        "♪ ${COUNT} track(s) saved"
+      )
+      emit "$(pick_random "${PHRASES[@]}")" "$RESULT"
+      ;;
+    list)
+      COUNT=$(printf '%s' "$RESULT" | jq -r '.recordings | length' 2>/dev/null || echo "?")
+      emit "♪ ${COUNT} recording(s) in the store" "$RESULT"
+      ;;
+    play)
+      REF=$(printf '%s' "$RESULT" | jq -r '.played // "the recording"' 2>/dev/null)
+      emit "♪ playing ${REF}" "$RESULT"
+      ;;
+    get)
+      ID=$(printf '%s' "$RESULT" | jq -r '.id // "the recording"' 2>/dev/null)
+      BYTES=$(printf '%s' "$RESULT" | jq -r '.bytes // "?"' 2>/dev/null)
+      emit "♪ fetched ${ID} (${BYTES} bytes)" "$RESULT"
+      ;;
+    remove)
+      REF=$(printf '%s' "$RESULT" | jq -r '.removed // "the recording"' 2>/dev/null)
+      emit "♪ removed ${REF}" "$RESULT"
+      ;;
+    *)
+      emit "$(message_line "$RESULT")" "$RESULT"
+      ;;
+  esac
   exit 0
 fi
 

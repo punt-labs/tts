@@ -2143,8 +2143,8 @@ class TestPerToolLogging:
 
         tools = await srv.mcp.list_tools()
         # 6 session/synthesis tools (unmute, vibe, who, notify, speak, status) +
-        # the single `music` tool + the 5 rec verbs.
-        assert len(tools) == 12  # schema intact, no tool lost to wrapping
+        # the single `music` tool + the single `rec` tool.
+        assert len(tools) == 8  # schema intact, no tool lost to wrapping
         with caplog.at_level(logging.INFO, logger="punt_vox.server"):
             await srv.mcp.call_tool("status", {})
         named = [

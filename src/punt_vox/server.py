@@ -29,7 +29,7 @@ from punt_vox.logging_config import (
     log_health,
     reapply_client_log_level,
 )
-from punt_vox.server_audio_tools import RecTools
+from punt_vox.server_audio_tools import RecTool
 from punt_vox.server_music_tool import MusicTool
 from punt_vox.synthesis_batch import SegmentBatch
 from punt_vox.types_programs.mode import Mode
@@ -486,21 +486,17 @@ def unmute(
     )
 
 
-# Register the recordings verbs as `mic` tools at parity with the CLI. Each is a
-# bound method of a humble object, so FastMCP builds the schema from the method
-# signature (minus self) and the daemon still owns containment and audit -- the
-# tool is a thin caller. Bare registration statements add no module-level public
-# name; the `_LoggingFastMCP.call_tool` override names each. rec_new fills its
-# synthesis defaults from a closure yielding the live session, refreshed on each
-# call; the class lives in server_audio_tools. The music catalog verbs are folded
-# into the single `music` tool below (server_music_tool).
-_rec_tools = RecTools(_voxd_client, lambda: _session)
+# The single `rec` tool: one subcommand-dispatched verb (new/list/play/get/
+# remove), replacing the five separate rec tools. FastMCP builds the schema from
+# the `dispatch` signature (minus self) and the daemon still owns containment and
+# audit -- the tool is a thin caller. rec new fills its synthesis defaults from a
+# closure yielding the live session, refreshed on each call; the classes live in
+# server_audio_tools. The bare registration adds no module-level public name; the
+# `_LoggingFastMCP.call_tool` override names each. The music catalog verbs are
+# folded into the single `music` tool below (server_music_tool).
+_rec_tool = RecTool(_voxd_client, lambda: _session)
 
-mcp.tool(name="rec_new")(_rec_tools.new)
-mcp.tool(name="rec_list")(_rec_tools.list_recordings)
-mcp.tool(name="rec_play")(_rec_tools.play)
-mcp.tool(name="rec_get")(_rec_tools.get)
-mcp.tool(name="rec_remove")(_rec_tools.remove)
+mcp.tool(name="rec")(_rec_tool.dispatch)
 
 
 @mcp.tool()
