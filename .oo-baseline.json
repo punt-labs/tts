@@ -1494,6 +1494,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/voxd/programs/album_reservation.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.25,
+    "max_complexity": 5.0,
+    "avg_complexity": 1.75,
+    "module_size": 96.0,
+    "classes_per_module": 2.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/voxd/programs/album_tags.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
