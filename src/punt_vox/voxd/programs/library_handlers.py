@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.voxd._parse import parse_optional_str
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.wire_reply import WireReply
@@ -51,17 +52,23 @@ class MusicNewHandler:
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Reject every bad pre-generation input pre-ack, else ack and reply.
 
-        A blank/non-string prompt, a non-string or duplicate name -- all input
-        rejection runs through :meth:`MusicLibrary.reserve` *before* the
+        A blank/non-string ``base_prompt``, a non-string or duplicate name -- all
+        input rejection runs through :meth:`MusicLibrary.reserve` *before* the
         ``generating`` ack, so a malformed request never gets an ack it only fails
         after. The reservation's context frees the held name on every exit path.
+
+        The authored input rides the wire as ``base_prompt`` (the same key
+        ``program_on`` uses); it is wrapped as a single-track :class:`PromptSet`
+        so ``new`` shares the one authored-input object both surfaces build, then
+        generated as ``prompt_for(0)`` -- the verbatim base, undecorated.
         """
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
-            prompt = parse_optional_str(msg, "prompt")
-            if not prompt or not prompt.strip():
+            base = parse_optional_str(msg, "base_prompt")
+            if not base or not base.strip():
                 await reply.error("music new requires a prompt")
                 return
+            prompt = PromptSet.single(base).prompt_for(0)
             with self._library.reserve(prompt, parse_optional_str(msg, "name")) as res:
                 if not await reply.send({"type": "generating"}):
                     return

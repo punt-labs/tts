@@ -11,6 +11,9 @@
 INPUT=$(cat)
 TOOL=$(printf '%s' "$INPUT" | jq -r '.tool_name')
 TOOL_NAME="${TOOL##*__}"
+# The single `music` tool routes on its subcommand argument (on/off/play/next/
+# list/new/get/remove); read it from the tool input to pick the panel form.
+SUBCOMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.subcommand // empty')
 RESULT=$(printf '%s' "$INPUT" | jq -r '
   def unpack: if type == "string" then (fromjson? // .) else . end;
   if (.tool_response | type) == "array" then
@@ -159,24 +162,6 @@ if [[ "$TOOL_NAME" == "rec_remove" ]]; then
   exit 0
 fi
 
-if [[ "$TOOL_NAME" == "music_new" ]]; then
-  ALBUM=$(printf '%s' "$RESULT" | jq -r '.album_id // "a new album"' 2>/dev/null)
-  emit "♪ generated album ${ALBUM}" "$RESULT"
-  exit 0
-fi
-
-if [[ "$TOOL_NAME" == "music_get" ]]; then
-  ALBUM=$(printf '%s' "$RESULT" | jq -r '.album_id // "the album"' 2>/dev/null)
-  emit "♪ exported ${ALBUM}" "$RESULT"
-  exit 0
-fi
-
-if [[ "$TOOL_NAME" == "music_remove" ]]; then
-  ALBUM=$(printf '%s' "$RESULT" | jq -r '.removed // "the album"' 2>/dev/null)
-  emit "♪ removed album ${ALBUM}" "$RESULT"
-  exit 0
-fi
-
 if [[ "$TOOL_NAME" == "vibe" ]]; then
   VIBE_DATA=$(printf '%s' "$RESULT" | jq -r '.vibe // empty' 2>/dev/null)
   if [[ -n "$VIBE_DATA" ]]; then
@@ -256,18 +241,36 @@ if [[ "$TOOL_NAME" == "who" ]]; then
   exit 0
 fi
 
-# The music control tools author their own DJ-flavored ♪ panel line server-side
-# (see MusicMarquee). The hook is a dumb echo of that .message, never a content
-# generator: it branches on no fields the tools do not emit.
-if [[ "$TOOL_NAME" == "music" || "$TOOL_NAME" == "music_play" || "$TOOL_NAME" == "music_next" ]]; then
-  emit "$(message_line "$RESULT")" "$STOP_NARRATION"
-  exit 0
-fi
-
-if [[ "$TOOL_NAME" == "music_list" ]]; then
-  COUNT=$(printf '%s' "$RESULT" | jq -r '.programs | length' 2>/dev/null || echo "?")
-  PHRASES=("♪ ${COUNT} album(s) in the crate" "♪ your crate: ${COUNT} album(s)")
-  emit "$(pick_random "${PHRASES[@]}")" "$RESULT"
+# The single `music` tool routes on its subcommand. The playback verbs
+# (on/off/play/next) are fire-and-forget: they author their own DJ-flavored ♪
+# .message line server-side (see MusicMarquee) and get the terminal
+# stop-narration directive, so the panel is the whole response. The query/catalog
+# verbs (list/new/get/remove) keep the RESULT for the agent to act on -- a saved
+# album id, an export path -- exactly as the old separate tools did.
+if [[ "$TOOL_NAME" == "music" ]]; then
+  case "$SUBCOMMAND" in
+    list)
+      COUNT=$(printf '%s' "$RESULT" | jq -r '.programs | length' 2>/dev/null || echo "?")
+      PHRASES=("♪ ${COUNT} album(s) in the crate" "♪ your crate: ${COUNT} album(s)")
+      emit "$(pick_random "${PHRASES[@]}")" "$RESULT"
+      ;;
+    new)
+      ALBUM=$(printf '%s' "$RESULT" | jq -r '.album_id // "a new album"' 2>/dev/null)
+      emit "♪ generated album ${ALBUM}" "$RESULT"
+      ;;
+    get)
+      ALBUM=$(printf '%s' "$RESULT" | jq -r '.album_id // "the album"' 2>/dev/null)
+      emit "♪ exported ${ALBUM}" "$RESULT"
+      ;;
+    remove)
+      ALBUM=$(printf '%s' "$RESULT" | jq -r '.removed // "the album"' 2>/dev/null)
+      emit "♪ removed album ${ALBUM}" "$RESULT"
+      ;;
+    *)
+      # on/off/play/next: control actions produce NO agent text.
+      emit "$(message_line "$RESULT")" "$STOP_NARRATION"
+      ;;
+  esac
   exit 0
 fi
 

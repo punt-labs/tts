@@ -23,6 +23,7 @@ from punt_vox.client_sync import VoxClientSync
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.program_gateway import ProgramGateway
 from punt_vox.types_programs.control import SelectionRequest
+from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.types_programs.status import ProgramStatus
 
 __all__ = ["MusicCli", "build_music_app"]
@@ -149,10 +150,14 @@ class MusicCli:
     ) -> None:
         """Generate one track into a fresh catalog album; print its bare id.
 
-        The prompt is passed to the daemon verbatim (no LLM expansion). This
-        parks a track in the catalog and leaves the active Program untouched.
+        The prompt is wrapped as a single-track :class:`PromptSet` -- the same
+        authored-input object the MCP tool builds -- and passed to the daemon
+        verbatim (no LLM expansion). This parks a track in the catalog and leaves
+        the active Program untouched. A blank prompt is a clean CLI error via the
+        gateway guard (``PromptSet.single`` raises ``ValueError``).
         """
-        album_id = self._guard(lambda: self._catalog_factory().new(prompt, name))
+        prompts = self._guard(lambda: PromptSet.single(prompt))
+        album_id = self._guard(lambda: self._catalog_factory().new(prompts, name))
         self._formatter.emit({"album_id": album_id}, album_id)
 
     def get(

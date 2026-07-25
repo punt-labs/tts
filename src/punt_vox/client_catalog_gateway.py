@@ -11,9 +11,12 @@ the playback-side :class:`~punt_vox.client_gateway.ClientProgramGateway`.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Self, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.client_sync import VoxClientSync
+
+if TYPE_CHECKING:
+    from punt_vox.types_programs.prompts import PromptSet
 
 __all__ = ["ClientCatalogGateway"]
 
@@ -30,9 +33,9 @@ class ClientCatalogGateway:
         self._client = client
         return self
 
-    def new(self, prompt: str, name: str | None) -> str:
+    def new(self, prompts: PromptSet, name: str | None) -> str:
         """Author one track via the ``music_new`` op; return the album id."""
-        return self._client.music_new(prompt, name)
+        return self._client.music_new(prompts, name)
 
     def get(self, album_id: str, dest_dir: str) -> str:
         """Copy the album into *dest_dir* via the ``music_get`` op."""

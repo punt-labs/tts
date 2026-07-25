@@ -27,6 +27,7 @@ from punt_vox.output_formatter import OutputFormatter
 from punt_vox.types_programs import Reason
 from punt_vox.types_programs.control import ProgramSummary
 from punt_vox.types_programs.identifiers import ProgramName
+from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.voxd.programs import Part, Program, ProgramState
 from punt_vox.voxd.programs.playback_policy import Advance, AdvanceResult
@@ -81,8 +82,8 @@ class InMemoryCatalogGateway:
         """Return the recorded ``(verb, arg)`` calls for assertions."""
         return self._calls
 
-    def new(self, prompt: str, name: str | None) -> str:
-        self._calls.append(("new", prompt))
+    def new(self, prompts: PromptSet, name: str | None) -> str:
+        self._calls.append(("new", prompts.base))
         album_id = name or f"{len(self._albums):06x}"
         self._albums[album_id] = f"album-{album_id}"
         return album_id

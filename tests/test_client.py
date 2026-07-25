@@ -16,6 +16,7 @@ from punt_vox.client import (
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError, VoxError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.paths import run_dir
+from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.types_synthesis import SynthesisSpec
 
@@ -1007,9 +1008,9 @@ class TestVoxClientRecMusic:
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        assert await client.music_new("warm pads") == "7f3a91"
+        assert await client.music_new(PromptSet.single("warm pads")) == "7f3a91"
         sent = json.loads(mock_ws.send.call_args.args[0])
-        assert sent["prompt"] == "warm pads"
+        assert sent["base_prompt"] == "warm pads"
 
     @pytest.mark.asyncio
     async def test_music_new_bad_prompt_raises(self) -> None:
@@ -1024,7 +1025,7 @@ class TestVoxClientRecMusic:
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(VoxdProtocolError, match="bad_prompt"):
-            await client.music_new("rejected")
+            await client.music_new(PromptSet.single("rejected"))
 
     @pytest.mark.asyncio
     async def test_music_remove_ok(self) -> None:

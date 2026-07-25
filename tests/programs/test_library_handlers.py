@@ -70,7 +70,11 @@ class TestMusicNewHandler:
     def test_success_acks_then_replies_bare_id(self, tmp_path: Path) -> None:
         library = _library(tmp_path / "programs")
         ws, sent = _capturing_ws()
-        msg: dict[str, object] = {"type": "music_new", "id": "n1", "prompt": "pads"}
+        msg: dict[str, object] = {
+            "type": "music_new",
+            "id": "n1",
+            "base_prompt": "pads",
+        }
         asyncio.run(MusicNewHandler(library)(msg, ws))
 
         assert sent[0]["type"] == "generating"
@@ -84,7 +88,7 @@ class TestMusicNewHandler:
     ) -> None:
         library = _library(tmp_path / "programs")
         ws, sent = _capturing_ws()
-        msg: dict[str, object] = {"type": "music_new", "id": "n2", "prompt": ""}
+        msg: dict[str, object] = {"type": "music_new", "id": "n2", "base_prompt": ""}
         with caplog.at_level(logging.WARNING):
             asyncio.run(MusicNewHandler(library)(msg, ws))
 
@@ -98,7 +102,7 @@ class TestMusicNewHandler:
         rather than acking and failing later in generation."""
         library = _library(tmp_path / "programs")
         ws, sent = _capturing_ws()
-        msg: dict[str, object] = {"type": "music_new", "id": "n5", "prompt": "   "}
+        msg: dict[str, object] = {"type": "music_new", "id": "n5", "base_prompt": "   "}
         with caplog.at_level(logging.WARNING):
             asyncio.run(MusicNewHandler(library)(msg, ws))
 
@@ -110,7 +114,7 @@ class TestMusicNewHandler:
         escape the handler and tear the connection down."""
         library = _library(tmp_path / "programs")
         ws, sent = _capturing_ws()
-        msg: dict[str, object] = {"type": "music_new", "id": "n4", "prompt": 123}
+        msg: dict[str, object] = {"type": "music_new", "id": "n4", "base_prompt": 123}
         asyncio.run(MusicNewHandler(library)(msg, ws))
 
         assert [f["type"] for f in sent] == ["error"]  # no 'generating' ack
@@ -121,7 +125,7 @@ class TestMusicNewHandler:
     ) -> None:
         library = _library(tmp_path / "programs", _BadPromptProducer())
         ws, sent = _capturing_ws()
-        msg: dict[str, object] = {"type": "music_new", "id": "n3", "prompt": "x"}
+        msg: dict[str, object] = {"type": "music_new", "id": "n3", "base_prompt": "x"}
         with caplog.at_level(logging.WARNING):
             asyncio.run(MusicNewHandler(library)(msg, ws))
 
@@ -140,7 +144,7 @@ class TestMusicNewHandler:
         first: dict[str, object] = {
             "type": "music_new",
             "id": "d0",
-            "prompt": "pads",
+            "base_prompt": "pads",
             "name": "dup",
         }
         asyncio.run(MusicNewHandler(library)(first, ws0))
@@ -149,7 +153,7 @@ class TestMusicNewHandler:
         second: dict[str, object] = {
             "type": "music_new",
             "id": "d1",
-            "prompt": "more",
+            "base_prompt": "more",
             "name": "dup",
         }
         with caplog.at_level(logging.WARNING):
@@ -167,7 +171,7 @@ class TestMusicNewHandler:
         msg: dict[str, object] = {
             "type": "music_new",
             "id": "n6",
-            "prompt": "pads",
+            "base_prompt": "pads",
             "name": 123,
         }
         asyncio.run(MusicNewHandler(library)(msg, ws))
@@ -184,7 +188,7 @@ class TestMusicNewHandler:
         taken: dict[str, object] = {
             "type": "music_new",
             "id": "k0",
-            "prompt": "pads",
+            "base_prompt": "pads",
             "name": "keep",
         }
         asyncio.run(MusicNewHandler(library)(taken, ws0))
@@ -193,7 +197,7 @@ class TestMusicNewHandler:
         dup: dict[str, object] = {
             "type": "music_new",
             "id": "k1",
-            "prompt": "more",
+            "base_prompt": "more",
             "name": "keep",
         }
         asyncio.run(MusicNewHandler(library)(dup, ws1))  # rejected pre-ack
@@ -202,7 +206,7 @@ class TestMusicNewHandler:
         other: dict[str, object] = {
             "type": "music_new",
             "id": "k2",
-            "prompt": "more",
+            "base_prompt": "more",
             "name": "other",
         }
         asyncio.run(MusicNewHandler(library)(other, ws2))
@@ -224,7 +228,7 @@ class TestMusicNewHandler:
         lost: dict[str, object] = {
             "type": "music_new",
             "id": "g1",
-            "prompt": "pads",
+            "base_prompt": "pads",
             "name": "again",
         }
         asyncio.run(MusicNewHandler(library)(lost, gone))
@@ -233,7 +237,7 @@ class TestMusicNewHandler:
         retry: dict[str, object] = {
             "type": "music_new",
             "id": "g2",
-            "prompt": "pads",
+            "base_prompt": "pads",
             "name": "again",
         }
         asyncio.run(MusicNewHandler(library)(retry, ws))

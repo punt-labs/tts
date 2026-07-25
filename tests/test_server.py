@@ -6,7 +6,7 @@ from __future__ import annotations
 import json
 import typing
 from pathlib import Path
-from typing import Any, NoReturn, final
+from typing import Any, NoReturn, cast, final
 from unittest.mock import MagicMock
 
 import pytest
@@ -30,10 +30,6 @@ from punt_vox.resolve import (
 )
 from punt_vox.server import (
     SessionConfig,
-    music,
-    music_list,
-    music_next,
-    music_play,
     notify,
     speak,
     status,
@@ -41,12 +37,60 @@ from punt_vox.server import (
     vibe,
     who,
 )
+from punt_vox.server_music_tool import MusicSubcommand
 from punt_vox.types import VoiceNotFoundError
 from punt_vox.types_programs import ProgramName, ProgramStatus, Reason
 from punt_vox.types_programs.control import CommandOutcome, ProgramSummary
 from punt_vox.voices import voice_not_found_message
 from punt_vox.voxd.programs import Part, Program, ProgramState
 from punt_vox.voxd.programs.playback_policy import Advance, AdvanceResult
+
+
+def music(
+    mode: str,
+    style: str | None = None,
+    name: str | None = None,
+    base_prompt: str | None = None,
+    variations: list[str] | None = None,
+) -> str:
+    """Drive the wired ``music`` tool's on/off path (the old ``music`` verb)."""
+    import punt_vox.server as srv
+
+    return srv._music_tool.dispatch(
+        cast("MusicSubcommand", mode),
+        style=style,
+        name=name,
+        base_prompt=base_prompt,
+        variations=variations,
+    )
+
+
+def music_play(
+    style: str | None = None,
+    vibe: str | None = None,
+    name: str | None = None,
+    album_id: str | None = None,
+) -> str:
+    """Drive the wired ``music`` tool's ``play`` subcommand."""
+    import punt_vox.server as srv
+
+    return srv._music_tool.dispatch(
+        "play", style=style, vibe=vibe, name=name, album_id=album_id
+    )
+
+
+def music_list() -> str:
+    """Drive the wired ``music`` tool's ``list`` subcommand."""
+    import punt_vox.server as srv
+
+    return srv._music_tool.dispatch("list")
+
+
+def music_next() -> str:
+    """Drive the wired ``music`` tool's ``next`` subcommand."""
+    import punt_vox.server as srv
+
+    return srv._music_tool.dispatch("next")
 
 
 class _StatusPolicy:
@@ -2098,8 +2142,9 @@ class TestPerToolLogging:
         import punt_vox.server as srv
 
         tools = await srv.mcp.list_tools()
-        # 11 session/synthesis/music tools + the 8 rec/catalog verbs (D-7).
-        assert len(tools) == 18  # schema intact, no tool lost to wrapping
+        # 6 session/synthesis tools (unmute, vibe, who, notify, speak, status) +
+        # the single `music` tool + the 5 rec verbs.
+        assert len(tools) == 12  # schema intact, no tool lost to wrapping
         with caplog.at_level(logging.INFO, logger="punt_vox.server"):
             await srv.mcp.call_tool("status", {})
         named = [

@@ -1,20 +1,20 @@
-"""The recordings-store and music-catalog ``mic`` verbs, split out of server.py.
+"""The recordings-store ``mic`` verbs, split out of server.py.
 
-Both are humble objects: each verb formats a JSON reply and calls exactly one
-:class:`~punt_vox.client_sync.VoxClientSync` op -- the same op the ``vox`` CLI
-hits, so the two surfaces share one code path and no logic is reimplemented
-here. server.py wires each verb onto the ``mic`` surface, handing in a client
-factory and (for the recordings store) a closure that yields the live session's
-synthesis defaults. Kept apart from server.py so that module stays under the
-module-size and class-count thresholds, mirroring ``vibe_command.py``: a tool
-module owns both its verbs and its own daemon-error envelope.
+:class:`RecTools` is a humble object: each verb formats a JSON reply and calls
+exactly one :class:`~punt_vox.client_sync.VoxClientSync` op -- the same op the
+``vox rec`` CLI hits, so the two surfaces share one code path and no logic is
+reimplemented here. server.py wires each verb onto the ``mic`` surface, handing
+in a client factory and a closure that yields the live session's synthesis
+defaults. Kept apart from server.py so that module stays under the module-size
+and class-count thresholds, mirroring ``vibe_command.py``: a tool module owns
+both its verbs and its own daemon-error envelope. The music-catalog verbs are
+folded into the single ``music`` tool (``server_music_tool``).
 """
 
 from __future__ import annotations
 
 import base64
 import json
-from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, Self, final
 
 from websockets.exceptions import WebSocketException
@@ -223,67 +223,3 @@ class RecTools:
         except (ValueError, *_DAEMON_ERRORS) as exc:
             return _error(str(exc))
         return json.dumps({"removed": ref})
-
-
-@final
-class MusicCatalogTools:
-    """The catalog-authoring ``mic`` verbs (``music_new``/``get``/``remove``).
-
-    Twin of the ``vox music new``/``get``/``remove`` CLI verbs: each formats a
-    JSON reply and calls one :class:`VoxClientSync` catalog op -- the same op the
-    CLI hits. Distinct from the ``music`` on/off tool, which drives the running
-    Program; these mutate the catalog and leave the active Program untouched.
-    An album is a multi-part directory, so ``get`` exports it to an agent-named
-    destination (the locator form) rather than returning inline bytes.
-    """
-
-    __slots__ = ("_client_factory",)
-    _client_factory: Callable[[], VoxClientSync]
-
-    def __new__(cls, client_factory: Callable[[], VoxClientSync]) -> Self:
-        self = super().__new__(cls)
-        self._client_factory = client_factory
-        return self
-
-    def new(self, prompt: str, name: str | None = None) -> str:
-        """Generate one track into a fresh catalog album; return its bare id.
-
-        The *prompt* is the finished ElevenLabs descriptive prompt, sent
-        verbatim -- vox never expands it. Generation runs immediately (no
-        confirmation) and parks the track in the catalog, leaving the active
-        Program's mode, pool, and playback exactly as it found them.
-
-        Returns:
-            JSON string ``{"album_id": "<id>"}``.
-        """
-        try:
-            album_id = self._client_factory().music_new(prompt, name)
-        except (ValueError, *_DAEMON_ERRORS) as exc:
-            return _error(str(exc))
-        return json.dumps({"album_id": album_id})
-
-    def get(self, album_id: str, dest: str) -> str:
-        """Export album *album_id* into directory *dest*; return the locator.
-
-        An album is a directory of parts, too large to return inline, so -- with
-        no shell CWD to default to -- the agent names *dest* and vox writes
-        ``<dest>/<album-name>/`` there, refusing a collision. The reply carries
-        the written path, the store-locator form of the CLI ``music get``.
-
-        Returns:
-            JSON string ``{"album_id", "path"}`` -- ``path`` is the written
-            album directory.
-        """
-        try:
-            target = self._client_factory().music_get(album_id, Path(dest))
-        except (ValueError, *_DAEMON_ERRORS) as exc:
-            return _error(str(exc))
-        return json.dumps({"album_id": album_id, "path": str(target)})
-
-    def remove(self, album_id: str) -> str:
-        """Delete catalog album *album_id* (a playing album is refused, D-2)."""
-        try:
-            self._client_factory().music_remove(album_id)
-        except (ValueError, *_DAEMON_ERRORS) as exc:
-            return _error(str(exc))
-        return json.dumps({"removed": album_id})

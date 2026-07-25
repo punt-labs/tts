@@ -1,13 +1,12 @@
-"""Tests for the rec + music-catalog ``mic`` MCP tools (D-7 parity).
+"""Tests for the recordings-store ``mic`` MCP tools (CLI parity).
 
 The recordings-store verbs (``rec_new``/``rec_list``/``rec_play``/``rec_get``/
-``rec_remove``) and the catalog-authoring verbs (``music_new``/``music_get``/
-``music_remove``) live on the :class:`~punt_vox.server_audio_tools.RecTools`
-and :class:`~punt_vox.server_audio_tools.MusicCatalogTools` humble objects.
-Each is driven directly with an in-memory client factory -- no daemon, no
-socket -- so the
-argument passthrough, the bare-id result shape, MCP-appropriate ``get`` forms,
-error surfacing, and the rec-vs-catalog routing are asserted without a wire.
+``rec_remove``) live on the :class:`~punt_vox.server_audio_tools.RecTools`
+humble object. Each is driven directly with an in-memory client factory -- no
+daemon, no socket -- so the argument passthrough, the bare-id result shape, the
+MCP-appropriate ``get`` form, error surfacing, and the routing are asserted
+without a wire. The music-catalog verbs are folded into the single ``music``
+tool and covered in ``test_server_music_tool.py``.
 
 The registration and one-code-path tests confirm every verb is exposed on the
 ``mic`` surface at parity with the CLI, and that a tool and its CLI twin issue
@@ -30,7 +29,7 @@ from punt_vox.client import RecordingSummary, RecordResult
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.server import mcp
-from punt_vox.server_audio_tools import MusicCatalogTools, RecTools
+from punt_vox.server_audio_tools import RecTools
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -61,19 +60,13 @@ class _FakeClient:
     test seeds a store and reads back the recorded calls to assert passthrough.
     """
 
-    __slots__ = ("_albums", "_store", "calls")
+    __slots__ = ("_store", "calls")
     _store: dict[str, bytes]
-    _albums: dict[str, str]
     calls: list[tuple[str, tuple[object, ...]]]
 
-    def __new__(
-        cls,
-        store: dict[str, bytes] | None = None,
-        albums: dict[str, str] | None = None,
-    ) -> Self:
+    def __new__(cls, store: dict[str, bytes] | None = None) -> Self:
         self = super().__new__(cls)
         self._store = dict(store) if store is not None else {}
-        self._albums = dict(albums) if albums is not None else {}
         self.calls = []
         return self
 
@@ -114,26 +107,6 @@ class _FakeClient:
             raise VoxdProtocolError(f"no recording named '{ref}'")
         del self._store[ref]
 
-    def music_new(self, prompt: str, name: str | None = None) -> str:
-        self.calls.append(("music_new", (prompt, name)))
-        album_id = name or f"{len(self._albums):06x}"
-        self._albums[album_id] = f"album-{album_id}"
-        return album_id
-
-    def music_get(self, album_id: str, dest_dir: Path) -> Path:
-        self.calls.append(("music_get", (album_id, dest_dir)))
-        if album_id not in self._albums:
-            raise VoxdProtocolError(f"no album named '{album_id}'")
-        return dest_dir / self._albums[album_id]
-
-    def music_remove(self, album_id: str) -> None:
-        self.calls.append(("music_remove", (album_id,)))
-        if album_id not in self._albums:
-            raise VoxdProtocolError(f"no album named '{album_id}'")
-        if album_id == "playing":
-            raise VoxdProtocolError(f"album {album_id} is playing; stop it first")
-        del self._albums[album_id]
-
 
 def _factory(client: _FakeClient) -> Callable[[], VoxClientSync]:
     """Adapt the structural fake to the tools' concrete client-factory type."""
@@ -155,35 +128,32 @@ def _rec(client: _FakeClient) -> RecTools:
     return _rec_tool(_factory(client))
 
 
-def _catalog(client: _FakeClient) -> MusicCatalogTools:
-    return MusicCatalogTools(_factory(client))
-
-
 # ---------------------------------------------------------------------------
-# Registration -- every verb is exposed on the mic surface (D-7)
+# Registration -- every rec verb is exposed on the mic surface
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_all_rec_and_catalog_verbs_registered() -> None:
+async def test_all_rec_verbs_registered() -> None:
     names = {tool.name for tool in await mcp.list_tools()}
-    assert {
-        "rec_new",
-        "rec_list",
-        "rec_play",
-        "rec_get",
-        "rec_remove",
-        "music_new",
-        "music_get",
-        "music_remove",
-    } <= names
+    assert {"rec_new", "rec_list", "rec_play", "rec_get", "rec_remove"} <= names
 
 
 @pytest.mark.asyncio
-async def test_music_program_tools_still_registered_alongside() -> None:
-    """The catalog verbs are added *alongside* the existing music tools."""
+async def test_music_folds_to_a_single_tool() -> None:
+    """The music/catalog verbs collapse to one `music` tool; the old names are gone."""
     names = {tool.name for tool in await mcp.list_tools()}
-    assert {"music", "music_play", "music_list", "music_next"} <= names
+    assert "music" in names
+    assert names.isdisjoint(
+        {
+            "music_play",
+            "music_list",
+            "music_next",
+            "music_new",
+            "music_get",
+            "music_remove",
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -362,83 +332,7 @@ def test_rec_remove_not_found_surfaces_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# music_new -- verbatim prompt, bare album id, no confirmation
-# ---------------------------------------------------------------------------
-
-
-def test_music_new_passes_prompt_verbatim_and_returns_bare_id() -> None:
-    fake = _FakeClient()
-    prompt = "warm analog pads, slow, D minor, instrumental, loopable"
-
-    result = json.loads(_catalog(fake).new(prompt))
-
-    assert set(result) == {"album_id"}
-    assert fake.calls == [("music_new", (prompt, None))]  # verbatim, no expansion
-
-
-def test_music_new_name_passthrough() -> None:
-    fake = _FakeClient()
-
-    result = json.loads(_catalog(fake).new("ambient drone", name="focus-bed"))
-
-    assert result["album_id"] == "focus-bed"
-    assert fake.calls[0] == ("music_new", ("ambient drone", "focus-bed"))
-
-
-def test_music_new_bad_prompt_surfaces_error() -> None:
-    client = MagicMock()
-    client.music_new.side_effect = VoxdProtocolError("bad_prompt")
-
-    result = json.loads(MusicCatalogTools(lambda: client).new("copyrighted work"))
-
-    assert "error" in result
-
-
-# ---------------------------------------------------------------------------
-# music_get -- agent form: export to a named destination, return the locator
-# ---------------------------------------------------------------------------
-
-
-def test_music_get_exports_to_named_dest_and_returns_path(tmp_path: Path) -> None:
-    fake = _FakeClient(albums={"7f3a91": "warm-pads-7f3a91"})
-
-    result = json.loads(_catalog(fake).get("7f3a91", str(tmp_path)))
-
-    assert result["album_id"] == "7f3a91"
-    assert result["path"] == str(tmp_path / "warm-pads-7f3a91")
-    assert fake.calls[0] == ("music_get", ("7f3a91", tmp_path))
-
-
-def test_music_get_unknown_album_surfaces_error(tmp_path: Path) -> None:
-    result = json.loads(_catalog(_FakeClient()).get("missing", str(tmp_path)))
-    assert "error" in result
-
-
-# ---------------------------------------------------------------------------
-# music_remove -- delete idle, refuse playing (D-2)
-# ---------------------------------------------------------------------------
-
-
-def test_music_remove_deletes_idle_album() -> None:
-    fake = _FakeClient(albums={"7f3a91": "warm-pads-7f3a91"})
-
-    result = json.loads(_catalog(fake).remove("7f3a91"))
-
-    assert result == {"removed": "7f3a91"}
-    assert ("music_remove", ("7f3a91",)) in fake.calls
-
-
-def test_music_remove_playing_album_surfaces_refusal() -> None:
-    fake = _FakeClient(albums={"playing": "live-album"})
-
-    result = json.loads(_catalog(fake).remove("playing"))
-
-    assert "error" in result
-    assert "playing" in result["error"]
-
-
-# ---------------------------------------------------------------------------
-# Routing -- rec verbs hit rec ops, catalog verbs hit catalog ops
+# Routing -- rec get hits the recordings fetch op, not any catalog op
 # ---------------------------------------------------------------------------
 
 
@@ -448,14 +342,6 @@ def test_rec_get_routes_to_fetch_not_music_get() -> None:
     _rec(fake).get("rec.mp3")
 
     assert [verb for verb, _ in fake.calls] == ["fetch"]
-
-
-def test_music_get_routes_to_music_get_not_fetch(tmp_path: Path) -> None:
-    fake = _FakeClient(albums={"7f3a91": "warm-pads-7f3a91"})
-
-    _catalog(fake).get("7f3a91", str(tmp_path))
-
-    assert [verb for verb, _ in fake.calls] == ["music_get"]
 
 
 # ---------------------------------------------------------------------------

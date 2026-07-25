@@ -70,7 +70,7 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/cli_music.py": {
-    "efferent_coupling": 9.0,
+    "efferent_coupling": 10.0,
     "public_names": 2.0,
     "circular_imports": 0.0,
     "max_lcom": 0.2,
@@ -378,15 +378,15 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/server.py": {
-    "efferent_coupling": 15.0,
-    "public_names": 14.0,
+    "efferent_coupling": 14.0,
+    "public_names": 10.0,
     "circular_imports": 0.0,
     "max_lcom": 0.748,
     "avg_lcom": 0.748
   },
   "src/punt_vox/server_audio_tools.py": {
     "efferent_coupling": 3.0,
-    "public_names": 3.0,
+    "public_names": 2.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
     "avg_lcom": 0.0
@@ -987,7 +987,7 @@
     "avg_lcom": 0.464
   },
   "src/punt_vox/voxd/programs/library_handlers.py": {
-    "efferent_coupling": 3.0,
+    "efferent_coupling": 4.0,
     "public_names": 3.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
