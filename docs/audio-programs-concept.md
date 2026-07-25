@@ -75,23 +75,45 @@ replayable** — from the user's point of view programs are permanent, not
 throwaway. The contrast with Studio (below) is about *who authors and where
 playback lives*, never about whether ours are saved.
 
-## The create/consume split (the operator's constraint, and it maps to ElevenLabs)
+## Who writes the content vs who runs the engine (revised 2026-07-25)
 
-- **Claude Code (MCP) = creative + consumption.** The LLM is the *showrunner*:
-  it authors music prompts / podcast scripts / audiobook chapters + casting,
-  calls vox to generate and play. Content knowledge lives here (same reason
-  music prompts must be LLM-authored — no separate content API key, and only the
-  model knows what the content should be). Generation costs credits.
-- **CLI = consumption only.** No LLM ⇒ no authoring, no generation. It lists,
-  plays, advances, and rotates **existing** Programs — which is *free* on
-  ElevenLabs (playback of generated audio consumes no credits). `vox program list`,
-  `vox program play <name>`, `vox program next`, `vox program loop <name>`. Until
-  the CLI gets its own content-generation path (more API keys + an authoring
-  model), it is a player for what Claude Code produced.
+The real split is **who writes the content** vs **who runs the ElevenLabs
+engine**. Writing the content is an LLM job; running the engine is the daemon's
+job. One data type connects them — the authored input the LLM writes and the
+daemon generates from:
 
-This is why the split is natural rather than a limitation: ElevenLabs already
-separates paid generation from free playback; vox's two modalities land exactly
-on that seam.
+- **The LLM writes the input.** For each format it produces one input object —
+  music: a `base_prompt` + 12 variations; podcast: the speaker turns + which
+  voice says each; audiobook: the chapters + the character voices. The MCP tool
+  hands the LLM the schema and the prompt to fill in (as `commands/music.md`
+  does today).
+- **The CLI takes that same structured input.** It needs no LLM of its own —
+  only the input in the right shape. A model, a human, or a script can hand it
+  the structure and it works identically. `vox music new "<prompt>"` already
+  does exactly this: the CLI passes a structured prompt to the daemon, which
+  generates. "The CLI cannot generate" was never true.
+- **Generation is daemon-side.** `voxd` holds the ElevenLabs key and runs the
+  engine for whichever surface fed it structured input. Playback is free
+  (ElevenLabs charges for generation, not playback), so consuming an existing
+  Program costs nothing on either surface.
+
+So the CLI is **not** consume-only and needs **no separate key**: it builds the
+same input object the MCP tool builds and sends it to the daemon. This replaces
+the earlier "CLI = consumption only until it gets its own keys" framing.
+
+### One input type per format, built by both the CLI and the MCP tool
+
+Each format has one input type for its authored content. Both the CLI and the
+MCP tool build that same type and send it to the daemon:
+
+| Format | Structured input (the authored content) |
+|---|---|
+| playlist | `base_prompt` + 12 genre variations |
+| podcast | ordered `(speaker, text, audio_tags)` turns + a voice cast |
+| audiobook | chapters (title + text) + character casting (+ optional SFX/music bed) |
+
+Get this right on music first (the format that already exists) and
+podcast/audiobook inherit a clean pattern instead of copying today's warts.
 
 ## Ties to work already in flight
 
@@ -137,10 +159,10 @@ on that seam.
    audiobook (or podcast) Program at generation time — one Program, bed embedded
    — not a separate music Program ducked underneath. This drops the
    simultaneous-playback/mixing concern entirely. Simpler.
-3. **CLI addresses Programs *and* Parts.** Consume-only, but it can `list` a
-   program, `play` a program, and select a specific part in series — e.g.
-   `vox music playlist playlist:2` (part 2). A Part = track / chapter / episode
-   by index within the Program.
+3. **CLI addresses Programs *and* Parts.** It authors via structured input
+   (§"The author/consume seam"), and it can `list` a program, `play` a program,
+   and select a specific part in series — e.g. `vox music playlist playlist:2`
+   (part 2). A Part = track / chapter / episode by index within the Program.
 4. **Length/credit budgeting** — deferred; not now.
 5. **Cast management** — deferred; not now.
 6. **Direct-to-API** (not ElevenLabs Studio "Projects" as backend). Keep podcasts
@@ -153,6 +175,34 @@ on that seam.
    - **Audiobook**: ~5 min chapters; a "book" up to ~30 min total (≈6 chapters).
 
 These supersede the corresponding open questions above.
+
+## Decisions (operator ruling, 2026-07-25 — structured-input spine + tidy music)
+
+Phase 1 (music → Program generalization) is **built**: the music internals were
+forward-integrated into a format-agnostic `voxd/programs/` package (the old
+`voxd/music/` package is gone). The core state machine — `Program`,
+`ProgramState` (16 invariants), `Part`, the `Format` enum with all three values,
+the stores, `Filler`, and the `Producer`/`PlaybackPolicy` seams — already hosts a
+second format without a rewrite. The remaining work is at the edges, and these
+rulings scope it:
+
+1. **One input type per format — approved.** Each format has a single input type
+   for its authored content, and the CLI and MCP tool both build it. The
+   "CLI = consume-only" framing is struck.
+2. **Finite formats terminate; music loops.** A podcast or audiobook **ends** at
+   the last part (a `Complete` / terminal transition); a playlist **loops**
+   (rotate). *Interim latitude:* if the terminal transition is meaningfully
+   harder to build, a podcast/audiobook may **loop for now** — ship looping and
+   add termination later. The Z model still models the terminate target.
+3. **Long-generation per-Part status — approved.** Promote `pending`/`generating`
+   from the single `filling` flag to **stored per-Part state** so a minutes-long
+   spoken generation is observable per part. This is the one state-signature
+   change; model it in `audio-programs.tex` at the Phase-2 (podcast) design gate,
+   before implementation.
+
+**Order of work:** update the design docs (this pass), then **tidy music first**
+onto that one input type (the reference), then podcast (Phase 2), then audiobook
+(Phase 3).
 
 ### Why not ElevenLabs Studio as the backend (decided 2026-07-05)
 
@@ -179,7 +229,9 @@ through voxd** (and saved on our own disk) — a different shape. Decision: go
 ## Phasing (operator, 2026-07-05 — Phase 1 first)
 
 **Phase 1 — move today's music onto the Program model + unlock playlist replay
-(CLI + MCP).** No new ElevenLabs engines; refactor + one new capability.
+(CLI + MCP). — BUILT** (music internals forward-integrated into `voxd/programs/`;
+the `voxd/music/` package is gone). No new ElevenLabs engines; refactor + one new
+capability.
 
 - Generalize the existing music internals into the shared model, **`playlist`
   format only**: `TrackStore → PartStore`, `Playlist → Program`,
@@ -198,6 +250,29 @@ through voxd** (and saved on our own disk) — a different shape. Decision: go
   generation path anyway) and vox-ig52's observability contract (`part.status`
   surfaced via `status`), since both refactor the same music path. Sequence so
   they don't collide.
+
+**Phase 1.5 — tidy music (the reference for podcast and audiobook).**
+Phase 1's core shipped, but the music command surface is inconsistent. Fix it on
+music first so podcast and audiobook copy a clean pattern. The problems: the CLI
+has **no `on` authoring verb** (only the MCP tool can author a pool); `new` sends
+a **bare string** instead of building a `PromptSet`; the MCP surface mixes one
+`music` tool (on/off via a `mode` argument) with separate `music_play`,
+`music_new`, `music_next` tools; and `vox music list --json` is rejected
+(vox-cnak). Decisions (2026-07-25):
+
+- **One `PromptSet` object, built by both the CLI and the MCP tool**, then sent
+  to the daemon. `new` builds a `PromptSet` too, not a bare string.
+- **MCP tools mirror the CLI structure.** One tool per command group, named for
+  the group (`music`), with the subcommand (`on`/`off`/`play`/`next`/`new`/
+  `list`/`get`/`remove`) as an argument — not one tool per subcommand. The same
+  mapping applies to every group, so `rec` (and later `podcast`/`audiobook`)
+  folds to the same shape in this pass or immediately after.
+- **The CLI reads authored input from stdin** (Unix pipe): `cat pool.json | vox
+  music on`. No `--file` flag. `vox music on` is new — the CLI has no `on` verb
+  today.
+- **`--json` works in every position** on the music subcommands.
+
+No state-machine change — command surface and wiring only.
 
 **Phase 2 — Podcast.** Text-to-Dialogue engine, multi-speaker, 5–10m episodes;
 `/podcast` with its own authoring instructions. Slots into the Program frame.

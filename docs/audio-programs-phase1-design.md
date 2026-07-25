@@ -23,6 +23,13 @@ operation or state schema of that name in `docs/audio-programs.tex`.
 > (handlers ack at enqueue, before the writer applies). The `vox music migrate`
 > path (§3) and the `~/Music/vox/programs/` layout were struck — pools save to
 > `~/Music/vox/<name>/` with ID3 tags.
+>
+> **Direction update (2026-07-25).** The remaining seams above are scoped by the
+> 2026-07-25 decisions in `docs/audio-programs-concept.md`: one input type for a
+> format's authored content that the CLI and MCP both build (tidy music first,
+> as the reference); finite formats terminate while music loops; and
+> long-generation per-Part status. The `.tex` models the terminate and per-Part
+> transitions at the Phase-2 design gate, before podcast implementation.
 
 **Ownership is gone.** Per the operator ruling of 2026-07-05, `voxd`'s Program
 state is machine-universal: any client — an MCP agent session or the CLI, from
