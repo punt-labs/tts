@@ -90,6 +90,21 @@ class PromptSet:
         return cls(base=clean_base, variations=cleaned)
 
     @classmethod
+    def single(cls, prompt: str) -> Self:
+        """Return a one-track set: the verbatim prompt as base, no variations.
+
+        The authored-input builder for ``music new``. Kept distinct from
+        :meth:`fallback` because ``new`` sends the prompt **untouched** -- no
+        ``". instrumental, loopable."`` decoration -- while still being the same
+        :class:`PromptSet` shape ``on`` produces, so both verbs author one object.
+        """
+        clean = prompt.strip()
+        if not clean:
+            msg = "prompt must be a non-empty string"
+            raise ValueError(msg)
+        return cls(base=clean, variations=())
+
+    @classmethod
     def fallback(cls, style: str, mood: str) -> Self:
         """Build the minimal literal fallback for a pool with no agent prompts.
 

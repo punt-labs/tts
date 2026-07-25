@@ -40,6 +40,33 @@ class TestFromAgent:
             PromptSet.from_agent("base", variations)
 
 
+class TestSingle:
+    """The single path wraps one verbatim prompt as a base-only set."""
+
+    def test_wraps_prompt_as_base_with_no_variations(self) -> None:
+        ps = PromptSet.single("warm analog pads, slow, D minor")
+        assert ps.base == "warm analog pads, slow, D minor"
+        assert ps.variations == ()
+
+    def test_strips_surrounding_whitespace(self) -> None:
+        ps = PromptSet.single("  ambient drone  ")
+        assert ps.base == "ambient drone"
+
+    def test_blank_prompt_rejected(self) -> None:
+        with pytest.raises(ValueError, match="prompt must be a non-empty string"):
+            PromptSet.single("   ")
+
+    def test_empty_prompt_rejected(self) -> None:
+        with pytest.raises(ValueError, match="prompt must be a non-empty string"):
+            PromptSet.single("")
+
+    def test_prompt_for_every_track_is_the_verbatim_base(self) -> None:
+        """A single set is undecorated: no `. instrumental, loopable.` tail."""
+        ps = PromptSet.single("copyrighted-safe descriptive prompt")
+        assert ps.prompt_for(0) == "copyrighted-safe descriptive prompt"
+        assert ps.prompt_for(5) == ps.prompt_for(0)
+
+
 class TestPromptForAgentSet:
     """Track i draws variation i, composed onto the shared base."""
 

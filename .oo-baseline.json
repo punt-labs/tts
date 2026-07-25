@@ -1120,10 +1120,10 @@
   "src/punt_vox/types_programs/prompts.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.6,
+    "avg_params": 1.5,
     "max_complexity": 6.0,
-    "avg_complexity": 3.4,
-    "module_size": 93.0,
+    "avg_complexity": 3.17,
+    "module_size": 106.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
