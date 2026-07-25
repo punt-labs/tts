@@ -9,6 +9,7 @@ CliRunner smoke tests confirm build_music_app wires the Typer group.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Self, final
@@ -21,6 +22,7 @@ from _program_fakes import FakeProgramGateway
 from typer.testing import CliRunner
 from websockets.exceptions import WebSocketException
 
+from punt_vox.cli_io import OutputFlags
 from punt_vox.cli_music import MusicCli, build_music_app
 from punt_vox.client_errors import VoxdProtocolError
 from punt_vox.output_formatter import OutputFormatter
@@ -55,6 +57,12 @@ def _summary(album_id: str, style: str, vibe: str, ready: int) -> ProgramSummary
 def _emitted(formatter: MagicMock) -> tuple[object, str]:
     payload, text = formatter.emit.call_args.args
     return payload, text
+
+
+def _build_music_app() -> typer.Typer:
+    """Build the music Typer group with a formatter and its OutputFlags."""
+    fmt = OutputFormatter()
+    return build_music_app(fmt, OutputFlags(fmt))
 
 
 @final
@@ -219,7 +227,7 @@ def test_remove_refuses_playing_album() -> None:
 
 
 def test_music_group_exposes_the_unified_verb_set() -> None:
-    app = build_music_app(OutputFormatter())
+    app = _build_music_app()
     names = {c.name for c in app.registered_commands if c.name is not None}
     assert names == {"new", "list", "play", "off", "get", "remove", "next", "status"}
 
@@ -231,7 +239,7 @@ _INTERNAL_LABEL = re.compile(r"\bD-[0-9]\b|\bDES-|consume-only")
 
 def test_music_help_carries_no_internal_labels() -> None:
     """No group/verb/option help leaks a design label or stale phrasing."""
-    for text in app_help_texts(build_music_app(OutputFormatter())):
+    for text in app_help_texts(_build_music_app()):
         assert not _INTERNAL_LABEL.search(text), text
 
 
@@ -423,8 +431,25 @@ def test_status_idle() -> None:
 
 
 def test_app_no_subcommand_shows_help() -> None:
-    app = build_music_app(OutputFormatter())
+    app = _build_music_app()
 
     result = CliRunner().invoke(app, [])
 
     assert result.exit_code != 0 or "Usage" in result.output
+
+
+def test_list_accepts_json_flag_after_the_subcommand() -> None:
+    """vox-cnak: --json parses AFTER the subcommand, not only before it."""
+    fmt = OutputFormatter()
+    flags = OutputFlags(fmt)
+    cli = MusicCli(fmt, lambda: FakeProgramGateway(), flags=flags)
+    # A second command makes this a multi-command group (as `vox music` is), so
+    # the runner treats "list" as the subcommand -- where --json failed (vox-cnak).
+    app = typer.Typer()
+    app.command("list")(cli.list_programs)
+    app.command("off")(cli.off)
+
+    result = CliRunner().invoke(app, ["list", "--json"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == {"programs": []}
