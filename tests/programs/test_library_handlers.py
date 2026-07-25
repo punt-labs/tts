@@ -361,6 +361,33 @@ class TestLibraryFaultClassification:
         )
         assert not any("rejected op" in r.getMessage() for r in caplog.records)
 
+    def test_corrupt_manifest_get_is_an_operational_fault(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A ``music get`` on an album whose on-disk manifest turned corrupt faults.
+
+        The album is healthy when the catalog scans it, then its manifest is
+        overwritten with non-UTF-8 bytes -- store corruption. ``music_manifest``
+        re-reads it live, so ``_read_manifest_text`` raises ``OSError`` (not the
+        ``ValueError`` a client rejection uses) and the handler audits it as an
+        operational fault while still returning a clean id-stamped error frame.
+        """
+        root = tmp_path / "programs"
+        locator = seed_album(root, 1, name="idle", album_id="a3f1c9")
+        library = _library(root)  # the catalog scans the still-healthy album
+        (root / locator / "manifest.json").write_bytes(b"\xff\xfe not utf-8")
+        ws, sent = _capturing_ws()
+        msg: dict[str, object] = {"id": "m8", "album": "a3f1c9"}
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            asyncio.run(MusicManifestHandler(library)(msg, ws))
+        assert sent[-1]["type"] == "error"
+        assert sent[-1]["id"] == "m8"  # a clean, id-stamped frame, not a torn socket
+        assert any(
+            r.levelno == logging.ERROR and "operation failed" in r.getMessage()
+            for r in caplog.records
+        )
+        assert not any("rejected op" in r.getMessage() for r in caplog.records)
+
     def test_os_error_is_an_operational_fault(
         self,
         tmp_path: Path,

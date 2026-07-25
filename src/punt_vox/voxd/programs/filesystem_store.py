@@ -201,9 +201,14 @@ class FilesystemProgramStore:
         of being read through. The read itself is bounded to one byte past the
         ceiling: a file that grows between the open and the read (a TOCTOU that a
         trusted ``fstat`` size would miss) still cannot pull an unbounded amount
-        into memory, and a result over the ceiling raises ``ValueError``.
-        ``_scan_one`` catches both and skips the album; ``open`` lets them
-        surface as the corrupt-album error.
+        into memory.
+
+        Every read-integrity failure raises ``OSError`` -- a symlink, a file over
+        the ceiling, or non-UTF-8 bytes. All three are daemon-side store
+        corruption, an operational fault rather than a bad client request, so the
+        taxonomy audits them as ``fault`` ("operation failed"), never ``error``
+        ("rejected op"). ``_scan_one`` catches ``OSError`` and skips the album;
+        ``open`` lets it surface as the corrupt-album fault.
         """
         fd = os.open(manifest_path, os.O_RDONLY | os.O_NOFOLLOW)
         try:
@@ -216,11 +221,18 @@ class FilesystemProgramStore:
             raise
         with handle:
             raw = handle.read(_MAX_MANIFEST_BYTES + 1)
+        name = manifest_path.name
         if len(raw) > _MAX_MANIFEST_BYTES:
-            name = manifest_path.name
             msg = f"manifest exceeds {_MAX_MANIFEST_BYTES} bytes: {name}"
-            raise ValueError(msg)
-        return raw.decode("utf-8")
+            raise OSError(msg)
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            # UnicodeDecodeError subclasses ValueError, which the taxonomy maps to
+            # a client rejection. Non-UTF-8 bytes on disk are store corruption, so
+            # re-raise as OSError to audit alongside the other read-integrity faults.
+            msg = f"manifest is not valid UTF-8: {name}"
+            raise OSError(msg) from exc
 
     def _contained_dir(self, directory: str) -> Path:
         """Return ``root/directory`` for a single validated segment, else raise.
@@ -232,8 +244,7 @@ class FilesystemProgramStore:
         and non-canonical spellings like ``./foo`` or ``foo/`` are all refused,
         rather than silently normalized to ``foo`` and resolved under the root.
         """
-        parts = Path(directory).parts
-        if len(parts) != 1 or parts[0] in (".", "..") or directory != parts[0]:
+        if Path(directory).parts != (directory,) or directory == "..":
             msg = f"album locator must be a single path segment: {directory!r}"
             raise ValueError(msg)
         path = self._root / directory

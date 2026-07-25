@@ -175,15 +175,37 @@ class TestCreateAndScan:
         assert any("corrupt manifest" in r.getMessage() for r in caplog.records)
 
     def test_open_rejects_an_oversized_manifest(self, tmp_path: Path) -> None:
-        """``open`` refuses a manifest above the ceiling before reading it."""
+        """``open`` faults on a manifest above the ceiling before reading it.
+
+        An oversized on-disk manifest is store corruption, not a bad client
+        request, so it raises ``OSError`` -- the taxonomy's operational-fault
+        bucket -- rather than the ``ValueError`` a client rejection would use.
+        """
         store = FilesystemProgramStore(tmp_path)
         draft = _draft("a3f1c9", "techno", "ambient")
         store.create(draft)
         (tmp_path / draft.locator / "manifest.json").write_text(
             "x" * (1024 * 1024 + 1), encoding="utf-8"
         )
-        with pytest.raises(ValueError, match="exceeds"):
+        with pytest.raises(OSError, match="exceeds") as caught:
             store.open(draft.locator)
+        assert not isinstance(caught.value, ValueError)  # a fault, not a rejection
+
+    def test_open_faults_on_a_non_utf8_manifest(self, tmp_path: Path) -> None:
+        """``open`` faults on a manifest whose bytes are not valid UTF-8.
+
+        Non-UTF-8 bytes on disk are store corruption. The naive ``bytes.decode``
+        raises ``UnicodeDecodeError`` (a ``ValueError`` subclass the taxonomy
+        would mis-audit as a client rejection); ``_read_manifest_text`` converts
+        it to ``OSError`` so it audits as an operational fault.
+        """
+        store = FilesystemProgramStore(tmp_path)
+        draft = _draft("a3f1c9", "techno", "ambient")
+        store.create(draft)
+        (tmp_path / draft.locator / "manifest.json").write_bytes(b"\xff\xfe not utf-8")
+        with pytest.raises(OSError, match="not valid UTF-8") as caught:
+            store.open(draft.locator)
+        assert not isinstance(caught.value, ValueError)  # a fault, not a rejection
 
     def test_open_rejects_a_symlinked_manifest(self, tmp_path: Path) -> None:
         """``open`` refuses a symlinked manifest instead of reading its target."""
@@ -221,7 +243,7 @@ class TestCreateAndScan:
             return _ReadSpy(real_fdopen(fd, mode), requested)
 
         monkeypatch.setattr(os, "fdopen", spy_fdopen)
-        with pytest.raises(ValueError, match="exceeds"):
+        with pytest.raises(OSError, match="exceeds"):
             store.open(draft.locator)
         assert requested == [_MAX_MANIFEST_BYTES + 1]
 
