@@ -29,7 +29,7 @@ vox is usable in three ways, all driving the same `voxd` audio daemon --- so it 
 
 - **Claude Code plugin (MCP)** --- the `mic` MCP server gives your agent voice, `/vibe`, and `/music` tools plus notification hooks. Drive it with `/vox y`, `/recap`, `/vibe`, `/music`.
 - **Python library** --- `from punt_vox import VoxClient`; `async with VoxClient() as vox: await vox.synthesize("Build finished")` (or the sync `VoxClientSync`). See [Python API](#python-api).
-- **CLI** --- `vox say "Build finished"`, `vox rec new "..."`, `vox music on`. A standalone TTS tool, independent of Claude Code. See [CLI](#cli).
+- **CLI** --- `vox say "Build finished"`, `vox rec new "..."`, `vox music play`. A standalone TTS tool, independent of Claude Code. See [CLI](#cli).
 
 ## Quick Start
 
@@ -444,8 +444,7 @@ vox notify y                                   # Enable notifications
 vox notify c                                   # Continuous spoken mode
 vox speak n                                    # Chimes only
 vox voice matilda                              # Set session voice
-vox music on                                   # Start background music
-vox music on --style techno                    # Start music with style modifier
+vox music play --style techno                  # Start a style radio (generates a fresh pool)
 vox music next                                 # Jump to another track
 vox music play focus-beats                     # Replay a saved album by name/tags (zero credits)
 vox music play 7f3a91                          # Replay a saved album by id
