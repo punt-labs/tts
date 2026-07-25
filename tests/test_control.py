@@ -5,8 +5,12 @@ from __future__ import annotations
 from punt_vox.types_programs.control import ProgramSummary, SelectionRequest
 
 
-def _album(style: str, vibe: str, album_id: str = "a1") -> ProgramSummary:
-    return ProgramSummary(id=album_id, style=style, vibe=vibe, format="music", ready=3)
+def _album(
+    style: str, vibe: str, album_id: str = "a1", name: str | None = None
+) -> ProgramSummary:
+    return ProgramSummary(
+        id=album_id, style=style, vibe=vibe, format="music", ready=3, name=name
+    )
 
 
 class TestResolvedStyle:
@@ -33,3 +37,23 @@ class TestResolvedStyle:
     def test_explicit_style_short_circuits_the_catalog(self) -> None:
         request = SelectionRequest(style="techno", vibe="wired")
         assert request.resolved_style([]) == "techno"
+
+    def test_curated_name_in_the_id_slot_resolves_its_style(self) -> None:
+        # The positional play path can carry a curated NAME in the id slot. That
+        # must resolve the named album and name its style, not match nothing and
+        # clear the register as a style-less union radio would.
+        catalog = [_album("trance", "calm", album_id="a1", name="focus-beats")]
+        request = SelectionRequest(id="focus-beats")
+        assert request.resolved_style(catalog) == "trance"
+
+    def test_id_in_the_id_slot_still_resolves_its_style(self) -> None:
+        catalog = [_album("techno", "wired", album_id="a1", name="focus-beats")]
+        request = SelectionRequest(id="a1")
+        assert request.resolved_style(catalog) == "techno"
+
+    def test_unknown_specific_ref_clears_to_none(self) -> None:
+        # A ref matching no album (neither id nor name) has no album to name: None,
+        # so the caller clears rather than naming a wrong genre.
+        catalog = [_album("trance", "calm", album_id="a1", name="focus-beats")]
+        request = SelectionRequest(id="does-not-exist")
+        assert request.resolved_style(catalog) is None

@@ -58,10 +58,10 @@ def _emitted(formatter: MagicMock) -> tuple[object, str]:
 class InMemoryCatalogGateway:
     """A filesystem-backed ``CatalogGateway`` fake for the authoring verbs."""
 
-    __slots__ = ("_albums", "_playing", "calls")
+    __slots__ = ("_albums", "_calls", "_playing")
     _albums: dict[str, str]
     _playing: set[str]
-    calls: list[tuple[str, str]]
+    _calls: list[tuple[str, str]]
 
     def __new__(
         cls,
@@ -71,17 +71,22 @@ class InMemoryCatalogGateway:
         self = super().__new__(cls)
         self._albums = dict(albums) if albums is not None else {}
         self._playing = set(playing) if playing is not None else set()
-        self.calls = []
+        self._calls = []
         return self
 
+    @property
+    def calls(self) -> list[tuple[str, str]]:
+        """Return the recorded ``(verb, arg)`` calls for assertions."""
+        return self._calls
+
     def new(self, prompt: str, name: str | None) -> str:
-        self.calls.append(("new", prompt))
+        self._calls.append(("new", prompt))
         album_id = name or f"{len(self._albums):06x}"
         self._albums[album_id] = f"album-{album_id}"
         return album_id
 
     def get(self, album_id: str, dest_dir: str) -> str:
-        self.calls.append(("get", album_id))
+        self._calls.append(("get", album_id))
         if album_id not in self._albums:
             raise VoxdProtocolError(f"no album named '{album_id}'")
         target = Path(dest_dir) / self._albums[album_id]

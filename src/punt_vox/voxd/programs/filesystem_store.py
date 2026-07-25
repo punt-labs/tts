@@ -10,6 +10,7 @@ seam that dereferences an opaque locator to a ``Path``.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import shutil
@@ -148,9 +149,14 @@ class FilesystemProgramStore:
         ``directory`` is a locator produced by :meth:`scan`/:meth:`create`, so the
         single-segment + containment guard of :meth:`_contained_dir` reconfirms it
         cannot escape the root before the recursive unlink.
+
+        Idempotent: an already-missing directory is "already deleted", not an
+        error, so a caller can always forget its catalog entry without a stale dir
+        leaving a ghost id. The containment guard still runs before any unlink.
         """
         path = self._contained_dir(directory)
-        shutil.rmtree(path)
+        with contextlib.suppress(FileNotFoundError):
+            shutil.rmtree(path)
 
     def _scan_one(self, manifest_path: Path) -> Album | None:
         """Return the Album for one manifest, or ``None`` to skip the directory.
@@ -188,7 +194,15 @@ class FilesystemProgramStore:
         surface as the corrupt-album error.
         """
         fd = os.open(manifest_path, os.O_RDONLY | os.O_NOFOLLOW)
-        with os.fdopen(fd, "rb") as handle:
+        try:
+            handle = os.fdopen(fd, "rb")
+        except OSError:
+            # fdopen failed to adopt the fd (e.g. resource pressure); close the
+            # raw descriptor by hand so it never leaks. On success the file
+            # object owns the fd and the ``with`` closes it.
+            os.close(fd)
+            raise
+        with handle:
             raw = handle.read(_MAX_MANIFEST_BYTES + 1)
         if len(raw) > _MAX_MANIFEST_BYTES:
             name = manifest_path.name

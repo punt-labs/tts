@@ -11,6 +11,7 @@ backing the active source; every live Part stays catalogued (F5).
 from __future__ import annotations
 
 import asyncio
+import shutil
 from typing import TYPE_CHECKING, NamedTuple, Self, final
 
 import pytest
@@ -346,6 +347,23 @@ class TestRemove:
         fx = _fx(tmp_path)
         with pytest.raises(ValueError, match="no album named"):
             fx.library.remove(AlbumId("abcdef"), blocked=frozenset())
+
+    def test_remove_forgets_entry_when_directory_already_gone(
+        self, tmp_path: Path
+    ) -> None:
+        # A catalogued album whose on-disk directory has already vanished must not
+        # leave a ghost id: remove forgets the catalog entry cleanly rather than
+        # raising on the missing directory and failing every retry until a rescan.
+        locator = seed_album(tmp_path / "programs", 1, name="idle", album_id="a3f1c9")
+        fx = _fx(tmp_path)  # scans the seeded album into the shared catalog
+        shutil.rmtree(fx.root / locator)  # the directory disappears out from under it
+
+        fx.library.remove(AlbumId("a3f1c9"), blocked=frozenset())
+
+        assert fx.service.catalog.by_id(AlbumId("a3f1c9")) is None  # no ghost id
+        # A second remove sees no entry -- the clean not-found, not a repeat failure.
+        with pytest.raises(ValueError, match="no album named"):
+            fx.library.remove(AlbumId("a3f1c9"), blocked=frozenset())
 
 
 @final

@@ -243,6 +243,36 @@ class TestOpen:
             store.create(_draft("a3f1c9", "techno", "ambient"))  # same slug-id
 
 
+class TestDelete:
+    """``delete`` removes an album dir and tolerates an already-missing one."""
+
+    def test_delete_removes_the_album_directory(self, tmp_path: Path) -> None:
+        store = FilesystemProgramStore(tmp_path)
+        draft = _draft("a3f1c9", "techno", "ambient", 1)
+        store.create(draft)
+        store.delete(draft.locator)
+        assert not (tmp_path / draft.locator).exists()
+
+    def test_delete_is_idempotent_when_directory_already_gone(
+        self, tmp_path: Path
+    ) -> None:
+        # A missing directory is "already deleted", not an error, so a caller can
+        # always forget its catalog entry after delete without a stale dir leaving
+        # a ghost id. A second delete of the same locator is a clean no-op.
+        store = FilesystemProgramStore(tmp_path)
+        draft = _draft("a3f1c9", "techno", "ambient", 1)
+        store.create(draft)
+        store.delete(draft.locator)
+        store.delete(draft.locator)  # already gone -- no FileNotFoundError
+
+    def test_delete_still_guards_a_hostile_locator(self, tmp_path: Path) -> None:
+        # Idempotence does not weaken the containment guard: a traversal locator is
+        # refused before any unlink, even though the "directory" does not exist.
+        store = FilesystemProgramStore(tmp_path / "root")
+        with pytest.raises(ValueError, match="single path segment"):
+            store.delete("../../etc")
+
+
 class TestPartStore:
     def test_next_index_and_write_target(self, tmp_path: Path) -> None:
         store = FilesystemProgramStore(tmp_path)
