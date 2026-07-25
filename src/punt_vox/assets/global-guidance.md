@@ -31,6 +31,17 @@ mood into 1–3 ElevenLabs expressive tags (`[frustrated]`, `[excited]`,
 (default) lets tags update from session signals at each task completion;
 `mode="off"` is neutral.
 
+## Recordings
+
+The daemon owns a recordings store; you address a recording by its bare store
+id, never a path.
+
+- `mic:rec_new` — synthesize `text` into the store; returns the bare id.
+- `mic:rec_list` — list the stored recordings.
+- `mic:rec_play` — play a stored recording (by id) on the daemon host.
+- `mic:rec_get` — return a recording's bytes (base64) by id.
+- `mic:rec_remove` — delete a recording by id.
+
 ## Music
 
 `mic:music` drives vibe-matched background music (`music_play`,
@@ -45,6 +56,14 @@ exactly 12 genre-accurate `variations`, one per pool slot.
   rejects those (`bad_prompt`) — describe the music itself instead.
 - Music needs an ElevenLabs paid plan (~2,000 credits per ~3-minute track).
   Playback auto-advances as tracks end; `music_next` is an optional manual skip.
+
+Catalog verbs (address a saved album by the id `music_list` prints):
+
+- `mic:music_new` — generate ONE track from a finished, verbatim prompt into a
+  fresh single-track catalog album. It does not disturb the running program.
+- `mic:music_get` — export a saved album by id into a destination directory
+  you name (`dest`); returns the written path/locator.
+- `mic:music_remove` — delete a saved album by id (refused while it is playing).
 
 ## Slash commands
 

@@ -50,11 +50,11 @@ class PlayHandler(MessageHandler):
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Resolve a store reference, then hand it to the daemon-host playback."""
         reply = WireReply(websocket, str(msg.get("id", "")))
-        ref = parse_optional_str(msg, "ref")
-        if not ref:
-            await reply.error("play requires a ref")
-            return
         try:
+            ref = parse_optional_str(msg, "ref")
+            if not ref:
+                await reply.error("play requires a ref")
+                return
             path = self._store.resolve_ref(ref)
         except ValueError as exc:
             await reply.error(str(exc))
@@ -88,6 +88,8 @@ class PlayHandler(MessageHandler):
         if result.ok:
             await reply.send({"type": "done"})
             return
-        detail = result.failure_detail()
-        logger.warning("Play failed: id=%r ref=%r %s", reply.request_id, ref, detail)
-        await reply.send({"type": "error", "message": f"playback failed: {detail}"})
+        # A host-side playback failure (missing player, unplayable file, played
+        # nothing) is a server-side operational fault, not a client rejection, so
+        # it routes through fault (the ERROR "operation failed" audit) rather than
+        # a bare error frame the log would blame on the client.
+        await reply.fault(f"playback failed: {result.failure_detail()}")

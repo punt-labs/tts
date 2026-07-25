@@ -82,8 +82,16 @@ class TestPlayHandler:
         assert item.outcome is not None  # the handler awaits the real outcome
         assert [p["type"] for p in sent] == ["playing", "done"]
 
-    def test_host_side_failure_surfaces_error(self, tmp_path: Path) -> None:
-        """A failed host-side playback reaches the client as an error, not a done."""
+    def test_host_side_failure_is_an_operational_fault(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A failed host-side playback is a fault, not a done or a client rejection.
+
+        A missing player or unplayable file is a server-side operational failure:
+        it reaches the client on the error frame but audits through fault (ERROR
+        "operation failed"), never WARNING "rejected op", since the client's
+        request was well-formed -- the daemon-side playback is what broke.
+        """
         store = RecordStore(tmp_path / "recordings")
         store.root.mkdir(parents=True)
         (store.root / "a1b2c3.mp3").write_bytes(b"\xff\xfb\x90\x00" * 4)
@@ -91,11 +99,17 @@ class TestPlayHandler:
         ws, sent = _capturing_ws()
 
         msg: dict[str, object] = {"type": "play", "id": "p1", "ref": "a1b2c3.mp3"}
-        asyncio.run(PlayHandler(playback=playback, store=store)(msg, ws))
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            asyncio.run(PlayHandler(playback=playback, store=store)(msg, ws))
 
         assert [p["type"] for p in sent] == ["playing", "error"]
         assert "playback failed" in str(sent[-1]["message"])
         assert "no player found" in str(sent[-1]["message"])
+        assert any(
+            r.levelno == logging.ERROR and "operation failed" in r.getMessage()
+            for r in caplog.records
+        )
+        assert not any("rejected op" in r.getMessage() for r in caplog.records)
 
     def test_played_nothing_surfaces_error(self, tmp_path: Path) -> None:
         """A clean exit under the suspicious-elapsed floor is a failure, not success."""
@@ -148,6 +162,20 @@ class TestPlayHandler:
 
         assert sent[-1]["type"] == "error"
         assert "requires a ref" in str(sent[-1]["message"])
+
+    def test_non_string_ref_is_a_clean_error(self, tmp_path: Path) -> None:
+        """A non-string ``ref`` yields an error frame; the parse must not escape
+        the handler and tear the connection down."""
+        store = RecordStore(tmp_path / "recordings")
+        playback = _playback_that_completes()
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {"type": "play", "id": "p1", "ref": 123}
+        asyncio.run(PlayHandler(playback=playback, store=store)(msg, ws))
+
+        assert sent[-1]["type"] == "error"
+        assert "must be a string" in str(sent[-1]["message"])
+        playback.enqueue.assert_not_awaited()
 
     def test_unknown_recording_is_an_error(self, tmp_path: Path) -> None:
         """A well-formed ref that does not exist in the store is refused."""

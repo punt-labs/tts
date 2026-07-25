@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.programs.album_id import AlbumId
+from punt_vox.voxd.programs.album_reservation import NameReservations
 from punt_vox.voxd.programs.album_tags import PromptFingerprint, TagQuery
 from punt_vox.voxd.programs.selection import Selection
 
@@ -96,17 +97,45 @@ class Album:
 class Catalog:
     """The in-memory index over album manifests -- the sole query surface."""
 
-    __slots__ = ("_by_id",)
+    __slots__ = ("_by_id", "_reservations")
     _by_id: dict[AlbumId, Album]
+    # The single held-names authority both authoring paths consult: ``music new``
+    # holds a curated name here across its generation await, and ``music on
+    # --name`` unions these holds with the catalogued names when it mints, so
+    # neither path can duplicate a name the other has claimed but not yet filed.
+    _reservations: NameReservations
 
     def __new__(cls, albums: tuple[Album, ...]) -> Self:
         self = super().__new__(cls)
         self._by_id = {album.id: album for album in albums}
+        self._reservations = NameReservations(self.taken_names)
         return self
+
+    @property
+    def reservations(self) -> NameReservations:
+        """Return the shared curated-name reservation registry (``music new`` holds)."""
+        return self._reservations
+
+    def reserved_names(self) -> frozenset[str]:
+        """Return every name in use: catalogued names union in-flight ``new`` holds.
+
+        The mint-collision set ``music on --name`` auto-suffixes against, so a
+        freshly bound album never takes a name a still-generating ``new`` holds.
+        """
+        return self.taken_names() | self._reservations.held_names()
 
     def add(self, album: Album) -> None:
         """Register a freshly created album so it is queryable without a re-scan."""
         self._by_id[album.id] = album
+
+    def remove(self, album_id: AlbumId) -> None:
+        """Drop the album with ``album_id`` from the index (idempotent on absence).
+
+        The on-disk delete is the store's; this keeps the in-memory index in step
+        so a removed album stops appearing in ``list`` and can never resolve for
+        ``play``/``get`` afterward.
+        """
+        self._by_id.pop(album_id, None)
 
     def mint_id(self) -> AlbumId:
         """Return a fresh id absent from the catalog (delegates to AlbumId.mint)."""
@@ -154,16 +183,13 @@ class Catalog:
         matches = self.by_tags(query)
         return matches[0] if matches else None
 
-    def resume(
-        self, style: str, vibe: str, fingerprint: PromptFingerprint
-    ) -> Album | None:
-        """Return the newest ``(style, vibe)`` album sharing ``fingerprint``.
+    def resume(self, query: TagQuery, fingerprint: PromptFingerprint) -> Album | None:
+        """Return the newest album matching ``query`` and sharing ``fingerprint``.
 
         A tag match with a *different* fingerprint is a miss, so the caller mints
         a fresh album rather than filling a foreign prompt-set's pool. ``None`` is
         the documented "no resumable pool" contract.
         """
-        query = TagQuery(style=style, vibe=vibe)
         for album in self.by_tags(query):
             if album.manifest.prompt_fingerprint == fingerprint:
                 return album

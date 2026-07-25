@@ -1,4 +1,4 @@
-"""Tests for the consume-only ``vox music`` CLI (cli_music.MusicCli).
+"""Tests for the ``vox music`` CLI (cli_music.MusicCli).
 
 MusicCli is a humble object: each command method is driven directly with an
 in-memory FakeProgramGateway and a mock formatter -- no daemon, no store -- so
@@ -9,15 +9,20 @@ CliRunner smoke tests confirm build_music_app wires the Typer group.
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+from typing import Self, final
 from unittest.mock import MagicMock
 
 import pytest
 import typer
+from _cli_introspect import app_help_texts
 from _program_fakes import FakeProgramGateway
 from typer.testing import CliRunner
 from websockets.exceptions import WebSocketException
 
 from punt_vox.cli_music import MusicCli, build_music_app
+from punt_vox.client_errors import VoxdProtocolError
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.types_programs import Reason
 from punt_vox.types_programs.control import ProgramSummary
@@ -49,6 +54,184 @@ def _summary(album_id: str, style: str, vibe: str, ready: int) -> ProgramSummary
 def _emitted(formatter: MagicMock) -> tuple[object, str]:
     payload, text = formatter.emit.call_args.args
     return payload, text
+
+
+@final
+class InMemoryCatalogGateway:
+    """A filesystem-backed ``CatalogGateway`` fake for the authoring verbs."""
+
+    __slots__ = ("_albums", "_calls", "_playing")
+    _albums: dict[str, str]
+    _playing: set[str]
+    _calls: list[tuple[str, str]]
+
+    def __new__(
+        cls,
+        albums: dict[str, str] | None = None,
+        playing: set[str] | None = None,
+    ) -> Self:
+        self = super().__new__(cls)
+        self._albums = dict(albums) if albums is not None else {}
+        self._playing = set(playing) if playing is not None else set()
+        self._calls = []
+        return self
+
+    @property
+    def calls(self) -> list[tuple[str, str]]:
+        """Return the recorded ``(verb, arg)`` calls for assertions."""
+        return self._calls
+
+    def new(self, prompt: str, name: str | None) -> str:
+        self._calls.append(("new", prompt))
+        album_id = name or f"{len(self._albums):06x}"
+        self._albums[album_id] = f"album-{album_id}"
+        return album_id
+
+    def get(self, album_id: str, dest_dir: str) -> str:
+        self._calls.append(("get", album_id))
+        if album_id not in self._albums:
+            raise VoxdProtocolError(f"no album named '{album_id}'")
+        target = Path(dest_dir) / self._albums[album_id]
+        target.mkdir(parents=True)  # exist_ok=False -> collision raises (D-1)
+        return str(target)
+
+    def remove(self, album_id: str) -> None:
+        self.calls.append(("remove", album_id))
+        if album_id not in self._albums:
+            raise VoxdProtocolError(f"no album named '{album_id}'")
+        if album_id in self._playing:
+            raise VoxdProtocolError(f"album {album_id} is playing; stop it first")
+        del self._albums[album_id]
+
+
+def _cli_catalog(
+    catalog: InMemoryCatalogGateway,
+    program: FakeProgramGateway | None = None,
+) -> tuple[MusicCli, MagicMock]:
+    formatter = MagicMock(spec=OutputFormatter)
+    prog = program if program is not None else FakeProgramGateway()
+    return MusicCli(formatter, lambda: prog, lambda: catalog), formatter
+
+
+# ---------------------------------------------------------------------------
+# new -- catalog authoring (verbatim prompt, bare id, program untouched)
+# ---------------------------------------------------------------------------
+
+
+def test_new_passes_prompt_verbatim_and_prints_bare_id() -> None:
+    catalog = InMemoryCatalogGateway()
+    cli, formatter = _cli_catalog(catalog)
+
+    cli.new("warm analog pads, slow, D minor, instrumental, loopable")
+
+    assert catalog.calls == [
+        ("new", "warm analog pads, slow, D minor, instrumental, loopable")
+    ]
+    payload, text = _emitted(formatter)
+    assert payload == {"album_id": text}  # human text is exactly the bare id
+
+
+def test_new_does_not_touch_the_active_program() -> None:
+    """music new parks a track in the catalog; the Program is untouched (D-5)."""
+    program = FakeProgramGateway()
+    cli, _ = _cli_catalog(InMemoryCatalogGateway(), program)
+
+    cli.new("ambient drone")
+
+    assert program.calls == []  # no select/status/advance -- program untouched
+
+
+def test_new_bad_prompt_is_clean_error() -> None:
+    gateway = MagicMock()
+    gateway.new.side_effect = VoxdProtocolError("bad_prompt")
+    cli = MusicCli(MagicMock(spec=OutputFormatter), FakeProgramGateway, lambda: gateway)
+
+    with pytest.raises(typer.Exit):
+        cli.new("copyrighted work")
+
+
+# ---------------------------------------------------------------------------
+# get -- copy an album directory into the CWD, refuse collision (D-1)
+# ---------------------------------------------------------------------------
+
+
+def test_get_creates_album_directory_in_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    catalog = InMemoryCatalogGateway({"7f3a91": "warm-pads-7f3a91"})
+    cli, formatter = _cli_catalog(catalog)
+
+    cli.get("7f3a91")
+
+    written = tmp_path / "warm-pads-7f3a91"
+    assert written.is_dir()
+    _, text = _emitted(formatter)
+    assert text == str(written)
+
+
+def test_get_collision_is_clean_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "warm-pads-7f3a91").mkdir()
+    catalog = InMemoryCatalogGateway({"7f3a91": "warm-pads-7f3a91"})
+    cli, _ = _cli_catalog(catalog)
+
+    with pytest.raises(typer.Exit):
+        cli.get("7f3a91")
+
+
+def test_get_unknown_album_is_clean_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    cli, _ = _cli_catalog(InMemoryCatalogGateway())
+
+    with pytest.raises(typer.Exit):
+        cli.get("missing")
+
+
+# ---------------------------------------------------------------------------
+# remove -- delete an idle album, refuse a playing one (D-2)
+# ---------------------------------------------------------------------------
+
+
+def test_remove_deletes_idle_album() -> None:
+    catalog = InMemoryCatalogGateway({"7f3a91": "warm-pads-7f3a91"})
+    cli, formatter = _cli_catalog(catalog)
+
+    cli.remove("7f3a91")
+
+    assert ("remove", "7f3a91") in catalog.calls
+    payload, text = _emitted(formatter)
+    assert payload == {"removed": "7f3a91"}
+    assert text == "removed 7f3a91"
+
+
+def test_remove_refuses_playing_album() -> None:
+    catalog = InMemoryCatalogGateway({"7f3a91": "warm-pads-7f3a91"}, playing={"7f3a91"})
+    cli, _ = _cli_catalog(catalog)
+
+    with pytest.raises(typer.Exit):
+        cli.remove("7f3a91")
+
+
+def test_music_group_exposes_the_unified_verb_set() -> None:
+    app = build_music_app(OutputFormatter())
+    names = {c.name for c in app.registered_commands if c.name is not None}
+    assert names == {"new", "list", "play", "off", "get", "remove", "next", "status"}
+
+
+# A design-decision label (D-1..D-9, DES-0xx) or the stale "consume-only" claim
+# in user-facing help is a defect: help is the manual, so it must read plainly.
+_INTERNAL_LABEL = re.compile(r"\bD-[0-9]\b|\bDES-|consume-only")
+
+
+def test_music_help_carries_no_internal_labels() -> None:
+    """No group/verb/option help leaks a design label or stale phrasing."""
+    for text in app_help_texts(build_music_app(OutputFormatter())):
+        assert not _INTERNAL_LABEL.search(text), text
 
 
 # ---------------------------------------------------------------------------
@@ -87,10 +270,11 @@ def test_list_empty() -> None:
 
 
 def test_play_by_tags_forwards_the_query() -> None:
+    """The --style/--vibe tag radio still resolves a union Selection (D-3)."""
     fake = FakeProgramGateway()
     cli, _ = _cli(fake)
 
-    cli.play("trance", "calm")
+    cli.play(style="trance", vibe="calm")
 
     assert fake.calls[0].verb == "select"
     assert fake.calls[0].selection is not None
@@ -98,21 +282,23 @@ def test_play_by_tags_forwards_the_query() -> None:
     assert fake.calls[0].selection.vibe == "calm"
 
 
-def test_play_by_id_forwards_the_album_id() -> None:
+def test_play_by_bare_id_positional_forwards_the_album_id() -> None:
+    """The bare <id> positional is the unified-verb primary form (D-3)."""
     fake = FakeProgramGateway()
     cli, _ = _cli(fake)
 
-    cli.play(album_id="a3f1c9")
+    cli.play("a3f1c9")
 
     assert fake.calls[0].selection is not None
     assert fake.calls[0].selection.id == "a3f1c9"
+    assert fake.calls[0].selection.style is None
 
 
 def test_play_reports_rejected() -> None:
     fake = FakeProgramGateway(applied=False)
     cli, formatter = _cli(fake)
 
-    cli.play("trance")
+    cli.play(style="trance")
 
     payload, _ = _emitted(formatter)
     assert payload["applied"] is False  # type: ignore[index]
@@ -125,7 +311,7 @@ def test_play_websocket_error_is_clean_error() -> None:
     cli = MusicCli(MagicMock(spec=OutputFormatter), lambda: gateway)
 
     with pytest.raises(typer.Exit):
-        cli.play("trance")
+        cli.play("a3f1c9")
 
 
 def test_status_websocket_handshake_error_is_clean_error() -> None:
@@ -136,6 +322,47 @@ def test_status_websocket_handshake_error_is_clean_error() -> None:
 
     with pytest.raises(typer.Exit):
         cli.status()
+
+
+# ---------------------------------------------------------------------------
+# off -- the one CLI stop verb, routed to the daemon program-off op
+# ---------------------------------------------------------------------------
+
+
+def test_off_invokes_the_program_off_op() -> None:
+    """`vox music off` issues the gateway stop() -- the daemon program-off path."""
+    fake = FakeProgramGateway()
+    cli, formatter = _cli(fake)
+
+    cli.off()
+
+    assert fake.verbs() == ["stop"]
+    payload, text = _emitted(formatter)
+    assert payload == {"music": "off", "applied": True}
+    assert text == "Music stopped."
+
+
+def test_off_is_idempotent_when_already_off() -> None:
+    """Stopping an already-idle Program is a clean no-op, not an error."""
+    fake = FakeProgramGateway(status=ProgramStatus.idle())
+    cli, formatter = _cli(fake)
+
+    cli.off()
+    cli.off()
+
+    assert fake.verbs() == ["stop", "stop"]
+    _, text = _emitted(formatter)
+    assert text == "Music stopped."
+
+
+def test_off_websocket_error_is_clean_error() -> None:
+    """A mid-request WebSocket close on off is a clean CLI error, not raw."""
+    gateway = MagicMock()
+    gateway.stop.side_effect = WebSocketException("connection closed")
+    cli = MusicCli(MagicMock(spec=OutputFormatter), lambda: gateway)
+
+    with pytest.raises(typer.Exit):
+        cli.off()
 
 
 # ---------------------------------------------------------------------------

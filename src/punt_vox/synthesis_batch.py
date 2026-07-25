@@ -56,10 +56,10 @@ class SegmentBatch:
                     continue
                 results.append(handler(seg_text, self._spec_for(seg)))
         except VoxdConnectionError as exc:
-            return self._error(str(exc))
+            return self._error(str(exc), results)
         except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
             logger.exception("%s failed", error_label)
-            return self._error(str(exc))
+            return self._error(str(exc), results)
         return json.dumps(results)
 
     def _spec_for(self, seg: dict[str, str]) -> SynthesisSpec:
@@ -73,6 +73,14 @@ class SegmentBatch:
         )
 
     @staticmethod
-    def _error(message: str) -> str:
-        """Return the tool's ``{"error": ...}`` JSON envelope."""
-        return json.dumps({"error": message})
+    def _error(message: str, results: list[dict[str, object]]) -> str:
+        """Return the ``{"error": ...}`` envelope, carrying any landed results.
+
+        A batch that fails partway still recorded the earlier segments; the
+        landed ids ride beside the error so they stay addressable rather than
+        orphaned and invisible. A total failure omits the empty ``results`` key.
+        """
+        envelope: dict[str, object] = {"error": message}
+        if results:
+            envelope["results"] = results
+        return json.dumps(envelope)

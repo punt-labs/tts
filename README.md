@@ -29,7 +29,7 @@ vox is usable in three ways, all driving the same `voxd` audio daemon --- so it 
 
 - **Claude Code plugin (MCP)** --- the `mic` MCP server gives your agent voice, `/vibe`, and `/music` tools plus notification hooks. Drive it with `/vox y`, `/recap`, `/vibe`, `/music`.
 - **Python library** --- `from punt_vox import VoxClient`; `async with VoxClient() as vox: await vox.synthesize("Build finished")` (or the sync `VoxClientSync`). See [Python API](#python-api).
-- **CLI** --- `vox say "Build finished"`, `vox record`, `vox music on`. A standalone TTS tool, independent of Claude Code. See [CLI](#cli).
+- **CLI** --- `vox say "Build finished"`, `vox rec new "..."`, `vox music play`. A standalone TTS tool, independent of Claude Code. See [CLI](#cli).
 
 ## Quick Start
 
@@ -434,18 +434,24 @@ vox is also a standalone TTS tool, independent of Claude Code.
 ```bash
 vox say "Hello world"                       # Synthesize + play
 vox say "Wall broadcast" --once 600         # Dedup identical text within 600s (for N-session broadcasts)
-vox record "Hello world" -o hello.mp3          # Synthesize + save
-vox record --from segments.json                # From JSON segments file
+vox rec new "Hello world"                      # Synthesize into the store; prints the id
+vox rec list                                   # List stored recordings
+vox rec get 5b9fc536a112.mp3                   # Materialize a recording into the CWD
+vox rec play 5b9fc536a112.mp3                  # Play a stored recording on the daemon host
+vox rec remove 5b9fc536a112.mp3               # Delete it from the store
 vox vibe excited                               # Set session mood
 vox notify y                                   # Enable notifications
 vox notify c                                   # Continuous spoken mode
 vox speak n                                    # Chimes only
 vox voice matilda                              # Set session voice
-vox music on                                   # Start background music
-vox music on --style techno                    # Start music with style modifier
+vox music play --style techno                  # Start a style radio (generates a fresh pool)
 vox music next                                 # Jump to another track
-vox music play focus-beats                     # Replay a saved pool (zero credits)
-vox music list                                 # List saved pools
+vox music play focus-beats                     # Replay a saved album by name/tags (zero credits)
+vox music play 7f3a91                          # Replay a saved album by id
+vox music list                                 # List saved albums
+vox music new "warm analog pads, D minor"      # Generate one track (verbatim prompt) into the catalog
+vox music get 7f3a91                           # Materialize an album into the CWD
+vox music remove 7f3a91                        # Delete an album from the catalog
 vox music off                                  # Stop background music
 vox status                                     # Current state
 vox version                                    # Print version
@@ -477,11 +483,11 @@ Provider API keys (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`) live in `~/.
 
 ### Shipped
 
-- **Mic API**: unified `unmute`/`record`/`vibe`/`who` MCP tools with segment-based input
+- **Mic API**: unified `unmute`/`vibe`/`who` plus `rec_*`/`music_*` store & catalog MCP tools with segment-based input
 - Notification layer: `/vox y|n|c`, `/mute`, `/unmute`, `/recap`, Stop + Notification hooks
 - Multi-provider TTS engine: ElevenLabs, AWS Polly, OpenAI, macOS `say`, Linux `espeak-ng`
 - Claude Code plugin: marketplace install, MCP server, slash commands
-- CLI: say, voices, record, vibe, on/off, mute, version, status, doctor
+- CLI: say, voices, rec, music, vibe, notify, mute, version, status, doctor
 - Two-channel display: `♪` panel summaries with voice/provider context
 - ElevenLabs streaming API for lower time-to-first-audio
 - `/vibe` with auto, manual, and off modes --- ElevenLabs expressive tags color every utterance

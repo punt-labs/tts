@@ -1,23 +1,25 @@
-"""Fetch WebSocket handler: return a stored recording's bytes to a remote client.
+"""Fetch WebSocket handler: stream a store file to a remote client in chunks.
 
-``vox fetch <id> -o <path>`` materializes a store recording on a client that
-does not share the daemon's filesystem. The reference is a bare store name,
-resolved and containment-checked exactly like a record name -- no client path,
-no escape. The bytes are returned base64-encoded in a **single frame**, so a
-recording larger than the frame budget is refused with a clear error rather than
-silently truncated. Remote fetch of a large recording is out of scope for this
-cut (the same limit that already made remote record above ~1 MiB non-functional);
-a chunked streaming transport is a separate, formally-modelled follow-up.
+``get`` retrieves a store file -- a recording, or one part of a music album -- of
+arbitrary total size in bounded per-frame memory. The reference is resolved and
+containment-checked *once*, before any byte, then handed to :class:`ChunkedTransfer`
+which streams ``fetch_begin`` -> ``chunk``* -> ``fetch_end`` (or an ``error``
+terminal on a mid-stream fault). A recording is addressed by a bare ``ref``; a
+music part by a catalog ``album`` id plus a bare ``part`` name, resolved inside the
+catalog-resolved album directory. A hostile ref/part is refused before the first
+byte and audit-logged; the old single-frame size ceiling is gone.
 """
 
 from __future__ import annotations
 
-import base64
 import logging
 from typing import TYPE_CHECKING, Self
 
-from punt_vox.types_audio import FETCH_FRAME_LIMIT_BYTES
+from punt_vox.types_audio import FETCH_CHUNK_BYTES
 from punt_vox.voxd._parse import parse_optional_str
+from punt_vox.voxd.chunked_fetch import ChunkedTransfer
+from punt_vox.voxd.path_status import PathStatus
+from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.types import MessageHandler
 from punt_vox.voxd.wire_reply import WireReply
 
@@ -26,6 +28,7 @@ if TYPE_CHECKING:
 
     from starlette.websockets import WebSocket
 
+    from punt_vox.voxd.programs.library import MusicLibrary
     from punt_vox.voxd.record_store import RecordStore
 
 __all__ = ["FetchHandler"]
@@ -34,97 +37,67 @@ logger = logging.getLogger(__name__)
 
 
 class FetchHandler(MessageHandler):
-    """Handle 'fetch' messages: return a store recording's bytes in one frame."""
+    """Handle 'fetch' messages: resolve a recording or album part, then stream it."""
 
-    __slots__ = ("_store",)
+    __slots__ = ("_music", "_store")
 
     _store: RecordStore
+    _music: MusicLibrary
 
-    def __new__(cls, *, store: RecordStore) -> Self:
+    def __new__(cls, *, store: RecordStore, music: MusicLibrary) -> Self:
         self = super().__new__(cls)
         self._store = store
+        self._music = music
         return self
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """Resolve a store reference, then return its bytes or an error frame."""
+        """Resolve the reference once (containment-checked), then stream in chunks."""
         reply = WireReply(websocket, str(msg.get("id", "")))
-        ref = parse_optional_str(msg, "ref")
-        if not ref:
-            await reply.error("fetch requires a ref")
-            return
         try:
-            path = self._store.resolve_ref(ref)
+            path, label = self._resolve_existing(msg)
         except ValueError as exc:
             await reply.error(str(exc))
             return
-        if not path.is_file():
-            await reply.error(f"no recording named {ref!r}")
+        except OSError:
+            # A stat fault (EACCES/EIO) on the already-contained path is a
+            # server-side fault, not a missing recording: PathStatus.of lets
+            # ENOENT read as absent but propagates any other OSError, so a
+            # genuine access failure never masquerades as "no such recording".
+            # The vendor detail is logged; the wire frame stays generic.
+            logger.exception("fetch op failed id=%r", reply.request_id)
+            await reply.fault("operation failed")
             return
-        await self._read_and_send(reply, path, ref)
+        await ChunkedTransfer(reply, FETCH_CHUNK_BYTES).stream(path, label)
 
-    async def _read_and_send(self, reply: WireReply, path: Path, ref: str) -> None:
-        """Read *path* bounded to one frame and send its bytes, or an error frame."""
-        try:
-            # A cheap pre-read stat rejects the common oversize case first, but
-            # it is NOT trusted for the read: a token-holding remote caller can
-            # grow/replace the store file between this stat and the read
-            # (record + fetch run concurrently), so reading the whole file would
-            # let it drive an arbitrarily large allocation -- a memory/DoS
-            # vector. Read at most FETCH_FRAME_LIMIT_BYTES + 1 so the worst-case
-            # allocation is bounded regardless of the race; len > limit means
-            # the on-disk file exceeds the budget and is rejected as oversize.
-            prelim_size = path.stat().st_size
-            if prelim_size > FETCH_FRAME_LIMIT_BYTES:
-                await self._reject_oversize(reply, prelim_size)
-                return
-            with path.open("rb") as handle:
-                raw = handle.read(FETCH_FRAME_LIMIT_BYTES + 1)
-        except OSError as exc:
-            # A read fault (the file deleted between is_file() and here, or a
-            # permission/IO error) is a resource failure, not a rejected probe:
-            # log it once here and send without re-logging via reply.error.
-            logger.warning(
-                "Fetch read failed for id=%r ref=%r: %s", reply.request_id, ref, exc
-            )
-            await reply.send(
-                {"type": "error", "message": f"cannot read recording {ref!r}: {exc}"}
-            )
-            return
+    def _resolve_existing(self, msg: dict[str, object]) -> tuple[Path, str]:
+        """Return ``(path, echo_ref)`` for an existing regular file, or raise.
 
-        # Authoritative size = what we read (capped at limit + 1). A file grown
-        # past the limit after the stat is rejected here -- the read never held
-        # more than limit + 1 bytes -- and the client's byte-count check is
-        # compared against a declaration that matches the payload, never a stale
-        # stat.
-        size = len(raw)
-        if size > FETCH_FRAME_LIMIT_BYTES:
-            await self._reject_oversize(reply, size)
-            return
-
-        logger.info("Fetch: id=%r ref=%r bytes=%d", reply.request_id, ref, size)
-        data = base64.b64encode(raw).decode("ascii")
-        # Echo the REQUESTED ref, not path.name: on a case-insensitive
-        # filesystem a mixed-case ref resolves to a differently-cased on-disk
-        # name, and the client's exact-match check would spuriously fail after
-        # a successful read. The ref was already validated by resolve_ref.
-        await reply.send({"type": "bytes", "ref": ref, "data": data, "bytes": size})
-
-    @staticmethod
-    async def _reject_oversize(reply: WireReply, size: int) -> None:
-        """Send the too-large-to-fetch error frame for a *size*-byte recording.
-
-        An oversize recording is a legitimate too-large file, not a probe, so it
-        is logged at INFO -- distinct from the WARNING class used for a rejected
-        or failed op -- keeping the audit trail symmetric with the read-fault
-        path, which also logs.
+        Resolves the reference once (containment-checked), then classifies it via
+        :class:`PathStatus` with ``follow_symlinks=False`` -- a symlink entry is
+        non-regular and rejected (never served its target), an absent path is a
+        client "no such recording/part", and any other stat ``OSError`` faults.
         """
-        logger.info("Fetch rejected oversize: id=%r bytes=%d", reply.request_id, size)
-        await reply.send(
-            {
-                "type": "error",
-                "message": (
-                    f"recording too large to fetch in one frame ({size} bytes > "
-                    f"{FETCH_FRAME_LIMIT_BYTES}); retrieve it from the host directly"
-                ),
-            }
-        )
+        album = parse_optional_str(msg, "album")
+        path, label, kind = self._resolve(album, msg)
+        if not PathStatus.of(path, follow_symlinks=False).is_regular_file:
+            raise ValueError(f"no {kind} named {label!r}")
+        return path, label
+
+    def _resolve(
+        self, album: str | None, msg: dict[str, object]
+    ) -> tuple[Path, str, str]:
+        """Return the resolved ``(path, echo_ref, kind)``, or raise ``ValueError``.
+
+        A music part (``album`` present) catalog-resolves the album id, then
+        bare-name-validates the part inside it; a recording resolves its bare
+        ``ref``. The album id is a catalog key, never a validated path (F2).
+        """
+        if album is not None:
+            part = parse_optional_str(msg, "part")
+            if not part:
+                raise ValueError("fetch of an album requires a part")
+            return self._music.resolve_part(AlbumId(album), part), part, "part"
+        ref = parse_optional_str(msg, "ref")
+        if not ref:
+            raise ValueError("fetch requires a ref or an album and part")
+        return self._store.resolve_ref(ref), ref, "recording"

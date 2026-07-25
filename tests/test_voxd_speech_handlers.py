@@ -71,6 +71,124 @@ class TestHandleSynthesizeShortCircuit:
         assert spec.provider == "espeak"
 
 
+class TestSynthesizeParseGuard:
+    """A malformed wire field is a clean error frame, not a torn connection."""
+
+    @pytest.mark.asyncio
+    async def test_non_string_voice_is_a_clean_error(self) -> None:
+        """A non-string typed field yields an id-stamped error frame; the parse
+        must not escape the handler and tear the connection down."""
+        mock_synth = MagicMock(spec=SynthesisPipeline)
+        mock_synth.synthesize_to_file = AsyncMock()
+        handler = _make_synthesize_handler(synthesis=mock_synth)
+        sent: list[dict[str, object]] = []
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=sent.append)
+
+        msg: dict[str, object] = {"id": "1", "text": "hello", "voice": 123}
+        await handler(msg, ws)
+
+        assert sent[-1]["type"] == "error"
+        assert sent[-1]["id"] == "1"
+        assert "must be a string" in str(sent[-1]["message"])
+        mock_synth.synthesize_to_file.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_non_string_text_is_a_clean_error(self) -> None:
+        """A non-string required text yields an id-stamped error frame; 123 must
+        not coerce to "123", synthesis must not run, and the connection stays up."""
+        mock_synth = MagicMock(spec=SynthesisPipeline)
+        mock_synth.synthesize_to_file = AsyncMock()
+        handler = _make_synthesize_handler(synthesis=mock_synth)
+        sent: list[dict[str, object]] = []
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=sent.append)
+
+        msg: dict[str, object] = {"id": "1", "text": 123}
+        await handler(msg, ws)
+
+        assert sent[-1]["type"] == "error"
+        assert sent[-1]["id"] == "1"
+        assert "text must be a string" in str(sent[-1]["message"])
+        mock_synth.synthesize_to_file.assert_not_called()
+
+
+class TestSynthesisFaultClassification:
+    """Synthesis and direct-play failures audit as faults, not client rejections.
+
+    A failed synthesis or a nonzero/exception direct-play exit is a server-side
+    operational failure -- it reaches the client on the error frame but routes
+    through WireReply.fault (ERROR "operation failed"), never WARNING "rejected
+    op", since the client's request was well-formed and the daemon-side work is
+    what broke. Parse rejections (TestSynthesizeParseGuard) stay errors.
+    """
+
+    @staticmethod
+    def _capturing_ws() -> tuple[MagicMock, list[dict[str, object]]]:
+        sent: list[dict[str, object]] = []
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=sent.append)
+        return ws, sent
+
+    @staticmethod
+    def _assert_faulted(
+        caplog: pytest.LogCaptureFixture, sent: list[dict[str, object]]
+    ) -> None:
+        assert sent[-1]["type"] == "error"
+        assert any(
+            r.levelno == logging.ERROR and "operation failed" in r.getMessage()
+            for r in caplog.records
+        )
+        assert not any("rejected op" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_synthesis_failure_is_a_fault(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_synth = MagicMock(spec=SynthesisPipeline)
+        mock_synth.try_direct_play = AsyncMock(return_value=None)
+        mock_synth.synthesize_to_file = AsyncMock(
+            side_effect=RuntimeError("provider 500")
+        )
+        handler = _make_synthesize_handler(synthesis=mock_synth)
+        ws, sent = self._capturing_ws()
+        msg: dict[str, object] = {"id": "s1", "text": "hi", "provider": "elevenlabs"}
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            await handler(msg, ws)
+        assert "provider 500" in str(sent[-1]["message"])
+        self._assert_faulted(caplog, sent)
+
+    @pytest.mark.asyncio
+    async def test_local_play_exception_is_a_fault(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_synth = MagicMock(spec=SynthesisPipeline)
+        mock_synth.try_direct_play = AsyncMock(
+            return_value=RuntimeError("espeak crash")
+        )
+        handler = _make_synthesize_handler(synthesis=mock_synth)
+        ws, sent = self._capturing_ws()
+        msg: dict[str, object] = {"id": "s2", "text": "hi", "provider": "espeak"}
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            await handler(msg, ws)
+        assert "espeak crash" in str(sent[-1]["message"])
+        self._assert_faulted(caplog, sent)
+
+    @pytest.mark.asyncio
+    async def test_local_play_nonzero_rc_is_a_fault(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_synth = MagicMock(spec=SynthesisPipeline)
+        mock_synth.try_direct_play = AsyncMock(return_value=3)
+        handler = _make_synthesize_handler(synthesis=mock_synth)
+        ws, sent = self._capturing_ws()
+        msg: dict[str, object] = {"id": "s3", "text": "hi", "provider": "espeak"}
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            await handler(msg, ws)
+        assert "rc=3" in str(sent[-1]["message"])
+        self._assert_faulted(caplog, sent)
+
+
 class TestHandleSynthesizeOnceFlag:
     """Integration tests for SynthesizeHandler with the once flag."""
 

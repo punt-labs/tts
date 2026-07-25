@@ -7,19 +7,24 @@ the parse-and-dispatch step differs per command, so it is the one abstract hook;
 the request-id plumbing, the applied ack, and the boundary error reply live here
 once (DRY, replacing the copy-pasted try/except of the old music handlers).
 
-The boundary catches every *expected* domain failure and turns it into a wire
-``{"type": "error"}`` a client can read: a ``ValueError`` (a bad request or a
-lost-race guard), a ``LookupError`` (``store.open`` on a deleted album dir), and
-an ``OSError`` (``store.create``'s ``mkdir(exist_ok=False)`` mint-race guard,
-disk-full, permissions). Letting any of these escape would tear the socket down,
-leaving the client a generic "connection closed" instead of the cause. Handlers
-hold no session and no owner -- ``voxd`` is machine-universal.
+The boundary catches every *expected* domain failure and replies through
+:class:`WireReply`, which splits it by fault-vs-error: a ``ValueError`` (a bad
+request or a lost-race guard) is a rejected client request audited as ``error``,
+while a ``LookupError`` (``store.open`` on a deleted album dir) or an ``OSError``
+(``store.create``'s ``mkdir(exist_ok=False)`` mint-race guard, disk-full,
+permissions) is a server-side operational failure audited as ``fault``. Letting
+any escape would tear the socket down, leaving the client a generic "connection
+closed" instead of the cause; replying through :class:`WireReply` also id-stamps
+every frame and no-ops on a gone peer. Handlers hold no session and no owner --
+``voxd`` is machine-universal.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar, Self
+
+from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
@@ -43,16 +48,21 @@ class ProgramCommandHandler(ABC):
         return self
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """Parse and dispatch, replying with an ack or a boundary error."""
-        request_id = str(msg.get("id", ""))
+        """Parse and dispatch, replying with an ack, a rejection, or a fault.
+
+        The boundary classifies the domain failure through
+        :meth:`WireReply.reject_or_fault`: a ``ValueError`` is a rejected client
+        request (``error``), a ``LookupError``/``OSError`` a server-side
+        operational failure (``fault``). The ack and both failure frames are
+        id-stamped and gone-peer-safe, matching the store handlers.
+        """
+        reply = WireReply(websocket, str(msg.get("id", "")))
         try:
             self._run(msg)
         except (ValueError, LookupError, OSError) as exc:
-            await websocket.send_json(
-                {"type": "error", "id": request_id, "message": str(exc)}
-            )
+            await reply.reject_or_fault(exc)
             return
-        await websocket.send_json({"type": self._WIRE_TYPE, "id": request_id})
+        await reply.send({"type": self._WIRE_TYPE})
 
     @abstractmethod
     def _run(self, msg: dict[str, object], /) -> None:

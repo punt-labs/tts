@@ -13,7 +13,7 @@ from punt_vox.client import (
     read_port_file,
     read_token_file,
 )
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError, VoxError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.paths import run_dir
 from punt_vox.types_programs.status import ProgramStatus
@@ -70,6 +70,30 @@ def _make_mock_ws() -> AsyncMock:
     ws.send = AsyncMock()
     ws.ping = AsyncMock()
     return ws
+
+
+def _fetch_frames(blob: bytes, *, chunk: int) -> list[dict[str, object]]:
+    """Build a valid chunked-fetch frame sequence (begin, chunk*, end) for *blob*."""
+    import base64
+    import hashlib
+
+    slices = [blob[i : i + chunk] for i in range(0, len(blob), chunk)]
+    frames: list[dict[str, object]] = [
+        {
+            "type": "fetch_begin",
+            "id": "f1",
+            "ref": "x.mp3",
+            "bytes": len(blob),
+            "chunks": len(slices),
+            "sha256": hashlib.sha256(blob).hexdigest(),
+        }
+    ]
+    frames.extend(
+        {"type": "chunk", "id": "f1", "seq": seq, "data": base64.b64encode(s).decode()}
+        for seq, s in enumerate(slices)
+    )
+    frames.append({"type": "fetch_end", "id": "f1", "ref": "x.mp3", "bytes": len(blob)})
+    return frames
 
 
 class TestVoxClientConnect:
@@ -749,58 +773,48 @@ class TestVoxClientPlayFetch:
             await client.play("a1b2c3.mp3")
 
     @pytest.mark.asyncio
-    async def test_fetch_returns_decoded_bytes(self) -> None:
-        import base64
-
-        payload = base64.b64encode(b"\xff\xfb\x90\x00" * 4).decode("ascii")
+    async def test_fetch_reassembles_chunked_stream(self) -> None:
+        """fetch reassembles fetch_begin -> chunk* -> fetch_end into the file bytes."""
+        blob = b"\xff\xfb\x90\x00" * 4  # 16 bytes
         mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {
-                    "type": "bytes",
-                    "id": "f1",
-                    "ref": "x.mp3",
-                    "data": payload,
-                    "bytes": 16,
-                }
-            )
-        )
+        frames = [json.dumps(f) for f in _fetch_frames(blob, chunk=6)]
+        mock_ws.recv = AsyncMock(side_effect=frames)
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        data = await client.fetch("x.mp3")
-        assert data == b"\xff\xfb\x90\x00" * 4
+        assert await client.fetch("x.mp3") == blob
+
+    @pytest.mark.asyncio
+    async def test_fetch_part_reassembles_stream(self) -> None:
+        """fetch_part addresses an album id + part and reassembles the same way."""
+        blob = b"music-bytes"
+        mock_ws = _make_mock_ws()
+        frames = [json.dumps(f) for f in _fetch_frames(blob, chunk=4)]
+        mock_ws.recv = AsyncMock(side_effect=frames)
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        assert await client.fetch_part("7f3a91", "001.mp3") == blob
+        sent = json.loads(mock_ws.send.call_args.args[0])
+        assert sent["album"] == "7f3a91"
+        assert sent["part"] == "001.mp3"
 
     @pytest.mark.asyncio
     async def test_fetch_uses_generous_fetch_timeout(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """fetch waits on the dedicated _TIMEOUT_FETCH, not the synthesis one."""
-        import base64
-
         from punt_vox.client import _TIMEOUT_FETCH
 
         captured: dict[str, float] = {}
-        payload = base64.b64encode(b"\xff\xfb\x90\x00" * 4).decode("ascii")
 
-        async def fake_drain(
-            _self: object,
-            _msg: dict[str, object],
-            *,
-            timeout: float,
-            terminal_type: str,
-        ) -> list[dict[str, object]]:
+        async def fake_stream(
+            _self: object, _msg: dict[str, object], *, timeout: float
+        ) -> bytes:
             captured["timeout"] = timeout
-            frame: dict[str, object] = {
-                "type": "bytes",
-                "id": "f1",
-                "ref": "x.mp3",
-                "data": payload,
-                "bytes": 16,
-            }
-            return [frame]
+            return b""
 
-        monkeypatch.setattr("punt_vox.client._VoxdTransport.send_and_drain", fake_drain)
+        monkeypatch.setattr("punt_vox.client._VoxdTransport.fetch_stream", fake_stream)
         client = VoxClient(port=8421, token="tok")
 
         await client.fetch("x.mp3")
@@ -808,75 +822,39 @@ class TestVoxClientPlayFetch:
         assert captured["timeout"] == _TIMEOUT_FETCH
         assert captured["timeout"] > 30.0  # clearly larger than synthesis
 
-    async def test_fetch_ref_mismatch_raises(self) -> None:
-        """A reply naming a different ref must not be written as this recording."""
-        import base64
-
-        payload = base64.b64encode(b"\xff\xfb\x90\x00" * 4).decode("ascii")
+    @pytest.mark.asyncio
+    async def test_fetch_wrong_first_frame_raises(self) -> None:
+        """A stream not opening with fetch_begin is a protocol error."""
         mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {
-                    "type": "bytes",
-                    "id": "f1",
-                    "ref": "OTHER.mp3",  # not what we asked for
-                    "data": payload,
-                    "bytes": 16,
-                }
-            )
-        )
+        mock_ws.recv = AsyncMock(return_value=json.dumps({"type": "done", "id": "f1"}))
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        with pytest.raises(VoxdProtocolError, match="ref mismatch"):
+        with pytest.raises(VoxdProtocolError, match="fetch_begin"):
             await client.fetch("x.mp3")
 
     @pytest.mark.asyncio
-    async def test_fetch_without_data_raises(self) -> None:
+    async def test_fetch_out_of_order_chunk_raises(self) -> None:
+        """A chunk whose seq is not the next expected is rejected."""
+        blob = b"abcdefgh"
+        frames = _fetch_frames(blob, chunk=4)
+        frames[2]["seq"] = 5  # corrupt the second chunk's order
         mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(return_value=json.dumps({"type": "bytes", "id": "f1"}))
+        mock_ws.recv = AsyncMock(side_effect=[json.dumps(f) for f in frames])
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        with pytest.raises(VoxdProtocolError, match="with data"):
-            await client.fetch("x.mp3")
-
-    @pytest.mark.asyncio
-    async def test_fetch_missing_bytes_raises(self) -> None:
-        """A 'bytes' reply without the count is a protocol error, not a silent write."""
-        import base64
-
-        payload = base64.b64encode(b"\xff\xfb\x90\x00" * 4).decode("ascii")
-        mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {"type": "bytes", "id": "f1", "ref": "x.mp3", "data": payload}
-            )
-        )
-        client = VoxClient(port=8421, token="tok")
-        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
-
-        with pytest.raises(VoxdProtocolError, match="missing 'bytes'"):
+        with pytest.raises(VoxdProtocolError, match="chunk seq"):
             await client.fetch("x.mp3")
 
     @pytest.mark.asyncio
     async def test_fetch_byte_count_mismatch_raises(self) -> None:
-        """A decoded length disagreeing with the declared count is a protocol error."""
-        import base64
-
-        payload = base64.b64encode(b"\xff\xfb\x90\x00" * 4).decode("ascii")  # 16 bytes
+        """A declared byte count disagreeing with the reassembly is an error."""
+        blob = b"abcdefgh"
+        frames = _fetch_frames(blob, chunk=4)
+        frames[0]["bytes"] = 99  # lie about the total
         mock_ws = _make_mock_ws()
-        mock_ws.recv = AsyncMock(
-            return_value=json.dumps(
-                {
-                    "type": "bytes",
-                    "id": "f1",
-                    "ref": "x.mp3",
-                    "data": payload,
-                    "bytes": 99,
-                }
-            )
-        )
+        mock_ws.recv = AsyncMock(side_effect=[json.dumps(f) for f in frames])
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
@@ -884,28 +862,370 @@ class TestVoxClientPlayFetch:
             await client.fetch("x.mp3")
 
     @pytest.mark.asyncio
-    async def test_fetch_non_integer_bytes_raises(self) -> None:
-        """A non-int 'bytes' is a clear protocol error, not a misleading mismatch."""
-        import base64
+    async def test_fetch_sha_mismatch_raises(self) -> None:
+        """A stream whose bytes do not match the declared sha256 is discarded."""
+        blob = b"abcdefgh"
+        frames = _fetch_frames(blob, chunk=4)
+        frames[0]["sha256"] = "0" * 64  # wrong digest
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(side_effect=[json.dumps(f) for f in frames])
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        payload = base64.b64encode(b"\xff\xfb\x90\x00" * 4).decode("ascii")
+        with pytest.raises(VoxdProtocolError, match="sha256 mismatch"):
+            await client.fetch("x.mp3")
+
+    @pytest.mark.asyncio
+    async def test_fetch_mid_stream_error_discards_partial(self) -> None:
+        """An error frame mid-stream raises, so no partial is returned to a caller."""
+        blob = b"abcdefgh"
+        frames = _fetch_frames(blob, chunk=4)
+        # Replace the last chunk with an abort error terminal.
+        frames[-2] = {"type": "error", "id": "f1", "message": "read fault"}
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(side_effect=[json.dumps(f) for f in frames[:-1]])
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="read fault"):
+            await client.fetch("x.mp3")
+
+    @pytest.mark.asyncio
+    async def test_fetch_fault_taints_and_closes_connection(self) -> None:
+        """A mid-stream fault closes the connection and nulls it for a reconnect.
+
+        The daemon may still be sending this fetch's remaining chunk frames; the
+        poisoned socket must be discarded so those stale frames cannot be read by
+        the next request. The failure still surfaces as a VoxdProtocolError.
+        """
+        blob = b"abcdefgh"
+        frames = _fetch_frames(blob, chunk=4)
+        frames[0]["sha256"] = "0" * 64  # force a mid-stream integrity fault
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(side_effect=[json.dumps(f) for f in frames])
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="sha256 mismatch"):
+            await client.fetch("x.mp3")
+
+        mock_ws.close.assert_awaited_once()
+        assert client._transport._ws is None  # pyright: ignore[reportPrivateUsage]
+
+    @pytest.mark.asyncio
+    async def test_subsequent_fetch_after_fault_reads_no_stale_frames(self) -> None:
+        """After a fault, the next fetch reconnects and reads a clean stream.
+
+        The first connection carries a corrupt stream followed by leftover chunk
+        frames the daemon was still sending. If that socket were reused, the next
+        fetch would read those stale frames and desync. Tainting the connection
+        forces a reconnect, so the second fetch reads only the fresh stream.
+        """
+        good = b"clean-bytes"
+        # First socket: a sha-mismatch fault, then stale frames that would poison
+        # a reused connection (the daemon still flushing the aborted fetch).
+        bad = _fetch_frames(b"abcdefgh", chunk=4)
+        bad[0]["sha256"] = "0" * 64
+        stale = _fetch_frames(b"STALE!!!", chunk=4)  # would be misread if reused
+        first_ws = _make_mock_ws()
+        first_ws.recv = AsyncMock(side_effect=[json.dumps(f) for f in (*bad, *stale)])
+        # Second socket (post-reconnect): the clean stream the caller asked for.
+        second_ws = _make_mock_ws()
+        second_ws.recv = AsyncMock(
+            side_effect=[json.dumps(f) for f in _fetch_frames(good, chunk=4)]
+        )
+
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = first_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="sha256 mismatch"):
+            await client.fetch("x.mp3")
+
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=second_ws,
+        ):
+            assert await client.fetch("x.mp3") == good
+
+        # The second fetch never touched the first (stale) socket's leftover
+        # frames -- only fetch_begin/chunk/fetch_end were read from it (5 frames).
+        assert first_ws.recv.call_count == len(bad)
+        assert client._transport._ws is second_ws  # pyright: ignore[reportPrivateUsage]
+
+
+class TestVoxClientRecMusic:
+    """The rec/music catalog client methods over a mock WebSocket."""
+
+    @pytest.mark.asyncio
+    async def test_rec_list_parses_entries(self) -> None:
         mock_ws = _make_mock_ws()
         mock_ws.recv = AsyncMock(
             return_value=json.dumps(
                 {
-                    "type": "bytes",
-                    "id": "f1",
-                    "ref": "x.mp3",
-                    "data": payload,
-                    "bytes": "notanumber",
+                    "type": "recordings",
+                    "id": "l1",
+                    "entries": [
+                        {"name": "a.mp3", "bytes": 5},
+                        {"name": "b.mp3", "bytes": 2},
+                    ],
                 }
             )
         )
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        with pytest.raises(VoxdProtocolError, match="non-integer 'bytes'"):
-            await client.fetch("x.mp3")
+        rows = await client.rec_list()
+        assert [(r.name, r.byte_count) for r in rows] == [("a.mp3", 5), ("b.mp3", 2)]
+
+    @pytest.mark.asyncio
+    async def test_rec_remove_error_raises(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "error", "id": "r1", "message": "no recording named 'x.mp3'"}
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="no recording named"):
+            await client.rec_remove("x.mp3")
+
+    @pytest.mark.asyncio
+    async def test_music_new_returns_album_id_after_ack(self) -> None:
+        """music_new consumes the 'generating' ack then returns the 'album' id."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "generating", "id": "n1"}),
+                json.dumps(
+                    {"type": "album", "id": "n1", "album_id": "7f3a91", "parts": 1}
+                ),
+            ]
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        assert await client.music_new("warm pads") == "7f3a91"
+        sent = json.loads(mock_ws.send.call_args.args[0])
+        assert sent["prompt"] == "warm pads"
+
+    @pytest.mark.asyncio
+    async def test_music_new_bad_prompt_raises(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps({"type": "generating", "id": "n1"}),
+                json.dumps({"type": "error", "id": "n1", "message": "bad_prompt"}),
+            ]
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="bad_prompt"):
+            await client.music_new("rejected")
+
+    @pytest.mark.asyncio
+    async def test_music_remove_ok(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "removed", "id": "r1", "album_id": "7f3a91"}
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        await client.music_remove("7f3a91")  # no raise
+
+    @pytest.mark.asyncio
+    async def test_music_get_writes_album_dir(self, tmp_path: Path) -> None:
+        """music_get creates ./<album>/ and writes each chunk-fetched part."""
+        part = b"track-bytes"
+        frames = [
+            json.dumps(
+                {
+                    "type": "manifest",
+                    "id": "m1",
+                    "album": "warm-pads-7f3a91",
+                    "parts": [{"part": "001.mp3", "bytes": len(part)}],
+                }
+            ),
+            *[json.dumps(f) for f in _fetch_frames(part, chunk=4)],
+        ]
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(side_effect=frames)
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        target = await client.music_get("7f3a91", tmp_path)
+        assert target == tmp_path / "warm-pads-7f3a91"
+        assert (target / "001.mp3").read_bytes() == part
+
+    @pytest.mark.asyncio
+    async def test_music_get_refuses_collision(self, tmp_path: Path) -> None:
+        """A pre-existing target directory is a collision error (D-1)."""
+        (tmp_path / "warm-pads-7f3a91").mkdir()
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "manifest",
+                    "id": "m1",
+                    "album": "warm-pads-7f3a91",
+                    "parts": [{"part": "001.mp3", "bytes": 3}],
+                }
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(FileExistsError):
+            await client.music_get("7f3a91", tmp_path)
+
+    @pytest.mark.asyncio
+    async def test_music_get_rejects_traversing_part(self, tmp_path: Path) -> None:
+        """A manifest naming a traversing part raises and writes nothing."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "manifest",
+                    "id": "m1",
+                    "album": "warm-pads-7f3a91",
+                    "parts": [{"part": "../escape.mp3", "bytes": 3}],
+                }
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxError):
+            await client.music_get("7f3a91", tmp_path)
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.asyncio
+    async def test_music_get_rejects_absolute_album_name(self, tmp_path: Path) -> None:
+        """A manifest with an absolute album name raises and writes nothing."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "manifest",
+                    "id": "m1",
+                    "album": "/etc/pwned",
+                    "parts": [{"part": "001.mp3", "bytes": 3}],
+                }
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxError):
+            await client.music_get("7f3a91", tmp_path)
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.asyncio
+    async def test_music_get_empty_album_raises_and_writes_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        """A zero-ready-part album raises before mkdir, leaving dest_dir untouched.
+
+        The manifest lists only ready parts, so an empty list means the album is
+        still generating. Exporting it must not leave a hollow ``<album>/`` dir,
+        which would then block a real export on the collision guard (D-1).
+        """
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "manifest",
+                    "id": "m1",
+                    "album": "warm-pads-7f3a91",
+                    "parts": [],
+                }
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(ValueError, match="no ready parts"):
+            await client.music_get("7f3a91", tmp_path)
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.asyncio
+    async def test_music_get_after_empty_succeeds_once_parts_exist(
+        self, tmp_path: Path
+    ) -> None:
+        """A get that failed empty leaves nothing, so a later real get still works."""
+        empty_ws = _make_mock_ws()
+        empty_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "manifest",
+                    "id": "m1",
+                    "album": "warm-pads-7f3a91",
+                    "parts": [],
+                }
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = empty_ws  # pyright: ignore[reportPrivateUsage]
+        with pytest.raises(ValueError, match="no ready parts"):
+            await client.music_get("7f3a91", tmp_path)
+
+        part = b"track-bytes"
+        ready_ws = _make_mock_ws()
+        ready_ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps(
+                    {
+                        "type": "manifest",
+                        "id": "m2",
+                        "album": "warm-pads-7f3a91",
+                        "parts": [{"part": "001.mp3", "bytes": len(part)}],
+                    }
+                ),
+                *[json.dumps(f) for f in _fetch_frames(part, chunk=4)],
+            ]
+        )
+        client._transport._ws = ready_ws  # pyright: ignore[reportPrivateUsage]
+
+        target = await client.music_get("7f3a91", tmp_path)
+        assert target == tmp_path / "warm-pads-7f3a91"
+        assert (target / "001.mp3").read_bytes() == part
+
+    @pytest.mark.asyncio
+    async def test_music_get_writes_all_parts_of_multi_part_album(
+        self, tmp_path: Path
+    ) -> None:
+        """A multi-part album chunk-fetches and writes every ready part."""
+        first, second = b"first-track", b"second"
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            side_effect=[
+                json.dumps(
+                    {
+                        "type": "manifest",
+                        "id": "m1",
+                        "album": "warm-pads-7f3a91",
+                        "parts": [
+                            {"part": "001.mp3", "bytes": len(first)},
+                            {"part": "002.mp3", "bytes": len(second)},
+                        ],
+                    }
+                ),
+                *[json.dumps(f) for f in _fetch_frames(first, chunk=4)],
+                *[json.dumps(f) for f in _fetch_frames(second, chunk=4)],
+            ]
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        target = await client.music_get("7f3a91", tmp_path)
+        assert (target / "001.mp3").read_bytes() == first
+        assert (target / "002.mp3").read_bytes() == second
 
 
 class TestVoxClientVoices:

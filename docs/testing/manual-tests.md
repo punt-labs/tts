@@ -1,6 +1,6 @@
 # Manual Test Flight
 
-Vox produces audio. Tests against logs and exit codes are not sufficient — the operator must hear the output and confirm it matches expectations. This document defines the canonical manual test flight: a short sequence that exercises the synthesis, cache, multi-segment, music, and mix paths through real audio hardware.
+Vox produces audio. Tests against logs and exit codes are not sufficient — the operator must hear the output and confirm it matches expectations. This document defines the canonical manual test flight: a short sequence that exercises the synthesis, cache, multi-segment, music, mix, recordings-store, and music-catalog paths through real audio hardware.
 
 Referenced from `CLAUDE.md` inner-loop step 5 ("Exercise manually"). Run this whenever code in `src/punt_vox/voxd/`, `src/punt_vox/providers/`, `src/punt_vox/core.py`, `src/punt_vox/hooks.py`, or `src/punt_vox/server.py` changes in ways that affect runtime behavior.
 
@@ -72,7 +72,7 @@ Use the **CLI** (`vox say`) to generate a block that clearly exceeds the 5,000-c
 vox say "$(python3 -c 'print("This is the first sentence, long enough to carry weight. Here is a second sentence with several more words in it. And a third sentence to add length. " * 60)')"
 ```
 
-`core.py:split_text()` splits on sentence boundaries; the daemon synthesizes each chunk in parallel and stitches them back into one stream. (To keep the listen short while still exercising split+merge, set `TTS_PROVIDER=openai` — its 4,096 limit chunks a smaller block — or use `vox record -o /tmp/chunk.mp3 "<long text>"` and inspect the single merged file.)
+`core.py:split_text()` splits on sentence boundaries; the daemon synthesizes each chunk in parallel and stitches them back into one stream. (To keep the listen short while still exercising split+merge, set `TTS_PROVIDER=openai` — its 4,096 limit chunks a smaller block — or run `vox rec new "<long text>"` then `vox rec get <id>` and inspect the single merged file.)
 
 **Ask the operator:** "Did the whole passage play as one continuous stream with natural sentence pauses and no audible seam or gap at the chunk boundaries?"
 
@@ -105,6 +105,68 @@ Wait 15 seconds so the music has clearly started, then call `mcp__plugin_vox_mic
 Call `mcp__plugin_vox_mic__music` with `mode="off"`. Confirm the music player is gone: `pgrep -fl 'afplay|ffplay'` (macOS/Linux) should show no track player.
 
 **Ask the operator:** "Did music stop cleanly when you sent the off command, no lingering bleed?"
+
+### Step 8 — recording into the store, play it back
+
+Capture a recording into the daemon store and play it on the daemon host. The
+CLI `vox rec` group and the MCP `mic:rec_*` tools are the same engine ops:
+
+```bash
+id=$(vox rec new "This recording lives in the daemon store.")
+echo "stored id: $id"     # bare store id, no path
+vox rec list              # the new id appears, one per line
+vox rec play "$id"        # plays on the daemon host (the machine with speakers)
+```
+
+**Ask the operator:** "Did the stored recording play back cleanly on the daemon host?"
+
+### Step 9 — materialize a recording into the current directory
+
+Fetch the bytes to the client and confirm the no-clobber guard:
+
+```bash
+cd "$(mktemp -d)"
+vox rec get "$id"                    # writes ./$id in the current directory
+ls -l "$id"                          # present
+vox rec get "$id"; echo "exit=$?"    # refuses: target exists → non-zero exit, no overwrite
+afplay "$id" 2>/dev/null || ffplay -autoexit -nodisp "$id"   # play the fetched file locally
+```
+
+The bytes stream from the daemon in bounded, sha256-verified chunks (any size).
+Assert: the first `get` writes the file, the second refuses with a non-zero exit
+and does not overwrite.
+
+**Ask the operator:** "Did the fetched file play locally and sound identical to the stored recording?"
+
+### Step 10 — music catalog: generate one track and play it
+
+`vox music new` generates one track from a finished ElevenLabs prompt into a
+fresh catalog album, without disturbing any running program (costs ElevenLabs
+credits, ~10–15 s):
+
+```bash
+album=$(vox music new "warm analog synth pads, slow, D minor, no drums")
+echo "album id: $album"
+vox music list                # the album appears with a ready/total count
+vox music play "$album"       # plays the album on the daemon host
+```
+
+**Ask the operator:** "Did the generated album play on the daemon host and match the prompt (warm analog pads)?"
+
+### Step 11 — catalog guardrails (no audio to judge — assert the outcomes)
+
+Confirm the daemon refuses hostile input and protects a playing album:
+
+```bash
+vox rec get "../escape.mp3"; echo "exit=$?"     # hostile ref → clean error, non-zero exit, nothing written
+vox music remove "$album"; echo "exit=$?"       # album from step 10 is playing → refused ("is playing")
+vox music off 2>/dev/null || true               # stop playback
+vox music remove "$album"; echo "exit=$?"       # now stopped → removes cleanly (exit 0)
+```
+
+No audio — assert each: the traversal ref is refused and writes nothing, `remove`
+of the playing album is refused with an "is playing" message, and after stopping
+the remove succeeds.
 
 ## Post-flight
 

@@ -58,9 +58,14 @@ message_line() {
     then (.message | split("\n")[0]) else empty end' 2>/dev/null
 }
 
+# $ctx carries the full tool RESULT, which for rec_get includes an arbitrarily
+# large base64 recording. Feed it to jq via --rawfile from a process
+# substitution, never --arg: an --arg value lands in jq's argv and a payload
+# past ARG_MAX would make the whole hook fail exec, delivering neither the panel
+# line nor the context. Read from a pipe and no size limit applies.
 emit() {
   local summary="$1" ctx="$2"
-  jq -n --arg summary "$summary" --arg ctx "$ctx" '{
+  jq -n --arg summary "$summary" --rawfile ctx <(printf '%s' "$ctx") '{
     hookSpecificOutput: {
       hookEventName: "PostToolUse",
       updatedMCPToolOutput: $summary,
@@ -113,7 +118,9 @@ if [[ "$TOOL_NAME" == "unmute" ]]; then
   exit 0
 fi
 
-if [[ "$TOOL_NAME" == "record" ]]; then
+# rec_new returns a LIST of {id,bytes,cached}, one per synthesized segment;
+# the agent addresses each recording later by its bare id, so keep the RESULT.
+if [[ "$TOOL_NAME" == "rec_new" ]]; then
   COUNT=$(printf '%s' "$RESULT" | jq -r 'length' 2>/dev/null || echo "?")
   extract_voice "$RESULT"
   PHRASES=(
@@ -121,6 +128,52 @@ if [[ "$TOOL_NAME" == "record" ]]; then
     "♪ ${COUNT} track(s) saved"
   )
   emit "$(pick_random "${PHRASES[@]}")" "$RESULT"
+  exit 0
+fi
+
+if [[ "$TOOL_NAME" == "rec_list" ]]; then
+  COUNT=$(printf '%s' "$RESULT" | jq -r '.recordings | length' 2>/dev/null || echo "?")
+  emit "♪ ${COUNT} recording(s) in the store" "$RESULT"
+  exit 0
+fi
+
+if [[ "$TOOL_NAME" == "rec_play" ]]; then
+  REF=$(printf '%s' "$RESULT" | jq -r '.played // "the recording"' 2>/dev/null)
+  emit "♪ playing ${REF}" "$RESULT"
+  exit 0
+fi
+
+# rec_get returns {id,bytes,base64}. The base64 payload is for the agent via
+# additionalContext ONLY -- the panel line names the id and size, never the
+# blob, so the compact channel is not flooded with an inline recording.
+if [[ "$TOOL_NAME" == "rec_get" ]]; then
+  ID=$(printf '%s' "$RESULT" | jq -r '.id // "the recording"' 2>/dev/null)
+  BYTES=$(printf '%s' "$RESULT" | jq -r '.bytes // "?"' 2>/dev/null)
+  emit "♪ fetched ${ID} (${BYTES} bytes)" "$RESULT"
+  exit 0
+fi
+
+if [[ "$TOOL_NAME" == "rec_remove" ]]; then
+  REF=$(printf '%s' "$RESULT" | jq -r '.removed // "the recording"' 2>/dev/null)
+  emit "♪ removed ${REF}" "$RESULT"
+  exit 0
+fi
+
+if [[ "$TOOL_NAME" == "music_new" ]]; then
+  ALBUM=$(printf '%s' "$RESULT" | jq -r '.album_id // "a new album"' 2>/dev/null)
+  emit "♪ generated album ${ALBUM}" "$RESULT"
+  exit 0
+fi
+
+if [[ "$TOOL_NAME" == "music_get" ]]; then
+  ALBUM=$(printf '%s' "$RESULT" | jq -r '.album_id // "the album"' 2>/dev/null)
+  emit "♪ exported ${ALBUM}" "$RESULT"
+  exit 0
+fi
+
+if [[ "$TOOL_NAME" == "music_remove" ]]; then
+  ALBUM=$(printf '%s' "$RESULT" | jq -r '.removed // "the album"' 2>/dev/null)
+  emit "♪ removed album ${ALBUM}" "$RESULT"
   exit 0
 fi
 
@@ -227,8 +280,9 @@ if [[ -n "$MSG_FIELD" ]]; then
   exit 0
 fi
 
-# Fallback: full output in panel
-jq -n --arg r "$RESULT" '{
+# Fallback: full output in panel. --rawfile from a pipe, not --arg, so a large
+# unrecognized result cannot overflow ARG_MAX and fail the hook (see emit).
+jq -n --rawfile r <(printf '%s' "$RESULT") '{
   hookSpecificOutput: {
     hookEventName: "PostToolUse",
     updatedMCPToolOutput: $r

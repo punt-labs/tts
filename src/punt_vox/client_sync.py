@@ -13,9 +13,15 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+from pathlib import Path
 from typing import Any, Self, cast
 
-from punt_vox.client import RecordResult, SynthesizeResult, VoxClient
+from punt_vox.client import (
+    RecordingSummary,
+    RecordResult,
+    SynthesizeResult,
+    VoxClient,
+)
 from punt_vox.client_env import DaemonEnv
 from punt_vox.types_programs import (
     CommandOutcome,
@@ -211,3 +217,30 @@ class VoxClientSync:
     def program_list(self) -> tuple[ProgramSummary, ...]:
         """Return every album as a catalogue summary."""
         return self._runner.run(self._call("program_list"))  # type: ignore[no-any-return]
+
+    # -- recordings store (rec group) ---------------------------------------
+
+    def rec_list(self) -> tuple[RecordingSummary, ...]:
+        """Return the store's recordings (name + bytes)."""
+        return cast(
+            "tuple[RecordingSummary, ...]", self._runner.run(self._call("rec_list"))
+        )
+
+    def rec_remove(self, ref: str) -> None:
+        """Delete recording *ref* from the store."""
+        self._runner.run(self._call("rec_remove", ref))
+
+    # -- music catalog (music group) ----------------------------------------
+
+    def music_new(self, prompt: str, name: str | None = None) -> str:
+        """Author one track into a fresh catalog album; return its bare album id."""
+        return cast("str", self._runner.run(self._call("music_new", prompt, name)))
+
+    def music_get(self, album_id: str, dest_dir: Path) -> Path:
+        """Copy an album into *dest_dir* as a directory of its parts."""
+        coro = self._call("music_get", album_id, dest_dir)
+        return cast("Path", self._runner.run(coro))
+
+    def music_remove(self, album_id: str) -> None:
+        """Delete a catalog album by id (a playing album is refused)."""
+        self._runner.run(self._call("music_remove", album_id))

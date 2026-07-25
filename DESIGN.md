@@ -2244,3 +2244,66 @@ only on the opt-in, cold `fetch`.
 Closes vox-zu39, vox-ovb7, vox-eoq9 (epic vox-dvri). Design of record:
 `docs/vox-dvri-daemon-audio-host.md`; containment model:
 `docs/vox-dvri-record-store.tex`.
+
+## DES-050: One Verb Vocabulary for the Two Audio Stores (rec / music)
+
+**Status:** accepted (vox-jei3). Design of record: `docs/rec-music-cli.md`;
+models: `docs/vox-chunked-transfer.tex`, `docs/audio-programs.tex` (Catalog/System delta).
+
+### Context
+
+vox has two daemon-owned audio stores. Music albums already had a coherent
+`vox music` Typer group (`list`/`play`/`next`/`status`); recordings did not —
+they were three scattered top-level verbs (`record`/`play`/`fetch`) with gaps
+(no `list`, no `remove`), an overloaded `play` (store id *or* local file, by a
+filesystem probe), a leaked daemon path from `record`, and a stray `-o` that
+let the client name an output path. The rough edges (a printed path that
+`fetch` then rejects; no way to enumerate the store) were symptoms of the
+recordings feature never getting the group treatment music had.
+
+### Decision
+
+Give recordings the same group shape and make **both** stores share one verb
+vocabulary — `new` / `list` / `play <id>` / `get <id>` / `remove <id>` (music
+also keeps `next` / `status`, being a running Program) — on the CLI **and** the
+MCP surface at parity (one engine, thin clients, one code path).
+
+- **`list`/`remove` spelled out**, not `ls`/`rm` — the other verbs are English words.
+- **No `-o` anywhere; `new` prints the bare store id; `get` writes into the CWD
+  under the store's own name** (rec = one file; music = a directory of the
+  album's parts), refusing to clobber. The client never names a daemon path.
+- **Chunked `get`.** The 700 000-byte single-frame fetch is replaced by a
+  bounded, ordered, sha256-verified chunk stream landed atomically, so any-size
+  recording or multi-MB album transfers in full — the limit was a bug to fix,
+  not a constraint to design around.
+- **`music new` is catalog authoring, distinct from the `music on` program.**
+  It takes the finished ElevenLabs prompt verbatim (no LLM style→prompt
+  expansion in the CLI/daemon — the invoker supplies what an agent would author
+  in the MCP flow), generates one track into a fresh single-track catalog album,
+  and parks it — the running Program's mode/pool/`lastError` are untouched, and a
+  generation failure is reported to the caller, never promoted to a program-level
+  `failed`. This is the crux of the Z-model delta: `new`/`remove` mutate the
+  **Catalog**, not the resolved Program pool (finding #7 preserved).
+- **`music play` keeps its tag radio** (`--style`/`--vibe`/`--name`) alongside
+  the bare `<id>` positional — no shipped behavior removed.
+- **`say` stays** as the ephemeral speak-now verb (synthesize + play, no store,
+  no id); `rec new` is its durable counterpart.
+
+### Forward integration (no shims)
+
+`vox record`/`play`/`fetch`, the `-o` flag, `vox play <localfile>`,
+`_emit_record_locator`, `_atomic_write_bytes`'s old form, and
+`FETCH_FRAME_LIMIT_BYTES` are deleted outright — no aliases, no deprecation
+hints (PY-RF-6; vox has no installed base to migrate). Local-file playback is
+the OS tool's job.
+
+### Alternatives Considered
+
+| Alternative | Rejected Because |
+|-------------|------------------|
+| Keep recordings as flat top-level verbs, just add `list`/`remove` | Leaves the incoherent shape (scattered verbs, overloaded `play`, leaked path); the group + shared vocabulary is what makes the two stores learnable as one. |
+| `ls`/`rm` (terse) | `new`/`play`/`get`/`next`/`status` have no natural short forms, so `ls`/`rm` would be the only abbreviations — one register, spelled out. |
+| Defer `music get` (tracks exceed the 700 KB fetch frame) | Shipping a `get` that refuses its main input is the rough edge we set out to remove; chunked transfer fixes the transport so `get` works for any size. |
+| Lean MCP (CLI-only management) | The projection model (architecture.md) makes MCP a first-class surface for an agent-facing tool; the same capability is exposed on every surface with callers via one engine path. |
+
+Closes vox-jei3.

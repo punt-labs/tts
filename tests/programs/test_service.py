@@ -20,8 +20,10 @@ from punt_vox.types_programs import Format, Mode
 from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.programs.album_tags import PromptFingerprint, TagQuery
+from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
+from punt_vox.voxd.programs.library import MusicLibrary
 
-from .conftest import make_service, seed_album
+from .conftest import QuietProducer, make_service, seed_album
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -302,3 +304,177 @@ class TestConsumeControls:
         await service.run_once()
         service.shutdown()
         assert service.status().mode is Mode.OFF
+
+
+class TestGeneratingFirstBacking:
+    """The album generated in ``generating_first`` (empty pool) still backs it.
+
+    During ``generating_first`` the first track is being written into the album's
+    directory while the pool is still empty. The D-2 backing set must cover that
+    album *regardless of pool emptiness*, so ``music_remove`` refuses it -- deleting
+    the directory mid-generation would corrupt the in-flight first track. These
+    tests assert that named invariant, and the regression that a non-backing idle
+    album is still removable in the same state.
+    """
+
+    def _library(self, tmp_path: Path, service: ProgramService) -> MusicLibrary:
+        """Build a library sharing the service's catalog + store, as wiring does."""
+        root = tmp_path / "programs"
+        return MusicLibrary(
+            service.catalog, FilesystemProgramStore(root), root, QuietProducer()
+        )
+
+    async def _generating_first(self, tmp_path: Path) -> ProgramService:
+        """Drive a fresh service to ``generating_first`` with an empty pool."""
+        service = _service(tmp_path)
+        service.turn_on(style="techno", vibe="calm", name=None, prompts=_ONE)
+        await service.run_once()  # apply the switch that arms the background fill
+        service.shutdown()  # cancel the fill before it records the first Part
+        assert service.status().mode is Mode.GENERATING_FIRST  # pool still empty
+        return service
+
+    async def test_generating_first_album_is_in_the_backing_set(
+        self, tmp_path: Path
+    ) -> None:
+        service = await self._generating_first(tmp_path)
+        album = service.catalog_albums()[0]
+        assert service.active_backing_locators() == frozenset({album.locator})
+
+    async def test_music_remove_refused_while_generating_first(
+        self, tmp_path: Path
+    ) -> None:
+        service = await self._generating_first(tmp_path)
+        album = service.catalog_albums()[0]
+        library = self._library(tmp_path, service)
+        with pytest.raises(ValueError, match="is playing"):
+            library.remove(album.id, blocked=service.active_backing_locators())
+        # The in-flight generation is undisturbed: still generating_first, album kept.
+        assert service.status().mode is Mode.GENERATING_FIRST
+        assert album.id in {a.id for a in service.catalog_albums()}
+
+    async def test_non_backing_album_is_removable_while_generating_first(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "programs"
+        idle = seed_album(root, 1, name="idle", album_id="b1b1b1")
+        service = _service(tmp_path)  # scans the seeded idle album into the catalog
+        service.turn_on(style="techno", vibe="calm", name=None, prompts=_ONE)
+        await service.run_once()
+        service.shutdown()
+        assert service.status().mode is Mode.GENERATING_FIRST
+        library = self._library(tmp_path, service)
+        library.remove(AlbumId("b1b1b1"), blocked=service.active_backing_locators())
+        assert not (root / idle).exists()  # a non-backing album still removes
+
+
+class TestStoppedProgramBacking:
+    """A Program stopped by ``off`` backs nothing, so its album becomes removable.
+
+    ``turn_off`` keeps the saved pool for a later re-``on`` (Z ``TurnOff``), but a
+    stopped Program neither plays a ready Part nor generates one. D-2 must drop
+    its album from the backing set: otherwise the retained non-empty pool would
+    wedge ``music remove`` with "is playing; stop it first" on a program that is
+    already stopped, leaving the operator no way to remove the album. The
+    contrast tests confirm a *live* program (playing a full pool) still backs its
+    album, so removal remains refused while it plays.
+    """
+
+    def _library(self, tmp_path: Path, service: ProgramService) -> MusicLibrary:
+        """Build a library sharing the service's catalog + store, as wiring does."""
+        root = tmp_path / "programs"
+        return MusicLibrary(
+            service.catalog, FilesystemProgramStore(root), root, QuietProducer()
+        )
+
+    async def _played_then_stopped(self, tmp_path: Path) -> tuple[ProgramService, str]:
+        """Resume a full saved pool (playing_rotating), then ``off`` it (pool kept).
+
+        Seeding a full album and resuming it reaches ``playing_rotating`` with a
+        non-empty pool and no armed fill -- the exact retained-pool state the D-2
+        off fix concerns -- via a single queued switch, so one ``run_once`` per
+        transition applies deterministically.
+        """
+        root = tmp_path / "programs"
+        locator = seed_album(
+            root, *range(1, _POOL_SIZE + 1), name="live", album_id="c1c1c1"
+        )
+        service = _service(tmp_path)  # scans the full seeded album into the catalog
+        service.turn_on(style="techno", vibe="ambient", name="live", prompts=_ONE)
+        await service.run_once()  # apply the switch onto the restored full pool
+        service.shutdown()  # a full pool arms no fill; cancel defensively
+        assert service.status().mode is Mode.PLAYING_ROTATING
+        # A live program playing a full pool backs its album (removal is refused).
+        assert service.active_backing_locators() == frozenset({locator})
+        service.off()
+        await service.run_once()
+        assert service.status().mode is Mode.OFF
+        return service, locator
+
+    async def test_stopped_program_backs_nothing(self, tmp_path: Path) -> None:
+        service, _ = await self._played_then_stopped(tmp_path)
+        # The retained pool must no longer back the album once playback is off.
+        assert service.active_backing_locators() == frozenset()
+
+    async def test_music_remove_succeeds_after_off(self, tmp_path: Path) -> None:
+        service, locator = await self._played_then_stopped(tmp_path)
+        album = service.catalog_albums()[0]
+        library = self._library(tmp_path, service)
+        library.remove(album.id, blocked=service.active_backing_locators())
+        assert not (tmp_path / "programs" / locator).exists()
+
+    async def test_music_remove_refused_while_playing(self, tmp_path: Path) -> None:
+        service = _service(tmp_path)
+        service.turn_on(style="techno", vibe="calm", name=None, prompts=_ONE)
+        await _drive_fill_to_full(service)
+        album = service.catalog_albums()[0]
+        library = self._library(tmp_path, service)
+        # No regression: a live, playing program still refuses removal of its album.
+        with pytest.raises(ValueError, match="is playing"):
+            library.remove(album.id, blocked=service.active_backing_locators())
+        assert album.id in {a.id for a in service.catalog_albums()}
+
+
+class TestConcurrentNameReservation:
+    """A curated name an in-flight ``music new`` holds blocks a colliding mint.
+
+    ``music new --name X`` holds X in the catalog's shared reservations across
+    its multi-second generation await, before X is catalogued. A concurrent
+    ``program on --name X`` shares that catalog, so its binder sees the hold and
+    auto-suffixes rather than minting a second album also named X -- which would
+    break the ``by_name`` 0-or-1 invariant. The hold releases on the
+    reservation's context exit, whether the ``new`` succeeded or failed, freeing
+    the name for a later mint.
+    """
+
+    def _library(self, tmp_path: Path, service: ProgramService) -> MusicLibrary:
+        """Build a library sharing the service's catalog, as wiring does."""
+        root = tmp_path / "programs"
+        return MusicLibrary(
+            service.catalog, FilesystemProgramStore(root), root, QuietProducer()
+        )
+
+    def test_in_flight_new_name_forces_the_binder_to_suffix(
+        self, tmp_path: Path
+    ) -> None:
+        service = _service(tmp_path)
+        library = self._library(tmp_path, service)
+        # ``music new --name focus`` is mid-generation: focus is held, not filed.
+        with library.reserve("pads", "focus"):
+            service.turn_on(style="techno", vibe="calm", name="focus", prompts=_ONE)
+            service.shutdown()  # cancel the fill the mint armed
+            names = {a.manifest.tags.name for a in service.catalog_albums()}
+        assert "focus" not in names  # the held name was not duplicated
+        assert "focus1" in names  # the binder auto-suffixed around the hold
+        assert service.catalog.by_name("focus") is None  # by_name stays 0-or-1
+
+    def test_released_reservation_frees_the_name_for_a_later_mint(
+        self, tmp_path: Path
+    ) -> None:
+        service = _service(tmp_path)
+        library = self._library(tmp_path, service)
+        with library.reserve("pads", "focus"):
+            pass  # an aborted/failed ``new`` releases the hold on context exit
+        service.turn_on(style="techno", vibe="calm", name="focus", prompts=_ONE)
+        service.shutdown()
+        names = {a.manifest.tags.name for a in service.catalog_albums()}
+        assert names == {"focus"}  # the freed name is minted unsuffixed

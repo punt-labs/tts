@@ -38,16 +38,16 @@ class StartRequest:
 class SelectionRequest:
     """The replay input for playing a Selection (the ``music play`` command).
 
-    ``id`` is a *direct-lookup* axis served by ``catalog.by_id`` -- distinct from
-    the ``style``/``vibe``/``name`` tag axes that build a tag query; it is
-    never folded into the tag filter. All fields optional: an all-``None`` request
+    ``id`` is the *specific-album* axis -- resolved id-or-name like the positional
+    play path, distinct from the ``style``/``vibe``/``name`` tag axes and never
+    folded into the tag filter. All fields optional: an all-``None`` request
     replays every album (the cross-genre radio).
     """
 
     style: str | None = None
     vibe: str | None = None
     name: str | None = None
-    id: str | None = None  # direct album-id lookup, never a tag axis
+    id: str | None = None  # specific album, resolved id-or-name; never a tag axis
 
     def resolved_style(self, catalog: Iterable[ProgramSummary]) -> str | None:
         """Return the single genre this replay selects, else ``None`` for a union.
@@ -64,13 +64,15 @@ class SelectionRequest:
         return self._single_style(s for s in catalog if self._selects(s))
 
     def _selects(self, summary: ProgramSummary) -> bool:
-        """Return whether *summary* is this replay's target: id lookup, else tags.
+        """Return whether *summary* is this replay's target: specific album, else tags.
 
-        An ``id`` ignores the tag axes; with no id each absent tag is a wildcard and
-        the vibe is bounded through ``VibeLabel`` to match the stored canonical tag.
+        The ``id`` axis resolves id-or-name, as the positional play path does, so a
+        name in the ``id`` slot still resolves its one album (and names its style)
+        rather than matching nothing and clearing the register like a union radio.
+        With no id each absent tag is a wildcard, the vibe bounded via ``VibeLabel``.
         """
         if self.id is not None:
-            return summary.id == self.id
+            return self.id in (summary.id, summary.name)
         return (self.vibe is None or summary.vibe == VibeLabel(self.vibe).value) and (
             self.name is None or summary.name == self.name
         )

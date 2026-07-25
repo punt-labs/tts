@@ -260,6 +260,12 @@ class InMemoryProgramStore:
         self._stores[draft.locator] = store
         return store
 
+    def delete(self, directory: str) -> None:
+        # Idempotent, matching the ProgramStore contract: deleting an
+        # already-missing album is a no-op, not an error, so a caller can forget
+        # its catalog entry without a stale directory leaving a ghost id.
+        self._stores.pop(directory, None)
+
 
 @pytest.fixture
 def program_store() -> InMemoryProgramStore:

@@ -78,3 +78,17 @@ class ProgramStore(Protocol):
         The store owns the clock: it stamps ``created = now(UTC)``.
         """
         ...
+
+    def delete(self, directory: str) -> None:
+        """Delete a scan/create-validated album directory and its Parts.
+
+        Same ``open``-guard invariant as :meth:`open`: ``directory`` is only ever
+        a locator produced by :meth:`scan` or :meth:`create`, so no wire/CLI path
+        can hand this a directory that resolves outside the root.
+
+        Idempotent: deleting an already-missing directory is a no-op, not an
+        error, so a caller can always forget its catalog entry without a stale
+        directory leaving a ghost id. A containment or validation failure on the
+        locator still raises.
+        """
+        ...

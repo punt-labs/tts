@@ -1,0 +1,353 @@
+%
+% vox-chunked-transfer.tex
+%
+% Z Specification for the vox daemon's chunked `get' (fetch) transport.
+%
+% The daemon delivers a stored file of arbitrary total size in bounded
+% per-frame memory: fetch_begin, then ordered `chunk' frames, then fetch_end
+% (or an error terminal). This model is deliberately kept out of
+% audio-programs.tex: it touches no Program, Radio, or Catalog field. It is
+% transport, on the order of the record-store containment model
+% (vox-dvri-record-store.tex), and pins the four integrity properties a
+% mid-stream fault must not violate: ordered contiguous chunks, a reassembled
+% total equal to the declared byte count, a containment check taken once before
+% the first byte, and an atomic terminal --- the complete file lands or nothing
+% does.
+%
+
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fuzz}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+
+\begin{document}
+
+\title{Vox Chunked Transfer: A Z Specification}
+\author{Formal model of the daemon \texttt{get}/\texttt{fetch} transport}
+\date{July 2026}
+\hypersetup{
+  pdftitle={Vox Chunked Transfer: A Z Specification},
+  pdfauthor={Punt Labs},
+  pdfsubject={Z Specification},
+  pdfcreator={fuzz/probcli}
+}
+\maketitle
+
+\section{Introduction}
+
+The daemon's \texttt{get} verb retrieves a store file --- a recording, or one
+part of a music album --- over the single client socket. The old transport put
+the whole file in one base64 frame and capped the total at
+$700\,000$ bytes; the redesign (\texttt{docs/rec-music-cli.md},
+\S``Chunked transfer'') replaces it with a bounded stream:
+
+\begin{quote}
+\texttt{fetch\_begin} $\rightarrow$ \texttt{chunk}$^{*}$ $\rightarrow$
+(\texttt{fetch\_end} $\mid$ \texttt{error})
+\end{quote}
+
+Each \texttt{chunk} carries at most \texttt{FETCH\_CHUNK\_BYTES}; the file may be
+arbitrarily large. The client reassembles the chunks in \texttt{seq} order,
+checks the running total against the declared \texttt{bytes}, and writes the
+result atomically, so a mid-stream fault never leaves a partial file. This
+specification models exactly that discipline, and states the four integrity
+properties as invariants and preconditions rather than as prose the code is
+merely asked to honour.
+
+The properties, and where each lives in the model:
+
+\begin{itemize}
+  \item \textbf{Ordered, contiguous chunks.} \texttt{Chunk} requires
+    $seq? = next$ and advances $next$ by one, so the delivered sequence numbers
+    are exactly $0, 1, \dots$ with no gap, reorder, or repeat.
+  \item \textbf{Reassembled total equals declared bytes.} \texttt{End} is
+    enabled only when $got = declaredBytes$ (and all declared chunks have
+    arrived); the running total $got$ never exceeds $declaredBytes$ by the state
+    invariant.
+  \item \textbf{Containment checked once, before the first byte.}
+    \texttt{Begin} is the sole transition into the streaming state and it is the
+    only place the reference is checked; an unsafe reference is refused by
+    \texttt{RejectBeforeBegin} from the idle state, so no byte is ever sent for
+    an uncontained reference.
+  \item \textbf{Atomic terminal.} A file is marked \emph{landed} only in the
+    \texttt{delivered} phase, which requires the complete byte count; a
+    mid-stream fault takes \texttt{Abort} to the \texttt{failed} phase with
+    nothing landed. No reachable state carries a landed partial file.
+\end{itemize}
+
+\section{Basic Types}
+
+A \texttt{REF} is a client-supplied reference to a store member: a recording id,
+or a music part name resolved inside its album directory. The model treats it as
+opaque; the containment rule of \texttt{vox-dvri-record-store.tex} decides which
+references are safe, abstracted here as a set. A \texttt{REASON} is an opaque
+non-empty diagnostic string, as in the audio-programs model.
+
+\begin{zed}
+  [REF, REASON]
+\end{zed}
+
+A Z boolean, spelled to avoid the ProB/B keyword clash with \texttt{BOOL}. The
+\texttt{landed} flag records whether the complete file has been placed on disk.
+
+\begin{zed}
+  ZBOOL ::= ztrue | zfalse
+\end{zed}
+
+A transfer is in one of four phases. \texttt{idle} is before any request;
+\texttt{active} is after \texttt{fetch\_begin}, receiving chunks;
+\texttt{delivered} is the success terminal, reached by \texttt{fetch\_end};
+\texttt{failed} is the error terminal, reached by an \texttt{error} frame. The
+two terminals are distinct and absorbing: one fetch is one lifecycle on one
+socket.
+
+\begin{zed}
+  Phase ::= idle | active | delivered | failed
+\end{zed}
+
+\section{Global Constant}
+
+\texttt{chunkLimit} is the per-chunk byte bound (\texttt{FETCH\_CHUNK\_BYTES} in
+the design; e.g.\ 256\,KiB). Its exact value is an implementation tuning knob;
+what the model fixes is that it is a positive constant and that every chunk
+respects it. There is deliberately \emph{no} total-file bound: the ceiling the
+old transport imposed is gone.
+
+\begin{axdef}
+  chunkLimit : \nat_1
+\end{axdef}
+
+\section{Containment}
+
+Which references resolve safely under the daemon-owned root is decided by the
+containment rule modelled in full in \texttt{vox-dvri-record-store.tex} (absolute,
+traversing, separator-bearing, empty, or non-printable names are rejected before
+any filesystem touch). Here that rule is abstracted as the set of safe
+references; the point of this model is \emph{when} the check happens, not how it
+is computed.
+
+\begin{axdef}
+  contained : \power REF
+\end{axdef}
+
+\section{State}
+\label{sec:state}
+
+The \texttt{Transfer} state carries the phase, the declared totals from
+\texttt{fetch\_begin} (\texttt{declaredBytes}, the \texttt{bytes} field, and
+\texttt{declaredChunks}, the \texttt{chunks} field), the next expected sequence
+number \texttt{next} (which equals the number of chunks received so far), the
+running reassembled total \texttt{got}, and the \texttt{landed} flag.
+
+The predicate carries every integrity invariant. The running total never
+overshoots the declaration and never more chunks arrive than declared; a file is
+\emph{landed} exactly in the \texttt{delivered} phase, and that phase is reached
+only with the full byte count and every chunk present; the \texttt{failed} phase
+never lands anything; and \texttt{idle} is the pristine zero state.
+
+\begin{schema}{Transfer}
+  phase : Phase \\
+  declaredBytes : \nat \\
+  declaredChunks : \nat \\
+  next : \nat \\
+  got : \nat \\
+  landed : ZBOOL
+  \where
+  got \leq declaredBytes \\
+  next \leq declaredChunks \\
+  (landed = ztrue \iff phase = delivered) \\
+  (phase = delivered \implies (got = declaredBytes \land next = declaredChunks)) \\
+  (phase = failed \implies landed = zfalse) \\
+  (phase = idle \implies \\
+  \quad~ (declaredBytes = 0 \land declaredChunks = 0 \\
+  \quad~ \land next = 0 \land got = 0 \land landed = zfalse))
+\end{schema}
+
+The invariant $landed = ztrue \iff phase = delivered$ together with
+$phase = delivered \implies got = declaredBytes$ is the heart of the atomic
+terminal: a landed file is always the complete file. No state schema admits a
+\texttt{landed} partial, so the property holds by construction, not by a runtime
+check the client must remember.
+
+\section{Initialisation}
+
+A fresh transfer is idle with all counters zero.
+
+\begin{schema}{InitTransfer}
+  Transfer'
+  \where
+  phase' = idle \\
+  declaredBytes' = 0 \\
+  declaredChunks' = 0 \\
+  next' = 0 \\
+  got' = 0 \\
+  landed' = zfalse
+\end{schema}
+
+\section{Operations}
+
+\subsection{Begin --- the \texttt{fetch\_begin} frame}
+
+From \texttt{idle}, the daemon resolves and containment-checks the reference
+\emph{once} and announces the totals. The declared chunk count must be able to
+carry the declared bytes ($declaredBytes \leq declaredChunks * chunkLimit$) and
+must not exceed them ($declaredChunks \leq declaredBytes$, so each declared chunk
+holds at least one byte); together these force $declaredBytes = 0 \iff
+declaredChunks = 0$, the empty-file case. The reference is checked here and only
+here: \texttt{Begin} is the sole gateway into \texttt{active}, so a byte is sent
+only after containment has passed.
+
+\begin{schema}{Begin}
+  \Delta Transfer \\
+  ref? : REF \\
+  bytes? : \nat \\
+  chunks? : \nat
+  \where
+  phase = idle \\
+  ref? \in contained \\
+  bytes? \leq chunks? * chunkLimit \\
+  chunks? \leq bytes? \\
+  phase' = active \\
+  declaredBytes' = bytes? \\
+  declaredChunks' = chunks? \\
+  next' = 0 \\
+  got' = 0 \\
+  landed' = zfalse
+\end{schema}
+
+\subsection{RejectBeforeBegin --- the pre-stream error frame}
+
+An unsafe reference is refused from \texttt{idle} with an error frame emitted
+\emph{before} any \texttt{fetch\_begin}. The state does not move: no totals are
+announced, no byte crosses the wire, nothing is landed. This is the model image
+of ``a hostile ref is audit-logged and rejected before the first byte''.
+
+\begin{schema}{RejectBeforeBegin}
+  \Xi Transfer \\
+  ref? : REF
+  \where
+  phase = idle \\
+  ref? \notin contained
+\end{schema}
+
+\subsection{Chunk --- a \texttt{chunk} data frame}
+
+While \texttt{active} and with chunks still owed, the next data frame must carry
+the next sequence number ($seq? = next$) --- this is the ordered, contiguous,
+no-repeat guarantee --- and at most \texttt{chunkLimit} bytes, at least one. The
+running total grows by the frame length and may not overshoot the declaration.
+
+\begin{schema}{Chunk}
+  \Delta Transfer \\
+  seq? : \nat \\
+  len? : \nat
+  \where
+  phase = active \\
+  next < declaredChunks \\
+  seq? = next \\
+  1 \leq len? \land len? \leq chunkLimit \\
+  got + len? \leq declaredBytes \\
+  phase' = active \\
+  declaredBytes' = declaredBytes \\
+  declaredChunks' = declaredChunks \\
+  next' = next + 1 \\
+  got' = got + len? \\
+  landed' = zfalse
+\end{schema}
+
+Because \texttt{next} starts at $0$ (from \texttt{Begin}) and each \texttt{Chunk}
+advances it by one while demanding $seq? = next$, the accepted sequence numbers
+are precisely $0, 1, \dots, declaredChunks - 1$: strictly increasing, contiguous,
+and each used once. A frame out of order, duplicated, or skipping a number has
+$seq? \neq next$ and is not a legal \texttt{Chunk}.
+
+\subsection{End --- the \texttt{fetch\_end} frame, atomic land}
+
+The success terminal fires only when every declared chunk has arrived
+($next = declaredChunks$) and the reassembled total equals the declared byte
+count ($got = declaredBytes$). Only then is the file \emph{landed}. This is the
+atomic write: the complete file appears, in one step, or --- via \texttt{Abort}
+--- not at all.
+
+\begin{schema}{End}
+  \Delta Transfer
+  \where
+  phase = active \\
+  next = declaredChunks \\
+  got = declaredBytes \\
+  phase' = delivered \\
+  declaredBytes' = declaredBytes \\
+  declaredChunks' = declaredChunks \\
+  next' = next \\
+  got' = got \\
+  landed' = ztrue
+\end{schema}
+
+The precondition $got = declaredBytes \land next = declaredChunks$ is exactly the
+client-side reassembly check ``the running total against \texttt{bytes}'', made a
+guard on the transition that lands the file rather than an afterthought. A short
+final chunk, or a dropped chunk, leaves $got < declaredBytes$ or $next <
+declaredChunks$, so \texttt{End} is disabled and the only terminal available is
+\texttt{Abort}.
+
+\subsection{Abort --- the mid-stream \texttt{error} terminal}
+
+A read fault, a short read, or any mid-stream failure ends the exchange with an
+\texttt{error} frame instead of \texttt{fetch\_end}. The phase moves to
+\texttt{failed} and nothing is landed: the client discards whatever partial it
+had accumulated. \texttt{Abort} is enabled from \texttt{active} whatever the
+running total, so it models a fault at any point in the stream.
+
+\begin{schema}{Abort}
+  \Delta Transfer \\
+  reason? : REASON
+  \where
+  phase = active \\
+  phase' = failed \\
+  declaredBytes' = declaredBytes \\
+  declaredChunks' = declaredChunks \\
+  next' = next \\
+  got' = got \\
+  landed' = zfalse
+\end{schema}
+
+Because $landed'= zfalse$ and the \texttt{failed} invariant keeps it so, no file
+is placed for an aborted transfer even when $got$ was one chunk short of
+$declaredBytes$. The partial is never on disk; ``the complete file lands or
+nothing does'' is a fact of the two terminals, not of client discipline.
+
+\section{Key Properties}
+
+The following hold by construction (state invariants) or as operation
+preconditions; they are the intended proof obligations for animation, and each
+corresponds to a named property in \texttt{docs/rec-music-cli.md}
+\S``Chunked transfer''.
+
+\begin{itemize}
+  \item \textbf{Ordered contiguous delivery}: every \texttt{Chunk} demands
+    $seq? = next$ and sets $next' = next + 1$ from an initial $next = 0$, so the
+    accepted sequence numbers are $0 \dots declaredChunks - 1$ with no gap,
+    reorder, or repeat.
+  \item \textbf{Bounded per-chunk memory}: every \texttt{Chunk} obeys
+    $len? \leq chunkLimit$, and there is no total-file bound anywhere in the
+    model --- a file of any size transfers.
+  \item \textbf{Reassembled total equals declared bytes}: $got \leq
+    declaredBytes$ always, and \texttt{End} requires $got = declaredBytes$ with
+    $next = declaredChunks$, so a delivered transfer reassembled every declared
+    byte in every declared chunk.
+  \item \textbf{Containment once, before the first byte}: \texttt{Begin} is the
+    only transition into \texttt{active} and the only reader of
+    \texttt{contained}; an uncontained reference takes \texttt{RejectBeforeBegin}
+    and never reaches \texttt{active}, so no chunk is ever emitted for it.
+  \item \textbf{Atomic terminal}: $landed = ztrue \iff phase = delivered$, and
+    $phase = delivered \implies got = declaredBytes$, so a landed file is always
+    complete; \texttt{Abort} reaches \texttt{failed} with $landed' = zfalse$, so
+    a mid-stream fault lands nothing. There is no reachable state with a landed
+    partial file.
+  \item \textbf{Distinct terminals}: \texttt{delivered} and \texttt{failed} are
+    reached only by \texttt{End} and \texttt{Abort} respectively, and neither has
+    an outgoing operation --- one request is one lifecycle, terminating in
+    exactly one of success or error.
+\end{itemize}
+
+\end{document}

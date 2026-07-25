@@ -1,0 +1,2 @@
+{"ts":"2026-07-24T06:23:24.88649Z","event":"result","actor":"mdm","details":{"confidence":0.9,"evidence_entries":5,"files_changed":8,"round":1,"verdict":"pass"}}
+{"ts":"2026-07-24T06:24:43.26039Z","event":"close","actor":"claude","details":{"round":1,"status":"closed","verdict":"pass"}}

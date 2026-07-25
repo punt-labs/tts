@@ -29,6 +29,7 @@ from punt_vox.logging_config import (
     reapply_client_log_level,
 )
 from punt_vox.music_phrases import MusicMarquee
+from punt_vox.server_audio_tools import MusicCatalogTools, RecTools
 from punt_vox.synthesis_batch import SegmentBatch
 from punt_vox.types_programs.control import SelectionRequest, StartRequest
 from punt_vox.types_programs.mode import Mode
@@ -500,101 +501,24 @@ def unmute(
     )
 
 
-@mcp.tool()
-def record(
-    text: str | None = None,
-    voice: str | None = None,
-    language: str | None = None,
-    segments: list[dict[str, str]] | None = None,
-    rate: int = 90,
-    pause_ms: int = 500,  # noqa: ARG001 -- reserved for future multi-segment pause
-    name: str | None = None,
-    stability: float | None = None,
-    similarity: float | None = None,
-    style: float | None = None,
-    speaker_boost: bool | None = None,  # noqa: FBT001 -- MCP tool schema requires bool param
-) -> str:
-    """Synthesize and save audio to a file.
+# Register the recordings + catalog verbs as `mic` tools at parity with the CLI
+# (D-7). Each is a bound method of a humble object, so FastMCP builds the schema
+# from the method signature (minus self) and the daemon still owns containment
+# and audit -- the tool is a thin caller. Bare registration statements add no
+# module-level public name; the `_LoggingFastMCP.call_tool` override names each.
+# rec_new fills its synthesis defaults from a closure yielding the live session,
+# refreshed on each call; the classes themselves live in server_audio_tools.
+_rec_tools = RecTools(_voxd_client, lambda: _session)
+_music_catalog_tools = MusicCatalogTools(_voxd_client)
 
-    Pass either a simple ``text`` string or a ``segments`` list.
-    Call multiple times for multiple output files.
-
-    Args:
-        text: Simple text to synthesize. Ignored when segments is provided.
-        voice: Default voice for all segments. If omitted, uses the
-            session voice or provider default.
-        language: Default ISO 639-1 language code (e.g. 'de', 'ko').
-            Per-segment "language" overrides this.
-        segments: List of segment objects, each with "text" (required)
-            and optional "voice", "language", and "vibe_tags".
-            Per-segment "vibe_tags" override the session config.
-        rate: Speech rate as percentage. Defaults to 90.
-        pause_ms: Pause between segments in milliseconds. Defaults to 500.
-        name: Bare filename to store the recording under (no path).
-            Content-addressed by text when omitted. Single-segment only.
-        stability: ElevenLabs voice stability (0.0-1.0).
-        similarity: ElevenLabs voice similarity boost (0.0-1.0).
-        style: ElevenLabs voice style/expressiveness (0.0-1.0).
-        speaker_boost: ElevenLabs speaker boost toggle.
-
-    Returns:
-        JSON string with synthesis results including file path.
-    """
-    _session.refresh_from_config()
-
-    # Validate voice settings via SynthesisSpec (single validation path).
-    SynthesisSpec(stability=stability, similarity=similarity, style=style).validate()
-
-    # Normalize input: text -> single segment.
-    if segments is None:
-        if text is None:
-            return _error("Provide text or segments.")
-        segments = [{"text": text}]
-
-    if name is not None and len(segments) > 1:
-        return _error("name only supported for single-segment calls")
-
-    # The daemon owns the store and is the single authority on name validity:
-    # only an absent (None) name is content-addressed; an explicit name --
-    # including "" -- is sent for the daemon to reject pre-ack. Uses
-    # ``is not None`` (not truthiness) to match client.record and the CLI.
-    single_name = name if name is not None and len(segments) == 1 else None
-    effective_provider = _session.provider
-    client = _voxd_client()
-
-    def _record_handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
-        result = client.record(seg_text, seg_spec, name=single_name)
-        # No local size assertion: the store path may not be on this machine
-        # (a remote daemon), and a same-named local file of a different size --
-        # a remote daemon sharing this user's home -- is NOT this recording, so
-        # a mismatch must not fail a successful store write (the identity-vs-
-        # existence rule #353 applied to the CLI locator). The daemon-reported
-        # byte count is authoritative; the client reports the locator.
-        return {
-            "id": result.id,
-            "name": result.name,
-            "path": str(result.store_path),
-            "text": seg_text,
-            "voice": seg_spec.voice,
-            "provider": effective_provider,
-            "bytes": result.byte_count,
-        }
-
-    defaults = SynthesisSpec(
-        voice=voice or _session.voice,
-        language=language,
-        rate=rate,
-        provider=effective_provider,
-        model=_session.model,
-        stability=stability,
-        similarity=similarity,
-        style=style,
-        speaker_boost=speaker_boost,
-        vibe_tags=_session.vibe_tags,
-    )
-    return SegmentBatch(segments, defaults).render(
-        handler=_record_handler, error_label="Record"
-    )
+mcp.tool(name="rec_new")(_rec_tools.new)
+mcp.tool(name="rec_list")(_rec_tools.list_recordings)
+mcp.tool(name="rec_play")(_rec_tools.play)
+mcp.tool(name="rec_get")(_rec_tools.get)
+mcp.tool(name="rec_remove")(_rec_tools.remove)
+mcp.tool(name="music_new")(_music_catalog_tools.new)
+mcp.tool(name="music_get")(_music_catalog_tools.get)
+mcp.tool(name="music_remove")(_music_catalog_tools.remove)
 
 
 @mcp.tool()

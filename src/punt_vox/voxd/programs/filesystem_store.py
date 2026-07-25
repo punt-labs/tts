@@ -10,7 +10,10 @@ seam that dereferences an opaque locator to a ``Path``.
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import os
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Self, final
@@ -18,6 +21,8 @@ from typing import Self, final
 from punt_vox.atomic_file import AtomicFile
 from punt_vox.types_programs.identifiers import ProgramName
 from punt_vox.types_programs.wire import JsonObject
+from punt_vox.voxd.containment import ContainmentRoot
+from punt_vox.voxd.path_status import PathStatus
 from punt_vox.voxd.programs.catalog import Album
 from punt_vox.voxd.programs.manifest import AlbumManifest, ManifestDraft, PartEntry
 from punt_vox.voxd.programs.part import Part
@@ -27,6 +32,13 @@ __all__ = ["FilesystemPartStore", "FilesystemProgramStore"]
 logger = logging.getLogger(__name__)
 
 _MANIFEST_NAME = "manifest.json"
+# What a client supplies when it names an album: one bare directory segment.
+# The label heads every structural rejection so it reads in the caller's terms.
+_LOCATOR_LABEL = "album locator"
+# A manifest is small JSON (album tags + up to a pool of Part entries); anything
+# past this ceiling is corrupt or a planted file, and is rejected before the read
+# so one giant manifest cannot exhaust daemon memory at scan time.
+_MAX_MANIFEST_BYTES = 1024 * 1024
 
 
 @final
@@ -102,8 +114,11 @@ class FilesystemProgramStore:
         The one startup disk walk. Each ``*/manifest.json`` is scanned alone, so a
         single escaping, idless-legacy, or corrupt directory is skipped without
         aborting the walk -- one torn file can never brick the catalog or daemon.
+        A missing root is an empty catalog; a root that exists but cannot be read
+        raises, so an access fault surfaces at startup rather than masquerading as
+        an empty music library.
         """
-        if not self._root.is_dir():
+        if not PathStatus.of(self._root).is_directory:
             return ()
         albums = [
             album
@@ -113,13 +128,21 @@ class FilesystemProgramStore:
         return tuple(albums)
 
     def open(self, directory: str) -> FilesystemPartStore:
-        """Return the PartStore for a scan/create-validated directory, else raise."""
+        """Return the PartStore for a scan/create-validated directory, else raise.
+
+        A missing manifest is a clean ``LookupError`` (the album was deleted); a
+        manifest that exists but cannot be stat'd raises the underlying ``OSError``,
+        so an access fault surfaces as a server-side fault rather than a false
+        "no saved album". A symlinked manifest still classifies as a regular file
+        (the follow matches the old ``is_file``) and is refused later by the
+        ``O_NOFOLLOW`` read.
+        """
         path = self._contained_dir(directory)
         manifest_path = path / _MANIFEST_NAME
-        if not manifest_path.is_file():
+        if not PathStatus.of(manifest_path).is_regular_file:
             msg = f"no saved album at directory {directory!r}"
             raise LookupError(msg)
-        manifest = AlbumManifest.from_json(manifest_path.read_text(encoding="utf-8"))
+        manifest = AlbumManifest.from_json(self._read_manifest_text(manifest_path))
         return FilesystemPartStore(path, manifest)
 
     def create(self, draft: ManifestDraft) -> FilesystemPartStore:
@@ -136,6 +159,21 @@ class FilesystemProgramStore:
         store.save_manifest()
         return store
 
+    def delete(self, directory: str) -> None:
+        """Remove a scan/create-validated album directory and every Part within it.
+
+        ``directory`` is a locator produced by :meth:`scan`/:meth:`create`, so the
+        single-segment + containment guard of :meth:`_contained_dir` reconfirms it
+        cannot escape the root before the recursive unlink.
+
+        Idempotent: an already-missing directory is "already deleted", not an
+        error, so a caller can always forget its catalog entry without a stale dir
+        leaving a ghost id. The containment guard still runs before any unlink.
+        """
+        path = self._contained_dir(directory)
+        with contextlib.suppress(FileNotFoundError):
+            shutil.rmtree(path)
+
     def _scan_one(self, manifest_path: Path) -> Album | None:
         """Return the Album for one manifest, or ``None`` to skip the directory.
 
@@ -149,7 +187,7 @@ class FilesystemProgramStore:
             logger.debug("skipping album dir outside root: %s", directory)
             return None
         try:
-            obj = JsonObject.parse(manifest_path.read_text("utf-8"), "manifest")
+            obj = JsonObject.parse(self._read_manifest_text(manifest_path), "manifest")
             if obj.opt_str("id") is None:
                 logger.debug("skipping idless legacy album dir: %s", directory)
                 return None
@@ -158,25 +196,60 @@ class FilesystemProgramStore:
             logger.error("skipping corrupt manifest in %s: %s", directory.name, exc)
             return None
 
+    @staticmethod
+    def _read_manifest_text(manifest_path: Path) -> str:
+        """Return a manifest's UTF-8 text, refusing a symlink or an oversized file.
+
+        The manifest is opened ``O_NOFOLLOW`` so a symlinked ``manifest.json`` (a
+        planted file pointing at an arbitrary target) raises ``OSError`` instead
+        of being read through. The read itself is bounded to one byte past the
+        ceiling: a file that grows between the open and the read (a TOCTOU that a
+        trusted ``fstat`` size would miss) still cannot pull an unbounded amount
+        into memory.
+
+        Every read-integrity failure raises ``OSError`` -- a symlink, a file over
+        the ceiling, or non-UTF-8 bytes. All three are daemon-side store
+        corruption, an operational fault rather than a bad client request, so the
+        taxonomy audits them as ``fault`` ("operation failed"), never ``error``
+        ("rejected op"). ``_scan_one`` catches ``OSError`` and skips the album;
+        ``open`` lets it surface as the corrupt-album fault.
+        """
+        fd = os.open(manifest_path, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            handle = os.fdopen(fd, "rb")
+        except OSError:
+            # fdopen failed to adopt the fd (e.g. resource pressure); close the
+            # raw descriptor by hand so it never leaks. On success the file
+            # object owns the fd and the ``with`` closes it.
+            os.close(fd)
+            raise
+        with handle:
+            raw = handle.read(_MAX_MANIFEST_BYTES + 1)
+        name = manifest_path.name
+        if len(raw) > _MAX_MANIFEST_BYTES:
+            msg = f"manifest exceeds {_MAX_MANIFEST_BYTES} bytes: {name}"
+            raise OSError(msg)
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            # UnicodeDecodeError subclasses ValueError, which the taxonomy maps to
+            # a client rejection. Non-UTF-8 bytes on disk are store corruption, so
+            # re-raise as OSError to audit alongside the other read-integrity faults.
+            msg = f"manifest is not valid UTF-8: {name}"
+            raise OSError(msg) from exc
+
     def _contained_dir(self, directory: str) -> Path:
-        """Return ``root/directory`` for a single validated segment, else raise.
+        """Return ``root/directory`` for a single bare directory name, else raise.
 
         A locator is always one plain directory-name segment produced by ``scan``
-        or ``create``, never a path. Rejecting anything that is not *already* its
-        own sole canonical component before the containment check restores that
-        single-segment invariant (defense in depth): empty, ``.``, ``..``, ``a/b``,
-        and non-canonical spellings like ``./foo`` or ``foo/`` are all refused,
-        rather than silently normalized to ``foo`` and resolved under the root.
+        or ``create``, never a path. The shared :class:`ContainmentRoot` gate --
+        the same :class:`~punt_vox.bare_name.BareName` structural check every
+        store surface uses -- rejects anything that is not one filename segment:
+        empty, ``.``, ``..``, ``a/b``, an absolute path, and separator-bearing
+        spellings like ``./foo`` or ``foo/`` are all refused, so a locator can
+        only ever name one album directory directly under the root.
         """
-        parts = Path(directory).parts
-        if len(parts) != 1 or parts[0] in (".", "..") or directory != parts[0]:
-            msg = f"album locator must be a single path segment: {directory!r}"
-            raise ValueError(msg)
-        path = self._root / directory
-        if not self._is_contained(path):
-            msg = f"album directory escapes the programs root: {directory!r}"
-            raise ValueError(msg)
-        return path
+        return ContainmentRoot(self._root, _LOCATOR_LABEL).contained_child(directory)
 
     def _is_contained(self, directory: Path) -> bool:
         """Return whether ``directory`` resolves to a path under the root."""

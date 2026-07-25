@@ -20,6 +20,7 @@ from punt_vox.voxd._parse import (
     parse_optional_float,
     parse_optional_int,
     parse_optional_str,
+    parse_required_str,
 )
 from punt_vox.voxd.dedup import OnceDedup
 from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue, PlaybackResult
@@ -28,6 +29,7 @@ from punt_vox.voxd.synthesis import (  # pyright: ignore[reportPrivateUsage]
     SynthesisPipeline,
 )
 from punt_vox.voxd.types import MessageHandler
+from punt_vox.voxd.wire_reply import WireReply
 
 __all__ = ["SynthesizeHandler"]
 
@@ -52,7 +54,15 @@ class _SpeechRequest:
 
     @classmethod
     def from_msg(cls, msg: dict[str, object], websocket: WebSocket) -> Self:
-        """Parse a wire message into a request; ``auto_detect`` fills the provider."""
+        """Parse a wire message into a request, validating at the boundary.
+
+        A string-typed field raises ``ValueError`` on a non-string value while a
+        numeric field accepts a JSON number (via the parse helpers); empty text
+        is rejected here, so both handlers share one text-validation point.
+        """
+        text = parse_required_str(msg, "text")
+        if not text:
+            raise ValueError("empty text")
         speaker_boost_raw = msg.get("speaker_boost")
         spec = SynthesisSpec(
             voice=parse_optional_str(msg, "voice"),
@@ -70,19 +80,30 @@ class _SpeechRequest:
             api_key=parse_optional_str(msg, "api_key"),
         )
         return cls(
-            text=str(msg.get("text", "")),
+            text=text,
             spec=spec,
             request_id=str(msg.get("id", "")),
             websocket=websocket,
         )
 
     async def reply(self, payload: dict[str, object]) -> None:
-        """Send *payload* to the client, stamped with this request's id."""
-        await self.websocket.send_json({"id": self.request_id, **payload})
+        """Send *payload* stamped with this request's id, safe on a gone peer.
 
-    async def error(self, message: str) -> None:
-        """Send an error reply for this request."""
-        await self.reply({"type": "error", "message": message})
+        Routing through :class:`WireReply` gives this request the same id-stamped,
+        disconnect-safe send the store handlers use, instead of a raw
+        ``send_json`` that raises out of the handler when the client has left.
+        """
+        await WireReply(self.websocket, self.request_id).send(payload)
+
+    async def fault(self, message: str) -> None:
+        """Audit a server-side OPERATIONAL failure and send its frame.
+
+        A failed synthesis or a nonzero direct-play exit is a daemon-side fault,
+        not a client rejection, so it routes through :meth:`WireReply.fault` (the
+        ERROR "operation failed" audit) -- matching the record handler's
+        store-write fault -- never a WARNING "rejected op" that blames the client.
+        """
+        await WireReply(self.websocket, self.request_id).fault(message)
 
 
 class SynthesizeHandler(MessageHandler):
@@ -113,13 +134,16 @@ class SynthesizeHandler(MessageHandler):
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Synthesize speech and enqueue for playback."""
-        req = _SpeechRequest.from_msg(msg, websocket)
-        if not req.text:
-            await req.error("empty text")
+        # Parse at the boundary: a non-string wire field (or empty text) is an
+        # id-stamped error frame, never a ValueError that tears the connection down.
+        try:
+            req = _SpeechRequest.from_msg(msg, websocket)
+            once = parse_optional_int(msg, "once")
+        except ValueError as exc:
+            # WireReply makes a gone-peer send a clean no-op, matching the siblings.
+            await WireReply(websocket, str(msg.get("id", ""))).error(str(exc))
             return
 
-        # Opt-in dedup: only when the caller sets `once` to a positive TTL.
-        once = parse_optional_int(msg, "once")
         dedup_recorded = await self._respond_if_deduped(req, once)
         if dedup_recorded is None:
             return
@@ -131,7 +155,10 @@ class SynthesizeHandler(MessageHandler):
             req.spec.voice or "",
             len(req.text),
         )
+        await self._dispatch(req, dedup_recorded=dedup_recorded)
 
+    async def _dispatch(self, req: _SpeechRequest, *, dedup_recorded: bool) -> None:
+        """Play a local provider directly, else synthesize to a file and enqueue."""
         local = (req.spec.provider or "") in _LOCAL_PROVIDERS
         if local and await self._play_local(req, dedup_recorded=dedup_recorded):
             return
@@ -182,12 +209,12 @@ class SynthesizeHandler(MessageHandler):
             return False
         if isinstance(result, Exception):
             self._rollback(req, dedup_recorded=dedup_recorded)
-            await req.error(str(result))
+            await req.fault(str(result))
         elif result == 0:
             await req.reply({"type": "done"})
         else:
             self._rollback(req, dedup_recorded=dedup_recorded)
-            await req.error(f"play_directly failed with rc={result}")
+            await req.fault(f"play_directly failed with rc={result}")
         return True
 
     async def _synthesize_and_enqueue(
@@ -199,7 +226,7 @@ class SynthesizeHandler(MessageHandler):
         except Exception as exc:
             self._rollback(req, dedup_recorded=dedup_recorded)
             logger.exception("Synthesis failed for id=%r", req.request_id)
-            await req.error(str(exc))
+            await req.fault(str(exc))
             return
 
         # `cached` rides the 'playing' response (the client's terminal).

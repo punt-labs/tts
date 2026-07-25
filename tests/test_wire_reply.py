@@ -30,6 +30,10 @@ def _warnings(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
     return [r for r in caplog.records if r.levelno == logging.WARNING]
 
 
+def _errors(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if r.levelno == logging.ERROR]
+
+
 class TestSend:
     """send stamps the request id and survives a vanished peer."""
 
@@ -105,3 +109,102 @@ class TestErrorLogging:
         assert delivered is False
         # The audit trail does not depend on the client still being connected.
         assert _warnings(caplog)
+
+    def test_rejection_is_labeled_rejected_op(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A malformed-input rejection audits as 'rejected op', not a fault."""
+        ws, _sent = _capturing_ws()
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(WireReply(ws, "r1").error("name must not be absolute"))
+        logged = _warnings(caplog)[-1].getMessage()
+        assert "rejected op" in logged
+        assert "operation failed" not in logged
+        assert not _errors(caplog)
+
+
+class TestFaultLogging:
+    """fault audit-logs a server-side operational failure at ERROR, not a rejection."""
+
+    def test_logs_operation_failed_at_error_with_request_id(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ws, _sent = _capturing_ws()
+        with caplog.at_level(logging.ERROR):
+            delivered = asyncio.run(WireReply(ws, "req-9").fault("synthesis failed"))
+        assert delivered is True
+        records = _errors(caplog)
+        assert len(records) == 1
+        message = records[0].getMessage()
+        assert "operation failed" in message
+        assert "rejected op" not in message
+        assert "req-9" in message
+
+    def test_client_frame_is_identical_to_error(self) -> None:
+        """The wire frame a fault sends is byte-for-byte the one error sends."""
+        fault_ws, fault_sent = _capturing_ws()
+        error_ws, error_sent = _capturing_ws()
+        asyncio.run(WireReply(fault_ws, "r1").fault("boom"))
+        asyncio.run(WireReply(error_ws, "r1").error("boom"))
+        assert fault_sent == error_sent
+        assert fault_sent[-1] == {"id": "r1", "type": "error", "message": "boom"}
+
+    def test_not_labeled_rejected_op(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A server fault never audits at WARNING as a client rejection."""
+        ws, _sent = _capturing_ws()
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(WireReply(ws, "r1").fault("store write failed"))
+        assert not _warnings(caplog)
+
+    def test_message_is_sanitized_in_the_log_but_verbatim_on_the_wire(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ws, sent = _capturing_ws()
+        hostile = "boom\nINJECTED\r\tfault"
+        with caplog.at_level(logging.ERROR):
+            asyncio.run(WireReply(ws, "r1").fault(hostile))
+        assert sent[-1]["message"] == hostile
+        logged = _errors(caplog)[-1].getMessage()
+        assert "\n" not in logged
+        assert "\\n" in logged
+
+    def test_logs_even_when_peer_gone(self, caplog: pytest.LogCaptureFixture) -> None:
+        ws = MagicMock()
+        ws.send_json = AsyncMock(side_effect=WebSocketDisconnect())
+        with caplog.at_level(logging.ERROR):
+            delivered = asyncio.run(WireReply(ws, "r1").fault("gone"))
+        assert delivered is False
+        assert _errors(caplog)
+
+
+class TestRejectOrFault:
+    """reject_or_fault routes ValueError to error, LookupError/OSError to fault."""
+
+    def test_value_error_audits_rejected_op(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ws, sent = _capturing_ws()
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(WireReply(ws, "r1").reject_or_fault(ValueError("bad field")))
+        logged = _warnings(caplog)[-1].getMessage()
+        assert "rejected op" in logged
+        assert not _errors(caplog)
+        assert sent[-1] == {"id": "r1", "type": "error", "message": "bad field"}
+
+    def test_lookup_error_audits_operation_failed(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ws, _sent = _capturing_ws()
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(WireReply(ws, "r1").reject_or_fault(LookupError("gone dir")))
+        assert "operation failed" in _errors(caplog)[-1].getMessage()
+        assert not _warnings(caplog)
+
+    def test_os_error_audits_operation_failed(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        ws, _sent = _capturing_ws()
+        with caplog.at_level(logging.WARNING):
+            asyncio.run(WireReply(ws, "r1").reject_or_fault(OSError("disk full")))
+        assert "operation failed" in _errors(caplog)[-1].getMessage()
+        assert not _warnings(caplog)

@@ -21,36 +21,20 @@ import contextlib
 import errno
 import os
 import shutil
+import stat
 import tempfile
-from collections.abc import Callable
 from dataclasses import dataclass
+from operator import attrgetter
 from pathlib import Path
 from typing import Self, final
 
 from punt_vox.types import generate_filename
+from punt_vox.voxd.containment import ContainmentRoot
+from punt_vox.voxd.path_status import PathStatus
 
 __all__ = ["RecordStore", "RecordWrite"]
 
-# Names that name the directory itself rather than a file in it.
-_DIR_TOKENS = frozenset({".", ".."})
-
-# Structural name rejections, first-match-raises. ``not isprintable`` rejects an
-# embedded newline, tab, or terminal escape that a record locator would echo
-# raw into the operator's log or terminal -- a log/terminal-injection vector.
-_NAME_REJECTIONS: tuple[tuple[Callable[[str], bool], str], ...] = (
-    (lambda c: not c, "empty recording name"),
-    (lambda c: "\x00" in c, "recording name contains a NUL byte"),
-    (lambda c: Path(c).is_absolute(), "recording name must not be absolute"),
-    (
-        lambda c: "/" in c or "\\" in c,
-        "recording name must not contain a path separator",
-    ),
-    (lambda c: c in _DIR_TOKENS, "recording name must be a filename, not '.' or '..'"),
-    (
-        lambda c: not c.isprintable(),
-        "recording name contains a non-printable character",
-    ),
-)
+_NAME_LABEL = "recording name"
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +46,15 @@ class RecordWrite:
     """
 
     path: Path
+    byte_count: int
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class RecordingEntry:
+    """One recording in the store: its bare name and byte count (the list view)."""
+
+    name: str
     byte_count: int
 
 
@@ -133,24 +126,92 @@ class RecordStore:
                 return moved
         return self._copy(source, dest, cached=cached)
 
-    def _resolve_within_root(self, candidate: str) -> Path:
-        """Validate a bare name and resolve it, verifying root containment.
+    def entries(self) -> tuple[RecordingEntry, ...]:
+        """Return the store's immediate recordings (name + bytes), sorted by name.
 
-        Structural rejections (``_NAME_REJECTIONS``, cheapest-first) run before
-        the filesystem touch; then a post-``resolve`` ``is_relative_to`` check
-        catches any symlink or normalization that escaped the root. Every
-        rejection raises ``ValueError`` with a lowercase message the handler
-        turns into a one-line error frame.
+        Lists only the files directly in the ``0700`` root -- no recursion and no
+        following a symlink out of it -- so the enumeration cannot leak a path the
+        client could never have named. A missing root is an empty store; a root
+        that exists but cannot be read raises, so an access fault is never masked
+        as an empty listing (``RecListHandler`` turns the ``OSError`` into a fault).
         """
-        for is_rejected, msg in _NAME_REJECTIONS:
-            if is_rejected(candidate):
-                raise ValueError(msg)
+        if not PathStatus.of(self._root).is_directory:
+            return ()
+        # Build the shared bare-name validator once; every child is judged by the
+        # same rules ``resolve_ref``/``remove`` apply, so list and operate agree.
+        validator = ContainmentRoot(self._root, _NAME_LABEL)
+        found = [
+            entry
+            for child in self._root.iterdir()
+            if (entry := self._entry_for(child, validator)) is not None
+        ]
+        return tuple(sorted(found, key=attrgetter("name")))
 
-        resolved = (self._root / candidate).resolve()
-        if not resolved.is_relative_to(self._root.resolve()):
-            msg = "recording name escapes the recordings root"
-            raise ValueError(msg)
-        return resolved
+    @staticmethod
+    def _entry_for(child: Path, validator: ContainmentRoot) -> RecordingEntry | None:
+        """Return *child*'s entry, or ``None`` to skip an unlistable child.
+
+        One ``lstat`` (no symlink follow) both classifies and sizes the child, so
+        a symlink or directory is excluded and the name+size come from the same
+        syscall -- no second stat to race. A child unlinked mid-scan (a TOCTOU
+        race) raises ``OSError`` here and is skipped, so a listing is best-effort
+        and never fails on a concurrent delete.
+
+        A name *validator* would refuse (a backslash-, separator-, or
+        non-printable-bearing planted file) is skipped too, so ``entries`` surfaces
+        only names ``resolve_ref``/``remove`` would accept -- list and operate stay
+        consistent, never showing an id that ``rec get``/``rec remove`` then reject.
+        ``None`` means "skip this entry", not a give-up on producing a value
+        (PY-EH-8).
+        """
+        try:
+            info = child.lstat()
+        except OSError:
+            return None
+        if not stat.S_ISREG(info.st_mode):
+            return None
+        try:
+            validator.contained_child(child.name)
+        except ValueError:
+            return None
+        return RecordingEntry(child.name, info.st_size)
+
+    def remove(self, ref: str) -> None:
+        """Delete one in-root recording by its bare name, or raise.
+
+        ``ref`` runs through the shared validator (a hostile name raises
+        ``ValueError`` before any filesystem touch). It is then acted on *in
+        place* -- ``root / ref`` without a symlink-following ``.resolve()`` -- so
+        removing a symlink entry unlinks the link, never the file it points at.
+        A delete can therefore never reach a recording elsewhere in the root or a
+        file outside it. A well-formed but absent recording raises
+        ``FileNotFoundError`` so a client can trust a success; an ``OSError`` from
+        the classify or the unlink (a permission or device fault) propagates
+        unchanged -- an access fault is never mislabeled a benign "not found".
+        """
+        path = self._child_within_root(ref)
+        # A no-follow classify accepts a link entry (even a broken one) so its
+        # removal deletes the link, and a real recording; a directory or an absent
+        # name matches neither and is "not found". Classifying from one stat means
+        # a ``PermissionError`` surfaces rather than reading as a false "absent".
+        status = PathStatus.of(path, follow_symlinks=False)
+        if not (status.is_symlink or status.is_regular_file):
+            msg = f"no recording named {ref!r}"
+            raise FileNotFoundError(msg)
+        path.unlink()
+
+    def _resolve_within_root(self, candidate: str) -> Path:
+        """Validate a bare name and resolve it within the shared containment root."""
+        return ContainmentRoot(self._root, _NAME_LABEL).resolve(candidate)
+
+    def _child_within_root(self, name: str) -> Path:
+        """Validate a bare name and return its child under the root, unfollowed.
+
+        The removal counterpart of :meth:`_resolve_within_root`: the shared
+        validator rejects a hostile name, but the entry is *not* symlink-resolved,
+        so acting on it touches the link itself rather than its target.
+        """
+        return ContainmentRoot(self._root, _NAME_LABEL).contained_child(name)
 
     @staticmethod
     def _move(source: Path, dest: Path) -> RecordWrite | None:
@@ -159,8 +220,13 @@ class RecordStore:
         Only a cross-filesystem rename (``EXDEV``) warrants the copy fallback;
         for any other ``OSError`` (``EACCES``, ``ENOENT``, ...) the copy path
         would not help and would mask the real cause, so re-raise it.
+
+        The byte count is read from the *source* before the rename: reading
+        ``dest`` afterwards would report a concurrent same-name write's size, not
+        the bytes this call landed (mirrors the cached copy path).
         """
         try:
+            byte_count = source.stat().st_size
             source.replace(dest)
         except OSError as exc:
             if exc.errno == errno.EXDEV:
@@ -169,7 +235,7 @@ class RecordStore:
         # An ephemeral source may not be private; the copy path's mkstemp temp is
         # 0600, so match that here to keep the recording private.
         dest.chmod(0o600)
-        return RecordWrite(path=dest, byte_count=dest.stat().st_size)
+        return RecordWrite(path=dest, byte_count=byte_count)
 
     @staticmethod
     def _copy(source: Path, dest: Path, *, cached: bool) -> RecordWrite:

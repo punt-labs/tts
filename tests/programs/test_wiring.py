@@ -28,14 +28,17 @@ _EXPECTED_HANDLERS = frozenset(
         "program_select",
         "program_list",
         "program_status",
+        "music_new",
+        "music_manifest",
+        "music_remove",
     }
 )
 
 
 class TestHandlerRoster:
-    """handlers() exposes exactly the six program_* wire adapters."""
+    """handlers() exposes the program_* playback and music_* catalog adapters."""
 
-    def test_exactly_the_six_program_handlers(self, tmp_path: Path) -> None:
+    def test_exactly_the_expected_handlers(self, tmp_path: Path) -> None:
         subsystem = _subsystem(tmp_path / "programs")
         assert set(subsystem.handlers()) == _EXPECTED_HANDLERS
 

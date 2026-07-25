@@ -11,16 +11,18 @@ if TYPE_CHECKING:
     from punt_vox.types import AudioProviderId
 
 __all__ = [
-    "FETCH_FRAME_LIMIT_BYTES",
+    "FETCH_CHUNK_BYTES",
     "AudioRequest",
     "AudioResult",
 ]
 
-# Raw byte ceiling for a single-frame ``fetch``. Base64 inflates ~33%, so this
-# keeps the encoded frame under the client's default 1 MiB receive limit with
-# room for the JSON envelope. A recording above this cannot be fetched in one
-# frame -- the daemon refuses it and the CLI locator does not point at fetch.
-FETCH_FRAME_LIMIT_BYTES = 700_000
+# Per-frame byte bound for the chunked ``fetch`` transport. A store file of any
+# total size streams as a sequence of ``chunk`` frames, each at most this many
+# raw bytes; base64 inflates ~33%, so 256 KiB stays well under the client's
+# default 1 MiB receive limit with room for the JSON envelope. There is
+# deliberately no total-file ceiling on the daemon -- the old single-frame limit
+# no longer governs retrieval.
+FETCH_CHUNK_BYTES = 256 * 1024
 
 
 def _metadata() -> dict[str, str]:

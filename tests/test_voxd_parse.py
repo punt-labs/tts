@@ -4,17 +4,87 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from starlette.websockets import WebSocketDisconnect
 
-from punt_vox.voxd._parse import safe_send
-
-if TYPE_CHECKING:
-    import pytest
+from punt_vox.voxd._parse import (
+    parse_optional_str,
+    parse_present_str,
+    parse_required_str,
+    safe_send,
+)
 
 _LOGGER = "punt_vox.voxd._parse"
+
+
+class TestParseOptionalStr:
+    """parse_optional_str rejects a non-string wire value at the boundary."""
+
+    def test_absent_key_is_none(self) -> None:
+        assert parse_optional_str({}, "ref") is None
+
+    def test_json_null_is_none(self) -> None:
+        assert parse_optional_str({"ref": None}, "ref") is None
+
+    def test_empty_string_is_none(self) -> None:
+        assert parse_optional_str({"ref": ""}, "ref") is None
+
+    def test_string_value_passes_through(self) -> None:
+        assert parse_optional_str({"ref": "take-1.mp3"}, "ref") == "take-1.mp3"
+
+    def test_non_string_rejected(self) -> None:
+        # A number would once have coerced to "5"; now it is a malformed frame.
+        with pytest.raises(ValueError, match="ref must be a string, got int"):
+            parse_optional_str({"ref": 5}, "ref")
+
+    def test_bool_rejected(self) -> None:
+        with pytest.raises(ValueError, match="album must be a string, got bool"):
+            parse_optional_str({"album": True}, "album")
+
+
+class TestParseRequiredStr:
+    """parse_required_str rejects a non-string; absent/null yields the empty string."""
+
+    def test_absent_key_is_empty(self) -> None:
+        assert parse_required_str({}, "text") == ""
+
+    def test_json_null_is_empty(self) -> None:
+        assert parse_required_str({"text": None}, "text") == ""
+
+    def test_empty_string_preserved(self) -> None:
+        assert parse_required_str({"text": ""}, "text") == ""
+
+    def test_string_value_passes_through(self) -> None:
+        assert parse_required_str({"text": "hello"}, "text") == "hello"
+
+    def test_non_string_rejected(self) -> None:
+        # A number would once have coerced to "123"; now it is a malformed frame.
+        with pytest.raises(ValueError, match="text must be a string, got int"):
+            parse_required_str({"text": 123}, "text")
+
+
+class TestParsePresentStr:
+    """parse_present_str rejects a non-string; keeps "" distinct from absence."""
+
+    def test_absent_key_is_none(self) -> None:
+        assert parse_present_str({}, "name") is None
+
+    def test_json_null_is_none(self) -> None:
+        assert parse_present_str({"name": None}, "name") is None
+
+    def test_empty_string_preserved_not_collapsed(self) -> None:
+        # Unlike parse_optional_str, an explicit "" is kept (a rejectable value),
+        # not collapsed to None (absence, which would content-address).
+        assert parse_present_str({"name": ""}, "name") == ""
+
+    def test_string_value_passes_through(self) -> None:
+        assert parse_present_str({"name": "take-1.mp3"}, "name") == "take-1.mp3"
+
+    def test_non_string_rejected(self) -> None:
+        with pytest.raises(ValueError, match="name must be a string, got int"):
+            parse_present_str({"name": 123}, "name")
 
 
 class TestSafeSend:

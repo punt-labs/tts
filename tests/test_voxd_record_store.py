@@ -114,6 +114,197 @@ class TestContainment:
         assert resolved.name == "greeting.mp3"
 
 
+class TestEnumerateAndRemove:
+    """entries() lists immediate in-root files; remove() unlinks one by bare name."""
+
+    def test_entries_skips_dirs_and_symlinks(
+        self, store: RecordStore, tmp_path: Path
+    ) -> None:
+        store.root.mkdir(parents=True)
+        (store.root / "real.mp3").write_bytes(b"12345")
+        (store.root / "sub").mkdir()  # a directory is not a recording
+        (store.root / "link.mp3").symlink_to(tmp_path / "elsewhere.mp3")
+        names = {entry.name for entry in store.entries()}
+        assert names == {"real.mp3"}
+
+    def test_entries_does_not_follow_symlink_to_real_file(
+        self, store: RecordStore, tmp_path: Path
+    ) -> None:
+        """A symlink to a real regular file is classified by lstat, never followed.
+
+        The weaker sibling test uses a broken symlink, which a follow-based
+        ``is_file()`` would also skip -- so it cannot tell a follow from a
+        non-follow. Here the target is a genuine regular file: if ``entries()``
+        followed the link (``is_file()`` semantics) it would list ``link.mp3`` as
+        a plain recording. Because it classifies from ``lstat`` (whose mode is
+        ``S_ISLNK``, not ``S_ISREG``), the link is excluded and its target is
+        never probed out of the root.
+        """
+        store.root.mkdir(parents=True)
+        target = tmp_path / "outside_target.mp3"
+        target.write_bytes(b"real-bytes")  # a genuine regular file outside root
+        (store.root / "real.mp3").write_bytes(b"12345")
+        (store.root / "link.mp3").symlink_to(target)
+
+        names = {entry.name for entry in store.entries()}
+
+        assert names == {"real.mp3"}  # link.mp3 not followed, not listed
+
+    def test_entries_reports_byte_counts(self, store: RecordStore) -> None:
+        store.root.mkdir(parents=True)
+        (store.root / "a.mp3").write_bytes(b"1234")
+        [entry] = store.entries()
+        assert entry.name == "a.mp3"
+        assert entry.byte_count == 4
+
+    def test_entries_skips_a_child_whose_stat_fails(
+        self, store: RecordStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A child unlinked between iterdir and lstat (TOCTOU) is skipped, not fatal.
+
+        A listing is best-effort under concurrent mutation: one entry whose lstat
+        raises OSError drops out and the enumeration continues for the rest.
+        """
+        store.root.mkdir(parents=True)
+        (store.root / "good.mp3").write_bytes(b"12345")
+        (store.root / "racing.mp3").write_bytes(b"vanishing")
+        real_lstat = Path.lstat
+
+        def flaky_lstat(self: Path) -> object:
+            if self.name == "racing.mp3":
+                raise OSError("vanished mid-scan")
+            return real_lstat(self)
+
+        monkeypatch.setattr(Path, "lstat", flaky_lstat)
+        names = {entry.name for entry in store.entries()}
+        assert names == {"good.mp3"}  # the racing entry skipped, listing survives
+
+    def test_entries_skips_names_a_ref_would_reject(self, store: RecordStore) -> None:
+        """A planted file whose name BareName refuses is not listed.
+
+        entries() must surface only names resolve_ref/remove would accept, so
+        list and operate stay consistent -- a backslash- or non-printable-bearing
+        name that ``rec get``/``rec remove`` reject can never appear in ``rec
+        list``. A normal recording alongside it still lists.
+        """
+        store.root.mkdir(parents=True)
+        (store.root / "good.mp3").write_bytes(b"12345")
+        (store.root / "bad\\name.mp3").write_bytes(b"planted")  # backslash: rejected
+        (store.root / "tab\tname.mp3").write_bytes(b"planted")  # non-printable
+        names = {entry.name for entry in store.entries()}
+        assert names == {"good.mp3"}
+
+    def test_remove_unlinks_an_in_root_file(self, store: RecordStore) -> None:
+        store.root.mkdir(parents=True)
+        (store.root / "gone.mp3").write_bytes(b"x")
+        store.remove("gone.mp3")
+        assert not (store.root / "gone.mp3").exists()
+
+    def test_remove_missing_raises_file_not_found(self, store: RecordStore) -> None:
+        store.root.mkdir(parents=True)
+        with pytest.raises(FileNotFoundError, match="no recording named"):
+            store.remove("nope.mp3")
+
+    def test_remove_hostile_ref_raises_before_touch(self, store: RecordStore) -> None:
+        with pytest.raises(ValueError, match="separator"):
+            store.remove("../../etc/passwd")
+
+    def test_remove_symlink_deletes_link_leaves_in_root_target(
+        self, store: RecordStore
+    ) -> None:
+        """remove() of a symlink entry unlinks the link, never its in-root target.
+
+        ``resolve_ref`` follows symlinks (``.resolve()``); if ``remove`` reused it,
+        removing ``link.mp3`` would delete the real recording it points at -- data
+        loss. ``remove`` resolves the bare name *without* following, so the link
+        itself is unlinked and ``real.mp3`` survives.
+        """
+        store.root.mkdir(parents=True)
+        (store.root / "real.mp3").write_bytes(b"keep-me")
+        (store.root / "link.mp3").symlink_to(store.root / "real.mp3")
+
+        store.remove("link.mp3")
+
+        assert not (store.root / "link.mp3").is_symlink()  # the link is gone
+        assert (store.root / "real.mp3").read_bytes() == b"keep-me"  # target intact
+
+    def test_remove_symlink_never_deletes_external_target(
+        self, store: RecordStore, tmp_path: Path
+    ) -> None:
+        """A symlink to a file outside the root: remove deletes only the link.
+
+        The no-follow removal cannot reach a path the client could never have
+        named, so a delete never escapes the store.
+        """
+        store.root.mkdir(parents=True)
+        outside = tmp_path / "outside.mp3"
+        outside.write_bytes(b"external")
+        (store.root / "escape.mp3").symlink_to(outside)
+
+        store.remove("escape.mp3")
+
+        assert not (store.root / "escape.mp3").is_symlink()  # link removed
+        assert outside.read_bytes() == b"external"  # external file untouched
+
+    def test_remove_broken_symlink_deletes_link(self, store: RecordStore) -> None:
+        """A broken symlink is still an entry: remove unlinks it, does not raise.
+
+        ``is_file`` follows and would report a broken link as absent; the
+        ``is_symlink`` check accepts it so the dangling link can be cleaned up.
+        """
+        store.root.mkdir(parents=True)
+        (store.root / "dangling.mp3").symlink_to(store.root / "missing.mp3")
+
+        store.remove("dangling.mp3")
+
+        assert not (store.root / "dangling.mp3").is_symlink()
+
+    def test_entries_access_fault_propagates_not_empty(
+        self, store: RecordStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A root that exists but cannot be stat'd raises, never a false empty list.
+
+        A boolean ``is_dir()`` swallows the ``PermissionError`` and reports an
+        empty store; classifying through PathStatus lets the fault propagate so
+        ``RecListHandler`` turns it into a fault frame rather than silence.
+        """
+        store.root.mkdir(parents=True)
+        real_stat = Path.stat
+
+        def denied(self: Path, *, follow_symlinks: bool = True) -> object:
+            if self == store.root:
+                raise PermissionError(errno.EACCES, "permission denied")
+            return real_stat(self, follow_symlinks=follow_symlinks)
+
+        monkeypatch.setattr(Path, "stat", denied)
+        with pytest.raises(PermissionError, match="permission denied"):
+            store.entries()
+
+    def test_remove_access_fault_propagates_not_not_found(
+        self, store: RecordStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A classify ``PermissionError`` propagates instead of reading "not found".
+
+        ``is_symlink``/``is_file`` both answer False on ``EACCES``, mislabeling an
+        access fault as a benign missing recording (a client-error rejection);
+        classifying through PathStatus lets the ``OSError`` surface so
+        ``RecRemoveHandler`` faults it.
+        """
+        store.root.mkdir(parents=True)
+        target = store.root / "guarded.mp3"
+        target.write_bytes(b"x")
+        real_stat = Path.stat
+
+        def denied(self: Path, *, follow_symlinks: bool = True) -> object:
+            if self == target:
+                raise PermissionError(errno.EACCES, "permission denied")
+            return real_stat(self, follow_symlinks=follow_symlinks)
+
+        monkeypatch.setattr(Path, "stat", denied)
+        with pytest.raises(PermissionError, match="permission denied"):
+            store.remove("guarded.mp3")
+
+
 class TestPlacement:
     """place() lands audio atomically in the root and reports its size."""
 
@@ -153,6 +344,30 @@ class TestPlacement:
         src.write_bytes(b"fresh")
 
         store.place(source=src, text="hi", name="out.mp3", cached=False)
+
+        assert not src.exists()
+
+    def test_move_reports_this_calls_bytes_not_a_racing_write(
+        self, store: RecordStore, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The reported size is the bytes this call wrote, not a racing dest write."""
+        src = tmp_path / "mine.mp3"
+        src.write_bytes(b"mine!")  # 5 bytes -- what THIS call lands
+
+        real_replace = Path.replace
+
+        def racing_replace(self: Path, target: str | Path) -> Path:
+            # A concurrent same-name write lands a larger file at dest right after
+            # our rename; a byte count read from dest afterwards would misreport it.
+            result = real_replace(self, target)
+            Path(target).write_bytes(b"someone-elses-larger-bytes")
+            return result
+
+        monkeypatch.setattr(Path, "replace", racing_replace)
+
+        write = store.place(source=src, text="t", name="out.mp3", cached=False)
+
+        assert write.byte_count == 5
 
         assert not src.exists()
 
