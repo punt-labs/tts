@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - **The scattered top-level `vox record`, `vox play`, and `vox fetch` commands, the `-o`/`--output` flag on the old `fetch`, and `vox play <localfile>`** — superseded by the `vox rec` group (forward integration, no aliases). Local files are played with the OS tool (`afplay`/`ffplay`); `vox say` stays the ephemeral speak-now verb. The 700 000-byte single-frame fetch ceiling (`FETCH_FRAME_LIMIT_BYTES`) is gone with the chunked transport.
+- **`vox music on`** — start the background-music radio with `vox music play --style <genre>` (or `--vibe`) instead; `vox music off` still stops it.
 
 ## [4.13.1] - 2026-07-22
 
