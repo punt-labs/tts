@@ -103,6 +103,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/catalog_gateway.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.67,
+    "max_complexity": 1.0,
+    "avg_complexity": 1.0,
+    "module_size": 23.0,
+    "classes_per_module": 0.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/claude_md.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -130,14 +143,14 @@
     "future_annotations": 1.0
   },
   "src/punt_vox/cli_music.py": {
-    "method_ratio": 0.95,
+    "method_ratio": 0.933,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.25,
-    "max_complexity": 5.0,
-    "avg_complexity": 1.75,
-    "module_size": 231.0,
-    "classes_per_module": 2.0,
-    "class_to_func_ratio": 0.667,
+    "avg_params": 1.0,
+    "max_complexity": 4.0,
+    "avg_complexity": 1.6,
+    "module_size": 202.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 0.5,
     "init_violations": 0.0,
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
@@ -164,6 +177,19 @@
     "module_size": 875.0,
     "classes_per_module": 5.0,
     "class_to_func_ratio": 0.714,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
+  "src/punt_vox/client_catalog_gateway.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.5,
+    "max_complexity": 1.0,
+    "avg_complexity": 1.0,
+    "module_size": 31.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
     "public_attr_violations": 0.0,
     "future_annotations": 1.0

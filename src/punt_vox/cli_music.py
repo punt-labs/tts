@@ -10,11 +10,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated, NoReturn, Protocol, Self, final, runtime_checkable
+from typing import Annotated, NoReturn, Self, final
 
 import typer
 from websockets.exceptions import WebSocketException
 
+from punt_vox.catalog_gateway import CatalogGateway
+from punt_vox.client_catalog_gateway import ClientCatalogGateway
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_gateway import ClientProgramGateway
 from punt_vox.client_sync import VoxClientSync
@@ -34,53 +36,6 @@ _GATEWAY_ERRORS = (
     OSError,
     ValueError,
 )
-
-
-@runtime_checkable
-class CatalogGateway(Protocol):
-    """The catalog-authoring operations ``music new``/``get``/``remove`` issue.
-
-    Distinct from :class:`ProgramGateway` (playback control): these mutate the
-    catalog, not the running Program. A test injects an in-memory fake; the
-    daemon owns the catalog and every path decision.
-    """
-
-    def new(self, prompt: str, name: str | None) -> str:
-        """Author one track into a fresh album; return its bare album id."""
-        ...
-
-    def get(self, album_id: str, dest_dir: str) -> str:
-        """Copy album *album_id* into *dest_dir*; return the written directory."""
-        ...
-
-    def remove(self, album_id: str) -> None:
-        """Delete album *album_id* from the catalog (a live album is refused)."""
-        ...
-
-
-@final
-class ClientCatalogGateway:
-    """Back the ``CatalogGateway`` seam with WebSocket calls to ``voxd``."""
-
-    __slots__ = ("_client",)
-    _client: VoxClientSync
-
-    def __new__(cls, client: VoxClientSync) -> Self:
-        self = super().__new__(cls)
-        self._client = client
-        return self
-
-    def new(self, prompt: str, name: str | None) -> str:
-        """Author one track via the ``music_new`` op; return the album id."""
-        return self._client.music_new(prompt, name)
-
-    def get(self, album_id: str, dest_dir: str) -> str:
-        """Copy the album into *dest_dir* via the ``music_get`` op."""
-        return str(self._client.music_get(album_id, Path(dest_dir)))
-
-    def remove(self, album_id: str) -> None:
-        """Delete the album via the ``music_remove`` op."""
-        self._client.music_remove(album_id)
 
 
 @final
@@ -120,12 +75,21 @@ class MusicCli:
         typer.echo(f"Error: {message}", err=True)
         raise typer.Exit(code=1)
 
-    def list_programs(self) -> None:
-        """List catalog albums via the daemon, with their ready/total counts."""
+    def _guard[T](self, op: Callable[[], T]) -> T:
+        """Run daemon call *op*, mapping any gateway fault to a clean CLI exit.
+
+        The single place a ``voxd`` error becomes a ``typer.Exit``: every verb
+        runs its gateway/catalog call through here instead of repeating the
+        try/except, so the error-presentation policy lives in one method.
+        """
         try:
-            albums = self._gateway_factory().catalog()
+            return op()
         except _GATEWAY_ERRORS as exc:
             self._fail(str(exc))
+
+    def list_programs(self) -> None:
+        """List catalog albums via the daemon, with their ready/total counts."""
+        albums = self._guard(lambda: self._gateway_factory().catalog())
         if not albums:
             self._formatter.emit({"programs": []}, "No saved albums.")
             return
@@ -168,10 +132,7 @@ class MusicCli:
         per-vibe, cross-genre union radio -- both resolve.
         """
         request = SelectionRequest(style=style, vibe=vibe, name=name, id=album_id)
-        try:
-            outcome = self._gateway_factory().select(request)
-        except _GATEWAY_ERRORS as exc:
-            self._fail(str(exc))
+        outcome = self._guard(lambda: self._gateway_factory().select(request))
         self._formatter.emit(
             {"music": "play", "applied": outcome.applied},
             outcome.display("Playing selection."),
@@ -191,10 +152,7 @@ class MusicCli:
         The prompt is passed to the daemon verbatim (no LLM expansion). This
         parks a track in the catalog and leaves the active Program untouched.
         """
-        try:
-            album_id = self._catalog_factory().new(prompt, name)
-        except _GATEWAY_ERRORS as exc:
-            self._fail(str(exc))
+        album_id = self._guard(lambda: self._catalog_factory().new(prompt, name))
         self._formatter.emit({"album_id": album_id}, album_id)
 
     def get(
@@ -202,10 +160,9 @@ class MusicCli:
         album_id: Annotated[str, typer.Argument(help="Album id to copy out.")],
     ) -> None:
         """Copy an album into the current directory as a directory of its parts."""
-        try:
-            target = self._catalog_factory().get(album_id, str(Path.cwd()))
-        except _GATEWAY_ERRORS as exc:
-            self._fail(str(exc))
+        target = self._guard(
+            lambda: self._catalog_factory().get(album_id, str(Path.cwd()))
+        )
         self._formatter.emit({"path": target}, target)
 
     def remove(
@@ -213,18 +170,25 @@ class MusicCli:
         album_id: Annotated[str, typer.Argument(help="Album id to delete.")],
     ) -> None:
         """Delete a saved album by id; a playing album is refused."""
-        try:
-            self._catalog_factory().remove(album_id)
-        except _GATEWAY_ERRORS as exc:
-            self._fail(str(exc))
+        self._guard(lambda: self._catalog_factory().remove(album_id))
         self._formatter.emit({"removed": album_id}, f"removed {album_id}")
+
+    def off(self) -> None:
+        """Turn the music program off (stop playback); a no-op when already off.
+
+        The one CLI stop verb, matching ``mic:music mode="off"``: both route the
+        same daemon program-off op. A stop against an already-idle Program is
+        idempotent -- the daemon acks and the CLI prints a clean confirmation.
+        """
+        outcome = self._guard(lambda: self._gateway_factory().stop())
+        self._formatter.emit(
+            {"music": "off", "applied": outcome.applied},
+            outcome.display("Music stopped."),
+        )
 
     def advance(self) -> None:
         """Advance the active source to another Part."""
-        try:
-            outcome = self._gateway_factory().advance()
-        except _GATEWAY_ERRORS as exc:
-            self._fail(str(exc))
+        outcome = self._guard(lambda: self._gateway_factory().advance())
         self._formatter.emit(
             {"music": "next", "applied": outcome.applied},
             outcome.display("Advancing to another part."),
@@ -232,10 +196,7 @@ class MusicCli:
 
     def status(self) -> None:
         """Show the active source's authoritative status."""
-        try:
-            report = self._gateway_factory().status()
-        except _GATEWAY_ERRORS as exc:
-            self._fail(str(exc))
+        report = self._guard(lambda: self._gateway_factory().status())
         self._formatter.emit(report.to_dict(), self._render_status(report))
 
     @staticmethod
@@ -263,6 +224,7 @@ def build_music_app(formatter: OutputFormatter) -> typer.Typer:
     app.command("new")(cli.new)
     app.command("list")(cli.list_programs)
     app.command("play")(cli.play)
+    app.command("off")(cli.off)
     app.command("get")(cli.get)
     app.command("remove")(cli.remove)
     app.command("next")(cli.advance)

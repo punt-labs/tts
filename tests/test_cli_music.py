@@ -220,7 +220,7 @@ def test_remove_refuses_playing_album() -> None:
 def test_music_group_exposes_the_unified_verb_set() -> None:
     app = build_music_app(OutputFormatter())
     names = {c.name for c in app.registered_commands if c.name is not None}
-    assert names == {"new", "list", "play", "get", "remove", "next", "status"}
+    assert names == {"new", "list", "play", "off", "get", "remove", "next", "status"}
 
 
 # A design-decision label (D-1..D-9, DES-0xx) or the stale "consume-only" claim
@@ -322,6 +322,47 @@ def test_status_websocket_handshake_error_is_clean_error() -> None:
 
     with pytest.raises(typer.Exit):
         cli.status()
+
+
+# ---------------------------------------------------------------------------
+# off -- the one CLI stop verb, routed to the daemon program-off op
+# ---------------------------------------------------------------------------
+
+
+def test_off_invokes_the_program_off_op() -> None:
+    """`vox music off` issues the gateway stop() -- the daemon program-off path."""
+    fake = FakeProgramGateway()
+    cli, formatter = _cli(fake)
+
+    cli.off()
+
+    assert fake.verbs() == ["stop"]
+    payload, text = _emitted(formatter)
+    assert payload == {"music": "off", "applied": True}
+    assert text == "Music stopped."
+
+
+def test_off_is_idempotent_when_already_off() -> None:
+    """Stopping an already-idle Program is a clean no-op, not an error."""
+    fake = FakeProgramGateway(status=ProgramStatus.idle())
+    cli, formatter = _cli(fake)
+
+    cli.off()
+    cli.off()
+
+    assert fake.verbs() == ["stop", "stop"]
+    _, text = _emitted(formatter)
+    assert text == "Music stopped."
+
+
+def test_off_websocket_error_is_clean_error() -> None:
+    """A mid-request WebSocket close on off is a clean CLI error, not raw."""
+    gateway = MagicMock()
+    gateway.stop.side_effect = WebSocketException("connection closed")
+    cli = MusicCli(MagicMock(spec=OutputFormatter), lambda: gateway)
+
+    with pytest.raises(typer.Exit):
+        cli.off()
 
 
 # ---------------------------------------------------------------------------
