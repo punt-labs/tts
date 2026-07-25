@@ -58,9 +58,14 @@ message_line() {
     then (.message | split("\n")[0]) else empty end' 2>/dev/null
 }
 
+# $ctx carries the full tool RESULT, which for rec_get includes an arbitrarily
+# large base64 recording. Feed it to jq via --rawfile from a process
+# substitution, never --arg: an --arg value lands in jq's argv and a payload
+# past ARG_MAX would make the whole hook fail exec, delivering neither the panel
+# line nor the context. Read from a pipe and no size limit applies.
 emit() {
   local summary="$1" ctx="$2"
-  jq -n --arg summary "$summary" --arg ctx "$ctx" '{
+  jq -n --arg summary "$summary" --rawfile ctx <(printf '%s' "$ctx") '{
     hookSpecificOutput: {
       hookEventName: "PostToolUse",
       updatedMCPToolOutput: $summary,
@@ -275,8 +280,9 @@ if [[ -n "$MSG_FIELD" ]]; then
   exit 0
 fi
 
-# Fallback: full output in panel
-jq -n --arg r "$RESULT" '{
+# Fallback: full output in panel. --rawfile from a pipe, not --arg, so a large
+# unrecognized result cannot overflow ARG_MAX and fail the hook (see emit).
+jq -n --rawfile r <(printf '%s' "$RESULT") '{
   hookSpecificOutput: {
     hookEventName: "PostToolUse",
     updatedMCPToolOutput: $r
