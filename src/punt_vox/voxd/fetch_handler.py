@@ -12,11 +12,13 @@ byte and audit-logged; the old single-frame size ceiling is gone.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Self
 
 from punt_vox.types_audio import FETCH_CHUNK_BYTES
 from punt_vox.voxd._parse import parse_optional_str
 from punt_vox.voxd.chunked_fetch import ChunkedTransfer
+from punt_vox.voxd.path_status import PathStatus
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.types import MessageHandler
 from punt_vox.voxd.wire_reply import WireReply
@@ -30,6 +32,8 @@ if TYPE_CHECKING:
     from punt_vox.voxd.record_store import RecordStore
 
 __all__ = ["FetchHandler"]
+
+logger = logging.getLogger(__name__)
 
 
 class FetchHandler(MessageHandler):
@@ -50,15 +54,34 @@ class FetchHandler(MessageHandler):
         """Resolve the reference once (containment-checked), then stream in chunks."""
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
-            album = parse_optional_str(msg, "album")
-            path, label, kind = self._resolve(album, msg)
+            path, label = self._resolve_existing(msg)
         except ValueError as exc:
             await reply.error(str(exc))
             return
-        if not path.is_file():
-            await reply.error(f"no {kind} named {label!r}")
+        except OSError:
+            # A stat fault (EACCES/EIO) on the already-contained path is a
+            # server-side fault, not a missing recording: PathStatus.of lets
+            # ENOENT read as absent but propagates any other OSError, so a
+            # genuine access failure never masquerades as "no such recording".
+            # The vendor detail is logged; the wire frame stays generic.
+            logger.exception("fetch op failed id=%r", reply.request_id)
+            await reply.fault("operation failed")
             return
         await ChunkedTransfer(reply, FETCH_CHUNK_BYTES).stream(path, label)
+
+    def _resolve_existing(self, msg: dict[str, object]) -> tuple[Path, str]:
+        """Return ``(path, echo_ref)`` for an existing regular file, or raise.
+
+        Resolves the reference once (containment-checked), then classifies the
+        result via :class:`PathStatus`: an absent path (``ENOENT``) is a client
+        rejection (``ValueError`` -> "no such recording/part"), while any other
+        stat ``OSError`` propagates to the caller as an operational fault.
+        """
+        album = parse_optional_str(msg, "album")
+        path, label, kind = self._resolve(album, msg)
+        if not PathStatus.of(path).is_regular_file:
+            raise ValueError(f"no {kind} named {label!r}")
+        return path, label
 
     def _resolve(
         self, album: str | None, msg: dict[str, object]

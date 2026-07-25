@@ -15,7 +15,10 @@ import base64
 import logging
 from typing import TYPE_CHECKING, cast, final
 
+import pytest
+
 from punt_vox.voxd.fetch_handler import FetchHandler
+from punt_vox.voxd.path_status import PathStatus
 from punt_vox.voxd.programs.catalog import Catalog
 from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
 from punt_vox.voxd.programs.library import MusicLibrary
@@ -97,6 +100,43 @@ class TestRecordingFetch:
         assert "no recording" in str(sent[-1]["message"])
         # No fetch_begin was ever sent for a missing recording.
         assert not [f for f in sent if f["type"] == "fetch_begin"]
+
+    def test_access_fault_is_a_fault_not_a_not_found(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A stat OSError on the resolved path is a server fault, not a rejection.
+
+        ``path.is_file()`` collapses ``PermissionError``/``EIO`` into False,
+        misreporting an access fault as a missing recording. Routing the exists
+        check through ``PathStatus.of`` lets ENOENT stay a client "no recording"
+        error while a genuine access fault propagates and audits as ERROR
+        "operation failed" -- never WARNING "rejected op", which would blame the
+        client for a daemon-side failure. The wire message stays generic; the
+        access-fault detail lives in the log only.
+        """
+        handler, store, _ = _handler(tmp_path)
+        (store.root / "a1b2c3.mp3").write_bytes(b"\xff\xfb\x90\x00")
+
+        def boom(_cls: type[PathStatus], _path: Path, /, **_kw: object) -> PathStatus:
+            raise PermissionError("access denied")
+
+        monkeypatch.setattr(PathStatus, "of", classmethod(boom))
+        ws, sent = _capturing_ws()
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd"):
+            asyncio.run(handler({"id": "f7", "ref": "a1b2c3.mp3"}, ws))
+
+        assert sent[-1]["type"] == "error"
+        assert sent[-1]["id"] == "f7"
+        assert sent[-1]["message"] == "operation failed"
+        assert not [f for f in sent if f["type"] == "fetch_begin"]
+        assert any(
+            r.levelno == logging.ERROR and "operation failed" in r.getMessage()
+            for r in caplog.records
+        )
+        assert not any("rejected op" in r.getMessage() for r in caplog.records)
 
     def test_hostile_ref_refused_before_begin_and_audited(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
