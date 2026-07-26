@@ -2307,3 +2307,53 @@ the OS tool's job.
 | Lean MCP (CLI-only management) | The projection model (architecture.md) makes MCP a first-class surface for an agent-facing tool; the same capability is exposed on every surface with callers via one engine path. |
 
 Closes vox-jei3.
+
+## DES-051: One MCP Tool Per Audio Group — Subcommand as the First Argument
+
+**Status:** accepted (Audio Programs Phase 1.5, vox-ys1p). Design of record:
+`docs/audio-programs-music-tidy.md`.
+
+### Context
+
+DES-050 gave the CLI two parallel groups, `vox rec` and `vox music`, sharing one
+verb vocabulary. The MCP surface reached parity but did so as **twelve separate
+tools** — `music`, `music_play`, `music_list`, `music_next`, `music_new`,
+`music_get`, `music_remove`, and five `rec_*` — with `music` overloading on/off
+through a `mode` string while every other verb was its own tool. Two shapes for
+one verb family, and no MCP structure matching the CLI's `vox music` group.
+Authored input was split too: `music on` built a `PromptSet` (base + 12
+variations); `music new` sent a bare prompt string that bypassed it; and the CLI
+could not author a pool at all.
+
+### Decision
+
+One MCP tool per command group, named for the group, with the subcommand as its
+first argument — mirroring the CLI's `vox <group> <subcommand>` exactly.
+
+- **`mic:music`** takes `subcommand` in `{on, off, play, next, new, list, get,
+  remove}`; **`mic:rec`** takes `subcommand` in `{new, list, play, get,
+  remove}`. `subcommand` is a `Literal`, so the schema shows the model the exact
+  verbs and an invalid one cannot be sent. The twelve old tools are deleted.
+- **The mapping is uniform** across every group: `vox <group> <subcommand>`
+  corresponds to `mic:<group> subcommand=<subcommand>`. The CLI and MCP are two
+  views of one structure; podcast and audiobook (Phases 2–3) inherit it.
+- **One `PromptSet`, built by both surfaces and sent to the daemon.** `music
+  new` builds `PromptSet.single(prompt)`; the wire key is `base_prompt`; the
+  bare-string path is deleted (forward integration, no shim).
+- **The CLI gains `vox music on`**, reading the 12-variation pool as JSON on
+  stdin (`cat pool.json | vox music on`) — no LLM in the CLI, just the structured
+  input a model or a script supplies. Generation runs daemon-side.
+- **`--json` works in every position** on the group subcommands (fixes vox-cnak).
+- Dispatch is an explicit method table keyed by the `Literal`, never an
+  `if`-ladder or `getattr` (PY-TS-11, PY-OO-6).
+
+### Alternatives Considered
+
+| Alternative | Rejected Because |
+|-------------|------------------|
+| Keep one tool per subcommand (`music_play`, `rec_new`, …) | Twelve tools for two groups, inconsistent with `music`'s mode-arg overload; the model sees a flat list, not the group structure the CLI already has. |
+| Name the first argument `mode` (as `music` did) | `mode` is music-specific; `subcommand` is uniform across every group, so rec/podcast/audiobook read the same. |
+| A `--file` flag for the CLI pool input | Naming a file duplicates what the shell already does; stdin is the Unix idiom and adds no new surface. |
+| Leave `music new` on a bare string | The daemon never receives the authored-input object, so "one object both surfaces build and send" fails and the spoken formats would inherit the split. |
+
+Extends DES-050; part of the Audio Programs epic (vox-ys1p).

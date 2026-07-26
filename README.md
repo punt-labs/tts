@@ -445,6 +445,7 @@ vox notify c                                   # Continuous spoken mode
 vox speak n                                    # Chimes only
 vox voice matilda                              # Set session voice
 vox music play --style techno                  # Start a style radio (generates a fresh pool)
+cat pool.json | vox music on --style techno    # Author a specific 12-track pool from stdin (pool.json = {base_prompt, variations})
 vox music next                                 # Jump to another track
 vox music play focus-beats                     # Replay a saved album by name/tags (zero credits)
 vox music play 7f3a91                          # Replay a saved album by id
@@ -483,7 +484,7 @@ Provider API keys (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`) live in `~/.
 
 ### Shipped
 
-- **Mic API**: unified `unmute`/`vibe`/`who` plus `rec_*`/`music_*` store & catalog MCP tools with segment-based input
+- **Mic API**: unified `unmute`/`vibe`/`who` plus one `rec` and one `music` tool (subcommand-dispatched) for the store & catalog, with segment-based input
 - Notification layer: `/vox y|n|c`, `/mute`, `/unmute`, `/recap`, Stop + Notification hooks
 - Multi-provider TTS engine: ElevenLabs, AWS Polly, OpenAI, macOS `say`, Linux `espeak-ng`
 - Claude Code plugin: marketplace install, MCP server, slash commands
