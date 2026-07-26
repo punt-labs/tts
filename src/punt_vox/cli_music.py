@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import json
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Annotated, NoReturn, Self, final
+from typing import Annotated, NoReturn, Self, cast, final
 
 import typer
 from websockets.exceptions import WebSocketException
@@ -164,16 +164,43 @@ class MusicCli:
 
         The ``isatty`` gate is the Unix pipeline convention: a pipe supplies the
         pool; an interactive ``vox music on`` with no pipe, or empty stdin, sends
-        ``None`` so the daemon uses its minimal literal fallback. A malformed
-        pool raises ``ValueError`` (``json.loads`` / ``PromptSet.from_wire``),
-        which the caller's ``_guard`` turns into a clean CLI error.
+        ``None`` so the daemon uses its minimal literal fallback. A piped payload
+        is parsed and validated by :meth:`_pool_from_wire`.
         """
         if sys.stdin.isatty():
             return None
         raw = sys.stdin.read().strip()
         if not raw:
             return None
-        return PromptSet.from_wire(json.loads(raw))
+        return MusicCli._pool_from_wire(json.loads(raw))
+
+    @staticmethod
+    def _pool_from_wire(payload: object) -> PromptSet:
+        """Return the piped *payload* as a PromptSet, or raise on a malformed pool.
+
+        A piped payload must be a *complete* pool. ``from_wire`` maps an absent
+        ``base_prompt`` to ``None`` -- the daemon fallback, correct for the
+        no-pipe path but wrong here, where stdin clearly supplied a payload. So a
+        Mapping lacking a non-empty ``base_prompt`` is a malformed pool, not a
+        fallback: raise ``ValueError`` (as ``json.loads`` and ``from_wire`` also
+        do) so the caller's ``_guard`` renders a clean CLI error. A non-object
+        payload (list/string/number) is rejected by ``from_wire`` itself.
+        """
+        if not isinstance(payload, Mapping):
+            pool = PromptSet.from_wire(payload)
+        else:
+            mapping = cast("Mapping[str, object]", payload)
+            base = mapping.get("base_prompt")
+            if not (isinstance(base, str) and base.strip()):
+                detail = "pool must have a non-empty base_prompt and 12 variations"
+                raise ValueError(detail)
+            pool = PromptSet.from_wire(mapping)
+        # A piped payload is never the fallback: from_wire only returns None for
+        # an absent base, which the base check above already rejected.
+        if pool is None:
+            detail = "pool must have a non-empty base_prompt and 12 variations"
+            raise ValueError(detail)
+        return pool
 
     def list_programs(
         self,

@@ -549,3 +549,24 @@ def test_on_non_object_pool_is_a_clean_error(
     with pytest.raises(typer.Exit):
         _on_cli(fake).on()
     assert fake.calls == []  # rejected before the gateway start
+
+
+@pytest.mark.parametrize(
+    "payload",
+    ["{}", '{"style": "trance"}', '{"variations": ["a", "b"]}'],
+)
+def test_on_incomplete_object_pool_is_a_clean_error(
+    monkeypatch: pytest.MonkeyPatch, payload: str
+) -> None:
+    """A piped object lacking a non-empty base_prompt is malformed, not a fallback.
+
+    Nothing piped falls back to the daemon (None); but a piped object -- empty,
+    or with variations and no base_prompt -- clearly supplied a payload, so it is
+    a clean CLI error rather than a silent fallback to the minimal literal prompt.
+    """
+    monkeypatch.setattr("sys.stdin", io.StringIO(payload))
+    fake = FakeProgramGateway()
+
+    with pytest.raises(typer.Exit):
+        _on_cli(fake).on()
+    assert fake.calls == []  # rejected before the gateway start
