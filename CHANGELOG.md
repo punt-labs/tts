@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.15.0] - 2026-07-25
+
 ### Added
 
 - **`vox music on` — CLI pool authoring from stdin (Audio Programs Phase 1.5).** The `vox music on` verb returns — 4.14.0 removed it — now as the structured-input authoring path: it reads a 12-variation pool as JSON on stdin (`cat pool.json | vox music on --style <genre>`, where `pool.json` is `{"base_prompt": "...", "variations": [... 12 ...]}`) and starts a generating program from it. With no piped input (a tty or empty stdin) it falls back to the daemon's minimal prompt. A malformed pool — bad JSON, the wrong variation count, or a non-object payload — is a clean CLI error, not a traceback.
