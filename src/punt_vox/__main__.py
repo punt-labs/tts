@@ -9,8 +9,6 @@ import logging
 import platform
 import shutil
 import subprocess
-import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -981,42 +979,21 @@ def daemon_restart_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 
 @daemon_app.command("status")
 def daemon_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """Check if the vox daemon is reachable."""
-    from punt_vox.client import read_port_file
+    """Check if the vox daemon is reachable.
 
-    port = read_port_file()
-    if port is None:
-        typer.echo("Daemon: not running (no port file)")
-        raise typer.Exit(code=1)
-
+    Routes through the client so it queries the configured daemon --
+    honoring ``VOXD_HOST`` / ``VOXD_PORT`` / ``VOXD_TOKEN`` -- rather than
+    a hardcoded ``127.0.0.1``, matching ``vox status`` and ``vox doctor``.
+    """
     try:
-        url = f"http://127.0.0.1:{port}/health"
-        if not url.startswith("http://"):  # S310: validate scheme before urlopen
-            msg = f"unexpected URL scheme: {url}"
-            raise ValueError(msg)
-        req = urllib.request.Request(url, method="GET")  # noqa: S310 -- scheme validated above
-        with urllib.request.urlopen(req, timeout=3) as resp:  # noqa: S310 -- scheme validated above
-            data = json.loads(resp.read())
-        uptime = data.get("uptime_seconds", "?")
-        sessions = data.get("active_sessions", "?")
-        typer.echo(f"Daemon: running on port {port}")
-        typer.echo(f"  Uptime:   {uptime}s")
-        typer.echo(f"  Sessions: {sessions}")
-    except urllib.error.URLError as exc:
-        reason = exc.reason
-        if isinstance(reason, ConnectionRefusedError):
-            typer.echo(f"Daemon: not running (port {port} refused)")
-        elif isinstance(reason, TimeoutError):
-            typer.echo(f"Daemon: not responding on port {port} (timeout)")
-        else:
-            typer.echo(f"Daemon: cannot reach port {port}: {reason}")
+        health = VoxClientSync().health()
+    except (VoxdConnectionError, VoxdProtocolError) as exc:
+        typer.echo(f"Daemon: not running ({exc})")
         raise typer.Exit(code=1) from exc
-    except json.JSONDecodeError as exc:
-        typer.echo(f"Daemon: port {port} responded but not valid JSON (wrong process?)")
-        raise typer.Exit(code=1) from exc
-    except OSError as exc:
-        typer.echo(f"Daemon: cannot reach port {port}: {exc}")
-        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"Daemon: running on port {health.port}")
+    typer.echo(f"  Uptime:   {health.uptime_seconds}s")
+    typer.echo(f"  Sessions: {health.active_sessions}")
 
 
 if __name__ == "__main__":

@@ -2041,6 +2041,84 @@ class TestGlobalFlags:
 
 
 # ---------------------------------------------------------------------------
+# daemon status tests
+# ---------------------------------------------------------------------------
+
+
+class TestDaemonStatusCommand:
+    """``vox daemon status`` must query the configured daemon.
+
+    Regression guard for vox-4p5p: the command probed a hardcoded
+    ``http://127.0.0.1:{port}`` read from the local port file, so with
+    ``VOXD_HOST`` set it queried localhost instead of the configured
+    remote daemon -- contradicting ``vox status`` and ``vox doctor``.
+    The fix routes through ``VoxClientSync().health()``, which honors
+    ``VOXD_HOST`` / ``VOXD_PORT`` / ``VOXD_TOKEN``.
+    """
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_routes_through_client_health(self, mock_client_cls: MagicMock) -> None:
+        mock_instance = mock_client_cls.return_value
+        mock_instance.health.return_value = HealthStatus.from_wire(
+            {"port": 8421, "uptime_seconds": 12, "active_sessions": 3}
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["daemon", "status"])
+
+        assert result.exit_code == 0
+        mock_instance.health.assert_called_once_with()
+        assert "running" in result.output
+        assert "8421" in result.output
+
+    @patch("punt_vox.client.read_port_file")
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_does_not_read_local_port_file(
+        self, mock_client_cls: MagicMock, mock_read_port: MagicMock
+    ) -> None:
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire(
+            {"port": 8421}
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["daemon", "status"])
+
+        assert result.exit_code == 0
+        mock_read_port.assert_not_called()
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_honors_voxd_host(
+        self, mock_client_cls: MagicMock, monkeypatch: MagicMock
+    ) -> None:
+        monkeypatch.setenv("VOXD_HOST", "remote.example.com")
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire(
+            {"port": 8421}
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["daemon", "status"])
+
+        assert result.exit_code == 0
+        # The command constructs the client with no explicit host, so
+        # VoxClientSync resolves VOXD_HOST itself -- it never targets a
+        # hardcoded 127.0.0.1.
+        mock_client_cls.assert_called_once_with()
+        assert "127.0.0.1" not in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_not_running_exits_nonzero(self, mock_client_cls: MagicMock) -> None:
+        from punt_vox.client_errors import VoxdConnectionError
+
+        mock_client_cls.return_value.health.side_effect = VoxdConnectionError("refused")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["daemon", "status"])
+
+        assert result.exit_code == 1
+        assert "not running" in result.output
+
+
+# ---------------------------------------------------------------------------
 # daemon restart tests
 # ---------------------------------------------------------------------------
 
