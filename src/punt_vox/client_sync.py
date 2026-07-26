@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Self, cast
 
 from punt_vox.client import (
+    CacheStatus,
     RecordingSummary,
     RecordResult,
     SynthesizeResult,
@@ -229,6 +230,16 @@ class VoxClientSync:
     def rec_remove(self, ref: str) -> None:
         """Delete recording *ref* from the store."""
         self._runner.run(self._call("rec_remove", ref))
+
+    # -- cache (daemon-owned MP3 quip cache) --------------------------------
+
+    def cache_status(self) -> CacheStatus:
+        """Return the daemon cache's entry count, size, and path."""
+        return cast("CacheStatus", self._runner.run(self._call("cache_status")))
+
+    def cache_clear(self) -> int:
+        """Delete every entry in the daemon cache; return the count deleted."""
+        return cast("int", self._runner.run(self._call("cache_clear")))
 
     # -- music catalog (music group) ----------------------------------------
 
