@@ -2119,6 +2119,114 @@ class TestDaemonStatusCommand:
 
 
 # ---------------------------------------------------------------------------
+# cache command tests
+# ---------------------------------------------------------------------------
+
+
+class TestCacheCommands:
+    """``vox cache status`` / ``clear`` must operate on the DAEMON's cache.
+
+    Regression guard for vox-suvs: both commands read/cleared the client's
+    local CACHE_DIR, so against a remote daemon (``VOXD_HOST`` set) they
+    touched the wrong machine -- ``clear`` silently no-oped and ``status``
+    reported the client's numbers. The fix routes both through
+    ``VoxClientSync``, which honors ``VOXD_HOST`` / ``VOXD_PORT`` /
+    ``VOXD_TOKEN`` like ``vox status`` and ``vox voices``.
+    """
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_status_routes_through_client(self, mock_client_cls: MagicMock) -> None:
+        from punt_vox.client import CacheStatus
+
+        mock_client_cls.return_value.cache_status.return_value = CacheStatus(
+            entries=4, size_bytes=8192, path=Path("/daemon/home/.cache/vox")
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["cache", "status"])
+
+        assert result.exit_code == 0
+        mock_client_cls.return_value.cache_status.assert_called_once_with()
+        assert "4" in result.output
+        assert "/daemon/home/.cache/vox" in result.output
+
+    @patch("punt_vox.cache.cache_status")
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_status_does_not_touch_local_cache(
+        self, mock_client_cls: MagicMock, mock_local_status: MagicMock
+    ) -> None:
+        from punt_vox.client import CacheStatus
+
+        mock_client_cls.return_value.cache_status.return_value = CacheStatus(
+            entries=0, size_bytes=0, path=Path("/daemon/cache")
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["cache", "status"])
+
+        assert result.exit_code == 0
+        # The local-cache read is dead: the CLI never calls cache.cache_status().
+        mock_local_status.assert_not_called()
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_status_daemon_unreachable_exits_nonzero(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        from punt_vox.client_errors import VoxdConnectionError
+
+        mock_client_cls.return_value.cache_status.side_effect = VoxdConnectionError(
+            "refused"
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["cache", "status"])
+
+        assert result.exit_code == 1
+        assert "refused" in result.output
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_clear_routes_through_client(self, mock_client_cls: MagicMock) -> None:
+        mock_client_cls.return_value.cache_clear.return_value = 9
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["cache", "clear"])
+
+        assert result.exit_code == 0
+        mock_client_cls.return_value.cache_clear.assert_called_once_with()
+        assert "9" in result.output
+
+    @patch("punt_vox.cache.cache_clear")
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_clear_does_not_touch_local_cache(
+        self, mock_client_cls: MagicMock, mock_local_clear: MagicMock
+    ) -> None:
+        mock_client_cls.return_value.cache_clear.return_value = 0
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["cache", "clear"])
+
+        assert result.exit_code == 0
+        # The remote daemon owns the cache: the CLI never calls cache.cache_clear().
+        mock_local_clear.assert_not_called()
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_clear_daemon_unreachable_exits_nonzero(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        from punt_vox.client_errors import VoxdConnectionError
+
+        mock_client_cls.return_value.cache_clear.side_effect = VoxdConnectionError(
+            "refused"
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["cache", "clear"])
+
+        assert result.exit_code == 1
+        assert "refused" in result.output
+
+
+# ---------------------------------------------------------------------------
 # daemon restart tests
 # ---------------------------------------------------------------------------
 
