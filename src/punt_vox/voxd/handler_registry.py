@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.cache import cache_clear, cache_status
 from punt_vox.paths import recordings_dir
+from punt_vox.voxd.cache_handlers import CacheClearHandler, CacheStatusHandler
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 from punt_vox.voxd.fetch_handler import FetchHandler
@@ -75,6 +77,8 @@ class HandlerRegistry:
             "fetch": FetchHandler(store=store, music=self._programs.library),
             "rec_list": RecListHandler(store),
             "rec_remove": RecRemoveHandler(store),
+            "cache_status": CacheStatusHandler(cache_status),
+            "cache_clear": CacheClearHandler(cache_clear),
             "chime": ChimeHandler(
                 chimes=ChimeResolver(),
                 chime_dedup=ChimeDedup(),
