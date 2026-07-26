@@ -861,14 +861,12 @@ def install_desktop(
 
 @cache_app.command("status")
 def cache_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """Show cache entry count, size, and path."""
-    from punt_vox.cache import cache_status
-
+    """Show the daemon cache's entry count, size, and path (honors VOXD_HOST)."""
     try:
-        info = cache_status()
-    except OSError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
+        info = VoxClientSync().cache_status()
+    except (VoxdConnectionError, VoxdProtocolError) as exc:
+        _formatter.error(str(exc), f"Error: {exc}")
+        raise typer.Exit(code=1) from exc
     size_kb = info.size_bytes / 1024
     payload = {
         "entries": info.entries,
@@ -881,14 +879,12 @@ def cache_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
 
 @cache_app.command("clear")
 def cache_clear_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """Delete all cached MP3 files."""
-    from punt_vox.cache import cache_clear
-
+    """Delete all cached MP3 files on the daemon host."""
     try:
-        count = cache_clear()
-    except OSError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
+        count = VoxClientSync().cache_clear()
+    except (VoxdConnectionError, VoxdProtocolError) as exc:
+        _formatter.error(str(exc), f"Error: {exc}")
+        raise typer.Exit(code=1) from exc
     _formatter.emit({"cleared": count}, f"Cleared {count} cached files.")
 
 

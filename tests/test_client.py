@@ -994,6 +994,70 @@ class TestVoxClientRecMusic:
             await client.rec_remove("x.mp3")
 
     @pytest.mark.asyncio
+    async def test_cache_status_parses_daemon_fields(self) -> None:
+        """cache_status returns the daemon's entries/size/path, not a local read."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "cache_status",
+                    "id": "s1",
+                    "entries": 4,
+                    "size_bytes": 8192,
+                    "path": "/daemon/home/.cache/vox",
+                }
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        status = await client.cache_status()
+        assert status.entries == 4
+        assert status.size_bytes == 8192
+        assert str(status.path) == "/daemon/home/.cache/vox"
+
+    @pytest.mark.asyncio
+    async def test_cache_clear_returns_count(self) -> None:
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "cache_cleared", "id": "c1", "cleared": 12}
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        assert await client.cache_clear() == 12
+
+    @pytest.mark.asyncio
+    async def test_cache_status_daemon_fault_raises(self) -> None:
+        """A daemon fault frame surfaces as a VoxError, never a wrong/empty status."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {"type": "error", "id": "s1", "message": "permission denied"}
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="permission denied"):
+            await client.cache_status()
+
+    @pytest.mark.asyncio
+    async def test_cache_status_malformed_reply_raises(self) -> None:
+        """A missing field is a malformed reply, raising rather than defaulting."""
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps({"type": "cache_status", "id": "s1", "entries": 4})
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdProtocolError, match="malformed reply"):
+            await client.cache_status()
+
+    @pytest.mark.asyncio
     async def test_music_new_returns_album_id_after_ack(self) -> None:
         """music_new consumes the 'generating' ack then returns the 'album' id."""
         mock_ws = _make_mock_ws()

@@ -78,6 +78,31 @@ class RecordingSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class CacheStatus:
+    """The daemon cache's size, described to a client.
+
+    ``path`` is the daemon-side cache directory as the daemon reported it: the
+    MP3 quip cache ``vox cache status`` inspects lives on the daemon host, so a
+    remote client sees the daemon's path, never a local one. ``entries`` and
+    ``size_bytes`` count the ``.mp3`` and orphaned ``.tmp`` files there, mirroring
+    the daemon's own ``cache_status`` return.
+    """
+
+    entries: int
+    size_bytes: int
+    path: Path
+
+    @classmethod
+    def from_wire(cls, obj: JsonObject) -> Self:
+        """Build a cache status from a ``cache_status`` reply, raising on a bad row."""
+        return cls(
+            entries=obj.require_int("entries"),
+            size_bytes=obj.require_int("size_bytes"),
+            path=Path(obj.require_str("path")),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class SynthesizeResult:
     """Result of a ``synthesize`` call on voxd.
 
@@ -764,6 +789,26 @@ class VoxClient:
     async def rec_remove(self, ref: str) -> None:
         """Delete recording *ref* from the store (a hostile/absent ref raises)."""
         await self._command("rec_remove", ref=ref)
+
+    # -- cache (daemon-owned MP3 quip cache) --------------------------------
+
+    async def cache_status(self) -> CacheStatus:
+        """Return the daemon cache's entry count, size, and path.
+
+        Routes through the daemon so the numbers describe the daemon's *own*
+        cache -- the one synthesis reads and writes -- not a client-local
+        directory, honoring ``VOXD_HOST``/``PORT``/``TOKEN`` like every other
+        command. ``path`` is the daemon-side cache path.
+        """
+        resp = await self._command("cache_status")
+        with self._wire_guard():
+            return CacheStatus.from_wire(JsonObject.coerce(resp, "cache_status"))
+
+    async def cache_clear(self) -> int:
+        """Delete every entry in the daemon cache; return the count deleted."""
+        resp = await self._command("cache_clear")
+        with self._wire_guard():
+            return JsonObject.coerce(resp, "cache_clear").require_int("cleared")
 
     # -- music catalog (music group) ----------------------------------------
 
