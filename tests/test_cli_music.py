@@ -9,6 +9,7 @@ CliRunner smoke tests confirm build_music_app wires the Typer group.
 
 from __future__ import annotations
 
+import io
 import json
 import re
 from pathlib import Path
@@ -229,7 +230,17 @@ def test_remove_refuses_playing_album() -> None:
 def test_music_group_exposes_the_unified_verb_set() -> None:
     app = _build_music_app()
     names = {c.name for c in app.registered_commands if c.name is not None}
-    assert names == {"new", "list", "play", "off", "get", "remove", "next", "status"}
+    assert names == {
+        "on",
+        "new",
+        "list",
+        "play",
+        "off",
+        "get",
+        "remove",
+        "next",
+        "status",
+    }
 
 
 # A design-decision label (D-1..D-9, DES-0xx) or the stale "consume-only" claim
@@ -453,3 +464,75 @@ def test_list_accepts_json_flag_after_the_subcommand() -> None:
 
     assert result.exit_code == 0
     assert json.loads(result.stdout) == {"programs": []}
+
+
+# ---------------------------------------------------------------------------
+# on -- start music from an authored pool piped on stdin
+# ---------------------------------------------------------------------------
+
+
+def _on_cli(gateway: FakeProgramGateway, vibe: str | None = None) -> MusicCli:
+    """Build a MusicCli whose vibe comes from a pinned source, not config."""
+    return MusicCli(
+        MagicMock(spec=OutputFormatter), lambda: gateway, vibe_source=lambda: vibe
+    )
+
+
+def test_on_pipes_the_authored_pool_into_the_start_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pool = {"base_prompt": "deep techno", "variations": [f"v{i}" for i in range(12)]}
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(pool)))
+    fake = FakeProgramGateway()
+
+    _on_cli(fake).on(style="trance")
+
+    request = fake.calls[0].request
+    assert request is not None and request.prompts is not None
+    assert request.prompts.base == "deep techno"
+    assert request.prompts.variations == tuple(f"v{i}" for i in range(12))
+    assert request.style == "trance"
+
+
+def test_on_with_empty_stdin_falls_back_to_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No pipe (empty stdin) sends prompts=None -- the daemon's literal fallback."""
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    fake = FakeProgramGateway()
+
+    _on_cli(fake).on()
+
+    request = fake.calls[0].request
+    assert request is not None and request.prompts is None
+
+
+def test_on_carries_the_config_vibe(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    fake = FakeProgramGateway()
+
+    _on_cli(fake, vibe="focused").on()
+
+    request = fake.calls[0].request
+    assert request is not None and request.vibe == "focused"
+
+
+def test_on_malformed_pool_is_a_clean_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sys.stdin", io.StringIO("{not json"))
+    fake = FakeProgramGateway()
+
+    with pytest.raises(typer.Exit):
+        _on_cli(fake).on()
+    assert fake.calls == []  # rejected before the gateway start
+
+
+def test_on_wrong_variation_count_is_a_clean_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pool = {"base_prompt": "x", "variations": ["only one"]}
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(pool)))
+    fake = FakeProgramGateway()
+
+    with pytest.raises(typer.Exit):
+        _on_cli(fake).on()
+    assert fake.calls == []

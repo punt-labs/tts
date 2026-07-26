@@ -8,6 +8,8 @@ Program; authoring verbs (new, get, remove) mutate the saved-album catalog.
 
 from __future__ import annotations
 
+import json
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, NoReturn, Self, final
@@ -21,9 +23,11 @@ from punt_vox.client_catalog_gateway import ClientCatalogGateway
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_gateway import ClientProgramGateway
 from punt_vox.client_sync import VoxClientSync
+from punt_vox.config import ConfigStore
+from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.program_gateway import ProgramGateway
-from punt_vox.types_programs.control import SelectionRequest
+from punt_vox.types_programs.control import SelectionRequest, StartRequest
 from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.types_programs.status import ProgramStatus
 
@@ -55,11 +59,18 @@ _Quiet = Annotated[
 class MusicCli:
     """The music commands: playback verbs plus catalog authoring (new/get/remove)."""
 
-    __slots__ = ("_catalog_factory", "_flags", "_formatter", "_gateway_factory")
+    __slots__ = (
+        "_catalog_factory",
+        "_flags",
+        "_formatter",
+        "_gateway_factory",
+        "_vibe_source",
+    )
     _formatter: OutputFormatter
     _gateway_factory: Callable[[], ProgramGateway]
     _catalog_factory: Callable[[], CatalogGateway]
     _flags: OutputFlags
+    _vibe_source: Callable[[], str | None]
 
     def __new__(
         cls,
@@ -67,18 +78,29 @@ class MusicCli:
         gateway_factory: Callable[[], ProgramGateway] | None = None,
         catalog_factory: Callable[[], CatalogGateway] | None = None,
         flags: OutputFlags | None = None,
+        vibe_source: Callable[[], str | None] | None = None,
     ) -> Self:
         self = super().__new__(cls)
         self._formatter = formatter
         self._gateway_factory = gateway_factory or cls._default_gateway
         self._catalog_factory = catalog_factory or cls._default_catalog
         self._flags = flags if flags is not None else OutputFlags(formatter)
+        self._vibe_source = vibe_source or cls._default_vibe
         return self
 
     @staticmethod
     def _default_gateway() -> ProgramGateway:
         """Build the production gateway -- a fresh WebSocket client per command."""
         return ClientProgramGateway(VoxClientSync())
+
+    @staticmethod
+    def _default_vibe() -> str | None:
+        """Return the session mood from config, so ``on`` sends the same vibe.
+
+        Reads the same ``vibe`` field the MCP tool sends from the session, so the
+        CLI ``on`` and the ``music`` tool start a Program with one mood contract.
+        """
+        return ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read().vibe
 
     @staticmethod
     def _default_catalog() -> CatalogGateway:
@@ -102,6 +124,56 @@ class MusicCli:
             return op()
         except _GATEWAY_ERRORS as exc:
             self._fail(str(exc))
+
+    def on(
+        self,
+        style: Annotated[
+            str | None, typer.Option("--style", help="Style tag, e.g. 'trance'.")
+        ] = None,
+        name: Annotated[
+            str | None, typer.Option("--name", help="Curated album handle to save.")
+        ] = None,
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
+    ) -> None:
+        """Start background music from an authored pool piped in on stdin.
+
+        Pipe the wire-form pool JSON (``{"base_prompt": ..., "variations":
+        [...]}``) on stdin: ``cat pool.json | vox music on --style trance``. With
+        no pipe (an interactive shell) or empty stdin, ``prompts`` is ``None`` and
+        the daemon falls back to its minimal literal prompt. A malformed pool is a
+        clean CLI error via the gateway guard. The vibe comes from config, so the
+        CLI and the ``music`` tool start a Program with the same mood contract.
+        """
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+        prompts = self._guard(self._read_pool)
+        request = StartRequest(
+            style=style, vibe=self._vibe_source(), name=name, prompts=prompts
+        )
+        outcome = self._guard(lambda: self._gateway_factory().start(request))
+        self._formatter.emit(
+            {"music": "on", "applied": outcome.applied},
+            outcome.display("Generating music."),
+        )
+
+    @staticmethod
+    def _read_pool() -> PromptSet | None:
+        """Return the stdin pool as a PromptSet, or None when nothing is piped.
+
+        The ``isatty`` gate is the Unix pipeline convention: a pipe supplies the
+        pool; an interactive ``vox music on`` with no pipe, or empty stdin, sends
+        ``None`` so the daemon uses its minimal literal fallback. A malformed
+        pool raises ``ValueError`` (``json.loads`` / ``PromptSet.from_wire``),
+        which the caller's ``_guard`` turns into a clean CLI error.
+        """
+        if sys.stdin.isatty():
+            return None
+        raw = sys.stdin.read().strip()
+        if not raw:
+            return None
+        return PromptSet.from_wire(json.loads(raw))
 
     def list_programs(
         self,
@@ -285,9 +357,10 @@ def build_music_app(formatter: OutputFormatter, flags: OutputFlags) -> typer.Typ
     """Return the ``vox music`` Typer group with bound methods (no wrappers)."""
     cli = MusicCli(formatter, flags=flags)
     app = typer.Typer(
-        help="Play saved albums and author the catalog (new/get/remove).",
+        help="Start, play, and author background music.",
         no_args_is_help=True,
     )
+    app.command("on")(cli.on)
     app.command("new")(cli.new)
     app.command("list")(cli.list_programs)
     app.command("play")(cli.play)
