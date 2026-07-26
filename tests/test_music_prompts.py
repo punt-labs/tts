@@ -141,14 +141,19 @@ class TestFromWire:
     def test_no_prompt_fields_returns_none(self) -> None:
         assert PromptSet.from_wire({"style": "techno"}) is None
 
-    def test_coerces_non_string_variation_items(self) -> None:
+    def test_rejects_a_non_string_variation_entry(self) -> None:
+        # voxd's wire rule rejects a non-string field; no str() coercion.
         msg: dict[str, object] = {
             "base_prompt": "base",
             "variations": [*_variations(POOL_SIZE - 1), 42],
         }
-        ps = PromptSet.from_wire(msg)
-        assert ps is not None
-        assert ps.variations[-1] == "42"
+        with pytest.raises(ValueError, match="every variation must be a string"):
+            PromptSet.from_wire(msg)
+
+    def test_rejects_a_numeric_base_prompt(self) -> None:
+        # A present non-string base_prompt is rejected, not str()-coerced.
+        with pytest.raises(ValueError, match="base_prompt must be a string"):
+            PromptSet.from_wire({"base_prompt": 42, "variations": _variations()})
 
     def test_base_without_variations_raises(self) -> None:
         with pytest.raises(ValueError, match=f"exactly {POOL_SIZE}"):

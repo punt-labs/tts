@@ -217,6 +217,15 @@ def test_new_builds_promptset_single_and_reaches_the_catalog() -> None:
     assert prompts.variations == ()  # a single track has no variations
 
 
+def test_new_canonicalises_a_blank_name_to_none() -> None:
+    """A blank/whitespace name is canonicalised to None, so the daemon
+    content-addresses the album rather than binding a whitespace handle."""
+    result = json.loads(_tool().dispatch("new", base_prompt="warm pads", name="   "))
+    # The _FakeCatalog content-addresses to "000000" when the name is None;
+    # an uncanonicalised "   " would bind that whitespace handle instead.
+    assert result["album_id"] == "000000"
+
+
 def test_new_without_base_prompt_is_an_error() -> None:
     catalog = _FakeCatalog()
     result = json.loads(_tool(catalog=catalog).dispatch("new"))

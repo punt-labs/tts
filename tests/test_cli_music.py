@@ -570,3 +570,19 @@ def test_on_incomplete_object_pool_is_a_clean_error(
     with pytest.raises(typer.Exit):
         _on_cli(fake).on()
     assert fake.calls == []  # rejected before the gateway start
+
+
+def test_on_blank_style_and_name_reach_the_daemon_as_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blank/whitespace style or name is canonicalised to None in the request,
+    matching the MCP tool so the two surfaces build one StartRequest."""
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    fake = FakeProgramGateway()
+
+    _on_cli(fake).on(style="   ", name="  ")
+
+    request = fake.calls[0].request
+    assert request is not None
+    assert request.style is None
+    assert request.name is None

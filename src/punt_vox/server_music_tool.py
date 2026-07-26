@@ -92,17 +92,17 @@ class MusicArgs:
     @property
     def canonical_style(self) -> str | None:
         """Return the style tag trimmed, or None when blank/absent."""
-        return (self.style or "").strip() or None
+        return StartRequest.canonical_tag(self.style)
 
     @property
     def canonical_vibe(self) -> str | None:
         """Return the vibe tag trimmed, or None when blank/absent."""
-        return (self.vibe or "").strip() or None
+        return StartRequest.canonical_tag(self.vibe)
 
     @property
     def canonical_name(self) -> str | None:
         """Return the name tag trimmed, or None when blank/absent."""
-        return (self.name or "").strip() or None
+        return StartRequest.canonical_tag(self.name)
 
     @property
     def authored(self) -> bool:
@@ -300,7 +300,7 @@ class MusicTool:
             return _error("music new requires base_prompt")
         try:
             prompts = PromptSet.single(args.base_prompt)
-            album_id = self._catalog_factory().new(prompts, args.name)
+            album_id = self._catalog_factory().new(prompts, args.canonical_name)
         except (ValueError, *_DAEMON_ERRORS) as exc:
             return _error(str(exc))
         return json.dumps({"album_id": album_id})

@@ -149,8 +149,12 @@ class MusicCli:
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         prompts = self._guard(self._read_pool)
+        # Canonicalise tags as the MCP tool does, so both surfaces build one request.
         request = StartRequest(
-            style=style, vibe=self._vibe_source(), name=name, prompts=prompts
+            style=StartRequest.canonical_tag(style),
+            vibe=self._vibe_source(),
+            name=StartRequest.canonical_tag(name),
+            prompts=prompts,
         )
         outcome = self._guard(lambda: self._gateway_factory().start(request))
         self._formatter.emit(

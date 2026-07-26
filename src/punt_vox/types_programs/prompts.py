@@ -57,14 +57,30 @@ class PromptSet:
             raise ValueError(detail)
         # isinstance narrows to Mapping[Unknown, Unknown]; restore the wire shape.
         mapping = cast("Mapping[str, object]", msg)
+        # Match voxd's wire rule (parse_optional_str): a PRESENT base_prompt must
+        # be a string -- reject a numeric/other JSON value rather than
+        # str()-coercing it. An absent base (None/missing) stays the fallback.
         raw_base = mapping.get("base_prompt")
-        raw_vars = mapping.get("variations")
-        variations = (
-            [str(v) for v in cast("list[object]", raw_vars)]
-            if isinstance(raw_vars, list) and raw_vars
-            else None
-        )
-        return cls.from_tool_args(str(raw_base) if raw_base else None, variations)
+        if raw_base is not None and not isinstance(raw_base, str):
+            detail = "base_prompt must be a string"
+            raise ValueError(detail)
+        variations = cls._wire_variations(mapping.get("variations"))
+        return cls.from_tool_args(raw_base or None, variations)
+
+    @staticmethod
+    def _wire_variations(raw: object) -> list[str] | None:
+        """Return the wire ``variations`` as strings, or None when absent.
+
+        A non-list or empty value is absent (None); a present non-string entry
+        is rejected (voxd's wire rule -- no str() coercion).
+        """
+        if not isinstance(raw, list) or not raw:
+            return None
+        items = cast("list[object]", raw)
+        if not all(isinstance(v, str) for v in items):
+            detail = "every variation must be a string"
+            raise ValueError(detail)
+        return cast("list[str]", items)
 
     @classmethod
     def from_tool_args(
