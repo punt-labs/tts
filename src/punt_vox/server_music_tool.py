@@ -16,6 +16,7 @@ class-count thresholds, mirroring how ``server_audio_tools.py`` was split out.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, Self, final
 
@@ -34,6 +35,8 @@ if TYPE_CHECKING:
     from punt_vox.vibe_command import MusicPreference
 
 __all__ = ["MusicArgs", "MusicSubcommand", "MusicTool"]
+
+logger = logging.getLogger(__name__)
 
 MusicSubcommand = Literal["on", "off", "play", "next", "new", "list", "get", "remove"]
 
@@ -247,7 +250,10 @@ class MusicTool:
         if outcome.applied:
             try:
                 resolved_style = request.resolved_style(gateway.catalog())
-            except _DAEMON_ERRORS:
+            except _DAEMON_ERRORS as exc:
+                # Best-effort: a fault here never fails the applied replay, but
+                # log it so the dropped re-pool style is traceable, not silent.
+                logger.warning("music play: re-pool genre lookup failed: %s", exc)
                 resolved_style = None
         self._pref_provider().confirm_selected(outcome, resolved_style, vibe, name)
         message = f"♪ {outcome.display(self._marquee.replay(name))}"

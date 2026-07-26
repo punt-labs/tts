@@ -1,12 +1,12 @@
 """Tests for the recordings-store ``mic`` MCP tools (CLI parity).
 
-The recordings-store verbs (``rec_new``/``rec_list``/``rec_play``/``rec_get``/
-``rec_remove``) live on the :class:`~punt_vox.server_audio_tools.RecTools`
-humble object. Each is driven directly with an in-memory client factory -- no
-daemon, no socket -- so the argument passthrough, the bare-id result shape, the
-MCP-appropriate ``get`` form, error surfacing, and the routing are asserted
-without a wire. The music-catalog verbs are folded into the single ``music``
-tool and covered in ``test_server_music_tool.py``.
+The recordings-store verbs (``new``/``list``/``play``/``get``/``remove``) live
+on the :class:`~punt_vox.server_audio_tools.RecTool` humble object, behind one
+subcommand-dispatched ``rec`` tool. Each is driven directly with an in-memory
+client factory -- no daemon, no socket -- so the argument passthrough, the
+bare-id result shape, the MCP-appropriate ``get`` form, error surfacing, and
+the routing are asserted without a wire. The music-catalog verbs are folded
+into the single ``music`` tool and covered in ``test_server_music_tool.py``.
 
 The registration and one-code-path tests confirm every verb is exposed on the
 ``mic`` surface at parity with the CLI, and that a tool and its CLI twin issue
@@ -42,7 +42,8 @@ if TYPE_CHECKING:
 def _fresh_session(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
     """Reset the module session and pin config discovery to a no-op.
 
-    ``RecTools.new`` refreshes the session from config; a fresh session plus a
+    ``RecTool``'s ``new`` subcommand refreshes the session from config; a fresh
+    session plus a
     ``None`` config dir keeps that a pure no-op so the tests exercise only the
     tool's own logic.
     """

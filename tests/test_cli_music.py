@@ -536,3 +536,16 @@ def test_on_wrong_variation_count_is_a_clean_error(
     with pytest.raises(typer.Exit):
         _on_cli(fake).on()
     assert fake.calls == []
+
+
+@pytest.mark.parametrize("payload", ["[1, 2]", '"a bare string"', "42"])
+def test_on_non_object_pool_is_a_clean_error(
+    monkeypatch: pytest.MonkeyPatch, payload: str
+) -> None:
+    """Valid JSON that is not an object is a clean CLI error, not a traceback."""
+    monkeypatch.setattr("sys.stdin", io.StringIO(payload))
+    fake = FakeProgramGateway()
+
+    with pytest.raises(typer.Exit):
+        _on_cli(fake).on()
+    assert fake.calls == []  # rejected before the gateway start

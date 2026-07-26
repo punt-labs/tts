@@ -38,16 +38,27 @@ class PromptSet:
     variations: tuple[str, ...]
 
     @classmethod
-    def from_wire(cls, msg: Mapping[str, object]) -> Self | None:
+    def from_wire(cls, msg: object) -> Self | None:
         """Return the agent's prompt set parsed from a wire message, or None.
 
         A missing, JSON-null, or empty ``base_prompt`` (or ``variations``) is
         normalised to ``None`` so this shares the one validation funnel in
         :meth:`from_tool_args` (DRY): a half-supplied pair raises, both absent
         falls back to a minimal prompt, and a null base never seeds garbage.
+
+        Reject a non-object payload with ``ValueError`` -- valid JSON that is a
+        list, string, or number (``echo '[1,2]' | vox music on``) would otherwise
+        fail ``.get`` with an ``AttributeError``. The parameter is ``object`` so
+        this owns the type check at the wire boundary rather than trusting the
+        caller's ``json.loads`` result.
         """
-        raw_base = msg.get("base_prompt")
-        raw_vars = msg.get("variations")
+        if not isinstance(msg, Mapping):
+            detail = "pool must be a JSON object with base_prompt and variations"
+            raise ValueError(detail)
+        # isinstance narrows to Mapping[Unknown, Unknown]; restore the wire shape.
+        mapping = cast("Mapping[str, object]", msg)
+        raw_base = mapping.get("base_prompt")
+        raw_vars = mapping.get("variations")
         variations = (
             [str(v) for v in cast("list[object]", raw_vars)]
             if isinstance(raw_vars, list) and raw_vars

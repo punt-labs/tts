@@ -131,6 +131,13 @@ class TestFromWire:
         assert ps.base == "Klezmer, clarinet lead"
         assert len(ps.variations) == POOL_SIZE
 
+    def test_rejects_a_non_object_payload(self) -> None:
+        # Valid JSON that is a list, string, or number is not a pool object;
+        # reject it at the wire boundary rather than fail .get with AttributeError.
+        for payload in ([1, 2], "a bare string", 42):
+            with pytest.raises(ValueError, match="must be a JSON object"):
+                PromptSet.from_wire(payload)
+
     def test_no_prompt_fields_returns_none(self) -> None:
         assert PromptSet.from_wire({"style": "techno"}) is None
 

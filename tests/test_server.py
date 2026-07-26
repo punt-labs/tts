@@ -717,9 +717,9 @@ class TestUnmute:
         assert spec.language == "fr"
 
 
-# The rec + music-catalog `mic` tools (rec_new/list/play/get/remove,
-# music_new/get/remove) live on the _RecTools / _MusicCatalogTools humble
-# objects and are covered in tests/test_server_rec_music.py.
+# The single `rec` and `music` mic tools (each subcommand-dispatched) are
+# covered in tests/test_server_rec_music.py and
+# tests/test_server_music_tool.py.
 
 
 # ---------------------------------------------------------------------------
