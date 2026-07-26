@@ -1,5 +1,5 @@
 {
-  "name": "vox",
+  "name": "vox-dev",
   "description": "Text-to-speech for Claude Code: /unmute, /mute, /vibe, /recap",
   "version": "4.15.0",
   "author": {
