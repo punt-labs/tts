@@ -93,7 +93,7 @@ you set the vibe:
    `(new mood × that style)` — the mood shades the genre, it never replaces it
    (relaxing flamenco = slow *soleá*/*guajira*; intense flamenco = fast
    *bulerías*). Follow the authoring rules in `/music`.
-3. Call `music(mode="on", style="<that style>", base_prompt="…",
+3. Call `music(subcommand="on", style="<that style>", base_prompt="…",
    variations=[… 12 …])`. The daemon rotates the pool for free if it already
    exists, or generates it if it is new.
 

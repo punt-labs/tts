@@ -4,16 +4,15 @@ The hook drives the two-channel display: ``updatedMCPToolOutput`` (the panel
 line the user sees) and ``additionalContext`` (text injected back into the
 agent). The invariant under test is which tools stay silent.
 
-The same mic tool backs multiple slash commands, so silence is decided per
-tool by whether EVERY flow that drives it wants the panel as the whole
-response. Only the pure music-control and vibe tools qualify: on success
-``music``/``music_play``/``music_next``/``vibe`` put a terminal stop-narration
-directive in ``additionalContext`` instead of the result JSON. Every other
-tool keeps its RESULT so the flow that needs it can reply — the
-``rec_*``/``music_new``/``music_get``/``music_remove`` verbs return ids, paths,
-and bytes the agent addresses later, ``unmute`` drives ``/vox model|provider``,
-``speak`` drives ``/mute``, ``notify`` drives ``/vox c``, and the query tools
-(``status``/``who``/``music_list``) report data. On any tool error the failure
+Silence is decided per action by whether the flow driving it wants the panel as
+the whole response. Only the music-control subcommands and vibe qualify: on
+success ``music`` with ``subcommand`` ``on``/``off``/``play``/``next`` and
+``vibe`` put a terminal stop-narration directive in ``additionalContext``
+instead of the result JSON. Every other action keeps its RESULT so the flow that
+needs it can reply — the ``rec`` verbs and the ``music`` catalog/list
+subcommands return ids, paths, and bytes the agent addresses later, ``unmute``
+drives ``/vox model|provider``, ``speak`` drives ``/mute``, ``notify`` drives
+``/vox c``, and the query subcommands report data. On any tool error the failure
 must still reach ``additionalContext``.
 
 Driven as a subprocess against the real script — the interface is the
@@ -40,15 +39,19 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _run_hook(tool: str, result: object) -> dict[str, str]:
+def _run_hook(
+    tool: str, result: object, *, subcommand: str | None = None
+) -> dict[str, str]:
     """Run the hook for ``tool`` with ``result`` as the tool response.
 
     ``result`` is wrapped the way FastMCP delivers a string return: a
-    single-element content array whose ``text`` is the JSON payload. Returns
-    the parsed ``hookSpecificOutput`` mapping. Raises if the hook exits
-    non-zero or emits no output.
+    single-element content array whose ``text`` is the JSON payload. The single
+    ``music`` tool routes on ``subcommand`` (its first input argument), so pass
+    it to drive a specific music panel form. Returns the parsed
+    ``hookSpecificOutput`` mapping. Raises if the hook exits non-zero or emits
+    no output.
     """
-    return _invoke(tool, json.dumps(result))
+    return _invoke(tool, json.dumps(result), subcommand=subcommand)
 
 
 def _run_hook_raw(tool: str, text: str) -> dict[str, str]:
@@ -61,16 +64,18 @@ def _run_hook_raw(tool: str, text: str) -> dict[str, str]:
     return _invoke(tool, text)
 
 
-def _invoke(tool: str, text: str) -> dict[str, str]:
+def _invoke(tool: str, text: str, *, subcommand: str | None = None) -> dict[str, str]:
     """Run the hook for ``tool`` with ``text`` as the response content.
 
     Returns the parsed ``hookSpecificOutput`` mapping. Raises if the hook
     exits non-zero or emits no output.
     """
-    payload = {
+    payload: dict[str, object] = {
         "tool_name": f"mcp__plugin_vox_mic__{tool}",
         "tool_response": [{"type": "text", "text": text}],
     }
+    if subcommand is not None:
+        payload["tool_input"] = {"subcommand": subcommand}
     proc = subprocess.run(
         ["bash", str(_HOOK)],
         input=json.dumps(payload),
@@ -175,10 +180,11 @@ class TestVibeMusicHint:
         assert out["updatedMCPToolOutput"] == "♪ Music on — generating..."
 
     def test_music_play_panel_is_the_message(self) -> None:
-        # music_play returns {"message", "applied"} — no "name" field.
+        # music play returns {"message", "applied"} — no "name" field.
         out = _run_hook(
-            "music_play",
+            "music",
             {"message": "♪ Playing selection.", "applied": True},
+            subcommand="play",
         )
         assert _STOP_MARK in out["additionalContext"]
         assert "applied" not in out["additionalContext"]
@@ -186,8 +192,9 @@ class TestVibeMusicHint:
 
     def test_music_next_context_is_the_directive(self) -> None:
         out = _run_hook(
-            "music_next",
+            "music",
             {"message": "♪ Skipping — generating next track...", "applied": True},
+            subcommand="next",
         )
         assert _STOP_MARK in out["additionalContext"]
         assert "applied" not in out["additionalContext"]
@@ -207,19 +214,25 @@ class TestRecMusicCatalogVerbs:
     """
 
     def test_rec_new_panel_counts_tracks_and_keeps_ids(self) -> None:
-        out = _run_hook("rec_new", [{"id": "abc123.mp3", "bytes": 10, "cached": False}])
+        out = _run_hook(
+            "rec",
+            [{"id": "abc123.mp3", "bytes": 10, "cached": False}],
+            subcommand="new",
+        )
         assert "abc123.mp3" in out["additionalContext"]  # ids reach the agent
         assert _STOP_MARK not in out["additionalContext"]
         assert out["updatedMCPToolOutput"].startswith("♪")
         assert "1" in out["updatedMCPToolOutput"]  # one track
 
     def test_rec_list_panel_counts_recordings(self) -> None:
-        out = _run_hook("rec_list", {"recordings": [{"id": "a.mp3", "bytes": 3}]})
+        out = _run_hook(
+            "rec", {"recordings": [{"id": "a.mp3", "bytes": 3}]}, subcommand="list"
+        )
         assert "a.mp3" in out["additionalContext"]
         assert out["updatedMCPToolOutput"] == "♪ 1 recording(s) in the store"
 
     def test_rec_play_panel_names_ref(self) -> None:
-        out = _run_hook("rec_play", {"played": "take-1.mp3"})
+        out = _run_hook("rec", {"played": "take-1.mp3"}, subcommand="play")
         assert "take-1.mp3" in out["additionalContext"]
         assert out["updatedMCPToolOutput"] == "♪ playing take-1.mp3"
 
@@ -227,36 +240,40 @@ class TestRecMusicCatalogVerbs:
         # HIGH regression: the blob is the agent's payload (additionalContext),
         # but must NEVER be dumped into the compact panel line.
         blob = "QUJDREVGR0hJSktMTU5PUA=="
-        out = _run_hook("rec_get", {"id": "clip.mp3", "bytes": 16, "base64": blob})
+        out = _run_hook(
+            "rec", {"id": "clip.mp3", "bytes": 16, "base64": blob}, subcommand="get"
+        )
         assert blob in out["additionalContext"]
         assert blob not in out["updatedMCPToolOutput"]
         assert out["updatedMCPToolOutput"] == "♪ fetched clip.mp3 (16 bytes)"
 
     def test_rec_remove_panel_names_ref(self) -> None:
-        out = _run_hook("rec_remove", {"removed": "old.mp3"})
+        out = _run_hook("rec", {"removed": "old.mp3"}, subcommand="remove")
         assert "old.mp3" in out["additionalContext"]
         assert out["updatedMCPToolOutput"] == "♪ removed old.mp3"
 
     def test_music_new_panel_names_album(self) -> None:
-        out = _run_hook("music_new", {"album_id": "7f3a91"})
+        out = _run_hook("music", {"album_id": "7f3a91"}, subcommand="new")
         assert "7f3a91" in out["additionalContext"]
         assert out["updatedMCPToolOutput"] == "♪ generated album 7f3a91"
 
     def test_music_get_panel_names_album_keeps_path(self) -> None:
         out = _run_hook(
-            "music_get", {"album_id": "7f3a91", "path": "/dest/warm-7f3a91"}
+            "music",
+            {"album_id": "7f3a91", "path": "/dest/warm-7f3a91"},
+            subcommand="get",
         )
         assert "/dest/warm-7f3a91" in out["additionalContext"]  # the path reaches back
         assert out["updatedMCPToolOutput"] == "♪ exported 7f3a91"
 
     def test_music_remove_panel_names_album(self) -> None:
-        out = _run_hook("music_remove", {"removed": "7f3a91"})
+        out = _run_hook("music", {"removed": "7f3a91"}, subcommand="remove")
         assert out["updatedMCPToolOutput"] == "♪ removed album 7f3a91"
 
     def test_rec_get_not_found_error_reaches_context(self) -> None:
         # On failure the verbs return {"error":...}; the error guard surfaces it.
         detail = "no recording named 'missing.mp3'"
-        out = _run_hook("rec_get", {"error": detail})
+        out = _run_hook("rec", {"error": detail}, subcommand="get")
         assert "missing.mp3" in out["additionalContext"]
         assert _STOP_MARK not in out["additionalContext"]
         assert out["updatedMCPToolOutput"] == f"♪ error: {detail}"
@@ -301,13 +318,14 @@ class TestQueryToolsKeepData:
         assert out["updatedMCPToolOutput"] == "♪ Matilda · notify=y"
 
     def test_music_list_context_carries_the_data(self) -> None:
-        # music_list returns {"message", "programs"} — the panel counts programs.
+        # music list returns {"message", "programs"} — the panel counts programs.
         out = _run_hook(
-            "music_list",
+            "music",
             {
                 "message": "♪ 1 saved album(s):",
                 "programs": [{"id": "a1", "name": "focus-beats"}],
             },
+            subcommand="list",
         )
         assert "focus-beats" in out["additionalContext"]
         assert _STOP_MARK not in out["additionalContext"]

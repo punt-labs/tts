@@ -135,7 +135,7 @@ class TestVibeTraceLog:
     def test_record_sanitizes_control_chars_to_one_line(self, tmp_path: Path) -> None:
         """A style/name smuggling ``\\n``/``\\r``/a control char stays one line.
 
-        ``canonical_tag`` only trims the ends, so an MCP-controlled value can
+        Tag canonicalisation only trims the ends, so an MCP-controlled value can
         carry an embedded newline (which would forge a second ``[vibe-trace]``
         line) or a raw control byte (which would corrupt a terminal on ``cat``).
         ``record`` escapes them, so the appended record is exactly one physical

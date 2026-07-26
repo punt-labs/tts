@@ -1,21 +1,25 @@
-"""The recordings-store and music-catalog ``mic`` verbs, split out of server.py.
+"""The recordings-store ``mic`` verbs behind one subcommand-dispatched ``rec`` tool.
 
-Both are humble objects: each verb formats a JSON reply and calls exactly one
-:class:`~punt_vox.client_sync.VoxClientSync` op -- the same op the ``vox`` CLI
-hits, so the two surfaces share one code path and no logic is reimplemented
-here. server.py wires each verb onto the ``mic`` surface, handing in a client
-factory and (for the recordings store) a closure that yields the live session's
-synthesis defaults. Kept apart from server.py so that module stays under the
-module-size and class-count thresholds, mirroring ``vibe_command.py``: a tool
-module owns both its verbs and its own daemon-error envelope.
+``vox <group> <subcommand>`` maps to the MCP tool ``<group>`` with its first
+argument ``<subcommand>``; ``rec`` folds to the same shape as ``music``. One
+:class:`RecTool` collapses the five recordings verbs behind a ``subcommand``
+argument, routed through an explicit method table -- polymorphism over an
+``if``-ladder (PY-OO-6). Every verb formats a JSON reply and calls exactly one
+:class:`~punt_vox.client_sync.VoxClientSync` op -- the same op the ``vox rec``
+CLI hits, so both surfaces share one code path and no logic is reimplemented
+here.
+
+Held apart from server.py so that module stays under the module-size and
+class-count thresholds, mirroring ``server_music_tool.py``: a tool module owns
+both its verbs and its own daemon-error envelope.
 """
 
 from __future__ import annotations
 
 import base64
 import json
-from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, Self, final
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, Self, final
 
 from websockets.exceptions import WebSocketException
 
@@ -28,8 +32,12 @@ if TYPE_CHECKING:
 
     from punt_vox.client_sync import VoxClientSync
 
-# The daemon-transport faults every tool boundary funnels to a JSON _error; named
-# once so the rec/catalog verbs share one contract, mirroring the same tuple in
+__all__ = ["RecArgs", "RecSubcommand", "RecTool", "SessionDefaults"]
+
+RecSubcommand = Literal["new", "list", "play", "get", "remove"]
+
+# The daemon-transport faults every subcommand funnels to a JSON _error; named
+# once so the whole tool shares one contract, mirroring the same tuple in
 # server.py and vibe_command.py (each tool module owns its boundary handling).
 _DAEMON_ERRORS = (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError)
 
@@ -40,7 +48,7 @@ def _error(message: str) -> str:
 
 
 class SessionDefaults(Protocol):
-    """The session fields ``rec_new`` reads to fill unset synthesis defaults.
+    """The session fields ``rec new`` reads to fill unset synthesis defaults.
 
     A structural view of :class:`~punt_vox.server.SessionConfig`; server.py
     hands in a closure yielding the live session so this module never imports
@@ -68,16 +76,44 @@ class SessionDefaults(Protocol):
 
 
 @final
-class RecTools:
-    """The recordings-store ``mic`` verbs, as thin delegates to one engine op.
+@dataclass(frozen=True, slots=True)
+class RecArgs:
+    """The raw ``rec`` tool arguments bundled for a subcommand handler.
+
+    One frozen value object per call (PY-OO-3) instead of a fan of loose
+    parameters threaded through five handlers; each handler reads only the
+    fields it needs -- ``new`` the synthesis inputs, ``play``/``get``/``remove``
+    the bare store ``ref``.
+    """
+
+    subcommand: str
+    text: str | None = None
+    voice: str | None = None
+    language: str | None = None
+    # Wire-shaped optional list: the multi-voice segments FastMCP delivers, or
+    # absent (PY-TS-14 -- the tool schema needs the list shape).
+    segments: list[dict[str, str]] | None = None
+    rate: int = 90
+    name: str | None = None
+    stability: float | None = None
+    similarity: float | None = None
+    style: float | None = None
+    speaker_boost: bool | None = None
+    ref: str | None = None
+
+
+@final
+class RecTool:
+    """Dispatch one ``rec`` subcommand to its recordings-store handler.
 
     Twin of the ``vox rec`` CLI (:class:`~punt_vox.cli_rec.RecCli`): every verb
     formats a JSON reply and calls exactly one :class:`VoxClientSync` op -- the
-    same op the CLI hits, so both surfaces share one code path and no logic is
-    reimplemented here. The client factory is a seam a test replaces with an
+    same op the CLI hits. The client factory is a seam a test replaces with an
     in-memory stand-in, and the session provider yields the live synthesis
     defaults. An MCP caller is an agent, not a shell, so ``get`` returns the
-    recording's bytes (base64) rather than writing a host file.
+    recording's bytes (base64) rather than writing a host file. The subcommand
+    selects a handler through :data:`_HANDLERS`, an explicit method map -- never
+    ``getattr``-by-name (PY-TS-11).
     """
 
     __slots__ = ("_client_factory", "_session_provider")
@@ -94,8 +130,9 @@ class RecTools:
         self._session_provider = session_provider
         return self
 
-    def new(
+    def dispatch(
         self,
+        subcommand: RecSubcommand,
         text: str | None = None,
         voice: str | None = None,
         language: str | None = None,
@@ -105,58 +142,87 @@ class RecTools:
         stability: float | None = None,
         similarity: float | None = None,
         style: float | None = None,
-        speaker_boost: bool | None = None,  # noqa: FBT001 -- MCP tool schema requires bool param
+        speaker_boost: bool | None = None,  # noqa: FBT001 -- MCP schema requires bool
+        ref: str | None = None,
     ) -> str:
-        """Synthesize speech into the store and return its bare store id.
+        """Author, list, play, fetch, or delete stored recordings.
 
-        Pass a simple ``text`` string or a ``segments`` list. The reply carries
-        the daemon-issued id only -- never a daemon path -- so the agent
-        addresses the recording with ``rec_play``/``rec_get``/``rec_remove``.
+        The recordings store is one daemon-owned directory of MP3s; every reply
+        carries a bare store id, never a daemon path.
 
         Args:
-            text: Simple text to synthesize. Ignored when segments is provided.
-            voice: Default voice for all segments; falls back to the session
-                voice or provider default.
+            subcommand: The verb -- ``new`` synthesizes into the store; ``list``
+                shows it; ``play``/``get``/``remove`` act on a bare store ``ref``.
+            text: Simple text to synthesize (``new``). Ignored when segments set.
+            voice: Default voice; falls back to the session voice or provider.
             language: Default ISO 639-1 language code (e.g. 'de', 'ko').
             segments: Segment objects, each with "text" and optional "voice",
                 "language", and "vibe_tags".
             rate: Speech rate as a percentage. Defaults to 90.
-            name: Bare filename to store under (no path). Content-addressed
-                when omitted. Single-segment only.
+            name: Bare filename to store under (no path). Content-addressed when
+                omitted. Single-segment only.
             stability: ElevenLabs voice stability (0.0-1.0).
             similarity: ElevenLabs voice similarity boost (0.0-1.0).
             style: ElevenLabs voice style/expressiveness (0.0-1.0).
             speaker_boost: ElevenLabs speaker boost toggle.
+            ref: The bare store id ``play``/``get``/``remove`` act on.
 
         Returns:
-            JSON string: a list of ``{"id", "bytes", "cached"}`` -- one per
-            segment, the ``id`` being the bare store id.
+            JSON string: a list of ``{"id", "bytes", "cached"}`` for ``new``,
+            ``{"recordings": [...]}`` for ``list``, ``{"played"}``/
+            ``{"id", "bytes", "base64"}``/``{"removed"}`` for the ref verbs, and
+            an ``{"error": ...}`` envelope on a bad input or daemon fault.
         """
+        self._session_provider().refresh_from_config()
+        args = RecArgs(
+            subcommand,
+            text,
+            voice,
+            language,
+            segments,
+            rate,
+            name,
+            stability,
+            similarity,
+            style,
+            speaker_boost,
+            ref,
+        )
+        handler = self._HANDLERS.get(subcommand)
+        if handler is None:
+            return _error(f"unknown rec subcommand: {subcommand!r}")
+        return handler(self, args)
+
+    def _new(self, args: RecArgs) -> str:
+        """Synthesize speech into the store; return a bare id per segment."""
         session = self._session_provider()
-        session.refresh_from_config()
         # Reject bad voice settings before any round-trip as a clean {"error"}
-        # envelope (the sibling verbs' contract), not a bare exception through
-        # the MCP tool.
-        spec = SynthesisSpec(stability=stability, similarity=similarity, style=style)
+        # envelope (the sibling verbs' contract), not a bare exception.
+        spec = SynthesisSpec(
+            stability=args.stability, similarity=args.similarity, style=args.style
+        )
         try:
             spec.validate()
         except ValueError as exc:
             return _error(str(exc))
+        segments = args.segments
         if segments is None:
-            if text is None:
+            if args.text is None:
                 return _error("Provide text or segments.")
-            segments = [{"text": text}]
-        if name is not None and len(segments) > 1:
+            segments = [{"text": args.text}]
+        if args.name is not None and len(segments) > 1:
             return _error("name only supported for single-segment calls")
         # The daemon owns the store and is the sole authority on name validity:
         # an absent (None) name is content-addressed; an explicit name --
         # including "" -- is sent for the daemon to reject pre-ack (``is not
         # None``, not truthiness, to match the client and the CLI).
-        single_name = name if name is not None and len(segments) == 1 else None
+        single_name = (
+            args.name if args.name is not None and len(segments) == 1 else None
+        )
         client = self._client_factory()
 
         def _handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:
-            # Bare id only -- no store path leaks to the agent (D-7, CLI parity).
+            # Bare id only -- no store path leaks to the agent (CLI parity).
             result = client.record(seg_text, seg_spec, name=single_name)
             return {
                 "id": result.name,
@@ -165,22 +231,22 @@ class RecTools:
             }
 
         defaults = SynthesisSpec(
-            voice=voice or session.voice,
-            language=language,
-            rate=rate,
+            voice=args.voice or session.voice,
+            language=args.language,
+            rate=args.rate,
             provider=session.provider,
             model=session.model,
-            stability=stability,
-            similarity=similarity,
-            style=style,
-            speaker_boost=speaker_boost,
+            stability=args.stability,
+            similarity=args.similarity,
+            style=args.style,
+            speaker_boost=args.speaker_boost,
             vibe_tags=session.vibe_tags,
         )
         return SegmentBatch(segments, defaults).render(
             handler=_handler, error_label="Record"
         )
 
-    def list_recordings(self) -> str:
+    def _list(self, _args: RecArgs) -> str:
         """List the store's recordings as ``{"recordings": [{"id", "bytes"}]}``."""
         try:
             entries = self._client_factory().rec_list()
@@ -189,101 +255,53 @@ class RecTools:
         rows = [{"id": e.name, "bytes": e.byte_count} for e in entries]
         return json.dumps({"recordings": rows})
 
-    def play(self, ref: str) -> str:
+    def _play(self, args: RecArgs) -> str:
         """Play recording *ref* on the daemon host; return ``{"played": ref}``."""
+        if args.ref is None:
+            return _error("rec play requires ref")
         try:
-            self._client_factory().play(ref)
+            self._client_factory().play(args.ref)
         except (ValueError, *_DAEMON_ERRORS) as exc:
             return _error(str(exc))
-        return json.dumps({"played": ref})
+        return json.dumps({"played": args.ref})
 
-    def get(self, ref: str) -> str:
+    def _get(self, args: RecArgs) -> str:
         """Return recording *ref*'s bytes, base64-encoded, for the agent.
 
         The CLI ``rec get`` writes ``./<ref>`` to the caller's directory; an MCP
         caller is an agent with no such directory, so the bytes come back inline
         (base64) rather than landing on the daemon host's filesystem.
-
-        Returns:
-            JSON string ``{"id", "bytes", "base64"}`` -- ``bytes`` is the decoded
-            length, ``base64`` the payload.
         """
+        if args.ref is None:
+            return _error("rec get requires ref")
         try:
-            data = self._client_factory().fetch(ref)
+            data = self._client_factory().fetch(args.ref)
         except (ValueError, *_DAEMON_ERRORS) as exc:
             return _error(str(exc))
         return json.dumps(
-            {"id": ref, "bytes": len(data), "base64": base64.b64encode(data).decode()}
+            {
+                "id": args.ref,
+                "bytes": len(data),
+                "base64": base64.b64encode(data).decode(),
+            }
         )
 
-    def remove(self, ref: str) -> str:
+    def _remove(self, args: RecArgs) -> str:
         """Delete recording *ref* from the store; return ``{"removed": ref}``."""
+        if args.ref is None:
+            return _error("rec remove requires ref")
         try:
-            self._client_factory().rec_remove(ref)
+            self._client_factory().rec_remove(args.ref)
         except (ValueError, *_DAEMON_ERRORS) as exc:
             return _error(str(exc))
-        return json.dumps({"removed": ref})
+        return json.dumps({"removed": args.ref})
 
-
-@final
-class MusicCatalogTools:
-    """The catalog-authoring ``mic`` verbs (``music_new``/``get``/``remove``).
-
-    Twin of the ``vox music new``/``get``/``remove`` CLI verbs: each formats a
-    JSON reply and calls one :class:`VoxClientSync` catalog op -- the same op the
-    CLI hits. Distinct from the ``music`` on/off tool, which drives the running
-    Program; these mutate the catalog and leave the active Program untouched.
-    An album is a multi-part directory, so ``get`` exports it to an agent-named
-    destination (the locator form) rather than returning inline bytes.
-    """
-
-    __slots__ = ("_client_factory",)
-    _client_factory: Callable[[], VoxClientSync]
-
-    def __new__(cls, client_factory: Callable[[], VoxClientSync]) -> Self:
-        self = super().__new__(cls)
-        self._client_factory = client_factory
-        return self
-
-    def new(self, prompt: str, name: str | None = None) -> str:
-        """Generate one track into a fresh catalog album; return its bare id.
-
-        The *prompt* is the finished ElevenLabs descriptive prompt, sent
-        verbatim -- vox never expands it. Generation runs immediately (no
-        confirmation) and parks the track in the catalog, leaving the active
-        Program's mode, pool, and playback exactly as it found them.
-
-        Returns:
-            JSON string ``{"album_id": "<id>"}``.
-        """
-        try:
-            album_id = self._client_factory().music_new(prompt, name)
-        except (ValueError, *_DAEMON_ERRORS) as exc:
-            return _error(str(exc))
-        return json.dumps({"album_id": album_id})
-
-    def get(self, album_id: str, dest: str) -> str:
-        """Export album *album_id* into directory *dest*; return the locator.
-
-        An album is a directory of parts, too large to return inline, so -- with
-        no shell CWD to default to -- the agent names *dest* and vox writes
-        ``<dest>/<album-name>/`` there, refusing a collision. The reply carries
-        the written path, the store-locator form of the CLI ``music get``.
-
-        Returns:
-            JSON string ``{"album_id", "path"}`` -- ``path`` is the written
-            album directory.
-        """
-        try:
-            target = self._client_factory().music_get(album_id, Path(dest))
-        except (ValueError, *_DAEMON_ERRORS) as exc:
-            return _error(str(exc))
-        return json.dumps({"album_id": album_id, "path": str(target)})
-
-    def remove(self, album_id: str) -> str:
-        """Delete catalog album *album_id* (a playing album is refused, D-2)."""
-        try:
-            self._client_factory().music_remove(album_id)
-        except (ValueError, *_DAEMON_ERRORS) as exc:
-            return _error(str(exc))
-        return json.dumps({"removed": album_id})
+    # The subcommand -> handler map: an explicit literal of the class's own
+    # methods, never getattr-by-name (PY-TS-11 forbids introspective dispatch).
+    _HANDLERS: ClassVar[dict[str, Callable[[RecTool, RecArgs], str]]] = {
+        "new": _new,
+        "list": _list,
+        "play": _play,
+        "get": _get,
+        "remove": _remove,
+    }

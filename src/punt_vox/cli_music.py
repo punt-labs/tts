@@ -8,21 +8,27 @@ Program; authoring verbs (new, get, remove) mutate the saved-album catalog.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import json
+import sys
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Annotated, NoReturn, Self, final
+from typing import Annotated, NoReturn, Self, cast, final
 
 import typer
 from websockets.exceptions import WebSocketException
 
 from punt_vox.catalog_gateway import CatalogGateway
+from punt_vox.cli_io import OutputFlags
 from punt_vox.client_catalog_gateway import ClientCatalogGateway
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_gateway import ClientProgramGateway
 from punt_vox.client_sync import VoxClientSync
+from punt_vox.config import ConfigStore
+from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.program_gateway import ProgramGateway
-from punt_vox.types_programs.control import SelectionRequest
+from punt_vox.types_programs.control import SelectionRequest, StartRequest
+from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.types_programs.status import ProgramStatus
 
 __all__ = ["MusicCli", "build_music_app"]
@@ -37,32 +43,64 @@ _GATEWAY_ERRORS = (
     ValueError,
 )
 
+# The three output flags, redeclared on every verb so ``--json`` parses AFTER
+# the subcommand (``vox music list --json``), not only before it (vox-cnak). The
+# shared ``OutputFlags`` ORs both positions together (cli_io.OutputFlags.apply).
+_JsonOutput = Annotated[bool, typer.Option("--json", help="Output JSON.")]
+_Verbose = Annotated[
+    bool, typer.Option("--verbose", "-v", help="Enable debug logging.")
+]
+_Quiet = Annotated[
+    bool, typer.Option("--quiet", "-q", help="Suppress non-JSON output.")
+]
+
 
 @final
 class MusicCli:
     """The music commands: playback verbs plus catalog authoring (new/get/remove)."""
 
-    __slots__ = ("_catalog_factory", "_formatter", "_gateway_factory")
+    __slots__ = (
+        "_catalog_factory",
+        "_flags",
+        "_formatter",
+        "_gateway_factory",
+        "_vibe_source",
+    )
     _formatter: OutputFormatter
     _gateway_factory: Callable[[], ProgramGateway]
     _catalog_factory: Callable[[], CatalogGateway]
+    _flags: OutputFlags
+    _vibe_source: Callable[[], str | None]
 
     def __new__(
         cls,
         formatter: OutputFormatter,
         gateway_factory: Callable[[], ProgramGateway] | None = None,
         catalog_factory: Callable[[], CatalogGateway] | None = None,
+        flags: OutputFlags | None = None,
+        vibe_source: Callable[[], str | None] | None = None,
     ) -> Self:
         self = super().__new__(cls)
         self._formatter = formatter
         self._gateway_factory = gateway_factory or cls._default_gateway
         self._catalog_factory = catalog_factory or cls._default_catalog
+        self._flags = flags if flags is not None else OutputFlags(formatter)
+        self._vibe_source = vibe_source or cls._default_vibe
         return self
 
     @staticmethod
     def _default_gateway() -> ProgramGateway:
         """Build the production gateway -- a fresh WebSocket client per command."""
         return ClientProgramGateway(VoxClientSync())
+
+    @staticmethod
+    def _default_vibe() -> str | None:
+        """Return the session mood from config, so ``on`` sends the same vibe.
+
+        Reads the same ``vibe`` field the MCP tool sends from the session, so the
+        CLI ``on`` and the ``music`` tool start a Program with one mood contract.
+        """
+        return ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read().vibe
 
     @staticmethod
     def _default_catalog() -> CatalogGateway:
@@ -87,8 +125,96 @@ class MusicCli:
         except _GATEWAY_ERRORS as exc:
             self._fail(str(exc))
 
-    def list_programs(self) -> None:
+    def on(
+        self,
+        style: Annotated[
+            str | None, typer.Option("--style", help="Style tag, e.g. 'trance'.")
+        ] = None,
+        name: Annotated[
+            str | None, typer.Option("--name", help="Curated album handle to save.")
+        ] = None,
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
+    ) -> None:
+        """Start background music from an authored pool piped in on stdin.
+
+        Pipe the wire-form pool JSON (``{"base_prompt": ..., "variations":
+        [...]}``) on stdin: ``cat pool.json | vox music on --style trance``. With
+        no pipe (an interactive shell) or empty stdin, ``prompts`` is ``None`` and
+        the daemon falls back to its minimal literal prompt. A malformed pool is a
+        clean CLI error via the gateway guard. The vibe comes from config, so the
+        CLI and the ``music`` tool start a Program with the same mood contract.
+        """
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+        prompts = self._guard(self._read_pool)
+        # Canonicalise tags as the MCP tool does, so both surfaces build one request.
+        request = StartRequest(
+            style=StartRequest.canonical_tag(style),
+            vibe=self._vibe_source(),
+            name=StartRequest.canonical_tag(name),
+            prompts=prompts,
+        )
+        outcome = self._guard(lambda: self._gateway_factory().start(request))
+        self._formatter.emit(
+            {"music": "on", "applied": outcome.applied},
+            outcome.display("Generating music."),
+        )
+
+    @staticmethod
+    def _read_pool() -> PromptSet | None:
+        """Return the stdin pool as a PromptSet, or None when nothing is piped.
+
+        The ``isatty`` gate is the Unix pipeline convention: a pipe supplies the
+        pool; an interactive ``vox music on`` with no pipe, or empty stdin, sends
+        ``None`` so the daemon uses its minimal literal fallback. A piped payload
+        is parsed and validated by :meth:`_pool_from_wire`.
+        """
+        if sys.stdin.isatty():
+            return None
+        raw = sys.stdin.read().strip()
+        if not raw:
+            return None
+        return MusicCli._pool_from_wire(json.loads(raw))
+
+    @staticmethod
+    def _pool_from_wire(payload: object) -> PromptSet:
+        """Return the piped *payload* as a PromptSet, or raise on a malformed pool.
+
+        A piped payload must be a *complete* pool. ``from_wire`` maps an absent
+        ``base_prompt`` to ``None`` -- the daemon fallback, correct for the
+        no-pipe path but wrong here, where stdin clearly supplied a payload. So a
+        Mapping lacking a non-empty ``base_prompt`` is a malformed pool, not a
+        fallback: raise ``ValueError`` (as ``json.loads`` and ``from_wire`` also
+        do) so the caller's ``_guard`` renders a clean CLI error. A non-object
+        payload (list/string/number) is rejected by ``from_wire`` itself.
+        """
+        if not isinstance(payload, Mapping):
+            pool = PromptSet.from_wire(payload)
+        else:
+            mapping = cast("Mapping[str, object]", payload)
+            base = mapping.get("base_prompt")
+            if not (isinstance(base, str) and base.strip()):
+                detail = "pool must have a non-empty base_prompt and 12 variations"
+                raise ValueError(detail)
+            pool = PromptSet.from_wire(mapping)
+        # A piped payload is never the fallback: from_wire only returns None for
+        # an absent base, which the base check above already rejected.
+        if pool is None:
+            detail = "pool must have a non-empty base_prompt and 12 variations"
+            raise ValueError(detail)
+        return pool
+
+    def list_programs(
+        self,
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
+    ) -> None:
         """List catalog albums via the daemon, with their ready/total counts."""
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         albums = self._guard(lambda: self._gateway_factory().catalog())
         if not albums:
             self._formatter.emit({"programs": []}, "No saved albums.")
@@ -124,6 +250,9 @@ class MusicCli:
         name: Annotated[
             str | None, typer.Option("--name", help="Curated album name to replay.")
         ] = None,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
     ) -> None:
         """Replay an album by its bare id or name, or a tag radio by style/vibe.
 
@@ -131,6 +260,7 @@ class MusicCli:
         radio); the ``--style``/``--vibe``/``--name`` selectors keep the shipped
         per-vibe, cross-genre union radio -- both resolve.
         """
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         request = SelectionRequest(style=style, vibe=vibe, name=name, id=album_id)
         outcome = self._guard(lambda: self._gateway_factory().select(request))
         self._formatter.emit(
@@ -146,20 +276,34 @@ class MusicCli:
         name: Annotated[
             str | None, typer.Option("--name", help="Curated album handle.")
         ] = None,
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
     ) -> None:
         """Generate one track into a fresh catalog album; print its bare id.
 
-        The prompt is passed to the daemon verbatim (no LLM expansion). This
-        parks a track in the catalog and leaves the active Program untouched.
+        The prompt is wrapped as a single-track :class:`PromptSet` -- the same
+        authored-input object the MCP tool builds -- and passed to the daemon
+        verbatim (no LLM expansion). This parks a track in the catalog and leaves
+        the active Program untouched. A blank prompt is a clean CLI error via the
+        gateway guard (``PromptSet.single`` raises ``ValueError``).
         """
-        album_id = self._guard(lambda: self._catalog_factory().new(prompt, name))
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+        prompts = self._guard(lambda: PromptSet.single(prompt))
+        album_id = self._guard(lambda: self._catalog_factory().new(prompts, name))
         self._formatter.emit({"album_id": album_id}, album_id)
 
     def get(
         self,
         album_id: Annotated[str, typer.Argument(help="Album id to copy out.")],
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
     ) -> None:
         """Copy an album into the current directory as a directory of its parts."""
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         target = self._guard(
             lambda: self._catalog_factory().get(album_id, str(Path.cwd()))
         )
@@ -168,34 +312,60 @@ class MusicCli:
     def remove(
         self,
         album_id: Annotated[str, typer.Argument(help="Album id to delete.")],
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
     ) -> None:
         """Delete a saved album by id; a playing album is refused."""
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         self._guard(lambda: self._catalog_factory().remove(album_id))
         self._formatter.emit({"removed": album_id}, f"removed {album_id}")
 
-    def off(self) -> None:
+    def off(
+        self,
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
+    ) -> None:
         """Turn the music program off (stop playback); a no-op when already off.
 
         The one CLI stop verb, matching ``mic:music mode="off"``: both route the
         same daemon program-off op. A stop against an already-idle Program is
         idempotent -- the daemon acks and the CLI prints a clean confirmation.
         """
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         outcome = self._guard(lambda: self._gateway_factory().stop())
         self._formatter.emit(
             {"music": "off", "applied": outcome.applied},
             outcome.display("Music stopped."),
         )
 
-    def advance(self) -> None:
+    def advance(
+        self,
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
+    ) -> None:
         """Advance the active source to another Part."""
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         outcome = self._guard(lambda: self._gateway_factory().advance())
         self._formatter.emit(
             {"music": "next", "applied": outcome.applied},
             outcome.display("Advancing to another part."),
         )
 
-    def status(self) -> None:
+    def status(
+        self,
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
+    ) -> None:
         """Show the active source's authoritative status."""
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         report = self._guard(lambda: self._gateway_factory().status())
         self._formatter.emit(report.to_dict(), self._render_status(report))
 
@@ -214,13 +384,14 @@ class MusicCli:
         return "\n".join(lines)
 
 
-def build_music_app(formatter: OutputFormatter) -> typer.Typer:
+def build_music_app(formatter: OutputFormatter, flags: OutputFlags) -> typer.Typer:
     """Return the ``vox music`` Typer group with bound methods (no wrappers)."""
-    cli = MusicCli(formatter)
+    cli = MusicCli(formatter, flags=flags)
     app = typer.Typer(
-        help="Play saved albums and author the catalog (new/get/remove).",
+        help="Start, play, and author background music.",
         no_args_is_help=True,
     )
+    app.command("on")(cli.on)
     app.command("new")(cli.new)
     app.command("list")(cli.list_programs)
     app.command("play")(cli.play)

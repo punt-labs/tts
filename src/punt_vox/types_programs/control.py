@@ -32,6 +32,17 @@ class StartRequest:
     name: str | None = None
     prompts: PromptSet | None = None
 
+    @staticmethod
+    def canonical_tag(value: str | None) -> str | None:
+        """Return a trimmed tag, or ``None`` when it is absent or blank.
+
+        The one boundary normaliser both surfaces apply to a style/name/vibe tag
+        before building a request, so a whitespace-only tag is treated as absent
+        by both -- never an explicit ``""`` the daemon stores while the panel
+        reads it as no tag, and never a source of CLI/MCP divergence.
+        """
+        return (value or "").strip() or None
+
 
 @final
 @dataclass(frozen=True, slots=True)

@@ -1,7 +1,7 @@
 ---
 description: "Control background music generation"
 argument-hint: "on [--name ...] [style ...] | off | next | play <name> | list"
-allowed-tools: ["mcp__plugin_vox_mic__music", "mcp__plugin_vox_mic__music_play", "mcp__plugin_vox_mic__music_list", "mcp__plugin_vox_mic__music_next", "mcp__plugin_vox_mic__status"]
+allowed-tools: ["mcp__plugin_vox_mic__music", "mcp__plugin_vox_mic__status"]
 ---
 
 # /music command
@@ -66,11 +66,15 @@ style jazz` changes it.
 
 Parse `$ARGUMENTS`:
 
+Every music action is ONE call to the `music` MCP tool, whose first argument is
+`subcommand` (`on`/`off`/`play`/`next`/`list`/`new`/`get`/`remove`) -- uniform
+with `vox music <subcommand>` on the CLI.
+
 ### `on` (with optional `--name ...` and `style ...`)
 
-Call the `music` MCP tool with `mode="on"`. If the user provided style
-words after `on style`, join them and pass as `style`. If `--name` is
-provided, pass as `name`.
+Call `music` with `subcommand="on"`. If the user provided style words after
+`on style`, join them and pass as `style`. If `--name` is provided, pass as
+`name`.
 
 **Author the prompts.** Before calling the tool, write `base_prompt` plus
 exactly 12 `variations` for the requested style (see "Authoring prompts" below)
@@ -78,20 +82,20 @@ and pass them. Re-author them whenever the style or vibe changes.
 
 ### `off`
 
-Call the `music` MCP tool with `mode="off"`.
+Call `music` with `subcommand="off"`.
 
 ### `next`
 
-Call the `music_next` MCP tool. Triggers regeneration while the current
+Call `music` with `subcommand="next"`. Triggers regeneration while the current
 track keeps playing (gapless).
 
 ### `play <name>`
 
-Call the `music_play` MCP tool with the track name.
+Call `music` with `subcommand="play"` and the track name.
 
 ### `list`
 
-Call the `music_list` MCP tool and display the track library.
+Call `music` with `subcommand="list"` and display the track library.
 
 ### No argument
 

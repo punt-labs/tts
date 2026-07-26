@@ -28,7 +28,7 @@ import typer
 from websockets.exceptions import WebSocketException
 
 from punt_vox.bare_name import BareName
-from punt_vox.cli_io import TextInput
+from punt_vox.cli_io import OutputFlags, TextInput
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.output_formatter import OutputFormatter
@@ -151,24 +151,34 @@ _SpeakerBoostFlag = Annotated[
     bool, typer.Option("--speaker-boost", help="Enable ElevenLabs speaker boost.")
 ]
 _RefArg = Annotated[str, typer.Argument(help="Bare store recording id.")]
+_JsonOutput = Annotated[bool, typer.Option("--json", help="Output JSON.")]
+_Verbose = Annotated[
+    bool, typer.Option("--verbose", "-v", help="Enable debug logging.")
+]
+_Quiet = Annotated[
+    bool, typer.Option("--quiet", "-q", help="Suppress non-JSON output.")
+]
 
 
 @final
 class RecCli:
     """The recordings-store command implementations (a humble object)."""
 
-    __slots__ = ("_formatter", "_gateway_factory")
+    __slots__ = ("_flags", "_formatter", "_gateway_factory")
     _formatter: OutputFormatter
     _gateway_factory: Callable[[], RecordGateway]
+    _flags: OutputFlags
 
     def __new__(
         cls,
         formatter: OutputFormatter,
         gateway_factory: Callable[[], RecordGateway] | None = None,
+        flags: OutputFlags | None = None,
     ) -> Self:
         self = super().__new__(cls)
         self._formatter = formatter
         self._gateway_factory = gateway_factory or cls._default_gateway
+        self._flags = flags if flags is not None else OutputFlags(formatter)
         return self
 
     @staticmethod
@@ -203,6 +213,10 @@ class RecCli:
         similarity: _SimilarityOpt = None,
         style: _StyleOpt = None,
         speaker_boost: _SpeakerBoostFlag = False,  # noqa: FBT002 -- typer bool default
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
     ) -> None:
         """Synthesize speech into the store and print its bare id.
 
@@ -210,6 +224,7 @@ class RecCli:
         stdin. Prints only the store id -- no path, no host. Act on it with
         ``rec play``/``rec get``/``rec remove``.
         """
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         boost = speaker_boost if speaker_boost else None
         spec = self._validated_spec(
             SynthesisSpec(
@@ -241,8 +256,15 @@ class RecCli:
                 result.name,
             )
 
-    def list_recordings(self) -> None:
+    def list_recordings(
+        self,
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
+    ) -> None:
         """List the store's recording ids, one per line (``--json`` for bytes)."""
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         entries = self._run(lambda g: g.recordings())
         if not entries:
             self._formatter.emit({"recordings": []}, "No recordings.")
@@ -251,15 +273,31 @@ class RecCli:
         listing = "\n".join(e.name for e in entries)
         self._formatter.emit({"recordings": rows}, listing)
 
-    def play(self, ref: _RefArg) -> None:
+    def play(
+        self,
+        ref: _RefArg,
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
+    ) -> None:
         """Play recording *ref* on the daemon host."""
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         self._run(lambda g: g.play(ref))
         self._formatter.emit(
             {"played": ref}, f"played store recording {ref} on the daemon host"
         )
 
-    def get(self, ref: _RefArg) -> None:
+    def get(
+        self,
+        ref: _RefArg,
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
+    ) -> None:
         """Copy recording *ref* into the current directory under its store name."""
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         dest = Path.cwd() / self._bare_ref(ref)
         if dest.exists():
             # Fast-fail the common case before the slow fetch; _land_no_clobber's
@@ -275,8 +313,16 @@ class RecCli:
             self._fail(f"cannot write {dest}: {exc}")
         self._formatter.emit({"path": str(dest), "bytes": len(data)}, f"./{ref}")
 
-    def remove(self, ref: _RefArg) -> None:
+    def remove(
+        self,
+        ref: _RefArg,
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
+    ) -> None:
         """Delete recording *ref* from the store."""
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         self._run(lambda g: g.remove(ref))
         self._formatter.emit({"removed": ref}, f"removed {ref}")
 
@@ -330,9 +376,9 @@ class RecCli:
             raise
 
 
-def build_rec_app(formatter: OutputFormatter) -> typer.Typer:
+def build_rec_app(formatter: OutputFormatter, flags: OutputFlags) -> typer.Typer:
     """Return the ``vox rec`` Typer group with bound methods (no wrappers)."""
-    cli = RecCli(formatter)
+    cli = RecCli(formatter, flags=flags)
     app = typer.Typer(
         help="Author and manage stored recordings.",
         no_args_is_help=True,

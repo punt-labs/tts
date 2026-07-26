@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`vox music on` — CLI pool authoring from stdin (Audio Programs Phase 1.5).** The `vox music on` verb returns — 4.14.0 removed it — now as the structured-input authoring path: it reads a 12-variation pool as JSON on stdin (`cat pool.json | vox music on --style <genre>`, where `pool.json` is `{"base_prompt": "...", "variations": [... 12 ...]}`) and starts a generating program from it. With no piped input (a tty or empty stdin) it falls back to the daemon's minimal prompt. A malformed pool — bad JSON, the wrong variation count, or a non-object payload — is a clean CLI error, not a traceback.
+
+### Changed
+
+- **One MCP tool per audio group (Audio Programs Phase 1.5).** The `mic` surface collapses the twelve separate `music_*` and `rec_*` tools into one `music` tool and one `rec` tool, each taking a `subcommand` argument — `mic:music` with `subcommand` in `{on, off, play, next, new, list, get, remove}` and `mic:rec` with `subcommand` in `{new, list, play, get, remove}`. The mapping is uniform (`vox <group> <subcommand>` corresponds to `mic:<group> subcommand=<subcommand>`), so the CLI and MCP are two views of one structure. Both surfaces build one `PromptSet` and send it to the daemon; the `music new` wire key is `base_prompt`.
+
+### Fixed
+
+- **`--json` in the trailing position on the `music` and `rec` subcommands (vox-cnak).** `vox music list --json` and `vox rec list --json` were rejected because the sub-app commands did not declare the flag; they now accept `--json`/`--verbose`/`--quiet` in every position, matching the top-level commands.
+
 ## [4.14.0] - 2026-07-25
 
 ### Added

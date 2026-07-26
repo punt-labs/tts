@@ -12,16 +12,18 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from punt_vox.client_catalog_gateway import ClientCatalogGateway
+from punt_vox.types_programs.prompts import PromptSet
 
 
 def test_new_delegates_to_music_new_and_returns_the_id() -> None:
-    """new() forwards the prompt and name and returns the client's album id."""
+    """new() forwards the PromptSet and name and returns the client's album id."""
     client = MagicMock()
     client.music_new.return_value = "7f3a91"
+    prompts = PromptSet.single("warm pads")
 
-    album_id = ClientCatalogGateway(client).new("warm pads", "mix")
+    album_id = ClientCatalogGateway(client).new(prompts, "mix")
 
-    client.music_new.assert_called_once_with("warm pads", "mix")
+    client.music_new.assert_called_once_with(prompts, "mix")
     assert album_id == "7f3a91"
 
 

@@ -38,22 +38,49 @@ class PromptSet:
     variations: tuple[str, ...]
 
     @classmethod
-    def from_wire(cls, msg: Mapping[str, object]) -> Self | None:
+    def from_wire(cls, msg: object) -> Self | None:
         """Return the agent's prompt set parsed from a wire message, or None.
 
         A missing, JSON-null, or empty ``base_prompt`` (or ``variations``) is
         normalised to ``None`` so this shares the one validation funnel in
         :meth:`from_tool_args` (DRY): a half-supplied pair raises, both absent
         falls back to a minimal prompt, and a null base never seeds garbage.
+
+        Reject a non-object payload with ``ValueError`` -- valid JSON that is a
+        list, string, or number (``echo '[1,2]' | vox music on``) would otherwise
+        fail ``.get`` with an ``AttributeError``. The parameter is ``object`` so
+        this owns the type check at the wire boundary rather than trusting the
+        caller's ``json.loads`` result.
         """
-        raw_base = msg.get("base_prompt")
-        raw_vars = msg.get("variations")
-        variations = (
-            [str(v) for v in cast("list[object]", raw_vars)]
-            if isinstance(raw_vars, list) and raw_vars
-            else None
-        )
-        return cls.from_tool_args(str(raw_base) if raw_base else None, variations)
+        if not isinstance(msg, Mapping):
+            detail = "pool must be a JSON object with base_prompt and variations"
+            raise ValueError(detail)
+        # isinstance narrows to Mapping[Unknown, Unknown]; restore the wire shape.
+        mapping = cast("Mapping[str, object]", msg)
+        # Match voxd's wire rule (parse_optional_str): a PRESENT base_prompt must
+        # be a string -- reject a numeric/other JSON value rather than
+        # str()-coercing it. An absent base (None/missing) stays the fallback.
+        raw_base = mapping.get("base_prompt")
+        if raw_base is not None and not isinstance(raw_base, str):
+            detail = "base_prompt must be a string"
+            raise ValueError(detail)
+        variations = cls._wire_variations(mapping.get("variations"))
+        return cls.from_tool_args(raw_base or None, variations)
+
+    @staticmethod
+    def _wire_variations(raw: object) -> list[str] | None:
+        """Return the wire ``variations`` as strings, or None when absent.
+
+        A non-list or empty value is absent (None); a present non-string entry
+        is rejected (voxd's wire rule -- no str() coercion).
+        """
+        if not isinstance(raw, list) or not raw:
+            return None
+        items = cast("list[object]", raw)
+        if not all(isinstance(v, str) for v in items):
+            detail = "every variation must be a string"
+            raise ValueError(detail)
+        return cast("list[str]", items)
 
     @classmethod
     def from_tool_args(
@@ -88,6 +115,21 @@ class PromptSet:
             msg = "every variation must be a non-empty string"
             raise ValueError(msg)
         return cls(base=clean_base, variations=cleaned)
+
+    @classmethod
+    def single(cls, prompt: str) -> Self:
+        """Return a one-track set: the verbatim prompt as base, no variations.
+
+        The authored-input builder for ``music new``. Kept distinct from
+        :meth:`fallback` because ``new`` sends the prompt **untouched** -- no
+        ``". instrumental, loopable."`` decoration -- while still being the same
+        :class:`PromptSet` shape ``on`` produces, so both verbs author one object.
+        """
+        clean = prompt.strip()
+        if not clean:
+            msg = "prompt must be a non-empty string"
+            raise ValueError(msg)
+        return cls(base=clean, variations=())
 
     @classmethod
     def fallback(cls, style: str, mood: str) -> Self:

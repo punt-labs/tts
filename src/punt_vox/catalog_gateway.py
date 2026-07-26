@@ -10,7 +10,10 @@ and every path decision.
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from punt_vox.types_programs.prompts import PromptSet
 
 __all__ = ["CatalogGateway"]
 
@@ -19,8 +22,13 @@ __all__ = ["CatalogGateway"]
 class CatalogGateway(Protocol):
     """The catalog-authoring operations ``music new``/``get``/``remove`` issue."""
 
-    def new(self, prompt: str, name: str | None) -> str:
-        """Author one track into a fresh album; return its bare album id."""
+    def new(self, prompts: PromptSet, name: str | None) -> str:
+        """Author one track from *prompts* into a fresh album; return its id.
+
+        *prompts* is the one-track :class:`PromptSet` both surfaces build via
+        :meth:`PromptSet.single`, so the daemon receives the authored-input object
+        rather than a bare string.
+        """
         ...
 
     def get(self, album_id: str, dest_dir: str) -> str:

@@ -34,36 +34,44 @@ mood into 1–3 ElevenLabs expressive tags (`[frustrated]`, `[excited]`,
 ## Recordings
 
 The daemon owns a recordings store; you address a recording by its bare store
-id, never a path.
+id, never a path. One `mic:rec` tool takes a `subcommand`:
 
-- `mic:rec_new` — synthesize `text` into the store; returns the bare id.
-- `mic:rec_list` — list the stored recordings.
-- `mic:rec_play` — play a stored recording (by id) on the daemon host.
-- `mic:rec_get` — return a recording's bytes (base64) by id.
-- `mic:rec_remove` — delete a recording by id.
+- `mic:rec subcommand="new"` — synthesize `text` into the store; returns the bare id.
+- `mic:rec subcommand="list"` — list the stored recordings.
+- `mic:rec subcommand="play"` — play a stored recording (by id) on the daemon host.
+- `mic:rec subcommand="get"` — return a recording's bytes (base64) by id.
+- `mic:rec subcommand="remove"` — delete a recording by id.
 
 ## Music
 
-`mic:music` drives vibe-matched background music (`music_play`,
-`music_list`, `music_next`, `music`). **You author the prompts** — vox is
+One `mic:music` tool takes a `subcommand`. **You author the prompts** — vox is
 a pipe to ElevenLabs, it does not decide what a genre sounds like. On
-`mode="on"` (and on every style/vibe change) write a `base_prompt` plus
+`subcommand="on"` (and on every style/vibe change) write a `base_prompt` plus
 exactly 12 genre-accurate `variations`, one per pool slot.
+
+- `mic:music subcommand="on"` — start or re-pool the background program from your
+  `base_prompt` + 12 `variations`.
+- `mic:music subcommand="off"` — stop the program.
+- `mic:music subcommand="play"` — replay a saved album (by id/name/tags) from
+  disk; no generation, no credits.
+- `mic:music subcommand="next"` — optional manual skip (playback auto-advances).
+- `mic:music subcommand="list"` — list saved albums.
+
+Guidance:
 
 - Vary *within* the genre (form, tempo, mode, lead instrument, mood) — never
   drift to genre-alien instruments.
 - **Never name an artist, band, composer, or copyrighted work.** ElevenLabs
   rejects those (`bad_prompt`) — describe the music itself instead.
 - Music needs an ElevenLabs paid plan (~2,000 credits per ~3-minute track).
-  Playback auto-advances as tracks end; `music_next` is an optional manual skip.
 
-Catalog verbs (address a saved album by the id `music_list` prints):
+Catalog verbs (address a saved album by the id `list` prints):
 
-- `mic:music_new` — generate ONE track from a finished, verbatim prompt into a
-  fresh single-track catalog album. It does not disturb the running program.
-- `mic:music_get` — export a saved album by id into a destination directory
-  you name (`dest`); returns the written path/locator.
-- `mic:music_remove` — delete a saved album by id (refused while it is playing).
+- `mic:music subcommand="new"` — generate ONE track from a finished, verbatim
+  prompt into a fresh single-track catalog album. It does not disturb the running program.
+- `mic:music subcommand="get"` — export a saved album by id into a destination
+  directory you name (`dest`); returns the written path/locator.
+- `mic:music subcommand="remove"` — delete a saved album by id (refused while it is playing).
 
 ## Slash commands
 

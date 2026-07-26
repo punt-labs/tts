@@ -232,9 +232,14 @@ class VoxClientSync:
 
     # -- music catalog (music group) ----------------------------------------
 
-    def music_new(self, prompt: str, name: str | None = None) -> str:
-        """Author one track into a fresh catalog album; return its bare album id."""
-        return cast("str", self._runner.run(self._call("music_new", prompt, name)))
+    def music_new(self, prompts: PromptSet, name: str | None = None) -> str:
+        """Author one track into a fresh catalog album; return its bare album id.
+
+        Both surfaces build *prompts* as ``PromptSet.single(prompt)`` and send it,
+        so the daemon receives the authored-input object (its ``base`` as the wire
+        ``base_prompt``), never a bare string.
+        """
+        return cast("str", self._runner.run(self._call("music_new", prompts, name)))
 
     def music_get(self, album_id: str, dest_dir: Path) -> Path:
         """Copy an album into *dest_dir* as a directory of its parts."""

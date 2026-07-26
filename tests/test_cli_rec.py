@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import errno
 import io
+import json
 import os
 import re
 from pathlib import Path
@@ -24,6 +25,7 @@ from typer.testing import CliRunner
 from websockets.exceptions import WebSocketException
 
 from punt_vox.__main__ import app
+from punt_vox.cli_io import OutputFlags
 from punt_vox.cli_rec import RecCli, RecordGateway, build_rec_app
 from punt_vox.client import RecordingSummary, RecordResult
 from punt_vox.client_errors import VoxdProtocolError
@@ -432,8 +434,14 @@ def test_remove_not_found_is_clean_error() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _build_rec_app() -> typer.Typer:
+    """Build the rec Typer group with a formatter and its OutputFlags."""
+    fmt = OutputFormatter()
+    return build_rec_app(fmt, OutputFlags(fmt))
+
+
 def _rec_verb_names() -> set[str]:
-    rec_app = build_rec_app(OutputFormatter())
+    rec_app = _build_rec_app()
     return {c.name for c in rec_app.registered_commands if c.name is not None}
 
 
@@ -467,7 +475,7 @@ def test_output_dir_kept_only_on_install_desktop() -> None:
 
 
 def test_rec_app_no_subcommand_shows_help() -> None:
-    result = CliRunner().invoke(build_rec_app(OutputFormatter()), [])
+    result = CliRunner().invoke(_build_rec_app(), [])
     assert result.exit_code != 0 or "Usage" in result.output
 
 
@@ -478,5 +486,22 @@ _INTERNAL_LABEL = re.compile(r"\bD-[0-9]\b|\bDES-")
 
 def test_rec_help_carries_no_internal_labels() -> None:
     """No group/verb/option help leaks a design label."""
-    for text in app_help_texts(build_rec_app(OutputFormatter())):
+    for text in app_help_texts(_build_rec_app()):
         assert not _INTERNAL_LABEL.search(text), text
+
+
+def test_list_accepts_json_flag_after_the_subcommand() -> None:
+    """vox-cnak: --json parses AFTER the subcommand, not only before it."""
+    fmt = OutputFormatter()
+    flags = OutputFlags(fmt)
+    cli = RecCli(fmt, lambda: InMemoryRecordGateway(), flags=flags)
+    # A second command makes this a multi-command group (as `vox rec` is), so the
+    # runner treats "list" as the subcommand -- the position where --json failed.
+    app = typer.Typer()
+    app.command("list")(cli.list_recordings)
+    app.command("remove")(cli.remove)
+
+    result = CliRunner().invoke(app, ["list", "--json"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == {"recordings": []}

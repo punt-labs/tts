@@ -19,6 +19,7 @@ from mcp.server.fastmcp import FastMCP
 from websockets.exceptions import WebSocketException
 
 from punt_vox import __version__
+from punt_vox.client_catalog_gateway import ClientCatalogGateway
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_gateway import ClientProgramGateway
 from punt_vox.client_sync import VoxClientSync
@@ -28,12 +29,10 @@ from punt_vox.logging_config import (
     log_health,
     reapply_client_log_level,
 )
-from punt_vox.music_phrases import MusicMarquee
-from punt_vox.server_audio_tools import MusicCatalogTools, RecTools
+from punt_vox.server_audio_tools import RecTool
+from punt_vox.server_music_tool import MusicTool
 from punt_vox.synthesis_batch import SegmentBatch
-from punt_vox.types_programs.control import SelectionRequest, StartRequest
 from punt_vox.types_programs.mode import Mode
-from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe_command import MusicPreference, VibeCommand
 from punt_vox.vibe_trace import VibeTraceLog
@@ -44,6 +43,7 @@ if TYPE_CHECKING:  # annotation-only -- kept off the runtime import graph (PY-TS
 
     from mcp.types import ContentBlock
 
+    from punt_vox.catalog_gateway import CatalogGateway
     from punt_vox.program_gateway import ProgramGateway
     from punt_vox.vibe import VibeChange
 
@@ -224,17 +224,6 @@ class SessionConfig:
             self._voice = normalized
         return normalized
 
-    @staticmethod
-    def canonical_tag(value: str | None) -> str | None:
-        """Return a trimmed tag, or ``None`` when it is absent or blank.
-
-        The one boundary normalizer the music tools apply to a style/name/vibe
-        tag before it drives both the panel phrase and the daemon request, so a
-        whitespace-only tag is treated as absent by both -- never as an explicit
-        ``""`` the daemon stores while the panel reads it as no tag.
-        """
-        return (value or "").strip() or None
-
     def summary_sentence(self) -> str:
         """Return the startup state as a plain sentence, not a developer dump.
 
@@ -330,10 +319,6 @@ class SessionConfig:
 
 # Module-level singleton; initialized in run_server().
 _session: SessionConfig = SessionConfig()
-
-# Authors the DJ-booth panel line for each music action. A module-level value so
-# it adds no procedural surface; tests replace it with a deterministic chooser.
-_marquee: MusicMarquee = MusicMarquee()
 
 # The genre the agent last set music to. The music tools keep it current on every
 # playback change so the vibe re-pool hint never names a stale style (the daemon
@@ -501,24 +486,17 @@ def unmute(
     )
 
 
-# Register the recordings + catalog verbs as `mic` tools at parity with the CLI
-# (D-7). Each is a bound method of a humble object, so FastMCP builds the schema
-# from the method signature (minus self) and the daemon still owns containment
-# and audit -- the tool is a thin caller. Bare registration statements add no
-# module-level public name; the `_LoggingFastMCP.call_tool` override names each.
-# rec_new fills its synthesis defaults from a closure yielding the live session,
-# refreshed on each call; the classes themselves live in server_audio_tools.
-_rec_tools = RecTools(_voxd_client, lambda: _session)
-_music_catalog_tools = MusicCatalogTools(_voxd_client)
+# The single `rec` tool: one subcommand-dispatched verb (new/list/play/get/
+# remove), replacing the five separate rec tools. FastMCP builds the schema from
+# the `dispatch` signature (minus self) and the daemon still owns containment and
+# audit -- the tool is a thin caller. rec new fills its synthesis defaults from a
+# closure yielding the live session, refreshed on each call; the classes live in
+# server_audio_tools. The bare registration adds no module-level public name; the
+# `_LoggingFastMCP.call_tool` override names each. The music catalog verbs are
+# folded into the single `music` tool below (server_music_tool).
+_rec_tool = RecTool(_voxd_client, lambda: _session)
 
-mcp.tool(name="rec_new")(_rec_tools.new)
-mcp.tool(name="rec_list")(_rec_tools.list_recordings)
-mcp.tool(name="rec_play")(_rec_tools.play)
-mcp.tool(name="rec_get")(_rec_tools.get)
-mcp.tool(name="rec_remove")(_rec_tools.remove)
-mcp.tool(name="music_new")(_music_catalog_tools.new)
-mcp.tool(name="music_get")(_music_catalog_tools.get)
-mcp.tool(name="music_remove")(_music_catalog_tools.remove)
+mcp.tool(name="rec")(_rec_tool.dispatch)
 
 
 @mcp.tool()
@@ -553,151 +531,25 @@ def vibe(
     )
 
 
-@mcp.tool()
-def music(
-    mode: str,
-    style: str | None = None,
-    name: str | None = None,
-    base_prompt: str | None = None,
-    variations: list[str] | None = None,
-) -> str:
-    """Control background music generation.
-
-    vox never interprets a genre -- YOU, the calling agent, author the prompts.
-    On ``on`` (and on any style/vibe change) supply ``base_prompt`` plus exactly
-    12 literal, genre-accurate ``variations`` (one per pool slot); voxd generates
-    track ``i`` from ``base_prompt`` + ``variations[i]``. Omit both to fall back
-    to ``"<style> music, <mood>. instrumental, loopable."``. Never add generic
-    "background music for deep work / smooth ambient texture / driving beat"
-    boilerplate -- it homogenizes every genre. See ``/music`` for a worked
-    example.
-
-    ``mode`` is "on"/"off"; ``style`` persists across calls; ``name`` replays or
-    saves a track; ``base_prompt`` + the 12 ``variations`` require each other.
-    Returns a JSON string with a ``message`` line and the ``applied`` result.
-    """
-    _session.refresh_from_config()
-    if mode not in ("on", "off"):
-        return _error(f"Invalid mode '{mode}'. Use on/off.")
-    # Canonicalize tags so the panel phrase and the daemon request agree on
-    # presence: a blank style/name is absent (None), never an explicit "".
-    style = SessionConfig.canonical_tag(style)
-    name = SessionConfig.canonical_tag(name)
-    try:
-        if mode == "on":
-            prompts = PromptSet.from_tool_args(base_prompt, variations)
-            outcome = _program_tools.start(
-                StartRequest(
-                    style=style, vibe=_session.vibe, name=name, prompts=prompts
-                )
-            )
-            # confirm_* adopts the genre and traces only on an applied outcome, so
-            # a rejected/lost-race start leaves the register untouched.
-            _music_pref.confirm_started(
-                outcome, style, _session.vibe, authored=bool(variations)
-            )
-            message = f"\u266a {outcome.display(_marquee.generating(style))}"
-        else:
-            outcome = _program_tools.stop()
-            _music_pref.confirm_stopped(outcome)
-            message = f"\u266a {outcome.display(_marquee.stopped())}"
-    except (ValueError, *_DAEMON_ERRORS) as exc:  # malformed prompt or daemon fault
-        return _error(str(exc))
-    return json.dumps({"message": message, "applied": outcome.applied})
+# The single `music` tool: one subcommand-dispatched verb (on/off/play/next/
+# list/new/get/remove), replacing the seven separate music tools. It reads the
+# module globals through call-time closures so a test patching `_program_tools`,
+# `_session`, or `_music_pref` is honoured on the next call; the classes live in
+# server_music_tool. The bare registration adds no module-level public name; the
+# `_LoggingFastMCP.call_tool` override names each call.
+def _catalog_gateway() -> CatalogGateway:
+    """Build the production catalog gateway -- a fresh WebSocket client per call."""
+    return ClientCatalogGateway(VoxClientSync())
 
 
-@mcp.tool()
-def music_play(
-    style: str | None = None,
-    vibe: str | None = None,
-    name: str | None = None,
-    album_id: str | None = None,
-) -> str:
-    """Replay a Selection -- from disk, no generation, no credits.
+_music_tool = MusicTool(
+    lambda: _program_tools,
+    _catalog_gateway,
+    lambda: _session,
+    lambda: _music_pref,
+)
 
-    Resolve a replay by tags or by an exact id: ``style``/``vibe``/``name`` build
-    a tag query (a match on multiple albums plays a union radio), while
-    ``album_id`` is a direct single-album lookup. Omit all four to replay every
-    album (the cross-genre radio).
-
-    Returns:
-        JSON string with a ``message`` line and the ``applied`` result.
-    """
-    _session.refresh_from_config()
-    # Canonicalize tags so the panel phrase and the daemon query agree: a blank
-    # tag is a wildcard (None), never an "" filter. album_id is an id, not a tag.
-    style = SessionConfig.canonical_tag(style)
-    vibe = SessionConfig.canonical_tag(vibe)
-    name = SessionConfig.canonical_tag(name)
-    request = SelectionRequest(style=style, vibe=vibe, name=name, id=album_id)
-    try:
-        outcome = _program_tools.select(request)
-    except (ValueError, *_DAEMON_ERRORS) as exc:  # bad id / no match, or daemon fault
-        return _error(str(exc))
-    # Name the re-pool genre from the live catalog (not the possibly-absent style
-    # arg); an id/name replay still names its genre, a union resolves to None. A
-    # rejected replay ignores it in confirm_selected, so skip the catalog round-trip;
-    # on the applied path a catalog fault falls back to None, never failing the replay.
-    resolved_style: str | None = None
-    if outcome.applied:
-        try:
-            resolved_style = request.resolved_style(_program_tools.catalog())
-        except _DAEMON_ERRORS:
-            resolved_style = None
-    # confirm_selected traces and adopts only on an applied outcome, so a rejected
-    # replay leaves the register untouched.
-    _music_pref.confirm_selected(outcome, resolved_style, vibe, name)
-    message = f"\u266a {outcome.display(_marquee.replay(name))}"
-    return json.dumps({"message": message, "applied": outcome.applied})
-
-
-@mcp.tool()
-def music_list() -> str:
-    """Show saved albums with their tags and ready/total part counts.
-
-    Returns:
-        JSON string with a ``message`` line and a ``programs`` list.
-    """
-    _session.refresh_from_config()
-    try:
-        summaries = _program_tools.catalog()
-    except _DAEMON_ERRORS as exc:
-        return _error(str(exc))
-    if not summaries:
-        message = "\u266a No saved albums."
-    else:
-        lines = [f"\u266a {len(summaries)} saved album(s):"]
-        lines.extend(f"  \u266a {summary.display_line()}" for summary in summaries)
-        message = "\n".join(lines)
-    programs = [
-        {
-            "id": s.id,
-            "style": s.style,
-            "vibe": s.vibe,
-            "name": s.name,
-            "format": s.format,
-            "ready": s.ready,
-            "total": s.total,
-        }
-        for s in summaries
-    ]
-    return json.dumps({"message": message, "programs": programs})
-
-
-@mcp.tool()
-def music_next() -> str:
-    """Advance to another Part -- the one ungated skip/next transition.
-
-    Returns:
-        JSON string with a ``message`` line and the ``applied`` result.
-    """
-    _session.refresh_from_config()
-    try:
-        outcome = _program_tools.advance()
-    except _DAEMON_ERRORS as exc:
-        return _error(str(exc))
-    message = f"♪ {outcome.display(_marquee.skip())}"
-    return json.dumps({"message": message, "applied": outcome.applied})
+mcp.tool(name="music")(_music_tool.dispatch)
 
 
 @mcp.tool()

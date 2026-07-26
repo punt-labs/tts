@@ -9,6 +9,8 @@ CliRunner smoke tests confirm build_music_app wires the Typer group.
 
 from __future__ import annotations
 
+import io
+import json
 import re
 from pathlib import Path
 from typing import Self, final
@@ -21,12 +23,14 @@ from _program_fakes import FakeProgramGateway
 from typer.testing import CliRunner
 from websockets.exceptions import WebSocketException
 
+from punt_vox.cli_io import OutputFlags
 from punt_vox.cli_music import MusicCli, build_music_app
 from punt_vox.client_errors import VoxdProtocolError
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.types_programs import Reason
 from punt_vox.types_programs.control import ProgramSummary
 from punt_vox.types_programs.identifiers import ProgramName
+from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.voxd.programs import Part, Program, ProgramState
 from punt_vox.voxd.programs.playback_policy import Advance, AdvanceResult
@@ -56,6 +60,12 @@ def _emitted(formatter: MagicMock) -> tuple[object, str]:
     return payload, text
 
 
+def _build_music_app() -> typer.Typer:
+    """Build the music Typer group with a formatter and its OutputFlags."""
+    fmt = OutputFormatter()
+    return build_music_app(fmt, OutputFlags(fmt))
+
+
 @final
 class InMemoryCatalogGateway:
     """A filesystem-backed ``CatalogGateway`` fake for the authoring verbs."""
@@ -81,8 +91,8 @@ class InMemoryCatalogGateway:
         """Return the recorded ``(verb, arg)`` calls for assertions."""
         return self._calls
 
-    def new(self, prompt: str, name: str | None) -> str:
-        self._calls.append(("new", prompt))
+    def new(self, prompts: PromptSet, name: str | None) -> str:
+        self._calls.append(("new", prompts.base))
         album_id = name or f"{len(self._albums):06x}"
         self._albums[album_id] = f"album-{album_id}"
         return album_id
@@ -218,9 +228,19 @@ def test_remove_refuses_playing_album() -> None:
 
 
 def test_music_group_exposes_the_unified_verb_set() -> None:
-    app = build_music_app(OutputFormatter())
+    app = _build_music_app()
     names = {c.name for c in app.registered_commands if c.name is not None}
-    assert names == {"new", "list", "play", "off", "get", "remove", "next", "status"}
+    assert names == {
+        "on",
+        "new",
+        "list",
+        "play",
+        "off",
+        "get",
+        "remove",
+        "next",
+        "status",
+    }
 
 
 # A design-decision label (D-1..D-9, DES-0xx) or the stale "consume-only" claim
@@ -230,7 +250,7 @@ _INTERNAL_LABEL = re.compile(r"\bD-[0-9]\b|\bDES-|consume-only")
 
 def test_music_help_carries_no_internal_labels() -> None:
     """No group/verb/option help leaks a design label or stale phrasing."""
-    for text in app_help_texts(build_music_app(OutputFormatter())):
+    for text in app_help_texts(_build_music_app()):
         assert not _INTERNAL_LABEL.search(text), text
 
 
@@ -422,8 +442,147 @@ def test_status_idle() -> None:
 
 
 def test_app_no_subcommand_shows_help() -> None:
-    app = build_music_app(OutputFormatter())
+    app = _build_music_app()
 
     result = CliRunner().invoke(app, [])
 
     assert result.exit_code != 0 or "Usage" in result.output
+
+
+def test_list_accepts_json_flag_after_the_subcommand() -> None:
+    """vox-cnak: --json parses AFTER the subcommand, not only before it."""
+    fmt = OutputFormatter()
+    flags = OutputFlags(fmt)
+    cli = MusicCli(fmt, lambda: FakeProgramGateway(), flags=flags)
+    # A second command makes this a multi-command group (as `vox music` is), so
+    # the runner treats "list" as the subcommand -- where --json failed (vox-cnak).
+    app = typer.Typer()
+    app.command("list")(cli.list_programs)
+    app.command("off")(cli.off)
+
+    result = CliRunner().invoke(app, ["list", "--json"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == {"programs": []}
+
+
+# ---------------------------------------------------------------------------
+# on -- start music from an authored pool piped on stdin
+# ---------------------------------------------------------------------------
+
+
+def _on_cli(gateway: FakeProgramGateway, vibe: str | None = None) -> MusicCli:
+    """Build a MusicCli whose vibe comes from a pinned source, not config."""
+    return MusicCli(
+        MagicMock(spec=OutputFormatter), lambda: gateway, vibe_source=lambda: vibe
+    )
+
+
+def test_on_pipes_the_authored_pool_into_the_start_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pool = {"base_prompt": "deep techno", "variations": [f"v{i}" for i in range(12)]}
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(pool)))
+    fake = FakeProgramGateway()
+
+    _on_cli(fake).on(style="trance")
+
+    request = fake.calls[0].request
+    assert request is not None and request.prompts is not None
+    assert request.prompts.base == "deep techno"
+    assert request.prompts.variations == tuple(f"v{i}" for i in range(12))
+    assert request.style == "trance"
+
+
+def test_on_with_empty_stdin_falls_back_to_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No pipe (empty stdin) sends prompts=None -- the daemon's literal fallback."""
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    fake = FakeProgramGateway()
+
+    _on_cli(fake).on()
+
+    request = fake.calls[0].request
+    assert request is not None and request.prompts is None
+
+
+def test_on_carries_the_config_vibe(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    fake = FakeProgramGateway()
+
+    _on_cli(fake, vibe="focused").on()
+
+    request = fake.calls[0].request
+    assert request is not None and request.vibe == "focused"
+
+
+def test_on_malformed_pool_is_a_clean_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("sys.stdin", io.StringIO("{not json"))
+    fake = FakeProgramGateway()
+
+    with pytest.raises(typer.Exit):
+        _on_cli(fake).on()
+    assert fake.calls == []  # rejected before the gateway start
+
+
+def test_on_wrong_variation_count_is_a_clean_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pool = {"base_prompt": "x", "variations": ["only one"]}
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(pool)))
+    fake = FakeProgramGateway()
+
+    with pytest.raises(typer.Exit):
+        _on_cli(fake).on()
+    assert fake.calls == []
+
+
+@pytest.mark.parametrize("payload", ["[1, 2]", '"a bare string"', "42"])
+def test_on_non_object_pool_is_a_clean_error(
+    monkeypatch: pytest.MonkeyPatch, payload: str
+) -> None:
+    """Valid JSON that is not an object is a clean CLI error, not a traceback."""
+    monkeypatch.setattr("sys.stdin", io.StringIO(payload))
+    fake = FakeProgramGateway()
+
+    with pytest.raises(typer.Exit):
+        _on_cli(fake).on()
+    assert fake.calls == []  # rejected before the gateway start
+
+
+@pytest.mark.parametrize(
+    "payload",
+    ["{}", '{"style": "trance"}', '{"variations": ["a", "b"]}'],
+)
+def test_on_incomplete_object_pool_is_a_clean_error(
+    monkeypatch: pytest.MonkeyPatch, payload: str
+) -> None:
+    """A piped object lacking a non-empty base_prompt is malformed, not a fallback.
+
+    Nothing piped falls back to the daemon (None); but a piped object -- empty,
+    or with variations and no base_prompt -- clearly supplied a payload, so it is
+    a clean CLI error rather than a silent fallback to the minimal literal prompt.
+    """
+    monkeypatch.setattr("sys.stdin", io.StringIO(payload))
+    fake = FakeProgramGateway()
+
+    with pytest.raises(typer.Exit):
+        _on_cli(fake).on()
+    assert fake.calls == []  # rejected before the gateway start
+
+
+def test_on_blank_style_and_name_reach_the_daemon_as_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A blank/whitespace style or name is canonicalised to None in the request,
+    matching the MCP tool so the two surfaces build one StartRequest."""
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    fake = FakeProgramGateway()
+
+    _on_cli(fake).on(style="   ", name="  ")
+
+    request = fake.calls[0].request
+    assert request is not None
+    assert request.style is None
+    assert request.name is None

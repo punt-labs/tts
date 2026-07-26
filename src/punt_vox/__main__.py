@@ -911,14 +911,14 @@ def mcp() -> None:
 # music subcommand group (consume-only; implementation in cli_music)
 # ---------------------------------------------------------------------------
 
-app.add_typer(build_music_app(_formatter), name="music")
+app.add_typer(build_music_app(_formatter, _flags), name="music")
 
 
 # ---------------------------------------------------------------------------
 # rec subcommand group (recordings store; implementation in cli_rec)
 # ---------------------------------------------------------------------------
 
-app.add_typer(build_rec_app(_formatter), name="rec")
+app.add_typer(build_rec_app(_formatter, _flags), name="rec")
 
 
 # ---------------------------------------------------------------------------

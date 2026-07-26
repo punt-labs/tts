@@ -767,14 +767,16 @@ class VoxClient:
 
     # -- music catalog (music group) ----------------------------------------
 
-    async def music_new(self, prompt: str, name: str | None = None) -> str:
+    async def music_new(self, prompts: PromptSet, name: str | None = None) -> str:
         """Author one track into a fresh catalog album; return its bare album id.
 
         The daemon sends a ``generating`` ack before the long generation, then the
-        terminal ``album`` frame; an empty/bad prompt raises. *prompt* is the
-        verbatim ElevenLabs descriptive prompt -- the client expands nothing.
+        terminal ``album`` frame; an empty/bad prompt raises. *prompts* is the
+        one-track :class:`PromptSet` both surfaces build for ``music new``; its
+        verbatim ``base`` rides the wire as ``base_prompt`` (the same authored-
+        input key ``program_on`` uses) -- the client expands nothing.
         """
-        fields: dict[str, object] = {"prompt": prompt}
+        fields: dict[str, object] = {"base_prompt": prompts.base}
         if name is not None:
             fields["name"] = name
         msg: dict[str, object] = {
