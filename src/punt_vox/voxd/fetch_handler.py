@@ -21,6 +21,7 @@ from punt_vox.voxd.chunked_fetch import ChunkedTransfer
 from punt_vox.voxd.path_status import PathStatus
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.types import MessageHandler
+from punt_vox.voxd.wire_fault import SafeFault
 from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
@@ -65,7 +66,7 @@ class FetchHandler(MessageHandler):
             # genuine access failure never masquerades as "no such recording".
             # The vendor detail is logged; the wire frame stays generic.
             logger.exception("fetch op failed id=%r", reply.request_id)
-            await reply.fault("operation failed")
+            await reply.fault(SafeFault.opaque("operation failed"))
             return
         await ChunkedTransfer(reply, FETCH_CHUNK_BYTES).stream(path, label)
 

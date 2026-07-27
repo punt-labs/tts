@@ -223,18 +223,21 @@ class TestMutatingBoundary:
     """
 
     @pytest.mark.parametrize(
-        ("error", "needle"),
+        ("error", "expected_message"),
         [
+            # A ValueError is a client rejection: its message echoes the client's
+            # own input and crosses verbatim. A LookupError/OSError is a server
+            # fault: the wire carries only the generic verdict, never the cause.
             (ValueError("bad request"), "bad request"),
-            (LookupError("no saved album at directory 'x'"), "no saved album"),
-            (FileExistsError("File exists: 'x'"), "File exists"),
-            (OSError("No space left on device"), "No space left"),
+            (LookupError("no saved album at directory 'x'"), "operation failed"),
+            (FileExistsError("File exists: 'x'"), "operation failed"),
+            (OSError("No space left on device"), "operation failed"),
         ],
     )
     async def test_expected_failures_reply_with_an_error(
-        self, error: Exception, needle: str
+        self, error: Exception, expected_message: str
     ) -> None:
         reply = await _reply(_RaisingHandler(error), {"id": "7"})
         assert reply["type"] == "error"
         assert reply["id"] == "7"
-        assert needle in str(reply["message"])
+        assert reply["message"] == expected_message

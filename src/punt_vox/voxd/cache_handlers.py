@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.voxd.wire_fault import SafeFault
 from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
@@ -52,7 +53,7 @@ class CacheStatusHandler:
         try:
             info = self._status()
         except OSError as exc:
-            await reply.fault(str(exc))
+            await reply.fault(SafeFault.from_exception(exc))
             return
         await reply.send(
             {
@@ -87,6 +88,6 @@ class CacheClearHandler:
         try:
             cleared = self._clear()
         except OSError as exc:
-            await reply.fault(str(exc))
+            await reply.fault(SafeFault.from_exception(exc))
             return
         await reply.send({"type": "cache_cleared", "cleared": cleared})

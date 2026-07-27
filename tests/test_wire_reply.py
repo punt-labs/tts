@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from starlette.websockets import WebSocketDisconnect
 
+from punt_vox.voxd.wire_fault import SafeFault
 from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
@@ -131,7 +132,9 @@ class TestFaultLogging:
     ) -> None:
         ws, _sent = _capturing_ws()
         with caplog.at_level(logging.ERROR):
-            delivered = asyncio.run(WireReply(ws, "req-9").fault("synthesis failed"))
+            delivered = asyncio.run(
+                WireReply(ws, "req-9").fault(SafeFault.opaque("synthesis failed"))
+            )
         assert delivered is True
         records = _errors(caplog)
         assert len(records) == 1
@@ -140,30 +143,32 @@ class TestFaultLogging:
         assert "rejected op" not in message
         assert "req-9" in message
 
-    def test_client_frame_is_identical_to_error(self) -> None:
-        """The wire frame a fault sends is byte-for-byte the one error sends."""
-        fault_ws, fault_sent = _capturing_ws()
-        error_ws, error_sent = _capturing_ws()
-        asyncio.run(WireReply(fault_ws, "r1").fault("boom"))
-        asyncio.run(WireReply(error_ws, "r1").error("boom"))
-        assert fault_sent == error_sent
-        assert fault_sent[-1] == {"id": "r1", "type": "error", "message": "boom"}
+    def test_wire_carries_the_safe_message_not_the_raw_detail(self) -> None:
+        """The wire frame sends the SafeFault's safe message, never the raw detail."""
+        ws, sent = _capturing_ws()
+        fault = SafeFault.opaque("store write failed at /Users/someone/x.mp3")
+        asyncio.run(WireReply(ws, "r1").fault(fault))
+        assert sent[-1] == {"id": "r1", "type": "error", "message": "operation failed"}
 
     def test_not_labeled_rejected_op(self, caplog: pytest.LogCaptureFixture) -> None:
         """A server fault never audits at WARNING as a client rejection."""
         ws, _sent = _capturing_ws()
         with caplog.at_level(logging.WARNING):
-            asyncio.run(WireReply(ws, "r1").fault("store write failed"))
+            asyncio.run(
+                WireReply(ws, "r1").fault(SafeFault.opaque("store write failed"))
+            )
         assert not _warnings(caplog)
 
-    def test_message_is_sanitized_in_the_log_but_verbatim_on_the_wire(
+    def test_log_detail_is_sanitized_while_wire_stays_safe(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         ws, sent = _capturing_ws()
         hostile = "boom\nINJECTED\r\tfault"
         with caplog.at_level(logging.ERROR):
-            asyncio.run(WireReply(ws, "r1").fault(hostile))
-        assert sent[-1]["message"] == hostile
+            asyncio.run(WireReply(ws, "r1").fault(SafeFault.opaque(hostile)))
+        # The wire carries the safe verdict; the hostile detail never reaches it.
+        assert sent[-1]["message"] == "operation failed"
+        # The log escapes the control characters -- no injection into vox.log.
         logged = _errors(caplog)[-1].getMessage()
         assert "\n" not in logged
         assert "\\n" in logged
@@ -172,7 +177,7 @@ class TestFaultLogging:
         ws = MagicMock()
         ws.send_json = AsyncMock(side_effect=WebSocketDisconnect())
         with caplog.at_level(logging.ERROR):
-            delivered = asyncio.run(WireReply(ws, "r1").fault("gone"))
+            delivered = asyncio.run(WireReply(ws, "r1").fault(SafeFault.opaque("gone")))
         assert delivered is False
         assert _errors(caplog)
 
@@ -194,17 +199,21 @@ class TestRejectOrFault:
     def test_lookup_error_audits_operation_failed(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        ws, _sent = _capturing_ws()
+        ws, sent = _capturing_ws()
         with caplog.at_level(logging.WARNING):
             asyncio.run(WireReply(ws, "r1").reject_or_fault(LookupError("gone dir")))
         assert "operation failed" in _errors(caplog)[-1].getMessage()
         assert not _warnings(caplog)
+        # A non-OSError fault carries no relative form -- the wire stays generic.
+        assert sent[-1]["message"] == "operation failed"
 
     def test_os_error_audits_operation_failed(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        ws, _sent = _capturing_ws()
+        ws, sent = _capturing_ws()
         with caplog.at_level(logging.WARNING):
             asyncio.run(WireReply(ws, "r1").reject_or_fault(OSError("disk full")))
         assert "operation failed" in _errors(caplog)[-1].getMessage()
         assert not _warnings(caplog)
+        # An OSError with no filename to relativize also stays generic on the wire.
+        assert sent[-1]["message"] == "operation failed"

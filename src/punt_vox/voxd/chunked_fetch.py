@@ -20,6 +20,8 @@ import hashlib
 import logging
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.voxd.wire_fault import SafeFault
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -59,7 +61,7 @@ class ChunkedTransfer:
         try:
             total, chunks, digest = self._measure(path)
         except OSError as exc:
-            await self._abort_before_begin(ref, exc)
+            await self._abort_before_begin(exc)
             return
 
         if not await self._reply.send(
@@ -97,7 +99,7 @@ class ChunkedTransfer:
         try:
             sent = await self._pump(path, total)
         except OSError as exc:
-            await self._abort_mid_stream(ref, exc)
+            await self._abort_mid_stream(exc)
             return
         if sent is None:
             # The peer left mid-stream: a silent end, like a gone peer at begin.
@@ -106,7 +108,7 @@ class ChunkedTransfer:
             return
         if sent != total:
             await self._abort_mid_stream(
-                ref, OSError(f"file changed mid-fetch: sent {sent} of {total} bytes")
+                OSError(f"file changed mid-fetch: sent {sent} of {total} bytes")
             )
             return
         await self._reply.send({"type": "fetch_end", "ref": ref, "bytes": total})
@@ -141,22 +143,28 @@ class ChunkedTransfer:
                 sent += len(slice_)
         return sent
 
-    async def _abort_before_begin(self, ref: str, exc: OSError) -> None:
+    async def _abort_before_begin(self, exc: OSError) -> None:
         """Refuse a transfer that faulted before any byte -- no begin, a fault frame.
 
         A read fault measuring the file is a server-side operational failure, not
         a client rejection, so it routes through ``fault`` (the ERROR "operation
         failed" audit) rather than a bare error frame -- the debugger reading
         vox.log sees a daemon fault, never a mislabeled rejected request.
-        """
-        await self._reply.fault(f"cannot read {ref!r}: {exc}")
 
-    async def _abort_mid_stream(self, ref: str, exc: OSError) -> None:
+        :class:`SafeFault` rebuilds the client-facing message from *exc*'s own
+        fields, so an in-jail read fault crosses as its relativized path and cause
+        while the absolute prefix stays in the log.
+        """
+        await self._reply.fault(SafeFault.from_exception(exc))
+
+    async def _abort_mid_stream(self, exc: OSError) -> None:
         """End a started stream with a fault terminal so the client discards it.
 
         A read fault (or a file that changed size) after ``fetch_begin`` is a
         server-side operational failure: it routes through ``fault`` for the same
         reason as :meth:`_abort_before_begin`, so an interrupted transfer is
-        audited as a daemon fault and no complete file is ever claimed for it.
+        audited as a daemon fault and no complete file is ever claimed for it. The
+        message is rebuilt from *exc* by :class:`SafeFault`, keeping the absolute
+        prefix out of the wire frame.
         """
-        await self._reply.fault(f"fetch of {ref!r} failed: {exc}")
+        await self._reply.fault(SafeFault.from_exception(exc))

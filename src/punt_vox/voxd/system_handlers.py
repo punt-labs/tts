@@ -15,6 +15,7 @@ from punt_vox.voxd.dedup import ChimeDedup
 from punt_vox.voxd.health import DaemonHealth
 from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue
 from punt_vox.voxd.types import MessageHandler
+from punt_vox.voxd.wire_fault import SafeFault
 from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
@@ -103,7 +104,7 @@ class VoicesHandler(MessageHandler):
             # A provider SDK can raise outside the trio (boto3 ClientError); the
             # router has no guard, so log the traceback and reply a generic fault.
             logger.exception("voices op failed id=%r", reply.request_id)
-            await reply.fault("operation failed")
+            await reply.fault(SafeFault.opaque("operation failed"))
             return
         await reply.send(
             {"type": "voices", "provider": provider_name, "voices": voice_list}

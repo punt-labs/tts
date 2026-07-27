@@ -96,9 +96,12 @@ class TestRecList:
             asyncio.run(RecListHandler(store)({"id": "l9"}, ws))
         assert sent[-1]["type"] == "error"
         assert sent[-1]["id"] == "l9"
-        assert "permission denied" in str(sent[-1]["message"])
+        # OSError with no in-jail filename -> generic wire verdict, detail to log.
+        assert sent[-1]["message"] == "operation failed"
         assert any(
-            r.levelno == logging.ERROR and "operation failed" in r.getMessage()
+            r.levelno == logging.ERROR
+            and "operation failed" in r.getMessage()
+            and "permission denied on recordings root" in r.getMessage()
             for r in caplog.records
         )
         assert not any("rejected op" in r.getMessage() for r in caplog.records)
@@ -176,9 +179,12 @@ class TestRecRemove:
             asyncio.run(RecRemoveHandler(store)({"id": "r7", "ref": "denied.mp3"}, ws))
         assert sent[-1]["type"] == "error"
         assert sent[-1]["id"] == "r7"
-        assert "Permission denied" in str(sent[-1]["message"])
+        # OSError with no in-jail filename -> generic wire verdict, detail to log.
+        assert sent[-1]["message"] == "operation failed"
         assert any(
-            r.levelno == logging.ERROR and "operation failed" in r.getMessage()
+            r.levelno == logging.ERROR
+            and "operation failed" in r.getMessage()
+            and "Permission denied" in r.getMessage()
             for r in caplog.records
         )
         assert not any("rejected op" in r.getMessage() for r in caplog.records)

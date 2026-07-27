@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd._parse import parse_optional_str
+from punt_vox.voxd.wire_fault import SafeFault
 from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
@@ -49,7 +50,7 @@ class RecListHandler:
         try:
             entries = self._store.entries()
         except OSError as exc:
-            await reply.fault(str(exc))
+            await reply.fault(SafeFault.from_exception(exc))
             return
         await reply.send(
             {
@@ -100,6 +101,6 @@ class RecRemoveHandler:
             await reply.error(str(exc))
             return
         except OSError as exc:
-            await reply.fault(str(exc))
+            await reply.fault(SafeFault.from_exception(exc))
             return
         await reply.send({"type": "removed", "removed": ref})

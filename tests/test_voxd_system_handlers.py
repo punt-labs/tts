@@ -255,7 +255,9 @@ class TestVoicesHandler:
 
         assert ws.sent[-1]["type"] == "error"
         assert ws.sent[-1]["id"] == "v2"
-        assert "voice service unreachable" in str(ws.sent[-1]["message"])
+        # The provider fault reaches the router's broad-except path, which replies
+        # a generic verdict; the raw "voice service unreachable" stays in the log.
+        assert ws.sent[-1]["message"] == "operation failed"
         assert any(
             r.levelno == logging.ERROR and "operation failed" in r.getMessage()
             for r in caplog.records

@@ -29,6 +29,7 @@ from punt_vox.voxd.synthesis import (  # pyright: ignore[reportPrivateUsage]
     SynthesisPipeline,
 )
 from punt_vox.voxd.types import MessageHandler
+from punt_vox.voxd.wire_fault import SafeFault
 from punt_vox.voxd.wire_reply import WireReply
 
 __all__ = ["SynthesizeHandler"]
@@ -95,15 +96,17 @@ class _SpeechRequest:
         """
         await WireReply(self.websocket, self.request_id).send(payload)
 
-    async def fault(self, message: str) -> None:
-        """Audit a server-side OPERATIONAL failure and send its frame.
+    async def fault(self, fault: SafeFault) -> None:
+        """Audit a server-side OPERATIONAL failure and send a prefix-free frame.
 
         A failed synthesis or a nonzero direct-play exit is a daemon-side fault,
         not a client rejection, so it routes through :meth:`WireReply.fault` (the
         ERROR "operation failed" audit) -- matching the record handler's
         store-write fault -- never a WARNING "rejected op" that blames the client.
+        The *fault* carries a prefix-free wire message and the raw log detail, so
+        no absolute prefix reaches the client.
         """
-        await WireReply(self.websocket, self.request_id).fault(message)
+        await WireReply(self.websocket, self.request_id).fault(fault)
 
 
 class SynthesizeHandler(MessageHandler):
@@ -209,12 +212,12 @@ class SynthesizeHandler(MessageHandler):
             return False
         if isinstance(result, Exception):
             self._rollback(req, dedup_recorded=dedup_recorded)
-            await req.fault(str(result))
+            await req.fault(SafeFault.from_exception(result))
         elif result == 0:
             await req.reply({"type": "done"})
         else:
             self._rollback(req, dedup_recorded=dedup_recorded)
-            await req.fault(f"play_directly failed with rc={result}")
+            await req.fault(SafeFault.opaque(f"play_directly failed with rc={result}"))
         return True
 
     async def _synthesize_and_enqueue(
@@ -226,7 +229,7 @@ class SynthesizeHandler(MessageHandler):
         except Exception as exc:
             self._rollback(req, dedup_recorded=dedup_recorded)
             logger.exception("Synthesis failed for id=%r", req.request_id)
-            await req.fault(str(exc))
+            await req.fault(SafeFault.from_exception(exc))
             return
 
         # `cached` rides the 'playing' response (the client's terminal).
