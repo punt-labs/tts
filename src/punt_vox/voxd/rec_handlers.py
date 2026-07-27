@@ -77,15 +77,10 @@ class RecRemoveHandler:
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
         """Validate the ref, unlink the recording, and reply -- or error/fault.
 
-        Three failure classes reply on the same wire frame but audit differently.
-        A hostile or non-string ``ref`` (``ValueError``) and a well-formed ref
-        that names no recording (``FileNotFoundError`` from ``remove``) are both
-        client rejections -- ``error`` (WARNING) -- and the not-found reply
-        matches how ``play``/``fetch`` answer "names no recording". A genuine
-        unlink fault -- a denied delete or a device error (any other ``OSError``)
-        -- is a server-side operational failure, so it routes through ``fault``
-        (ERROR "operation failed"), never mislabeled a client rejection. Every
-        path replies an id-stamped frame rather than escaping to a router teardown.
+        A domain failure (``ValueError`` or ``OSError``) is classified by
+        :meth:`_reply_failure` into a client rejection or a server-side fault;
+        every path replies an id-stamped frame rather than escaping to a router
+        teardown.
         """
         reply = WireReply(websocket, str(msg.get("id", "")))
         try:
@@ -94,13 +89,27 @@ class RecRemoveHandler:
                 await reply.error("rec remove requires a ref")
                 return
             self._store.remove(ref)
-        except ValueError as exc:
-            await reply.error(str(exc))
-            return
-        except FileNotFoundError as exc:
-            await reply.error(str(exc))
-            return
-        except OSError as exc:
-            await reply.fault(SafeFault.from_exception(exc))
+        except (ValueError, OSError) as exc:
+            await self._reply_failure(reply, exc)
             return
         await reply.send({"type": "removed", "removed": ref})
+
+    @staticmethod
+    async def _reply_failure(reply: WireReply, exc: ValueError | OSError) -> None:
+        """Route a remove failure: client rejections verbatim, host faults relativized.
+
+        A hostile or non-string ``ref`` (``ValueError``) and the store's own "no
+        recording named X" (a ``FileNotFoundError`` with ``filename`` ``None``,
+        echoing the client's own ref) are client rejections -- ``error`` (WARNING),
+        sent verbatim, matching how ``play``/``fetch`` answer a ref that names no
+        recording. A raw OS unlink race carries ``filename=<absolute store path>``;
+        that, and any other ``OSError`` (a denied delete, a device error), is a
+        server-side fault routed through :class:`SafeFault`, so no absolute prefix
+        (host recon) ever crosses the wire while the raw detail stays in the log.
+        """
+        if isinstance(exc, ValueError) or (
+            isinstance(exc, FileNotFoundError) and exc.filename is None
+        ):
+            await reply.error(str(exc))
+        else:
+            await reply.fault(SafeFault.from_exception(exc))
