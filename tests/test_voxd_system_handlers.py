@@ -255,8 +255,11 @@ class TestVoicesHandler:
 
         assert ws.sent[-1]["type"] == "error"
         assert ws.sent[-1]["id"] == "v2"
-        # The provider fault reaches the router's broad-except path, which replies
-        # a generic verdict; the raw "voice service unreachable" stays in the log.
+        # VoicesHandler catches the OSError in its own (ValueError, LookupError,
+        # OSError) clause and replies via reject_or_fault -> WireReply.fault as a
+        # SafeFault; it never escapes to the router's broad-except. The OSError has
+        # no in-jail filename, so the wire carries the generic verdict while the
+        # raw "voice service unreachable" stays in the log.
         assert ws.sent[-1]["message"] == "operation failed"
         assert any(
             r.levelno == logging.ERROR and "operation failed" in r.getMessage()
