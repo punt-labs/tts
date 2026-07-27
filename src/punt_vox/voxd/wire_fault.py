@@ -53,7 +53,17 @@ class SafeFault:
         generic ``"operation failed"``. The raw ``str(exc)`` -- the absolute path
         included -- is retained as the log detail.
         """
-        return cls(cls._wire_for(exc), str(exc))
+        # Boundary catch (PY-EH-6): building a fault runs while an error is
+        # ALREADY being handled, so a raise here would fault the fault handler and
+        # tear down the socket. Relativizing a hostile exc.filename has its own
+        # fail-closed guards, but this backstop makes the fault path provably
+        # un-teardownable regardless of any future edge -- any failure yields the
+        # generic verdict. Defense in depth, not a substitute for the guards.
+        try:
+            wire = cls._wire_for(exc)
+        except Exception:  # noqa: BLE001 -- PY-EH-6 fault-building boundary
+            wire = _GENERIC
+        return cls(wire, str(exc))
 
     @classmethod
     def opaque(cls, detail: str) -> Self:

@@ -67,12 +67,13 @@ class DataRootRelative:
         still labels ``state``.
 
         Returns ``None`` -- a documented state, not a failure -- when *candidate*
-        is absent, cannot be resolved (a symlink loop), or resolves under neither
-        root; the caller then drops the path or sends a generic verdict.
+        is absent, cannot be built into a ``Path`` (a ``bytes`` filename), cannot
+        be resolved (a symlink loop), or resolves under neither root; the caller
+        then drops the path or sends a generic verdict.
         """
         if candidate is None:
             return None
-        resolved = cls._resolved(Path(candidate))
+        resolved = cls._resolved(candidate)
         if resolved is None:
             return None
         labeled_roots = (
@@ -86,22 +87,26 @@ class DataRootRelative:
         return None
 
     @staticmethod
-    def _resolved(path: Path) -> Path | None:
-        """Return ``path.resolve()``, or ``None`` when the path cannot be resolved.
+    def _resolved(candidate: str | Path) -> Path | None:
+        """Return ``Path(candidate).resolve()``, or ``None`` if it cannot be built.
 
-        A symlink loop raises ``OSError`` (``ELOOP``) or ``RuntimeError``, and a
-        malformed path can raise ``ValueError``. This helper runs on the fault
-        path -- ``SafeFault`` relativizes ``exc.filename`` -- so an unguarded
-        ``resolve()`` would let a looping filename raise *while a fault is being
-        built*, faulting the fault handler and tearing down the socket. Fail
-        closed: an unresolvable path is treated as out of jail (``None``), so such
-        a filename yields the generic ``"operation failed"`` rather than a crash.
+        Both the construction and the resolution can fail on a hostile filename:
+        ``Path(candidate)`` raises ``TypeError`` for a non-str/os.PathLike value
+        (an ``OSError.filename`` may be ``bytes``, which the ``str | Path`` type
+        does not admit but a runtime fault can still deliver), and ``resolve()``
+        raises ``OSError`` (``ELOOP``)/``RuntimeError`` on a symlink loop or
+        ``ValueError`` on a malformed path. This runs on the fault path --
+        ``SafeFault`` relativizes ``exc.filename`` -- so an unguarded
+        build-or-resolve would raise *while a fault is being built*, faulting the
+        fault handler and tearing down the socket. Fail closed: any such failure
+        means out of jail (``None``), so the filename yields the generic
+        ``"operation failed"`` rather than a crash.
         """
         # None here is the documented fail-closed contract (out of jail), not a
         # give-up -- see the docstring and PY-TS-14.
         try:
-            return path.resolve()
-        except (OSError, RuntimeError, ValueError):
+            return Path(candidate).resolve()
+        except (OSError, RuntimeError, ValueError, TypeError):
             return None
 
 

@@ -123,3 +123,23 @@ class TestResolveFailureDoesNotEscape:
         # Building the fault must not propagate the ELOOP from relativize.
         fault = SafeFault.from_exception(exc)
         assert fault.wire_message == "operation failed"
+
+    def test_relativize_raising_anything_is_caught_at_the_boundary(
+        self, state_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The boundary catch backstops ANY relativize failure, not just the guards.
+
+        The helper fails closed on its own, but building a fault must be provably
+        un-teardownable regardless of a future helper edge: even an arbitrary
+        exception from relativize yields the generic verdict, never a propagation.
+        """
+
+        def boom(_candidate: object) -> object:
+            raise RuntimeError("arbitrary failure inside relativize")
+
+        monkeypatch.setattr("punt_vox.voxd.wire_fault.relativize_to_data_root", boom)
+        exc = OSError(13, "Permission denied", "/looping/path.mp3")
+        fault = SafeFault.from_exception(exc)
+        assert fault.wire_message == "operation failed"
+        # The raw detail is still retained for the log.
+        assert "Permission denied" in fault.log_detail
