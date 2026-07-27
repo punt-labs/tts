@@ -810,6 +810,17 @@ class VoxClient:
         with self._wire_guard():
             return JsonObject.coerce(resp, "cache_clear").require_int("cleared")
 
+    async def set_log_level(self, level: str) -> str:
+        """Set the daemon's log level; return the effective level it applied.
+
+        The daemon clamps *level* server-side to the INFO audit floor, so a
+        request for a stricter level comes back as ``info`` -- the audit trail is
+        never blinded. ``info`` or ``debug`` in normal use.
+        """
+        resp = await self._command("set_log_level", level=level)
+        with self._wire_guard():
+            return JsonObject.coerce(resp, "set_log_level").require_str("level")
+
     # -- music catalog (music group) ----------------------------------------
 
     async def music_new(self, prompts: PromptSet, name: str | None = None) -> str:

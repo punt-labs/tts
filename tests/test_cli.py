@@ -937,35 +937,50 @@ class TestSpeakCommand:
 
 
 class TestLogCommand:
-    """`vox log debug|info` writes the log_level config key (D5 humble setter)."""
+    """`vox log debug|info` routes through the daemon wire op (INFO-floor clamped)."""
 
-    def test_log_debug_persists_to_global(
-        self, tmp_path: Path, monkeypatch: MagicMock
-    ) -> None:
-        """`vox log` writes the GLOBAL setting so a service-started daemon reads it."""
-        import punt_vox.config as cfg
-
-        monkeypatch.setattr(
-            cfg.ConfigStore, "global_dir", classmethod(lambda _cls: tmp_path)
-        )
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_log_debug_routes_through_daemon(self, mock_client_cls: MagicMock) -> None:
+        """`vox log debug` sets the DAEMON's level over the wire, not local config."""
+        mock_client_cls.return_value.set_log_level.return_value = "debug"
 
         result = CliRunner().invoke(app, ["log", "debug"])
+
         assert result.exit_code == 0
         assert "debug logging on" in result.output.lower()
-        assert cfg.ConfigStore(tmp_path).read().log_level == "debug"
+        mock_client_cls.return_value.set_log_level.assert_called_once_with("debug")
 
-    def test_log_rejects_unknown_level(
-        self, tmp_path: Path, monkeypatch: MagicMock
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_log_reports_the_effective_clamped_level(
+        self, mock_client_cls: MagicMock
     ) -> None:
-        import punt_vox.config as cfg
+        """The label reflects the daemon's EFFECTIVE (clamped) level, not the input."""
+        mock_client_cls.return_value.set_log_level.return_value = "info"
 
-        monkeypatch.setattr(
-            cfg.ConfigStore, "global_dir", classmethod(lambda _cls: tmp_path)
-        )
+        result = CliRunner().invoke(app, ["log", "info"])
 
+        assert result.exit_code == 0
+        assert "back to info" in result.output.lower()
+
+    def test_log_rejects_unknown_level(self) -> None:
         result = CliRunner().invoke(app, ["log", "loud"])
         assert result.exit_code == 1
         assert "info or debug" in result.output.lower()
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_log_daemon_unreachable_exits_nonzero(
+        self, mock_client_cls: MagicMock
+    ) -> None:
+        from punt_vox.client_errors import VoxdConnectionError
+
+        mock_client_cls.return_value.set_log_level.side_effect = VoxdConnectionError(
+            "refused"
+        )
+
+        result = CliRunner().invoke(app, ["log", "debug"])
+
+        assert result.exit_code == 1
+        assert "refused" in result.output
 
 
 class TestVoiceCommand:
