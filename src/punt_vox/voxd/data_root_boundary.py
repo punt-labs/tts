@@ -88,7 +88,7 @@ class DataRootRelative:
 
     @staticmethod
     def _resolved(candidate: str | Path) -> Path | None:
-        """Return ``Path(candidate).resolve()``, or ``None`` if it cannot be built.
+        """Return ``Path(candidate).resolve(strict=False)``, or ``None`` on failure.
 
         Both the construction and the resolution can fail on a hostile filename:
         ``Path(candidate)`` raises ``TypeError`` for a non-str/os.PathLike value
@@ -105,7 +105,10 @@ class DataRootRelative:
         # None here is the documented fail-closed contract (out of jail), not a
         # give-up -- see the docstring and PY-TS-14.
         try:
-            return Path(candidate).resolve()
+            # strict=False is explicit: the fail-closed contract depends on
+            # best-effort resolution (no raise on a missing path), and pinning it
+            # guards against a future change to the resolve() default.
+            return Path(candidate).resolve(strict=False)
         except (OSError, RuntimeError, ValueError, TypeError):
             return None
 
