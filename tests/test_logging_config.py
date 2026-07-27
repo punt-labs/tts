@@ -12,6 +12,7 @@ import pytest
 from punt_vox import logging_config, paths
 from punt_vox.config import ConfigStore
 from punt_vox.log_append_handler import AppendLogHandler
+from punt_vox.voxd.audit_log_level import AuditFloorLevel
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -256,6 +257,28 @@ class TestLogHealth:
         assert health["name"] == "logs/vox.log"  # relative, no absolute prefix
         assert not health["name"].startswith("/")
         assert health["status"] == "healthy"
+
+
+class TestApplyLogLevel:
+    """apply_log_level re-points the root logger + handlers to a concrete level."""
+
+    def test_notset_clamped_level_still_emits_info(self) -> None:
+        """A `notset` request, clamped to DEBUG, leaves a NAMED logger emitting INFO+.
+
+        ``apply_log_level`` targets the root logger; a child logger defers to it,
+        so after applying the ``AuditFloorLevel``-clamped ``notset`` (DEBUG) the
+        audit trail (INFO and above) still emits -- the effective level is a
+        concrete DEBUG, never NOTSET(0)/defer that could sit above INFO.
+        """
+        root = logging.getLogger()
+        saved_level = root.level
+        try:
+            effective = AuditFloorLevel.from_name("notset").numeric
+            logging_config.apply_log_level(effective)
+            assert root.level == logging.DEBUG  # concrete, never NOTSET(0)
+            assert logging.getLogger("voxd.audit.child").isEnabledFor(logging.INFO)
+        finally:
+            root.setLevel(saved_level)
 
 
 class TestShipTransportIsGone:

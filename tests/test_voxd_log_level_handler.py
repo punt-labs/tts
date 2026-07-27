@@ -65,6 +65,20 @@ class TestInfoFloor:
         assert applied == [logging.INFO]  # clamped down, never WARNING
         assert sent[-1] == {"type": "log_level", "id": "l3", "level": "info"}
 
+    def test_notset_request_applies_debug_never_notset(self) -> None:
+        """A crafted `notset` frame applies DEBUG(10), never NOTSET(0).
+
+        NOTSET is a registered level name, so it reaches the clamp; left at 0 it
+        would defer a named logger to its parent (possibly above INFO). The
+        handler must apply a concrete level that still emits INFO+.
+        """
+        handler, applied = _handler()
+        ws, sent = _capturing_ws()
+        asyncio.run(handler({"id": "l6", "level": "notset"}, ws))
+        assert applied == [logging.DEBUG]  # floored up, never NOTSET(0)
+        assert applied[0] != logging.NOTSET
+        assert sent[-1] == {"type": "log_level", "id": "l6", "level": "debug"}
+
 
 class TestRejectsUnknown:
     def test_unknown_level_is_rejected_and_applies_nothing(self) -> None:

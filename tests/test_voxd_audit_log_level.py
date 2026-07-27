@@ -50,6 +50,29 @@ class TestClampsToFloor:
         assert AuditFloorLevel(logging.DEBUG).numeric == logging.DEBUG
 
 
+class TestNeverBelowDebug:
+    """A sub-DEBUG request floors to DEBUG -- a concrete level, never NOTSET/defer.
+
+    ``notset`` (0) is a *registered* level name, so it reaches the clamp rather
+    than being rejected as unknown. Left at 0 it would set a defer-to-parent
+    threshold on a named logger, which could sit above INFO and blind the trail.
+    Flooring at DEBUG keeps the effective level concrete and INFO-emitting.
+    """
+
+    def test_notset_name_floors_to_debug(self) -> None:
+        level = AuditFloorLevel.from_name("notset")
+        assert level.numeric == logging.DEBUG  # never NOTSET(0)
+        assert level.numeric != logging.NOTSET
+        assert level.name == "debug"
+
+    def test_constructor_floors_a_raw_notset_to_debug(self) -> None:
+        assert AuditFloorLevel(logging.NOTSET).numeric == logging.DEBUG
+
+    def test_constructor_floors_a_raw_sub_debug_numeric_to_debug(self) -> None:
+        """Even a custom sub-DEBUG numeric (below 10) is raised to DEBUG."""
+        assert AuditFloorLevel(5).numeric == logging.DEBUG
+
+
 class TestRejectsUnknown:
     """An unrecognized level name is a rejected request, not a silent default."""
 
