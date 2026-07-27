@@ -16,9 +16,7 @@ def test_from_wire_reads_the_full_daemon_payload() -> None:
             "port": 8421,
             "active_sessions": 2,
             "provider": "elevenlabs",
-            "audio_env": {"PATH": "/usr/bin"},
-            "player_binary": "/usr/bin/afplay",
-            "last_playback": {"rc": 0, "file": "/tmp/a.mp3"},
+            "last_playback": {"rc": 0, "file": "recordings/a.mp3"},
             "pid": 4242,
             "daemon_version": "5.0.0",
         }
@@ -30,9 +28,7 @@ def test_from_wire_reads_the_full_daemon_payload() -> None:
     assert status.port == 8421
     assert status.active_sessions == 2
     assert status.provider == "elevenlabs"
-    assert dict(status.audio_env) == {"PATH": "/usr/bin"}
-    assert status.player_binary == "/usr/bin/afplay"
-    assert status.last_playback == {"rc": 0, "file": "/tmp/a.mp3"}
+    assert status.last_playback == {"rc": 0, "file": "recordings/a.mp3"}
     assert status.pid == 4242
     assert status.daemon_version == "5.0.0"
 
@@ -51,24 +47,21 @@ def test_from_wire_defaults_absent_fields() -> None:
     assert status.pid == 0
     assert status.daemon_version == ""
     assert status.uptime_seconds == 0.0
-    assert dict(status.audio_env) == {}
-    assert status.player_binary == ""
     assert status.last_playback is None
 
 
 def test_from_wire_coerces_wrong_types_to_defaults() -> None:
     """Wrong-typed fields fall back to defaults rather than raising or leaking.
 
-    ``bool`` is rejected as an int (``True`` is not a port); a non-mapping
-    ``audio_env`` yields an empty mapping.
+    ``bool`` is rejected as an int (``True`` is not a port); a non-string
+    ``provider`` falls back to ``"unknown"``.
     """
     status = HealthStatus.from_wire(
-        {"port": True, "provider": 7, "audio_env": "not-a-map", "uptime_seconds": True}
+        {"port": True, "provider": 7, "uptime_seconds": True}
     )
 
     assert status.port == 0
     assert status.provider == "unknown"
-    assert dict(status.audio_env) == {}
     assert status.uptime_seconds == 0.0
 
 

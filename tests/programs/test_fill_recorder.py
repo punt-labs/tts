@@ -80,3 +80,29 @@ class TestFillRecorderLogging:
             _recorder().transient(ValueError("rate limited"))
         assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
         assert any(r.levelno == logging.DEBUG for r in caplog.records)
+
+
+class TestFillRecorderReasonSanitization:
+    """A path-bearing failure records a wire-safe reason (#10/D4)."""
+
+    def test_permanent_reason_relativizes_and_strips_paths(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The recorded failed-part reason carries no absolute host prefix."""
+        from punt_vox import paths
+
+        state = (tmp_path / "state").resolve()
+        (state / "recordings").mkdir(parents=True)
+        monkeypatch.setattr(paths, "user_state_dir", lambda: state)
+        rec = state / "recordings" / "part4.mp3"
+        exc = OSError(f"denied: {rec} via /opt/homebrew/bin/ffprobe")
+
+        store = _RecordingStore()
+        _recorder().permanent(cast("PartStore", store), 4, Path("part4.mp3"), exc)
+
+        reason = store.recorded[-1].reason
+        assert reason is not None
+        assert "recordings/part4.mp3" in reason  # in-jail token relativized
+        assert str(state) not in reason  # no absolute prefix
+        assert "/opt/homebrew/bin/ffprobe" not in reason  # out-of-jail stripped
+        assert "<path>" in reason

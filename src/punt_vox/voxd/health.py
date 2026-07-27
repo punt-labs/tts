@@ -10,7 +10,7 @@ from collections.abc import Callable
 from typing import Self
 
 from punt_vox.paths import installed_version
-from punt_vox.voxd.playback import _AUDIO_ENV_KEYS, PlaybackQueue, _player_binary_path
+from punt_vox.voxd.playback import PlaybackQueue
 
 
 class DaemonHealth:
@@ -66,12 +66,12 @@ class DaemonHealth:
     def minimal_payload(self) -> dict[str, object]:
         """Return the public health payload safe for unauthenticated callers.
 
-        Excludes ``audio_env``, ``player_binary``, and ``last_playback`` so the
-        HTTP ``/health`` route can never leak environment variables or stderr
-        contents to non-localhost listeners.
+        Carries only liveness verdicts and service metrics. The TTS ``provider``
+        is dropped (D1): naming the backend to an unauthenticated probe
+        fingerprints it, and it is an out-of-jail host fact with no relative
+        form. Everything else is added only by :meth:`full_payload`, behind the
+        auth token.
         """
-        from punt_vox.providers import auto_detect_provider
-
         uptime = time.monotonic() - self._start_time
         return {
             "status": "ok",
@@ -79,30 +79,24 @@ class DaemonHealth:
             "queued": self._playback.queue_size,
             "port": self._port,
             "active_sessions": self._get_client_count(),
-            "provider": auto_detect_provider(),
         }
 
     def full_payload(self) -> dict[str, object]:
         """Return the full diagnostic health payload for authenticated callers.
 
-        Adds the audio environment snapshot, the resolved player binary, the
-        last playback result, the running process id, and the cached daemon
-        version. Used only by the WebSocket health handler, which is gated
-        by the auth token.
-
-        The ``pid`` field is used by ``vox daemon restart`` to confirm the
-        daemon has come back up as a fresh process. The ``daemon_version``
-        field is used by ``vox doctor`` to warn when the running daemon
-        does not match the wheel installed on disk. Neither is
-        exposed on the unauthenticated HTTP ``/health`` route -- version
-        info is a fingerprinting aid for targeted exploitation, and the
-        minimal payload stays minimal.
+        Used only by the token-gated WebSocket health handler. ``provider`` is
+        authenticated-only (D1) -- ``doctor`` reads it, the ``/health`` probe
+        never sees it. The old host-fact diagnostics ``audio_env`` and
+        ``player_binary`` are dropped (D2): out of jail, no relative form.
+        ``last_playback`` is relativized by :meth:`PlaybackResult.to_health_dict`,
+        so no absolute prefix crosses even here. ``pid`` (used by ``vox daemon
+        restart``) and ``daemon_version`` (used by ``vox doctor``) are neither a
+        host map nor forbidden over the token.
         """
+        from punt_vox.providers import auto_detect_provider
+
         payload = self.minimal_payload()
-        payload["audio_env"] = {
-            k: os.environ.get(k, "<unset>") for k in _AUDIO_ENV_KEYS
-        }
-        payload["player_binary"] = _player_binary_path()
+        payload["provider"] = auto_detect_provider()
         if result := self._playback.last_result:
             payload["last_playback"] = result.to_health_dict()
         else:

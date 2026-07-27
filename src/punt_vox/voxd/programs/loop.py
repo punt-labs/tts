@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_vox.types_programs.playback_fault import PlaybackFaultKind
 from punt_vox.voxd.programs.interrupt_race import InterruptRace
 from punt_vox.voxd.programs.playback_signal import Rotate
+from punt_vox.voxd.wire_text import SafeText
 
 if TYPE_CHECKING:
     from punt_vox.voxd.programs.control_channel import ControlChannel
@@ -128,8 +129,14 @@ class ProgramLoop:
         await self._advance_after(target)
 
     async def _back_off_spawn(self, target: Part, exc: OSError) -> None:
-        """Record the spawn failure observably, then pause so it cannot spin."""
-        self._health.record(target, str(exc), PlaybackFaultKind.SPAWN)
+        """Record the spawn failure observably, then pause so it cannot spin.
+
+        The status-surfaced reason is :class:`SafeText`-sanitized so the missing
+        binary's absolute path never crosses the wire; the raw exception rides
+        ``exc_info`` to the host-local log.
+        """
+        reason = SafeText.of(str(exc)).text
+        self._health.record(target, reason, PlaybackFaultKind.SPAWN)
         logger.error(
             "player spawn failed for part %s; backing off %ss",
             target.index,

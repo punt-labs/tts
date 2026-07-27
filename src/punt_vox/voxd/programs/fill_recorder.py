@@ -24,6 +24,7 @@ from punt_vox.voxd.programs.fill_signal import (
 )
 from punt_vox.voxd.programs.manifest import PartEntry
 from punt_vox.voxd.programs.part import Part, PartStatus
+from punt_vox.voxd.wire_text import SafeText
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -63,30 +64,38 @@ class FillRecorder:
     def permanent(
         self, store: PartStore, index: int, target: Path, exc: Exception
     ) -> None:
-        """Record a permanent per-Part failure and post it (observable surface)."""
-        self._failed(store, index, target, self._reason(exc, "permanent"))
+        """Record a permanent per-Part failure and post it (observable surface).
+
+        The recorded reason is path-sanitized by :meth:`_reason` and surfaces at
+        WARNING via :meth:`_failed`; the raw exception -- absolute paths and all
+        -- rides ``exc_info`` at DEBUG, host-local, so the operator can recover
+        the prefix without it crossing the wire.
+        """
+        logger.debug("music: part %d generation failure detail", index, exc_info=exc)
+        self._failed(store, index, target, self._reason(str(exc), "permanent"))
 
     def unexpected(
         self, store: PartStore, index: int, target: Path, exc: Exception
     ) -> None:
         """Record an unexpected (buggy) failure as permanent, logging its trace."""
         logger.error("fill: unexpected error producing part %d", index, exc_info=exc)
-        self._failed(store, index, target, Reason(f"unexpected: {exc}"))
+        reason = self._reason(f"unexpected: {exc}", "unexpected")
+        self._failed(store, index, target, reason)
 
     def transient(self, exc: Exception) -> None:
         """Post a transient failure -- nothing recorded, so backoff-retry is intact.
 
-        DEBUG, not WARNING: a transient failure is retried and not yet
-        user-actionable, so it stays out of the default log.
+        DEBUG, not WARNING: retried and not yet user-actionable. The raw exception
+        rides ``exc_info``; the posted reason is path-sanitized because it can
+        reach status as ``last_error`` while a retry is in flight.
         """
-        reason = self._reason(exc, "transient")
-        logger.debug("music: part transient failure, backing off: %s", reason.text)
-        self._post(TransientFailure(reason))
+        logger.debug("music: part transient failure, backing off", exc_info=exc)
+        self._post(TransientFailure(self._reason(str(exc), "transient")))
 
     def _failed(
         self, store: PartStore, index: int, target: Path, reason: Reason
     ) -> None:
-        """Record a FAILED entry and post a permanent outcome for ``target``."""
+        """Record a FAILED entry (path-sanitized reason) and post its outcome."""
         store.record(
             PartEntry(
                 index=index,
@@ -110,6 +119,13 @@ class FillRecorder:
         self._channel.post(FreshFillOutcome(self._channel.source, outcome))
 
     @staticmethod
-    def _reason(exc: Exception, fallback: str) -> Reason:
-        """Build a non-empty Reason from an exception message."""
-        return Reason(str(exc) or fallback)
+    def _reason(text: str, fallback: str) -> Reason:
+        """Return *text* as a non-empty, path-sanitized wire-facing Reason.
+
+        An exception message can embed an absolute path (an ``OSError`` on a
+        saved-album file), so it crosses :class:`SafeText` -- in-jail tokens
+        relativize, out-of-jail ones strip, length is capped -- before it becomes
+        the ``Reason`` a client reads. Empty text falls back so the Reason is
+        never blank (PY-CC-2).
+        """
+        return Reason(SafeText.of(text).text or fallback)
