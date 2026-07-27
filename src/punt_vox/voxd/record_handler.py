@@ -100,7 +100,7 @@ class RecordHandler(MessageHandler):
             {
                 "type": "audio",
                 "name": write.path.name,
-                "path": str(write.path),
+                "path": write.wire_path,
                 "bytes": write.byte_count,
                 "cached": outcome.cached,
             }

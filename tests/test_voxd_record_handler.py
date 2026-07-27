@@ -58,11 +58,13 @@ class TestRecordHandler:
 
         assert sent[0]["type"] == "recording"  # ack precedes the file
         audio = next(p for p in sent if p["type"] == "audio")
-        landed = Path(str(audio["path"]))
-        assert landed.parent == store.root.resolve()  # contained in the store
+        # The wire `path` is relativized (no absolute prefix); the file is located
+        # by its bare name under the store root, not by reconstructing an abs path.
+        assert not str(audio["path"]).startswith("/")
+        landed = store.root / str(audio["name"])
+        assert landed.parent == store.root  # contained in the store
         assert landed.read_bytes() == data
         assert audio["bytes"] == len(data) == landed.stat().st_size
-        assert audio["name"] == landed.name
 
     def test_record_returns_store_locator(self, tmp_path: Path) -> None:
         src = tmp_path / "src.mp3"

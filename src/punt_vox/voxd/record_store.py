@@ -30,6 +30,7 @@ from typing import Self, final
 
 from punt_vox.types import generate_filename
 from punt_vox.voxd.containment import ContainmentRoot
+from punt_vox.voxd.data_root_boundary import relativize_to_data_root
 from punt_vox.voxd.path_status import PathStatus
 
 __all__ = ["RecordStore", "RecordWrite"]
@@ -47,6 +48,12 @@ class RecordWrite:
 
     path: Path
     byte_count: int
+
+    @property
+    def wire_path(self) -> str:
+        """Return the landed path relativized for the wire, never a host prefix."""
+        rel = relativize_to_data_root(self.path)
+        return str(rel.path) if rel is not None else self.path.name
 
 
 @final
