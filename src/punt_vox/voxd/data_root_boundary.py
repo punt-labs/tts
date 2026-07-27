@@ -67,21 +67,42 @@ class DataRootRelative:
         still labels ``state``.
 
         Returns ``None`` -- a documented state, not a failure -- when *candidate*
-        is absent or resolves under neither root; the caller then drops the path or
-        sends a generic verdict.
+        is absent, cannot be resolved (a symlink loop), or resolves under neither
+        root; the caller then drops the path or sends a generic verdict.
         """
         if candidate is None:
             return None
-        resolved = Path(candidate).resolve()
+        resolved = cls._resolved(Path(candidate))
+        if resolved is None:
+            return None
         labeled_roots = (
             ("state", paths.user_state_dir()),
             ("output", dirs.default_output_dir()),
         )
         for label, root in labeled_roots:
-            root_resolved = root.resolve()
-            if resolved.is_relative_to(root_resolved):
+            root_resolved = cls._resolved(root)
+            if root_resolved is not None and resolved.is_relative_to(root_resolved):
                 return cls(label, resolved.relative_to(root_resolved))
         return None
+
+    @staticmethod
+    def _resolved(path: Path) -> Path | None:
+        """Return ``path.resolve()``, or ``None`` when the path cannot be resolved.
+
+        A symlink loop raises ``OSError`` (``ELOOP``) or ``RuntimeError``, and a
+        malformed path can raise ``ValueError``. This helper runs on the fault
+        path -- ``SafeFault`` relativizes ``exc.filename`` -- so an unguarded
+        ``resolve()`` would let a looping filename raise *while a fault is being
+        built*, faulting the fault handler and tearing down the socket. Fail
+        closed: an unresolvable path is treated as out of jail (``None``), so such
+        a filename yields the generic ``"operation failed"`` rather than a crash.
+        """
+        # None here is the documented fail-closed contract (out of jail), not a
+        # give-up -- see the docstring and PY-TS-14.
+        try:
+            return path.resolve()
+        except (OSError, RuntimeError, ValueError):
+            return None
 
 
 def relativize_to_data_root(path: str | Path | None) -> DataRootRelative | None:

@@ -1391,12 +1391,12 @@
     "future_annotations": 1.0
   },
   "src/punt_vox/voxd/data_root_boundary.py": {
-    "method_ratio": 0.8,
+    "method_ratio": 0.833,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.8,
-    "max_complexity": 4.0,
-    "avg_complexity": 1.6,
-    "module_size": 78.0,
+    "avg_params": 0.83,
+    "max_complexity": 6.0,
+    "avg_complexity": 2.0,
+    "module_size": 97.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 0.5,
     "init_violations": 0.0,

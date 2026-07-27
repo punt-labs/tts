@@ -133,6 +133,41 @@ class TestTraversalSafety:
         assert relativize_to_data_root(link / "secret.mp3") is None
 
 
+class TestResolveFailsClosed:
+    """An unresolvable candidate fails closed to ``None`` -- never propagates.
+
+    The helper runs on the fault path (``SafeFault`` relativizes ``exc.filename``),
+    so a ``resolve()`` that raises must not escape and fault the fault handler.
+    """
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            OSError(40, "Too many levels of symbolic links"),  # ELOOP
+            RuntimeError("Symlink loop detected"),
+        ],
+    )
+    def test_resolve_failure_returns_none(
+        self,
+        roots: tuple[Path, Path],
+        monkeypatch: pytest.MonkeyPatch,
+        error: OSError | RuntimeError,
+    ) -> None:
+        """A ``resolve()`` that raises fails closed to ``None``, never propagates.
+
+        ``Path.resolve(strict=False)`` is best-effort and does not raise on a loop
+        on every platform, so the guard is proven by forcing the raise: an ELOOP
+        ``OSError`` and a ``RuntimeError`` must both be swallowed.
+        """
+
+        def boom(_self: Path, *_args: object, **_kwargs: object) -> Path:
+            raise error
+
+        monkeypatch.setattr(Path, "resolve", boom)
+        # Must return None, not propagate the exception.
+        assert relativize_to_data_root("/anything/at/all.mp3") is None
+
+
 class TestDataRootRelative:
     """The value object is an immutable label + relative path."""
 

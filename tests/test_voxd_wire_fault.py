@@ -103,3 +103,23 @@ class TestNoPrefixLeak:
         assert "/Users/" not in wire
         assert not wire.startswith("/")
         assert "Errno" not in wire
+
+
+class TestResolveFailureDoesNotEscape:
+    """A filename whose resolve() raises yields the generic verdict, never a crash.
+
+    SafeFault runs on the fault path, so a symlink-loop filename must not raise
+    while a fault is being built (that would fault the fault handler).
+    """
+
+    def test_unresolvable_filename_is_generic_and_does_not_raise(
+        self, state_root: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def boom(_self: Path, *_args: object, **_kwargs: object) -> Path:
+            raise OSError(40, "Too many levels of symbolic links")  # ELOOP
+
+        monkeypatch.setattr(Path, "resolve", boom)
+        exc = OSError(40, "Too many levels of symbolic links", "/some/looping/path.mp3")
+        # Building the fault must not propagate the ELOOP from relativize.
+        fault = SafeFault.from_exception(exc)
+        assert fault.wire_message == "operation failed"
