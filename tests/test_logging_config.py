@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from punt_vox import logging_config
+from punt_vox import logging_config, paths
 from punt_vox.config import ConfigStore
 from punt_vox.log_append_handler import AppendLogHandler
 
@@ -24,6 +24,9 @@ def _redirect_log_tree(
     log_dir = tmp_path / "logs"
     monkeypatch.setattr(logging_config, "_LOG_DIR", log_dir)
     monkeypatch.setattr(logging_config, "_LOG_FILE", log_dir / "vox.log")
+    # Point the state root at tmp so the sink's health relativizes in-jail
+    # (``logs/vox.log``) instead of falling back to the bare name out of jail.
+    monkeypatch.setattr(paths, "user_state_dir", lambda: tmp_path)
     # Default: level resolves to the quiet INFO. Individual tests override.
     _pin_level(monkeypatch, "info")
     root = logging.getLogger()
@@ -136,7 +139,7 @@ class TestConfigureDaemonLogging:
         """A symlinked vox.log is refused at write (O_NOFOLLOW) and reads unhealthy.
 
         The append sink never follows the link: the write goes to stderr, the
-        target is untouched, and ``log_health`` reports ``writable=False`` so a
+        target is untouched, and ``log_health`` reports ``degraded`` so a
         symlink-redirect attempt is queryable instead of falsely reporting healthy.
         """
         target = tmp_path / "target.txt"
@@ -145,7 +148,7 @@ class TestConfigureDaemonLogging:
         log.parent.mkdir(parents=True)
         log.symlink_to(target)
         logging_config.configure_daemon_logging()
-        assert logging_config.log_health()["writable"] is False  # symlink != healthy
+        assert logging_config.log_health()["status"] == "degraded"  # symlink != healthy
         logging.getLogger("punt_vox.voxd").info("blocked")
         assert target.read_text() == "do not write here\n"  # link never followed
 
@@ -247,10 +250,12 @@ class TestLogHealth:
     ) -> Iterator[None]:
         yield from _redirect_log_tree(tmp_path, monkeypatch)
 
-    def test_reports_path_and_writability(self, tmp_path: Path) -> None:
+    def test_reports_relative_name_and_verdict(self, tmp_path: Path) -> None:
+        _ = tmp_path  # in-jail via the autouse fixture's state-root patch
         health = logging_config.log_health()
-        assert health["path"] == str(tmp_path / "logs" / "vox.log")
-        assert health["writable"] is True
+        assert health["name"] == "logs/vox.log"  # relative, no absolute prefix
+        assert not health["name"].startswith("/")
+        assert health["status"] == "healthy"
 
 
 class TestShipTransportIsGone:

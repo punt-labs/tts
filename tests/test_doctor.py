@@ -100,10 +100,11 @@ class TestCheckPythonVersion:
 
 class TestCheckFfmpeg:
     @patch("punt_vox.doctor.shutil.which", return_value="/usr/bin/ffmpeg")
-    def test_ffmpeg_found(self, _mock: MagicMock) -> None:
+    def test_ffmpeg_found_reports_present_no_path(self, _mock: MagicMock) -> None:
         result = DoctorCheck().check_ffmpeg()
         assert result.passed is True
-        assert "/usr/bin/ffmpeg" in result.message
+        assert result.message == "ffmpeg: present"
+        assert "/usr/bin/ffmpeg" not in result.message  # out-of-jail path dropped
 
     @patch("punt_vox.doctor.shutil.which", return_value=None)
     def test_ffmpeg_missing(self, _mock: MagicMock) -> None:
@@ -217,11 +218,13 @@ class TestCheckUvx:
 
 
 class TestCheckOutputDir:
-    def test_writable_dir(self, tmp_path: Path) -> None:
+    def test_writable_dir_reports_verdict_no_path(self, tmp_path: Path) -> None:
         with patch("punt_vox.doctor.default_output_dir", return_value=tmp_path):
             results = DoctorCheck().check_output_dir()
         assert len(results) == 1
         assert results[0].passed is True
+        assert results[0].message == "output: writable"
+        assert str(tmp_path) not in results[0].message  # no absolute path
 
     def test_missing_dir(self, tmp_path: Path) -> None:
         missing = tmp_path / "nonexistent"
@@ -230,7 +233,8 @@ class TestCheckOutputDir:
         assert len(results) == 1
         assert results[0].passed is False
         assert results[0].symbol == "⚠"
-        assert "does not exist" in results[0].message
+        assert "absent" in results[0].message
+        assert str(missing) not in results[0].message  # no absolute path
 
 
 # ---------------------------------------------------------------------------
@@ -338,3 +342,24 @@ class TestRunAll:
         assert isinstance(results, list)
         assert all(isinstance(r, CheckResult) for r in results)
         assert len(results) >= 4  # python, ffmpeg, daemon, uvx at minimum
+
+    def test_no_which_or_config_path_leaks_into_any_message(
+        self, tmp_path: Path
+    ) -> None:
+        """No out-of-jail host path (a `which` result, a config path) reaches a
+        message -- the a7dd chroot: doctor emits verdicts, never host locations."""
+        mock_client = MagicMock(spec=VoxClientSync)
+        mock_client.health.side_effect = VoxdConnectionError("nope")
+        which_path = "/opt/host/bin/tool"
+        config_path = tmp_path / "sekret-home" / "config.json"
+        with (
+            patch("punt_vox.doctor.shutil.which", return_value=which_path),
+            patch("punt_vox.doctor.default_output_dir", return_value=tmp_path),
+            patch(
+                "punt_vox.doctor.claude_desktop_config_path", return_value=config_path
+            ),
+        ):
+            results = DoctorCheck(client=mock_client).run_all()
+        for r in results:
+            assert which_path not in r.message  # no binary install path
+            assert str(config_path) not in r.message  # no absolute config path
