@@ -17,6 +17,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, cast, final
 
+from punt_vox import dirs, paths
 from punt_vox.cache import CacheInfo
 from punt_vox.voxd.cache_handlers import CacheClearHandler, CacheStatusHandler
 
@@ -37,8 +38,20 @@ def _capturing_ws() -> tuple[WebSocket, list[dict[str, object]]]:
 
 
 class TestCacheStatus:
-    def test_reply_mirrors_cache_info(self) -> None:
-        info = CacheInfo(entries=3, size_bytes=2048, path=Path("/daemon/cache"))
+    def test_reply_relativizes_the_cache_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The in-jail cache dir crosses as its relative `cache`, never a host prefix.
+
+        The daemon cache lives at ``<state>/cache``; the wire carries only the
+        relative form so a client learns the logical location, never the absolute
+        prefix (home + username) -- the a7dd chroot invariant.
+        """
+        state = (Path(str(tmp_path)) / "state").resolve()
+        (state / "cache").mkdir(parents=True)
+        monkeypatch.setattr(paths, "user_state_dir", lambda: state)
+        monkeypatch.setattr(dirs, "default_output_dir", lambda: state / "out")
+        info = CacheInfo(entries=3, size_bytes=2048, path=state / "cache")
         ws, sent = _capturing_ws()
         asyncio.run(CacheStatusHandler(lambda: info)({"id": "s1"}, ws))
         assert sent[-1] == {
@@ -46,13 +59,16 @@ class TestCacheStatus:
             "id": "s1",
             "entries": 3,
             "size_bytes": 2048,
-            "path": "/daemon/cache",
+            "path": "cache",
         }
+        assert not str(sent[-1]["path"]).startswith("/")  # no absolute prefix
 
-    def test_empty_cache_reports_zeroes(self) -> None:
-        info = CacheInfo(entries=0, size_bytes=0, path=Path("/daemon/cache"))
+    def test_out_of_jail_path_never_leaks_a_prefix(self) -> None:
+        """A path under neither root falls back to the bare name, never a prefix."""
+        info = CacheInfo(entries=0, size_bytes=0, path=Path("/daemon/home/user/cache"))
         ws, sent = _capturing_ws()
         asyncio.run(CacheStatusHandler(lambda: info)({"id": "s2"}, ws))
+        assert sent[-1]["path"] == "cache"  # bare name, no home/username prefix
         assert sent[-1]["entries"] == 0
         assert sent[-1]["size_bytes"] == 0
 

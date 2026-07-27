@@ -5,11 +5,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.cache import cache_clear, cache_status
+from punt_vox.logging_config import apply_log_level
 from punt_vox.paths import recordings_dir
 from punt_vox.voxd.cache_handlers import CacheClearHandler, CacheStatusHandler
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 from punt_vox.voxd.fetch_handler import FetchHandler
+from punt_vox.voxd.log_level_handler import LogLevelHandler
 from punt_vox.voxd.play_handler import PlayHandler
 from punt_vox.voxd.rec_handlers import RecListHandler, RecRemoveHandler
 from punt_vox.voxd.record_handler import RecordHandler
@@ -79,6 +81,7 @@ class HandlerRegistry:
             "rec_remove": RecRemoveHandler(store),
             "cache_status": CacheStatusHandler(cache_status),
             "cache_clear": CacheClearHandler(cache_clear),
+            "set_log_level": LogLevelHandler(apply_log_level),
             "chime": ChimeHandler(
                 chimes=ChimeResolver(),
                 chime_dedup=ChimeDedup(),

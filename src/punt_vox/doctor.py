@@ -102,10 +102,13 @@ class DoctorCheck:
         )
 
     def check_ffmpeg(self) -> CheckResult:
-        """Check ffmpeg is installed."""
-        ffmpeg = shutil.which("ffmpeg")
-        if ffmpeg:
-            return _pass(f"ffmpeg: {ffmpeg}")
+        """Check ffmpeg is installed -- present/absent verdict, no install path.
+
+        ``ffmpeg`` is out of jail (a host binary location), so the reply is a
+        verdict: its ``which`` path never crosses to a remote-daemon client.
+        """
+        if shutil.which("ffmpeg"):
+            return _pass("ffmpeg: present")
         hint = {
             "Darwin": "brew install ffmpeg",
             "Linux": "see https://ffmpeg.org/download.html",
@@ -119,10 +122,9 @@ class DoctorCheck:
             return []
         if any(os.environ.get(k) for k in ("ELEVENLABS_API_KEY", "OPENAI_API_KEY")):
             return []
-        espeak = shutil.which("espeak-ng") or shutil.which("espeak")
-        if espeak:
-            espeak_name = Path(espeak).name
-            return [_pass(f"{espeak_name}: {espeak} (offline fallback)")]
+        if shutil.which("espeak-ng") or shutil.which("espeak"):
+            # Out of jail: report presence, never the binary's install path.
+            return [_pass("espeak: present (offline fallback)")]
         return [
             _result(
                 _OPTIONAL,
@@ -183,26 +185,24 @@ class DoctorCheck:
         return []
 
     def check_music_dir(self) -> list[CheckResult]:
-        """Check music directory existence."""
+        """Check the music dir -- present/absent verdict, no abs path.
+
+        An in-jail path under the ``output`` root, reported as a relative verdict
+        so its absolute prefix never crosses to a client.
+        """
         from punt_vox.dirs import (
             _resolve_music_dir,  # pyright: ignore[reportPrivateUsage]
         )
 
         music_dir = _resolve_music_dir()  # pyright: ignore[reportPrivateUsage]
         if not music_dir.is_dir():
-            return [
-                _warn(
-                    f"Music directory: {music_dir} does not exist"
-                    " — will be created on first 'vox record'"
-                )
-            ]
+            return [_warn("output music dir: absent — created on first 'vox record'")]
         return []
 
     def check_uvx(self) -> CheckResult:
-        """Check for uvx binary."""
-        uvx = shutil.which("uvx")
-        if uvx:
-            return _result(_OK, f"uvx: {uvx}", required=False)
+        """Check for uvx -- present/absent verdict, no host path (out of jail)."""
+        if shutil.which("uvx"):
+            return _result(_OK, "uvx: present", required=False)
         return _result(
             _OPTIONAL,
             "uvx: not found (needed for MCP server)",
@@ -231,13 +231,9 @@ class DoctorCheck:
             )
             return results
 
-        results.append(
-            _result(
-                _OK,
-                f"Claude Desktop config: {config_path}",
-                required=False,
-            )
-        )
+        # Out of jail (under ~/Library, neither data root): present/absent
+        # verdict only -- the absolute config path never crosses to a client.
+        results.append(_result(_OK, "Claude Desktop config: present", required=False))
 
         try:
             data = json.loads(config_path.read_text(encoding="utf-8"))
@@ -270,27 +266,21 @@ class DoctorCheck:
         return results
 
     def check_output_dir(self) -> list[CheckResult]:
-        """Check output directory writability."""
+        """Check the output dir -- writable verdict, no abs path or raw OSError.
+
+        The dir *is* the ``output`` data root, so its own label is the name; the
+        absolute path and the raw ``OSError`` stay out of the client-facing reply.
+        """
         out_dir = default_output_dir()
         if out_dir.is_dir():
             try:
                 test_file = out_dir / ".doctor_test"
                 test_file.write_text("ok")
                 test_file.unlink()
-                return [_pass(f"Output directory: {out_dir}")]
-            except OSError as exc:
-                return [
-                    _fail(
-                        f"Output directory: {out_dir} ({exc})"
-                        " — check permissions or use --output-dir"
-                    )
-                ]
-        return [
-            _warn(
-                f"Output directory: {out_dir} does not exist"
-                " — will be created on first 'vox record'"
-            )
-        ]
+                return [_pass("output: writable")]
+            except OSError:
+                return [_fail("output: not writable — check permissions")]
+        return [_warn("output: absent — created on first 'vox record'")]
 
 
 # ---------------------------------------------------------------------------

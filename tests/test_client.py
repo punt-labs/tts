@@ -468,6 +468,8 @@ class TestVoxClientRecord:
 
     @pytest.mark.asyncio
     async def test_record_returns_store_locator(self) -> None:
+        # The daemon sends the RELATIVE store path (`recordings/x.mp3`), never an
+        # absolute prefix; the client parses that relative form into store_path.
         mock_ws = _make_mock_ws()
         mock_ws.recv = AsyncMock(
             return_value=json.dumps(
@@ -475,7 +477,7 @@ class TestVoxClientRecord:
                     "type": "audio",
                     "id": "r1",
                     "name": "x.mp3",
-                    "path": "/store/x.mp3",
+                    "path": "recordings/x.mp3",
                     "bytes": 40,
                     "cached": False,
                 }
@@ -487,7 +489,8 @@ class TestVoxClientRecord:
         result = await client.record("Hello")
         assert result.id == "x.mp3"
         assert result.name == "x.mp3"
-        assert result.store_path == Path("/store/x.mp3")
+        assert result.store_path == Path("recordings/x.mp3")
+        assert not result.store_path.is_absolute()  # no host prefix crosses
         assert result.byte_count == 40
         assert result.cached is False
 

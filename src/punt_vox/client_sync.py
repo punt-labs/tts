@@ -241,6 +241,14 @@ class VoxClientSync:
         """Delete every entry in the daemon cache; return the count deleted."""
         return cast("int", self._runner.run(self._call("cache_clear")))
 
+    def set_log_level(self, level: str) -> str:
+        """Set the daemon's log level; return the effective level it applied.
+
+        The daemon clamps *level* to the INFO audit floor, so a stricter request
+        comes back as ``info`` -- the audit trail is never blinded.
+        """
+        return cast("str", self._runner.run(self._call("set_log_level", level)))
+
     # -- music catalog (music group) ----------------------------------------
 
     def music_new(self, prompts: PromptSet, name: str | None = None) -> str:

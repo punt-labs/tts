@@ -467,23 +467,28 @@ def log_cmd(
         typer.Argument(help="Log verbosity: info (quiet default) or debug."),
     ],
 ) -> None:
-    """Set log verbosity globally. Client processes apply it immediately; the
-    daemon picks it up on `vox daemon restart`."""
+    """Set the daemon's log verbosity live over the wire (info or debug).
+
+    Routes to voxd so the running daemon -- including a remote one over
+    ``VOXD_HOST`` -- applies the level immediately; the daemon clamps to the INFO
+    audit floor server-side, so the audit trail is never blinded. Use
+    ``--verbose`` to raise a single client command instead.
+    """
     normalized = level.lower()
     if normalized not in ("info", "debug"):
         typer.echo("Error: level must be info or debug.", err=True)
         raise typer.Exit(code=1)
-
-    # Write the GLOBAL setting: a service-started voxd never runs from a repo, so
-    # a repo-local value would leave the daemon at INFO after a restart. A repo
-    # may still pin log_level in its own vox.local.md to raise only its clients.
-    ConfigStore(ConfigStore.global_dir()).write_field("log_level", normalized)
+    try:
+        effective = VoxClientSync().set_log_level(normalized)
+    except (VoxdConnectionError, VoxdProtocolError) as exc:
+        _formatter.error(str(exc), f"Error: {exc}")
+        raise typer.Exit(code=1) from exc
     label = (
-        "Debug logging on — restart the daemon to raise its level too."
-        if normalized == "debug"
+        "Debug logging on — the daemon is now verbose."
+        if effective == "debug"
         else "Log level back to info."
     )
-    _formatter.emit({"log_level": normalized}, label)
+    _formatter.emit({"log_level": effective}, label)
 
 
 # ---------------------------------------------------------------------------

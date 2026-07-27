@@ -35,15 +35,20 @@ from typing import Self, TypedDict, final
 
 from punt_vox.log_sanitize import SANITIZER
 from punt_vox.private_state import PrivateState
+from punt_vox.voxd.data_root_boundary import relativize_to_data_root
 
 __all__ = ["AtomicAppendLog", "SinkHealth"]
 
 
 class SinkHealth(TypedDict):
-    """The sink's client-observable status view: where it writes and if it can now."""
+    """The sink's client-observable status: a relative name and a verdict.
 
-    path: str
-    writable: bool
+    ``name`` is relativized (``logs/vox.log``), never a host prefix; ``status``
+    is ``"healthy"`` when the sink can append now, else ``"degraded"`` (a7dd).
+    """
+
+    name: str
+    status: str
 
 
 # ``O_NOFOLLOW`` refuses a symlink at the log path -- never legitimate, and a
@@ -93,13 +98,17 @@ class AtomicAppendLog:
         return self._path
 
     def health(self) -> SinkHealth:
-        """Return where the sink writes and whether it could append right now.
+        """Return the sink's relative name and a healthy/degraded verdict.
 
         The client-observable answer to "is this log itself working?" -- surfaced
         through ``mic:status`` so a broken sink is queryable, never buried in a
-        second daemon log (the lesson that motivated routing failures out of band).
+        second daemon log. The path crosses relativized (``logs/vox.log``) with
+        the bare name as the fail-closed fallback, so no absolute prefix (home +
+        username) reaches a client (the a7dd chroot); ``status`` is the verdict.
         """
-        return {"path": str(self._path), "writable": self.is_writable()}
+        rel = relativize_to_data_root(self._path)
+        name = str(rel.path) if rel is not None else self._path.name
+        return {"name": name, "status": "healthy" if self.is_writable() else "degraded"}
 
     def append(self, text: str) -> None:
         """Escape *text* to one line and append it atomically; never raise, never log.

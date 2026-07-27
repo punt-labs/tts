@@ -56,10 +56,10 @@ class RecordResult:
     ``record`` captures to the daemon-owned store; the client never names a
     daemon path. ``id`` and ``name`` are the store reference (the store
     filename) a caller passes to :meth:`VoxClient.play` or
-    :meth:`VoxClient.fetch`. ``store_path`` is the daemon-side path -- usable
-    directly when the client shares the daemon's filesystem, and the source for
-    a local :meth:`VoxClient.fetch` copy. ``byte_count`` is the size the daemon
-    wrote; ``cached`` reports a content-addressed cache hit.
+    :meth:`VoxClient.fetch`. ``store_path`` is that reference expressed
+    relative to the daemon's data root (``recordings/foo.mp3``) -- a logical
+    locator with no absolute prefix, never a path on the client's own disk.
+    ``byte_count`` is the size the daemon wrote; ``cached`` reports a cache hit.
     """
 
     id: str
@@ -81,9 +81,9 @@ class RecordingSummary:
 class CacheStatus:
     """The daemon cache's size, described to a client.
 
-    ``path`` is the daemon-side cache directory as the daemon reported it: the
-    MP3 quip cache ``vox cache status`` inspects lives on the daemon host, so a
-    remote client sees the daemon's path, never a local one. ``entries`` and
+    ``path`` is the daemon cache directory relativized to its data root
+    (``cache``) -- a logical name with no absolute prefix, so a remote client
+    learns the location, never the daemon's home or username. ``entries`` and
     ``size_bytes`` count the ``.mp3`` and orphaned ``.tmp`` files there, mirroring
     the daemon's own ``cache_status`` return.
     """
@@ -809,6 +809,17 @@ class VoxClient:
         resp = await self._command("cache_clear")
         with self._wire_guard():
             return JsonObject.coerce(resp, "cache_clear").require_int("cleared")
+
+    async def set_log_level(self, level: str) -> str:
+        """Set the daemon's log level; return the effective level it applied.
+
+        The daemon clamps *level* server-side to the INFO audit floor, so a
+        request for a stricter level comes back as ``info`` -- the audit trail is
+        never blinded. ``info`` or ``debug`` in normal use.
+        """
+        resp = await self._command("set_log_level", level=level)
+        with self._wire_guard():
+            return JsonObject.coerce(resp, "set_log_level").require_str("level")
 
     # -- music catalog (music group) ----------------------------------------
 

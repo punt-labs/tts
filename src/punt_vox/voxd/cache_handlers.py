@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.voxd.data_root_boundary import relativize_to_data_root
 from punt_vox.voxd.wire_fault import SafeFault
 from punt_vox.voxd.wire_reply import WireReply
 
@@ -55,12 +56,15 @@ class CacheStatusHandler:
         except OSError as exc:
             await reply.fault(SafeFault.from_exception(exc))
             return
+        # The in-jail cache dir crosses relativized (`cache`), never a host
+        # prefix; the bare name is the fail-closed fallback out of jail.
+        rel = relativize_to_data_root(info.path)
         await reply.send(
             {
                 "type": "cache_status",
                 "entries": info.entries,
                 "size_bytes": info.size_bytes,
-                "path": str(info.path),
+                "path": str(rel.path) if rel is not None else info.path.name,
             }
         )
 

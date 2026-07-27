@@ -33,6 +33,7 @@ from punt_vox.private_state import PrivateState
 
 __all__ = [
     "Role",
+    "apply_log_level",
     "configure_client_logging",
     "configure_daemon_logging",
     "log_health",
@@ -117,12 +118,22 @@ def reapply_client_log_level() -> None:
     within a tool call or two and status reflects what the process actually does.
     """
     level = logging.getLevelNamesMapping().get(_resolve_level(verbose=False))
-    if level is None:
-        return
+    if level is not None:
+        apply_log_level(level)
+
+
+def apply_log_level(numeric: int) -> None:
+    """Set the root logger and every handler to *numeric* -- the live level switch.
+
+    The one place a running process re-points its level: shared by the client's
+    ``reapply_client_log_level`` and the daemon's ``set_log_level`` wire op, so a
+    running daemon and a long-lived client flip the root logger and its handlers
+    the same way rather than duplicating the walk.
+    """
     root = logging.getLogger()
-    root.setLevel(level)
+    root.setLevel(numeric)
     for handler in root.handlers:
-        handler.setLevel(level)
+        handler.setLevel(numeric)
 
 
 def _config(*, name_prefix: str, level: str) -> dict[str, object]:

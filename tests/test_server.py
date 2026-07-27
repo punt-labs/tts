@@ -1143,16 +1143,17 @@ class TestStatusTool:
             "vibe_trace",
         }
 
-    def test_reports_vibe_trace_path_and_writable(
+    def test_reports_vibe_trace_name_and_verdict(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """status makes the trace-sink health client-observable: path + writable."""
+        """status makes the trace sink observable as a relative name + verdict."""
         monkeypatch.setattr("punt_vox.vibe_trace.log_dir", lambda: tmp_path)
 
         health = json.loads(status())["vibe_trace"]
 
-        assert health["path"] == str(tmp_path / "vibe-trace.log")
-        assert health["writable"] is True
+        assert health["name"] == "vibe-trace.log"  # relative, no host prefix
+        assert not health["name"].startswith("/")
+        assert health["status"] == "healthy"
 
     def test_reports_log_level(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -1172,7 +1173,7 @@ class TestStatusTool:
     def test_reports_vibe_trace_unwritable(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """A read-only log dir surfaces writable=false through the status API."""
+        """A read-only log dir surfaces a `degraded` verdict through the status API."""
         locked = tmp_path / "locked"
         locked.mkdir()
         monkeypatch.setattr("punt_vox.vibe_trace.log_dir", lambda: locked)
@@ -1182,7 +1183,7 @@ class TestStatusTool:
         finally:
             locked.chmod(0o700)
 
-        assert health["writable"] is False
+        assert health["status"] == "degraded"
 
     def test_reflects_current_music_style(self) -> None:
         """status surfaces the current music style for a client to observe."""

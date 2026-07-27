@@ -254,13 +254,14 @@ class TestVibeTraceLog:
         finally:
             locked.chmod(0o700)
 
-    def test_health_reports_path_and_writability(self, tmp_path: Path) -> None:
-        """``health`` is the status-API view: string path plus live writability."""
+    def test_health_reports_relative_name_and_verdict(self, tmp_path: Path) -> None:
+        """``health`` is the status-API view: relative name plus a live verdict.
+
+        The path crosses as its bare name here (out of jail under tmp) -- never an
+        absolute prefix -- and ``status`` is the healthy/degraded verdict.
+        """
         trace = VibeTraceLog(tmp_path / "vibe-trace.log")
-        assert trace.health() == {
-            "path": str(tmp_path / "vibe-trace.log"),
-            "writable": True,
-        }
+        assert trace.health() == {"name": "vibe-trace.log", "status": "healthy"}
 
     def test_is_writable_false_when_probe_raises_oserror(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -289,10 +290,7 @@ class TestVibeTraceLog:
             raise OSError(5, "I/O error")
 
         monkeypatch.setattr("punt_vox.append_log.os.access", blow_up)
-        assert trace.health() == {
-            "path": str(tmp_path / "vibe-trace.log"),
-            "writable": False,
-        }
+        assert trace.health() == {"name": "vibe-trace.log", "status": "degraded"}
 
     def test_record_swallows_io_failure(self, tmp_path: Path) -> None:
         # A directory where the file should be makes os.open raise; the sink must
