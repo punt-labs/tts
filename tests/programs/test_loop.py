@@ -30,6 +30,8 @@ from punt_vox.voxd.programs.playback_signal import Rotate
 from .conftest import AvoidRepeatPolicy, FakeSleeper
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import pytest
 
 PoolFactory = Callable[..., frozenset[Part]]
@@ -587,3 +589,55 @@ class TestSpawnFailure:
         assert player.parts  # recovered and played after the failed spawn
         assert health.fault is None  # the successful spawn cleared the fault
         assert sleeper.sleeps  # it backed off before recovering
+
+
+@final
+class _PathLeakSpawnPlayer:
+    """Raise a spawn error whose message embeds absolute host paths."""
+
+    __slots__ = ("_msg", "parts")
+    _msg: str
+    parts: list[Part]
+
+    def __new__(cls, msg: str) -> Self:
+        self = super().__new__(cls)
+        self._msg = msg
+        self.parts = []
+        return self
+
+    async def play(self, part: Part) -> FakeProcess:
+        raise FileNotFoundError(self._msg)
+
+
+class TestSpawnFaultReasonSanitization:
+    """The status-surfaced spawn-fault reason carries no absolute prefix (#10/D4)."""
+
+    async def test_spawn_fault_reason_relativizes_and_strips_paths(
+        self, rotating: Program, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from punt_vox import paths
+
+        state = (tmp_path / "state").resolve()
+        (state / "recordings").mkdir(parents=True)
+        monkeypatch.setattr(paths, "user_state_dir", lambda: state)
+        rec = state / "recordings" / "t.mp3"
+        player = _PathLeakSpawnPlayer(f"spawn {rec}: /opt/homebrew/bin/ffplay missing")
+        health = PlaybackHealth()
+        sleeper = FakeSleeper()
+        channel = ControlChannel(rotating)
+        loop = ProgramLoop(channel, player, sleeper, health)
+        run = asyncio.create_task(loop.run())
+        for _ in range(500):
+            if health.fault is not None and sleeper.sleeps:
+                break
+            await asyncio.sleep(0)
+        run.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await run
+
+        fault = health.fault
+        assert fault is not None
+        assert "recordings/t.mp3" in fault.reason  # in-jail token relativized
+        assert str(state) not in fault.reason  # no absolute prefix
+        assert "/opt/homebrew/bin/ffplay" not in fault.reason  # out-of-jail stripped
+        assert "<path>" in fault.reason
