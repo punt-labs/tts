@@ -132,11 +132,18 @@ class TestSynthesisFaultClassification:
 
     @staticmethod
     def _assert_faulted(
-        caplog: pytest.LogCaptureFixture, sent: list[dict[str, object]]
+        caplog: pytest.LogCaptureFixture,
+        sent: list[dict[str, object]],
+        detail: str,
     ) -> None:
+        # The wire carries only the generic verdict -- a non-OSError fault (or an
+        # rc) has no relative form -- while the raw *detail* stays in the log.
         assert sent[-1]["type"] == "error"
+        assert sent[-1]["message"] == "operation failed"
         assert any(
-            r.levelno == logging.ERROR and "operation failed" in r.getMessage()
+            r.levelno == logging.ERROR
+            and "operation failed" in r.getMessage()
+            and detail in r.getMessage()
             for r in caplog.records
         )
         assert not any("rejected op" in r.getMessage() for r in caplog.records)
@@ -155,8 +162,7 @@ class TestSynthesisFaultClassification:
         msg: dict[str, object] = {"id": "s1", "text": "hi", "provider": "elevenlabs"}
         with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
             await handler(msg, ws)
-        assert "provider 500" in str(sent[-1]["message"])
-        self._assert_faulted(caplog, sent)
+        self._assert_faulted(caplog, sent, "provider 500")
 
     @pytest.mark.asyncio
     async def test_local_play_exception_is_a_fault(
@@ -171,8 +177,7 @@ class TestSynthesisFaultClassification:
         msg: dict[str, object] = {"id": "s2", "text": "hi", "provider": "espeak"}
         with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
             await handler(msg, ws)
-        assert "espeak crash" in str(sent[-1]["message"])
-        self._assert_faulted(caplog, sent)
+        self._assert_faulted(caplog, sent, "espeak crash")
 
     @pytest.mark.asyncio
     async def test_local_play_nonzero_rc_is_a_fault(
@@ -185,8 +190,7 @@ class TestSynthesisFaultClassification:
         msg: dict[str, object] = {"id": "s3", "text": "hi", "provider": "espeak"}
         with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
             await handler(msg, ws)
-        assert "rc=3" in str(sent[-1]["message"])
-        self._assert_faulted(caplog, sent)
+        self._assert_faulted(caplog, sent, "rc=3")
 
 
 class TestHandleSynthesizeOnceFlag:

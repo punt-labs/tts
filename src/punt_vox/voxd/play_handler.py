@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Self
 from punt_vox.voxd._parse import parse_optional_str
 from punt_vox.voxd.playback import PlaybackItem
 from punt_vox.voxd.types import MessageHandler
+from punt_vox.voxd.wire_fault import SafeFault
 from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
@@ -91,5 +92,9 @@ class PlayHandler(MessageHandler):
         # A host-side playback failure (missing player, unplayable file, played
         # nothing) is a server-side operational fault, not a client rejection, so
         # it routes through fault (the ERROR "operation failed" audit) rather than
-        # a bare error frame the log would blame on the client.
-        await reply.fault(f"playback failed: {result.failure_detail()}")
+        # a bare error frame the log would blame on the client. The failure detail
+        # embeds player stderr with absolute paths, so it is an opaque fault: the
+        # detail goes to the log and the wire carries only the generic verdict.
+        await reply.fault(
+            SafeFault.opaque(f"playback failed: {result.failure_detail()}")
+        )

@@ -21,6 +21,7 @@ from punt_vox.voxd.chunked_fetch import ChunkedTransfer
 from punt_vox.voxd.path_status import PathStatus
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.types import MessageHandler
+from punt_vox.voxd.wire_fault import SafeFault
 from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
@@ -58,14 +59,16 @@ class FetchHandler(MessageHandler):
         except ValueError as exc:
             await reply.error(str(exc))
             return
-        except OSError:
+        except OSError as exc:
             # A stat fault (EACCES/EIO) on the already-contained path is a
             # server-side fault, not a missing recording: PathStatus.of lets
             # ENOENT read as absent but propagates any other OSError, so a
             # genuine access failure never masquerades as "no such recording".
-            # The vendor detail is logged; the wire frame stays generic.
+            # logger.exception records the traceback; SafeFault.from_exception
+            # then puts the cause on the audit line too (and relativizes an
+            # in-jail store path), never leaving the failure silent.
             logger.exception("fetch op failed id=%r", reply.request_id)
-            await reply.fault("operation failed")
+            await reply.fault(SafeFault.from_exception(exc))
             return
         await ChunkedTransfer(reply, FETCH_CHUNK_BYTES).stream(path, label)
 

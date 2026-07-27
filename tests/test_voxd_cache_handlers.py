@@ -76,9 +76,13 @@ class TestCacheStatus:
             asyncio.run(CacheStatusHandler(boom)({"id": "s9"}, ws))
         assert sent[-1]["type"] == "error"
         assert sent[-1]["id"] == "s9"
-        assert "permission denied" in str(sent[-1]["message"])
+        # An OSError with no in-jail filename carries no relative form -- the wire
+        # gets the generic verdict; the raw detail stays in the host-local log.
+        assert sent[-1]["message"] == "operation failed"
         assert any(
-            r.levelno == logging.ERROR and "operation failed" in r.getMessage()
+            r.levelno == logging.ERROR
+            and "operation failed" in r.getMessage()
+            and "permission denied on cache dir" in r.getMessage()
             for r in caplog.records
         )
         assert not any("rejected op" in r.getMessage() for r in caplog.records)
@@ -113,9 +117,13 @@ class TestCacheClear:
             asyncio.run(CacheClearHandler(boom)({"id": "c9"}, ws))
         assert sent[-1]["type"] == "error"
         assert sent[-1]["id"] == "c9"
-        assert "Permission denied" in str(sent[-1]["message"])
+        # No in-jail filename on the OSError -- the wire is the generic verdict,
+        # the raw "Permission denied" detail is kept in the host-local log.
+        assert sent[-1]["message"] == "operation failed"
         assert any(
-            r.levelno == logging.ERROR and "operation failed" in r.getMessage()
+            r.levelno == logging.ERROR
+            and "operation failed" in r.getMessage()
+            and "Permission denied" in r.getMessage()
             for r in caplog.records
         )
         assert not any("rejected op" in r.getMessage() for r in caplog.records)

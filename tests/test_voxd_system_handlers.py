@@ -255,7 +255,12 @@ class TestVoicesHandler:
 
         assert ws.sent[-1]["type"] == "error"
         assert ws.sent[-1]["id"] == "v2"
-        assert "voice service unreachable" in str(ws.sent[-1]["message"])
+        # VoicesHandler catches the OSError in its own (ValueError, LookupError,
+        # OSError) clause and replies via reject_or_fault -> WireReply.fault as a
+        # SafeFault; it never escapes to the router's broad-except. The OSError has
+        # no in-jail filename, so the wire carries the generic verdict while the
+        # raw "voice service unreachable" stays in the log.
+        assert ws.sent[-1]["message"] == "operation failed"
         assert any(
             r.levelno == logging.ERROR and "operation failed" in r.getMessage()
             for r in caplog.records
@@ -291,11 +296,13 @@ class TestVoicesHandler:
         assert ws.sent[-1]["id"] == "v3"
         # Generic on the wire -- the RuntimeError text never leaks to the client.
         assert ws.sent[-1]["message"] == "operation failed"
-        # The full traceback is logged for the audit trail (logger.exception)...
+        # The full traceback is logged for the audit trail (logger.exception),
+        # and the cause is never silently lost -- the exception detail is attached.
         assert any(
             r.levelno == logging.ERROR
             and r.name == "punt_vox.voxd.system_handlers"
             and r.exc_info is not None
+            and "unexpected vendor failure" in str(r.exc_info[1])
             for r in caplog.records
         )
         # ...and it audits as an operational fault, never a client rejection.

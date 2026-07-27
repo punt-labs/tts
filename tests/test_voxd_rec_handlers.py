@@ -96,9 +96,12 @@ class TestRecList:
             asyncio.run(RecListHandler(store)({"id": "l9"}, ws))
         assert sent[-1]["type"] == "error"
         assert sent[-1]["id"] == "l9"
-        assert "permission denied" in str(sent[-1]["message"])
+        # OSError with no in-jail filename -> generic wire verdict, detail to log.
+        assert sent[-1]["message"] == "operation failed"
         assert any(
-            r.levelno == logging.ERROR and "operation failed" in r.getMessage()
+            r.levelno == logging.ERROR
+            and "operation failed" in r.getMessage()
+            and "permission denied on recordings root" in r.getMessage()
             for r in caplog.records
         )
         assert not any("rejected op" in r.getMessage() for r in caplog.records)
@@ -176,7 +179,51 @@ class TestRecRemove:
             asyncio.run(RecRemoveHandler(store)({"id": "r7", "ref": "denied.mp3"}, ws))
         assert sent[-1]["type"] == "error"
         assert sent[-1]["id"] == "r7"
-        assert "Permission denied" in str(sent[-1]["message"])
+        # OSError with no in-jail filename -> generic wire verdict, detail to log.
+        assert sent[-1]["message"] == "operation failed"
+        assert any(
+            r.levelno == logging.ERROR
+            and "operation failed" in r.getMessage()
+            and "Permission denied" in r.getMessage()
+            for r in caplog.records
+        )
+        assert not any("rejected op" in r.getMessage() for r in caplog.records)
+
+    def test_unlink_race_filenotfound_does_not_leak_absolute_path(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A TOCTOU unlink race is a fault whose wire frame carries no host path.
+
+        The store's own "no recording named X" is a ``FileNotFoundError`` with
+        ``filename`` ``None`` -- a client rejection sent verbatim. But if the entry
+        vanishes between the stat and the ``unlink``, the OS raises a *raw*
+        ``FileNotFoundError`` carrying ``filename=<absolute store path>``. That is
+        a server-side fault, not a rejection, and its absolute prefix must never
+        reach the client -- it routes through ``fault`` and crosses as a
+        prefix-free message.
+        """
+        store = _store(tmp_path)
+        (store.root / "racy.mp3").write_bytes(b"bytes")
+        leaked = "/Users/someone/.punt-labs/vox/recordings/racy.mp3"
+
+        def racing_remove(_self: RecordStore, _ref: str) -> None:
+            raise FileNotFoundError(2, "No such file or directory", leaked)
+
+        monkeypatch.setattr(RecordStore, "remove", racing_remove)
+        ws, sent = _capturing_ws()
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            asyncio.run(RecRemoveHandler(store)({"id": "r8", "ref": "racy.mp3"}, ws))
+        assert sent[-1]["type"] == "error"
+        assert sent[-1]["id"] == "r8"
+        # The wire frame carries no absolute prefix and no OS Errno.
+        message = str(sent[-1]["message"])
+        assert "/Users/" not in message
+        assert not message.startswith("/")
+        assert "Errno" not in message
+        # It audits as a server fault, not a client rejection.
         assert any(
             r.levelno == logging.ERROR and "operation failed" in r.getMessage()
             for r in caplog.records

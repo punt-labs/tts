@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Self
 
 from punt_vox.log_sanitize import SANITIZER
 from punt_vox.voxd._parse import safe_send
+from punt_vox.voxd.wire_fault import SafeFault
 
 if TYPE_CHECKING:
     from starlette.websockets import WebSocket
@@ -77,21 +78,29 @@ class WireReply:
         )
         return await self.send({"type": "error", "message": message})
 
-    async def fault(self, message: str) -> bool:
-        """Audit a server-side OPERATIONAL failure at ERROR and send its frame.
+    async def fault(self, fault: SafeFault) -> bool:
+        """Audit a server-side OPERATIONAL failure at ERROR and send a safe frame.
 
         A fault is a daemon-side error -- synthesis failed, a store write failed
         -- as opposed to :meth:`error`, which records a rejected client request.
-        The client-facing frame is byte-for-byte identical to :meth:`error`'s;
-        only the audit classification differs, so a debugger reading vox.log
-        sees a server fault logged as "operation failed", never mislabeled
-        "rejected op". The message is sanitized on the same log-injection path,
-        and logged even when the peer has gone.
+        The audit classification differs from :meth:`error`, so a debugger reading
+        vox.log sees a server fault logged as "operation failed", never mislabeled
+        "rejected op".
+
+        Unlike :meth:`error`, the wire frame does **not** carry the raw text: it
+        sends :attr:`SafeFault.wire_message`, a relativized ``"path: reason"`` for
+        an in-jail ``OSError`` or the generic ``"operation failed"``, so no
+        absolute prefix (home + username) reaches the client. The raw
+        :attr:`SafeFault.log_detail` -- the absolute path included -- is sanitized
+        for log injection and written to the host-local vox.log alone, and logged
+        even when the peer has gone.
         """
         logger.error(
-            "operation failed id=%r: %s", self._request_id, self._sanitize(message)
+            "operation failed id=%r: %s",
+            self._request_id,
+            self._sanitize(fault.log_detail),
         )
-        return await self.send({"type": "error", "message": message})
+        return await self.send({"type": "error", "message": fault.wire_message})
 
     async def reject_or_fault(self, exc: ValueError | LookupError | OSError) -> bool:
         """Route a domain failure to :meth:`error` or :meth:`fault` by its type.
@@ -111,7 +120,7 @@ class WireReply:
         """
         if isinstance(exc, ValueError):
             return await self.error(str(exc))
-        return await self.fault(str(exc))
+        return await self.fault(SafeFault.from_exception(exc))
 
     @staticmethod
     def _sanitize(message: str) -> str:

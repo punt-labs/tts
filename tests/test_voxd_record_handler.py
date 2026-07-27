@@ -183,7 +183,9 @@ class TestRecordHandler:
         asyncio.run(handler(msg, ws))
 
         error = next(p for p in sent if p["type"] == "error")
-        assert "boom" in str(error["message"])
+        # A non-OSError synthesis fault carries no relative form -- the wire gets
+        # the generic verdict; the raw "boom" goes to the log via logger.exception.
+        assert error["message"] == "operation failed"
         assert not store.root.exists() or not any(store.root.glob("*.mp3"))
 
     def test_empty_text_is_an_error(self, tmp_path: Path) -> None:

@@ -12,6 +12,7 @@ from punt_vox.voxd._parse import parse_present_str
 from punt_vox.voxd.speech_handlers import _SpeechRequest
 from punt_vox.voxd.synthesis import SynthesisPipeline
 from punt_vox.voxd.types import MessageHandler
+from punt_vox.voxd.wire_fault import SafeFault
 from punt_vox.voxd.wire_reply import WireReply
 
 if TYPE_CHECKING:
@@ -133,7 +134,9 @@ class RecordHandler(MessageHandler):
             # Any place() failure (not just OSError) must reach the already-ack'd
             # client as an error frame -- otherwise it waits out the full timeout.
             logger.exception("Record write failed for id=%r", req.request_id)
-            await WireReply(req.websocket, req.request_id).fault(str(exc))
+            await WireReply(req.websocket, req.request_id).fault(
+                SafeFault.from_exception(exc)
+            )
             return None
 
     async def _synthesize(self, req: _SpeechRequest) -> SynthesisOutcome | None:
@@ -142,5 +145,7 @@ class RecordHandler(MessageHandler):
             return await self._synthesis.synthesize_to_file(req.text, req.spec)
         except Exception as exc:
             logger.exception("Record synthesis failed for id=%r", req.request_id)
-            await WireReply(req.websocket, req.request_id).fault(str(exc))
+            await WireReply(req.websocket, req.request_id).fault(
+                SafeFault.from_exception(exc)
+            )
             return None

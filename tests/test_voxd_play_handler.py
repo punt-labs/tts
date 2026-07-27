@@ -103,15 +103,20 @@ class TestPlayHandler:
             asyncio.run(PlayHandler(playback=playback, store=store)(msg, ws))
 
         assert [p["type"] for p in sent] == ["playing", "error"]
-        assert "playback failed" in str(sent[-1]["message"])
-        assert "no player found" in str(sent[-1]["message"])
+        # Player stderr carries absolute paths, so the wire gets only the generic
+        # verdict; the "playback failed: ... no player found" detail stays in the log.
+        assert sent[-1]["message"] == "operation failed"
         assert any(
-            r.levelno == logging.ERROR and "operation failed" in r.getMessage()
+            r.levelno == logging.ERROR
+            and "operation failed" in r.getMessage()
+            and "no player found" in r.getMessage()
             for r in caplog.records
         )
         assert not any("rejected op" in r.getMessage() for r in caplog.records)
 
-    def test_played_nothing_surfaces_error(self, tmp_path: Path) -> None:
+    def test_played_nothing_surfaces_error(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """A clean exit under the suspicious-elapsed floor is a failure, not success."""
         store = RecordStore(tmp_path / "recordings")
         store.root.mkdir(parents=True)
@@ -124,10 +129,14 @@ class TestPlayHandler:
         ws, sent = _capturing_ws()
 
         msg: dict[str, object] = {"type": "play", "id": "p1", "ref": "a1b2c3.mp3"}
-        asyncio.run(PlayHandler(playback=playback, store=store)(msg, ws))
+        with caplog.at_level(logging.ERROR, logger="punt_vox.voxd.wire_reply"):
+            asyncio.run(PlayHandler(playback=playback, store=store)(msg, ws))
 
+        # The wire carries only the generic verdict; the "played nothing" detail
+        # stays in the host-local log.
         assert sent[-1]["type"] == "error"
-        assert "played nothing" in str(sent[-1]["message"])
+        assert sent[-1]["message"] == "operation failed"
+        assert any("played nothing" in r.getMessage() for r in caplog.records)
 
     def test_play_ref_outside_root_rejected(self, tmp_path: Path) -> None:
         store = RecordStore(tmp_path / "recordings")
