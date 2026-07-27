@@ -296,11 +296,13 @@ class TestVoicesHandler:
         assert ws.sent[-1]["id"] == "v3"
         # Generic on the wire -- the RuntimeError text never leaks to the client.
         assert ws.sent[-1]["message"] == "operation failed"
-        # The full traceback is logged for the audit trail (logger.exception)...
+        # The full traceback is logged for the audit trail (logger.exception),
+        # and the cause is never silently lost -- the exception detail is attached.
         assert any(
             r.levelno == logging.ERROR
             and r.name == "punt_vox.voxd.system_handlers"
             and r.exc_info is not None
+            and "unexpected vendor failure" in str(r.exc_info[1])
             for r in caplog.records
         )
         # ...and it audits as an operational fault, never a client rejection.

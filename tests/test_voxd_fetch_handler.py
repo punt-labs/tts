@@ -130,12 +130,15 @@ class TestRecordingFetch:
 
         assert sent[-1]["type"] == "error"
         assert sent[-1]["id"] == "f7"
+        # The OSError has no filename, so the wire stays generic...
         assert sent[-1]["message"] == "operation failed"
         assert not [f for f in sent if f["type"] == "fetch_begin"]
         assert any(
             r.levelno == logging.ERROR and "operation failed" in r.getMessage()
             for r in caplog.records
         )
+        # ...but the cause is never silently lost: it reaches the host-local log.
+        assert any("access denied" in r.getMessage() for r in caplog.records)
         assert not any("rejected op" in r.getMessage() for r in caplog.records)
 
     def test_hostile_ref_refused_before_begin_and_audited(

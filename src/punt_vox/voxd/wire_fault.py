@@ -12,11 +12,14 @@ absolute paths and all, is kept for the host-local ``vox.log`` alone.
 
 from __future__ import annotations
 
+import logging
 from typing import Self, final
 
 from punt_vox.voxd.data_root_boundary import relativize_to_data_root
 
 __all__ = ["SafeFault"]
+
+logger = logging.getLogger(__name__)
 
 _GENERIC = "operation failed"
 
@@ -61,7 +64,11 @@ class SafeFault:
         # generic verdict. Defense in depth, not a substitute for the guards.
         try:
             wire = cls._wire_for(exc)
-        except Exception:  # noqa: BLE001 -- PY-EH-6 fault-building boundary
+        except Exception:  # PY-EH-6 fault-building boundary: must never itself raise
+            # Log host-local so a future _wire_for regression is visible; without
+            # this the trust-boundary builder could break and we would see only
+            # generic faults, never knowing it failed. Never sent to the client.
+            logger.exception("fault message construction failed; using generic verdict")
             wire = _GENERIC
         return cls(wire, str(exc))
 

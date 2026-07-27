@@ -10,6 +10,7 @@ wire message ever leaks an absolute prefix or an ``Errno``.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -124,14 +125,20 @@ class TestResolveFailureDoesNotEscape:
         fault = SafeFault.from_exception(exc)
         assert fault.wire_message == "operation failed"
 
-    def test_relativize_raising_anything_is_caught_at_the_boundary(
-        self, state_root: Path, monkeypatch: pytest.MonkeyPatch
+    def test_relativize_raising_anything_is_caught_and_logged(
+        self,
+        state_root: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """The boundary catch backstops ANY relativize failure, not just the guards.
+        """The boundary catch backstops ANY relativize failure -- and logs it.
 
         The helper fails closed on its own, but building a fault must be provably
         un-teardownable regardless of a future helper edge: even an arbitrary
-        exception from relativize yields the generic verdict, never a propagation.
+        exception from relativize yields the generic verdict, never a
+        propagation. Crucially the swallow is NOT silent -- the internal failure
+        is logged host-local so a future _wire_for regression is visible instead
+        of masquerading as an ordinary generic fault.
         """
 
         def boom(_candidate: object) -> object:
@@ -139,7 +146,14 @@ class TestResolveFailureDoesNotEscape:
 
         monkeypatch.setattr("punt_vox.voxd.wire_fault.relativize_to_data_root", boom)
         exc = OSError(13, "Permission denied", "/looping/path.mp3")
-        fault = SafeFault.from_exception(exc)
+        with caplog.at_level(logging.ERROR, logger="punt_vox.voxd.wire_fault"):
+            fault = SafeFault.from_exception(exc)
         assert fault.wire_message == "operation failed"
         # The raw detail is still retained for the log.
         assert "Permission denied" in fault.log_detail
+        # The internal builder failure is logged, not silently swallowed.
+        assert any(
+            r.levelno == logging.ERROR
+            and "fault message construction failed" in r.getMessage()
+            for r in caplog.records
+        )
