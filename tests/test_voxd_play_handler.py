@@ -103,9 +103,12 @@ class TestPlayHandler:
             asyncio.run(PlayHandler(playback=playback, store=store)(msg, ws))
 
         assert [p["type"] for p in sent] == ["playing", "error"]
-        # Player stderr carries absolute paths, so the wire gets only the generic
-        # verdict; the "playback failed: ... no player found" detail stays in the log.
-        assert sent[-1]["message"] == "operation failed"
+        # The wire carries the rc/elapsed verdict plus path-free stderr; this
+        # stderr has no path, so it passes through. The raw detail is logged.
+        assert (
+            sent[-1]["message"]
+            == "playback failed: player exited rc=1: no player found"
+        )
         assert any(
             r.levelno == logging.ERROR
             and "operation failed" in r.getMessage()
@@ -113,6 +116,35 @@ class TestPlayHandler:
             for r in caplog.records
         )
         assert not any("rejected op" in r.getMessage() for r in caplog.records)
+
+    def test_fault_stderr_relativizes_in_jail_and_strips_out_of_jail(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Player stderr: in-jail paths relativize, out-of-jail paths strip."""
+        from punt_vox import paths
+
+        state = (tmp_path / "state").resolve()
+        store = RecordStore(state / "recordings")
+        store.root.mkdir(parents=True)
+        rec = store.root / "a1b2c3.mp3"
+        rec.write_bytes(b"\xff\xfb\x90\x00" * 4)
+        monkeypatch.setattr(paths, "user_state_dir", lambda: state)
+
+        def _leaky(path: Path) -> PlaybackResult:
+            stderr = f"ffplay {rec}: via /opt/homebrew/bin/afplay failed"
+            return PlaybackResult(path=path, rc=1, elapsed_s=0.0, stderr=stderr, ts=0.0)
+
+        playback = _playback_with(_leaky)
+        ws, sent = _capturing_ws()
+
+        msg: dict[str, object] = {"type": "play", "id": "p1", "ref": "a1b2c3.mp3"}
+        asyncio.run(PlayHandler(playback=playback, store=store)(msg, ws))
+
+        message = str(sent[-1]["message"])
+        assert "recordings/a1b2c3.mp3" in message  # in-jail token relativized
+        assert str(state) not in message  # no absolute prefix
+        assert "/opt/homebrew/bin/afplay" not in message  # out-of-jail stripped
+        assert "<path>" in message
 
     def test_played_nothing_surfaces_error(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -132,10 +164,10 @@ class TestPlayHandler:
         with caplog.at_level(logging.ERROR, logger="punt_vox.voxd.wire_reply"):
             asyncio.run(PlayHandler(playback=playback, store=store)(msg, ws))
 
-        # The wire carries only the generic verdict; the "played nothing" detail
-        # stays in the host-local log.
+        # The wire carries the rc/elapsed verdict (no stderr here); the raw
+        # "played nothing" detail is logged.
         assert sent[-1]["type"] == "error"
-        assert sent[-1]["message"] == "operation failed"
+        assert sent[-1]["message"] == "playback failed: played nothing (elapsed 0.001s)"
         assert any("played nothing" in r.getMessage() for r in caplog.records)
 
     def test_play_ref_outside_root_rejected(self, tmp_path: Path) -> None:

@@ -78,12 +78,23 @@ class PlaybackResult:
         return self.rc == 0 and self.elapsed_s >= _SUSPICIOUS_ELAPSED_S
 
     def failure_detail(self) -> str:
-        """One-line reason for a failed/no-op playback, for the host-local log."""
+        """Raw one-line failure reason (absolute paths and all) for the log."""
         if self.rc != 0:
             base = f"player exited rc={self.rc}"
         else:
             base = f"played nothing (elapsed {self.elapsed_s:.3f}s)"
         return f"{base}: {self.stderr}" if self.stderr else base
+
+    def wire_failure_detail(self) -> str:
+        """Prefix-free failure reason for the client frame.
+
+        The raw :meth:`failure_detail` with its host paths stripped: the rc and
+        elapsed verdict carry no path, so they pass through, while an in-jail
+        stderr token relativizes and an out-of-jail one strips via
+        :class:`SafeText`. The client learns why playback failed without seeing
+        an absolute prefix; the raw text stays in the host-local log.
+        """
+        return SafeText.of(self.failure_detail()).text
 
     def to_health_dict(self) -> dict[str, object]:
         """Serialize for the authenticated health payload with no host paths.

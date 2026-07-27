@@ -92,9 +92,13 @@ class PlayHandler(MessageHandler):
         # A host-side playback failure (missing player, unplayable file, played
         # nothing) is a server-side operational fault, not a client rejection, so
         # it routes through fault (the ERROR "operation failed" audit) rather than
-        # a bare error frame the log would blame on the client. The failure detail
-        # embeds player stderr with absolute paths, so it is an opaque fault: the
-        # detail goes to the log and the wire carries only the generic verdict.
+        # a bare error frame the log would blame on the client. The wire carries
+        # the rc/elapsed verdict with player-stderr paths relativized/stripped
+        # (wire_failure_detail); the raw failure_detail -- absolute paths and all
+        # -- stays in the host-local log.
         await reply.fault(
-            SafeFault.opaque(f"playback failed: {result.failure_detail()}")
+            SafeFault(
+                f"playback failed: {result.wire_failure_detail()}",
+                f"playback failed: {result.failure_detail()}",
+            )
         )
