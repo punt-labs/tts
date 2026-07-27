@@ -55,19 +55,22 @@ class TestDaemonHealthConstruction:
 
 
 class TestHealthPayloadFull:
-    """The authenticated WS health payload exposes audio state for vox doctor."""
+    """The authenticated WS health payload carries verdicts, never host facts."""
 
-    def test_includes_audio_env_and_player_binary(self) -> None:
+    def test_drops_audio_env_and_player_binary(self) -> None:
+        """D2: env values and the player-binary path are out-of-jail host facts."""
         health = _make_health()
         payload = health.full_payload()
 
-        assert "audio_env" in payload
-        assert "player_binary" in payload
+        assert "audio_env" not in payload
+        assert "player_binary" not in payload
         assert "last_playback" in payload
-        audio_env = cast("dict[str, str]", payload["audio_env"])
-        assert "XDG_RUNTIME_DIR" in audio_env
-        assert "PULSE_SERVER" in audio_env
-        assert "DBUS_SESSION_BUS_ADDRESS" in audio_env
+
+    def test_carries_provider_on_authenticated_payload(self) -> None:
+        """D1: provider stays on the authenticated WS health (doctor reads it)."""
+        health = _make_health()
+        payload = health.full_payload()
+        assert "provider" in payload
 
     def test_includes_daemon_version_matching_installed_package(self) -> None:
         """Authenticated payload carries daemon_version from importlib.metadata."""
@@ -99,17 +102,32 @@ class TestHealthPayloadFull:
         assert "pid" in payload
         assert payload["pid"] == os.getpid()
 
-    def test_unset_audio_env_uses_sentinel(
-        self, monkeypatch: pytest.MonkeyPatch
+    def test_last_playback_relativizes_file_and_stderr(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        for key in ("XDG_RUNTIME_DIR", "PULSE_SERVER", "DBUS_SESSION_BUS_ADDRESS"):
-            monkeypatch.delenv(key, raising=False)
-        health = _make_health()
-        payload = health.full_payload()
-        audio_env = cast("dict[str, str]", payload["audio_env"])
-        assert audio_env["XDG_RUNTIME_DIR"] == "<unset>"
-        assert audio_env["PULSE_SERVER"] == "<unset>"
-        assert audio_env["DBUS_SESSION_BUS_ADDRESS"] == "<unset>"
+        """D2: last_playback carries a relative file and a path-stripped stderr."""
+        from punt_vox import paths
+
+        state = (tmp_path / "state").resolve()
+        (state / "recordings").mkdir(parents=True)
+        monkeypatch.setattr(paths, "user_state_dir", lambda: state)
+        rec = state / "recordings" / "foo.mp3"
+        playback = PlaybackQueue()
+        playback.set_last_result(
+            PlaybackResult(
+                path=rec,
+                rc=1,
+                elapsed_s=0.5,
+                stderr=f"ffplay: {rec}: No such file",
+                ts=0.0,
+            )
+        )
+        health = DaemonHealth(playback, lambda: 0, 0)
+
+        last = cast("dict[str, object]", health.full_payload()["last_playback"])
+        assert last["file"] == "recordings/foo.mp3"
+        assert str(state) not in str(last["stderr"])
+        assert "recordings/foo.mp3" in str(last["stderr"])
 
     def test_last_playback_reflects_state(self) -> None:
         playback = PlaybackQueue()

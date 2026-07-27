@@ -10,11 +10,13 @@ import logging
 import math
 import os
 import platform
-import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
+
+from punt_vox.voxd.data_root_boundary import relativize_to_data_root
+from punt_vox.voxd.wire_text import SafeText
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +52,7 @@ _MAX_STDERR_LEN = 2000
 
 
 # ---------------------------------------------------------------------------
-# PlaybackItem dataclass
+# PlaybackResult / PlaybackItem dataclasses
 # ---------------------------------------------------------------------------
 
 
@@ -76,7 +78,7 @@ class PlaybackResult:
         return self.rc == 0 and self.elapsed_s >= _SUSPICIOUS_ELAPSED_S
 
     def failure_detail(self) -> str:
-        """One-line reason for a failed/no-op playback, for a client error frame."""
+        """One-line reason for a failed/no-op playback, for the host-local log."""
         if self.rc != 0:
             base = f"player exited rc={self.rc}"
         else:
@@ -84,12 +86,20 @@ class PlaybackResult:
         return f"{base}: {self.stderr}" if self.stderr else base
 
     def to_health_dict(self) -> dict[str, object]:
-        """Serialize for the health endpoint JSON payload."""
+        """Serialize for the authenticated health payload with no host paths.
+
+        ``file`` is an in-jail recording or album path, so it crosses relativized
+        to its data root (``recordings/foo.mp3``) -- or ``None`` if it resolves
+        out of jail. ``stderr`` echoes absolute player paths, so its in-jail
+        tokens relativize and its out-of-jail ones strip via :class:`SafeText`.
+        ``rc``, ``elapsed_s``, and ``ts`` are service verdicts and cross as-is.
+        """
+        rel = relativize_to_data_root(self.path)
         return {
-            "file": str(self.path),
+            "file": None if rel is None else str(rel.path),
             "rc": self.rc,
             "elapsed_s": self.elapsed_s,
-            "stderr": self.stderr,
+            "stderr": SafeText.of(self.stderr).text,
             "ts": self.ts,
         }
 
@@ -145,16 +155,6 @@ def _is_darwin() -> bool:
     branch as unreachable for cross-platform development.
     """
     return platform.system() == "Darwin"
-
-
-def _player_binary_name() -> str:
-    """Return the platform player binary name."""
-    return "afplay" if _is_darwin() else "ffplay"
-
-
-def _player_binary_path() -> str | None:  # pyright: ignore[reportUnusedFunction]
-    """Return the resolved path to the platform player binary, or None."""
-    return shutil.which(_player_binary_name())
 
 
 def _player_command(path: Path) -> list[str]:
@@ -286,8 +286,10 @@ class PlaybackQueue:
             return
 
         rc, elapsed, stderr_text = result
-        self._record_result(path=path, rc=rc, elapsed=elapsed, stderr=stderr_text)
-        self._log_result(path, rc, elapsed, size, stderr_text, cmd, env_snapshot)
+        recorded = self._record_result(
+            path=path, rc=rc, elapsed=elapsed, stderr=stderr_text
+        )
+        self._log_result(recorded, size, cmd, env_snapshot)
 
     def _validate_file(self, path: Path) -> int | None:
         """Return file size in bytes, or None after recording an error."""
@@ -404,57 +406,53 @@ class PlaybackQueue:
 
     def _log_result(
         self,
-        path: Path,
-        rc: int,
-        elapsed: float,
+        result: PlaybackResult,
         size: int,
-        stderr_text: str,
         cmd: list[str],
         env_snapshot: dict[str, str],
     ) -> None:
-        """Interpret a playback result and log at the appropriate level."""
-        if rc != 0:
+        """Interpret a playback *result* and log at the appropriate level.
+
+        Takes the recorded :class:`PlaybackResult` -- which already bundles the
+        file, exit code, elapsed time, and stderr -- plus the spawn context
+        (``size``, ``cmd``, ``env_snapshot``) the result does not carry, so the
+        log line reproduces the exact invocation for triage.
+        """
+        name = result.path.name
+        if result.rc != 0:
             logger.error(
                 "Playback FAILED: rc=%d elapsed=%.3fs file=%s size=%d "
                 "cmd=%s audio_env=%s stderr=%r",
-                rc,
-                elapsed,
-                path.name,
+                result.rc,
+                result.elapsed_s,
+                name,
                 size,
                 cmd,
                 env_snapshot,
-                stderr_text,
+                result.stderr,
             )
             return
 
-        if elapsed < _SUSPICIOUS_ELAPSED_S:
+        if result.elapsed_s < _SUSPICIOUS_ELAPSED_S:
             logger.warning(
                 "Playback SUSPICIOUS: rc=0 but elapsed=%.4fs (<%.2fs) file=%s "
                 "size=%d audio_env=%s stderr=%r -- probably played nothing",
-                elapsed,
+                result.elapsed_s,
                 _SUSPICIOUS_ELAPSED_S,
-                path.name,
+                name,
                 size,
                 env_snapshot,
-                stderr_text,
+                result.stderr,
             )
             return
 
-        if stderr_text:
-            logger.debug(
-                "Playback ok: elapsed=%.3fs file=%s size=%d stderr=%r",
-                elapsed,
-                path.name,
-                size,
-                stderr_text,
-            )
-        else:
-            logger.debug(
-                "Playback ok: elapsed=%.3fs file=%s size=%d",
-                elapsed,
-                path.name,
-                size,
-            )
+        logger.debug(
+            "Playback ok: elapsed=%.3fs file=%s size=%d stderr=%r",
+            result.elapsed_s,
+            name,
+            size,
+            result.stderr,
+        )
 
     async def consumer(self) -> None:
         """Single consumer: play audio sequentially from the queue.
@@ -533,8 +531,8 @@ class PlaybackQueue:
         rc: int,
         elapsed: float,
         stderr: str,
-    ) -> None:
-        """Update last_result with a freshly-observed playback result."""
+    ) -> PlaybackResult:
+        """Store and return a freshly-observed playback result as ``last_result``."""
         self._last_result = PlaybackResult(
             path=path,
             rc=rc,
@@ -542,3 +540,4 @@ class PlaybackQueue:
             stderr=stderr,
             ts=time.time(),
         )
+        return self._last_result
