@@ -98,3 +98,33 @@ class TestCap:
     def test_short_text_not_capped(self, roots: tuple[Path, Path]) -> None:
         raw = "short reason"
         assert SafeText.of(raw).text == raw
+
+
+class TestRegexDosBounded:
+    """A pathological many-segment input cannot hang the scan (input capped first)."""
+
+    def test_long_many_segment_input_returns_fast(
+        self, roots: tuple[Path, Path]
+    ) -> None:
+        """A 200k-char '/a/a/.../a X' string sanitizes in well under a second.
+
+        The ``_ABSOLUTE_PATH`` pattern backtracks super-linearly, so scanning the
+        raw input would take minutes; capping the input before the regex bounds
+        the cost to ``cap`` chars regardless of the caller's input length.
+        """
+        import time
+
+        raw = "/a" * 100_000 + " X"  # ~200k chars, one giant many-segment token
+        start = time.monotonic()
+        safe = SafeText.of(raw).text
+        assert time.monotonic() - start < 1.0  # bounded, not O(n^2) on 200k chars
+        assert len(safe) <= 2100  # capped, with room for the truncation suffix
+
+    def test_capped_input_still_sanitizes(self, roots: tuple[Path, Path]) -> None:
+        """Capping the input first does not defeat relativize/strip on what remains."""
+        state, _output = roots
+        rec = state / "recordings" / "foo.mp3"
+        raw = f"denied: {rec} then " + "x" * 5000  # in-jail path within the first cap
+        safe = SafeText.of(raw).text
+        assert "recordings/foo.mp3" in safe
+        assert str(state) not in safe

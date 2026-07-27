@@ -55,9 +55,15 @@ class SafeText:
 
     @classmethod
     def of(cls, raw: str, *, cap: int = _MAX_LEN) -> Self:
-        """Return *raw* with host paths relativized/stripped and length capped."""
-        cleaned = _ABSOLUTE_PATH.sub(cls._rewrite_token, raw)
-        return cls(cls._capped(cleaned, cap))
+        """Return *raw* with host paths relativized/stripped and length capped.
+
+        Cap the *input* before the regex, not only the output: ``_ABSOLUTE_PATH``
+        backtracks super-linearly, so scanning an uncapped 200k-char many-segment
+        string would hang the daemon's event loop on the fault path. Bounding the
+        scan to *cap* chars keeps the cost self-contained, independent of caller
+        input discipline.
+        """
+        return cls(_ABSOLUTE_PATH.sub(cls._rewrite_token, cls._capped(raw, cap)))
 
     @property
     def text(self) -> str:
