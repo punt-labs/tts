@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Self, cast, final
 
 
@@ -16,9 +16,8 @@ class HealthStatus:
     summary (``status``, ``uptime_seconds``, ``queued``, ``active_sessions``)
     plus the running process's identity (``port``, ``pid``,
     ``daemon_version``) so a caller can confirm the daemon is up, on which
-    port, and running which build. ``audio_env``, ``player_binary``, and
-    ``last_playback`` are the diagnostics the daemon reports for ``vox
-    doctor``.
+    port, and running which build. ``last_playback`` is the ``vox doctor``
+    diagnostic the daemon reports, relativized so it carries no host path.
 
     Absent fields fall back to benign defaults rather than raising: a health
     read is best-effort observability, and every consumer already treats a
@@ -33,8 +32,6 @@ class HealthStatus:
     uptime_seconds: float = 0.0
     queued: int = 0
     active_sessions: int = 0
-    audio_env: Mapping[str, str] = field(default_factory=dict[str, str])
-    player_binary: str = ""
     # The last playback result (file, rc, elapsed_s, stderr, ts) or None when
     # nothing has played -- a diagnostic sub-record kept as a typed mapping
     # because a caller only ever forwards it to a log, never branches on it.
@@ -52,8 +49,6 @@ class HealthStatus:
             uptime_seconds=cls._as_float(raw.get("uptime_seconds")),
             queued=cls._as_int(raw.get("queued")),
             active_sessions=cls._as_int(raw.get("active_sessions")),
-            audio_env=cls._as_str_map(raw.get("audio_env")),
-            player_binary=cls._as_str(raw.get("player_binary"), ""),
             last_playback=cls._as_map(raw.get("last_playback")),
         )
 
@@ -73,14 +68,6 @@ class HealthStatus:
         if isinstance(value, bool):
             return 0.0
         return float(value) if isinstance(value, int | float) else 0.0
-
-    @staticmethod
-    def _as_str_map(value: object) -> Mapping[str, str]:
-        """Return a string-to-string mapping from *value*, else an empty one."""
-        if not isinstance(value, Mapping):
-            return {}
-        items = cast("Mapping[object, object]", value)
-        return {str(k): str(v) for k, v in items.items()}
 
     @staticmethod
     def _as_map(value: object) -> Mapping[str, object] | None:
