@@ -3,8 +3,10 @@
 Security / trust-boundary design review of the `voxd` daemon's client-facing
 wire protocol. Follow-on to the vox-dvri remote-daemon audit, Category B.
 
-Design and review only. No production code changes accompany this document.
-Every fix below is enumerated so it can become an implementation bead.
+The boundary helper (§7 #0, `relativize_to_data_root`) and the `WireReply`
+fault contract (§7 #1) land together with this document. The remaining fixes
+(§7 #2–#10) are each enumerated as an implementation bead of the vox-93ej
+trust-boundary epic and land in their own PRs.
 
 ## 1. The invariant — a conceptual chroot
 
