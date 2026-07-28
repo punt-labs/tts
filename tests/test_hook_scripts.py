@@ -39,10 +39,20 @@ class TestHookScripts:
         assert "config.md" not in text
 
     @pytest.mark.parametrize("name", _SCRIPTS)
-    def test_gate_uses_current_filenames(self, name: str) -> None:
+    def test_gate_uses_enabled_marker(self, name: str) -> None:
+        # Per-repo opt-in: an audio hook is silent unless the repo ran
+        # `vox enable` (the marker) and the vox CLI is installed.
         text = _read(name)
-        assert ".punt-labs/vox/vox.md" in text
-        assert ".punt-labs/vox/vox.local.md" in text
+        assert ".punt-labs/vox/enabled" in text
+        assert "command -v vox" in text
+
+    @pytest.mark.parametrize("name", _SCRIPTS)
+    def test_gate_drops_retired_config_presence_check(self, name: str) -> None:
+        # The marker supersedes the old vox.md/vox.local.md presence gate;
+        # keeping it would fire audio in a disabled repo whose config is dormant.
+        text = _read(name)
+        assert ".punt-labs/vox/vox.md" not in text
+        assert ".punt-labs/vox/vox.local.md" not in text
 
     @pytest.mark.parametrize("name", _SCRIPTS)
     def test_extracts_cwd_from_stdin(self, name: str) -> None:

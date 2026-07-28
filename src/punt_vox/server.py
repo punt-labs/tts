@@ -30,6 +30,7 @@ from punt_vox.logging_config import (
     reapply_client_log_level,
 )
 from punt_vox.server_audio_tools import RecTool
+from punt_vox.server_enablement import EnablementTool
 from punt_vox.server_music_tool import MusicTool
 from punt_vox.synthesis_batch import SegmentBatch
 from punt_vox.types_programs.mode import Mode
@@ -550,6 +551,12 @@ _music_tool = MusicTool(
 )
 
 mcp.tool(name="music")(_music_tool.dispatch)
+
+# The repo enable/disable tool: one action-dispatched verb writing the same
+# `.punt-labs/vox/enabled` marker `vox enable` writes, so both surfaces agree
+# (tool-enable-disable.md 2.14). Repo file operations, not daemon-owned state.
+_enablement_tool = EnablementTool()
+mcp.tool(name="enablement")(_enablement_tool.dispatch)
 
 
 @mcp.tool()

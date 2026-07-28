@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`vox enable` / `vox disable` — per-repo enablement (vox-ck3w, `tool-enable-disable.md` conformance).** vox now turns on per repo via a committed `.punt-labs/vox/enabled` marker. `vox enable`, run in a repo, deposits the `.punt-labs/vox/CLAUDE.md` agent guide, writes the marker, adds the `@.punt-labs/vox/CLAUDE.md` import to the repo's `CLAUDE.md`, additively registers the enable/disable skill permissions, and establishes an audible notify level (`normal`) so a freshly-enabled repo chimes and speaks on task completion — silence is `vox disable` (marker removed, hook gate closed), never an enabled repo left at `notify=n`; a re-enable preserves an existing `continuous` choice. `vox disable` reverses the import and marker, leaving the guide dormant (non-destructive); `vox disable --purge` removes the subtree. The same verbs are on the `mic` MCP surface (`mic:enablement` with `action="enable"|"disable"`) and as `/enable` / `/disable` slash commands — all three write a byte-identical marker. No auto-enable: vox never turns itself on as a side effect of use.
+- **`install.sh --no-plugin` / `VOX_NO_PLUGIN=1` — CLI-only install (`install-cli-only.md` conformance).** Installs the `vox` CLI and its user-scope guidance import without the Claude Code plugin — for scripts, CI, and non-Claude harnesses. Both `curl … | sh -s -- --no-plugin` and `curl … | VOX_NO_PLUGIN=1 sh` work, and the plugin is auto-skipped when `claude` is absent. A `--no-plugin` agent drives vox through the CLI, guided by the deposited guide's unconditional CLI section.
+
+### Changed
+
+- **vox's audio session hooks gate on the per-repo marker.** The Stop, Notification, and PostToolUse chime/narration hooks now fire only in repos that ran `vox enable` — vox is silent in a project until it opts in, and a clone on a box without vox is a graceful no-op. This replaces the retired `vox.md`-presence check.
+- **The deposited `.punt-labs/vox/CLAUDE.md` guide is surface-aware** — it routes an agent to the `mic` MCP tools when present, otherwise to the `vox` CLI, so a plugin-less agent can still drive vox.
+
+### Removed
+
+- **`/vox y|n|c` is retired** (`tool-enable-disable.md` §2.3 — `y|n` is not an enablement vocabulary). Per-repo on/off is now `/vox enable` / `/vox disable`; the notify level moves to `vox notify normal|continuous`. The legacy managed-section `CLAUDE.md` marker code (`managed_section.py`, `markdown_fence.py`) is removed in favor of the bare `@`-import writer.
+
+### Security
+
+- **`vox enable` refuses to follow a symlink at its tool-owned paths.** The `.punt-labs/vox/enabled` marker and the deposited `.punt-labs/vox/CLAUDE.md` guide are now written with `O_NOFOLLOW`, so an untrusted repo that plants either path as a symlink to a sensitive file (`~/.ssh/id_rsa`, credentials) can no longer redirect the write onto the link's target. Such a path is refused with a clear error across all three surfaces (CLI, `mic`, slash command); the target is never overwritten. The host `CLAUDE.md` and `.claude/settings.json` writes remain intentionally symlink-resolving (dotfile managers symlink those).
+
 ## [4.15.0] - 2026-07-25
 
 ### Added

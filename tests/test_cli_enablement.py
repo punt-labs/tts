@@ -1,0 +1,141 @@
+"""Tests for the ``vox enable`` / ``vox disable`` CLI verbs."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from typer.testing import CliRunner
+
+from punt_vox.__main__ import app
+
+if TYPE_CHECKING:
+    import pytest
+
+_IMPORT = "@.punt-labs/vox/CLAUDE.md"
+
+
+def _point_repo_at(monkeypatch: pytest.MonkeyPatch, root: Path | None) -> None:
+    def fake_root(start: Path | None = None) -> Path | None:
+        return root
+
+    monkeypatch.setattr("punt_vox.enablement.find_repo_root", fake_root)
+
+
+def test_enable_writes_marker_and_import(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _point_repo_at(monkeypatch, tmp_path)
+    result = CliRunner().invoke(app, ["enable"])
+    assert result.exit_code == 0
+    assert (tmp_path / ".punt-labs" / "vox" / "enabled").is_file()
+    assert _IMPORT in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+
+
+def test_disable_removes_marker_leaves_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _point_repo_at(monkeypatch, tmp_path)
+    runner = CliRunner()
+    runner.invoke(app, ["enable"])
+    result = runner.invoke(app, ["disable"])
+    assert result.exit_code == 0
+    assert not (tmp_path / ".punt-labs" / "vox" / "enabled").is_file()
+    assert _IMPORT not in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+    # Non-destructive: the dormant subtree survives.
+    assert (tmp_path / ".punt-labs" / "vox").is_dir()
+
+
+def test_disable_purge_removes_subtree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _point_repo_at(monkeypatch, tmp_path)
+    runner = CliRunner()
+    runner.invoke(app, ["enable"])
+    result = runner.invoke(app, ["disable", "--purge"])
+    assert result.exit_code == 0
+    assert not (tmp_path / ".punt-labs" / "vox").is_dir()
+    assert _IMPORT not in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+
+
+def test_enable_outside_a_repo_fails_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _point_repo_at(monkeypatch, None)
+    result = CliRunner().invoke(app, ["enable"])
+    assert result.exit_code == 1
+    assert "git repository" in result.output.lower()
+
+
+def test_enable_with_symlinked_marker_exits_cleanly_target_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An untrusted repo plants .punt-labs/vox/enabled as a symlink to a secret.
+    # `vox enable` must refuse (exit 1, clean stderr) and never overwrite the
+    # target -- the O_NOFOLLOW guard mapped to a ValueError the CLI catches.
+    _point_repo_at(monkeypatch, tmp_path)
+    secret = tmp_path / "secret.txt"
+    secret.write_text("PRIVATE KEY\n", encoding="utf-8")
+    vox = tmp_path / ".punt-labs" / "vox"
+    vox.mkdir(parents=True)
+    (vox / "enabled").symlink_to(secret)
+
+    result = CliRunner().invoke(app, ["enable"])
+    assert result.exit_code == 1
+    assert "symlink at a tool-owned path" in result.output
+    assert "Traceback" not in result.output
+    assert secret.read_text(encoding="utf-8") == "PRIVATE KEY\n"
+
+
+def _write_malformed_settings(repo: Path) -> None:
+    settings = repo / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text('{"permissions": {"allow": "not-a-list"}}', encoding="utf-8")
+
+
+def test_enable_with_malformed_settings_exits_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A malformed .claude/settings.json makes the SettingsRegistration guard raise
+    # ValueError from inside enable() -- not the not-a-repo case. The CLI must map
+    # it to a clean stderr message and exit 1, never dump a traceback.
+    _point_repo_at(monkeypatch, tmp_path)
+    _write_malformed_settings(tmp_path)
+    result = CliRunner().invoke(app, ["enable"])
+    assert result.exit_code == 1
+    assert "permissions.allow must be a JSON array" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_disable_with_malformed_settings_exits_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The same guard fires on the disable path (deregister reads settings.json);
+    # the CLI maps the ValueError to a clean exit 1, never a traceback.
+    _point_repo_at(monkeypatch, tmp_path)
+    _write_malformed_settings(tmp_path)
+    result = CliRunner().invoke(app, ["disable"])
+    assert result.exit_code == 1
+    assert "permissions.allow must be a JSON array" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_enable_with_write_failure_exits_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A write that fails with OSError (permission denied, ENOSPC) during enable()
+    # must map to the same clean exit 1 + stderr the ValueError paths give -- the
+    # CLI catch is symmetric with the MCP surface, never a raw traceback.
+    _point_repo_at(monkeypatch, tmp_path)
+
+    def deny_write(_self: object, _text: str) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("punt_vox.tool_owned_file.ToolOwnedFile.write", deny_write)
+    result = CliRunner().invoke(app, ["enable"])
+    assert result.exit_code == 1
+    assert "vox: " in result.output
+    assert "Permission denied" in result.output
+    assert "Traceback" not in result.output
+    # The typer.Exit is what surfaced, not the raw OSError.
+    assert not isinstance(result.exception, PermissionError)

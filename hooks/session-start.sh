@@ -81,7 +81,7 @@ else
 
   # Build PLUGIN_RULES via jq to avoid JSON injection from $TOOL_GLOB
   PLUGIN_RULES=$(jq -n --arg glob "$TOOL_GLOB" \
-    '[$glob, "Skill(unmute)", "Skill(mute)", "Skill(recap)", "Skill(vibe)", "Skill(vox)", "Skill(music)"]' 2>/dev/null) || {
+    '[$glob, "Skill(unmute)", "Skill(mute)", "Skill(recap)", "Skill(vibe)", "Skill(vox)", "Skill(music)", "Skill(enable)", "Skill(disable)"]' 2>/dev/null) || {
     ACTIONS+=("jq failed to build permission rules — skipping permission setup")
     PLUGIN_RULES=""
   }

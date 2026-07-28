@@ -8,19 +8,19 @@ import pytest
 from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
-from punt_vox.claude_md import GlobalClaudeImports
+from punt_vox.claude_md import ClaudeMdImport
 from punt_vox.guidance import VoxGuidance
 
 _VOX = "@~/.punt-labs/vox/CLAUDE.md"
 
 
-def _global(tmp_path: Path) -> GlobalClaudeImports:
-    return GlobalClaudeImports(tmp_path / ".claude" / "CLAUDE.md")
+def _writer(tmp_path: Path) -> ClaudeMdImport:
+    return ClaudeMdImport(tmp_path / ".claude" / "CLAUDE.md", _VOX)
 
 
 def _guidance(tmp_path: Path) -> VoxGuidance:
     doc = tmp_path / "vox" / "CLAUDE.md"
-    return VoxGuidance(doc, _global(tmp_path), _VOX)
+    return VoxGuidance(doc, _writer(tmp_path))
 
 
 # ---------------------------------------------------------------------------
@@ -58,10 +58,10 @@ def test_install_cleans_up_guide_when_register_raises(
     # and re-raise the original error, symmetric with the uninstall teardown.
     guide = _guidance(tmp_path)
 
-    def boom_register(self: GlobalClaudeImports, line: str) -> bool:
+    def boom_register(self: ClaudeMdImport) -> bool:
         raise OSError("simulated register failure")
 
-    monkeypatch.setattr(GlobalClaudeImports, "register", boom_register)
+    monkeypatch.setattr(ClaudeMdImport, "register", boom_register)
 
     with pytest.raises(OSError, match="simulated register failure"):
         guide.install()
@@ -164,6 +164,31 @@ def test_uninstall_prunes_import_even_when_unlink_raises(
 
     # The import was pruned despite the unlink failure -- self-healing teardown.
     assert _VOX not in global_path.read_text(encoding="utf-8")
+
+
+def test_uninstall_surfaces_both_teardown_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # When BOTH teardown steps fail, neither is lost: the prune (orphaned-import)
+    # failure is raised with the unlink failure chained as its __cause__.
+    guide = _guidance(tmp_path)
+    guide.install()
+
+    def boom_unlink(self: Path, *_args: object, **_kwargs: object) -> None:
+        raise OSError("unlink boom")
+
+    def boom_prune(self: ClaudeMdImport) -> None:
+        raise OSError("prune boom")
+
+    monkeypatch.setattr(Path, "unlink", boom_unlink)
+    monkeypatch.setattr(ClaudeMdImport, "prune", boom_prune)
+
+    with pytest.raises(OSError, match="prune boom") as exc_info:
+        guide.uninstall()
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, OSError)
+    assert "unlink boom" in str(cause)
 
 
 def test_for_current_user_import_line() -> None:

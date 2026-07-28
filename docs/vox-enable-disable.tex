@@ -1,0 +1,530 @@
+%
+% vox-enable-disable.tex
+%
+% Z Specification for vox's per-repo enablement state machine.
+% Models the three-state marker (Enabled / Dormant / Absent), the
+% enable / disable / purge transitions, and the load-bearing
+% biconditional  markerPresent <=> importPresent  of
+% tool-enable-disable.md sec 2.11, together with the CLAUDE.md
+% import-line writer idempotence of sec 2.4.
+%
+% Input design: docs/vox-enable-disable.md sec 4.
+% Standard:     punt-kit/standards/tool-enable-disable.md sec 2.4, 2.7, 2.11.
+%
+
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fuzz}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+
+\begin{document}
+
+\title{Vox Per-Repo Enablement: A Z Specification}
+\author{Formal model of the \texttt{enabled} marker and the \texttt{enable} /
+  \texttt{disable} verbs}
+\date{July 2026}
+\hypersetup{
+  pdftitle={Vox Per-Repo Enablement: A Z Specification},
+  pdfauthor={Punt Labs},
+  pdfsubject={Z Specification},
+  pdfcreator={fuzz/probcli}
+}
+\maketitle
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+
+A repository turns vox on with \texttt{vox enable} and off with
+\texttt{vox disable}. Enablement is not a boolean field but a small state
+machine over three observable facts: whether the tool-owned directory
+\texttt{.punt-labs/vox/} exists, whether the \texttt{enabled} marker inside it
+exists, and whether the repo's \texttt{CLAUDE.md} carries the canonical
+\texttt{@.punt-labs/vox/CLAUDE.md} import. The standard
+(\texttt{tool-enable-disable.md}) fixes one load-bearing property over these
+three: the marker is present exactly when the import is present. This is the
+\emph{enabled $\iff$ import} biconditional of \S2.11, and it is what
+\texttt{punt audit} keys on and what every \texttt{enable}/\texttt{disable}
+transition must preserve.
+
+This specification pins the machine so that the invariant is a property of the
+state schema rather than of scattered defensive checks, and so that the two
+transitions the informal design underspecifies --- \texttt{Purge}, which the
+\S4 state machine described only by its effect on the directory, and the
+line-level idempotence of the import writer, which a single boolean cannot
+express --- are stated precisely. Writing the model surfaced three places where
+a literal reading of the design would strand an orphan import or resurrect a
+directory; they are collected in Section~\ref{sec:findings}.
+
+\section{Basic Types}
+
+The model has no basic (given) types. Every fact it tracks is two-valued --- a
+file or line is present or absent --- and the two counts it needs
+(\texttt{importLines}) are bounded naturals. This is deliberate: the enablement
+decision is entirely a question of presence, and a model that admits only
+presence cannot smuggle in hidden state.
+
+\section{Free Types}
+
+A Z boolean, spelled to avoid the ProB/B keyword clash with \texttt{BOOL}. The
+three facts of the state, and every derived flag, range over \texttt{ZBOOL}.
+
+\begin{zed}
+  ZBOOL ::= ztrue | zfalse
+\end{zed}
+
+\section{Global Constant}
+
+\texttt{maxImports} bounds the number of canonical import lines the model
+admits in a host \texttt{CLAUDE.md}. A conformant writer keeps this at most one;
+the value $2$ is chosen so that an \emph{accidental duplicate} --- the state a
+non-conformant or racing writer could leave, which \S2.4 requires
+\texttt{disable} to collapse --- is representable and therefore checkable. Were
+the bound $1$, the duplicate-collapse property would be vacuous, since the
+offending state could not be written down.
+
+\begin{axdef}
+  maxImports : \nat_1
+  \where
+  maxImports = 2
+\end{axdef}
+
+\section{State}
+\label{sec:state}
+
+The enablement state is the three presence facts of the \S2.7 table:
+\texttt{dirPresent} (the directory \texttt{.punt-labs/vox/} exists),
+\texttt{markerPresent} (the \texttt{enabled} marker inside it exists), and
+\texttt{importPresent} (the repo \texttt{CLAUDE.md} carries the canonical
+import). The predicate carries the two invariants named in the design's \S4 and
+in \S2.11 of the standard.
+
+\begin{schema}{RepoEnablement}
+  dirPresent : ZBOOL \\
+  markerPresent : ZBOOL \\
+  importPresent : ZBOOL
+  \where
+  markerPresent = importPresent \\
+  markerPresent = ztrue \implies dirPresent = ztrue
+\end{schema}
+
+The first conjunct is the \S2.11 biconditional: over the two-valued
+\texttt{ZBOOL}, $markerPresent = importPresent$ is exactly
+$markerPresent = ztrue \iff importPresent = ztrue$. The second records that the
+marker lives inside the directory, so a present marker forces a present
+directory; its contrapositive, $dirPresent = zfalse \implies markerPresent =
+zfalse$, is the fact that removing the directory removes the marker.
+
+Only three of the eight assignments to the triple satisfy both conjuncts, and
+they are exactly the three observable states of the \S2.7 table.
+
+\begin{schema}{Enabled}
+  RepoEnablement
+  \where
+  dirPresent = ztrue \\
+  markerPresent = ztrue \\
+  importPresent = ztrue
+\end{schema}
+
+\begin{schema}{Dormant}
+  RepoEnablement
+  \where
+  dirPresent = ztrue \\
+  markerPresent = zfalse \\
+  importPresent = zfalse
+\end{schema}
+
+\begin{schema}{Absent}
+  RepoEnablement
+  \where
+  dirPresent = zfalse \\
+  markerPresent = zfalse \\
+  importPresent = zfalse
+\end{schema}
+
+The states partition the reachable configurations: the biconditional forbids the
+four assignments with $markerPresent \neq importPresent$, and $markerPresent =
+ztrue \implies dirPresent = ztrue$ forbids the remaining outlier
+($dirPresent = zfalse$, $markerPresent = ztrue$, $importPresent = ztrue$). What
+is left is precisely \texttt{Enabled}, \texttt{Dormant}, \texttt{Absent} --- no
+fourth state exists, which is the point of pinning the invariants in the schema.
+
+\section{Initialisation}
+
+A fresh repository --- one that has never run \texttt{enable} --- is
+\texttt{Absent}: no directory, no marker, no import.
+
+\begin{schema}{Init}
+  RepoEnablement'
+  \where
+  dirPresent' = zfalse \\
+  markerPresent' = zfalse \\
+  importPresent' = zfalse
+\end{schema}
+
+\section{Transitions}
+\label{sec:transitions}
+
+Three operations move a repository between the states. Each preserves the
+invariant by construction, because each fixes the primed triple to one of the
+three legal assignments.
+
+\subsection{Enable --- reach \texttt{Enabled} from anywhere}
+
+\texttt{enable} deposits the guide, writes the marker, and adds the import if
+absent (design \S3.3, standard \S2.3). It has no precondition: it reaches
+\texttt{Enabled} from \texttt{Absent}, \texttt{Dormant}, or \texttt{Enabled}
+alike, and from \texttt{Enabled} it changes nothing --- it is idempotent, which
+is also the upgrade path.
+
+\begin{schema}{Enable}
+  \Delta RepoEnablement
+  \where
+  dirPresent' = ztrue \\
+  markerPresent' = ztrue \\
+  importPresent' = ztrue
+\end{schema}
+
+The postcondition is a constant, so $Enable \semi Enable$ has the same effect as
+$Enable$: the second run reads an \texttt{Enabled} state and writes it back
+unchanged. Idempotence at the \emph{line} level --- that the import appears
+exactly once, never twice --- is not visible here, where \texttt{importPresent}
+is a single boolean; it is the subject of Section~\ref{sec:writer}.
+
+\subsection{Disable --- reach \texttt{Dormant} or \texttt{Absent}, non-destructively}
+
+\texttt{disable} removes the import and the marker and deregisters settings, but
+leaves the rest of the subtree in place (design \S3.3, standard \S2.9). The
+directory is left exactly as it was found --- $dirPresent' = dirPresent$ --- so
+\texttt{disable} lands in \texttt{Dormant} when the directory was present and in
+\texttt{Absent} when it was not.
+
+\begin{schema}{Disable}
+  \Delta RepoEnablement
+  \where
+  dirPresent' = dirPresent \\
+  markerPresent' = zfalse \\
+  importPresent' = zfalse
+\end{schema}
+
+The frame $dirPresent' = dirPresent$ is the precise statement of
+``non-destructive''. Writing the postcondition instead as $dirPresent' = ztrue$
+--- ``leave the directory'' read as ``ensure a directory'' --- would resurrect a
+directory when \texttt{disable} is run on an already-\texttt{Absent} repo,
+manufacturing a spurious \texttt{Dormant} state from nothing
+(finding~\ref{sec:findings}, item~2). The frame avoids that: \texttt{disable} on
+\texttt{Absent} is a no-op that stays \texttt{Absent}.
+
+\subsection{Purge --- reach \texttt{Absent} by removing the subtree}
+
+\texttt{disable --purge} removes the whole subtree (design \S3.3). It is enabled
+only when there is a directory to remove --- from \texttt{Dormant} or
+\texttt{Enabled} --- and it lands in \texttt{Absent}.
+
+\begin{schema}{Purge}
+  \Delta RepoEnablement
+  \where
+  dirPresent = ztrue \\
+  dirPresent' = zfalse \\
+  markerPresent' = zfalse \\
+  importPresent' = zfalse
+\end{schema}
+
+The postcondition sets \emph{all three} facts false, and the conjunct
+$importPresent' = zfalse$ is load-bearing, not decorative. The import line lives
+in \texttt{CLAUDE.md}, \emph{outside} the subtree \texttt{Purge} removes; a
+\texttt{Purge} modelled as ``remove the directory'' alone --- $dirPresent' =
+zfalse$, $markerPresent' = zfalse$, with \texttt{importPresent} left untouched
+--- would, from \texttt{Enabled}, produce $(zfalse, zfalse, ztrue)$: a state
+that violates the biconditional and leaves a dangling \texttt{@}-import that
+\S2.11 flags as an orphan. \texttt{Purge} must therefore perform
+\texttt{disable}'s import removal before deleting the subtree; it is
+\texttt{Disable} followed by the directory removal, never the removal alone
+(finding~\ref{sec:findings}, item~1).
+
+\section{The Import-Line Writer}
+\label{sec:writer}
+
+The single boolean \texttt{importPresent} answers ``is the import there?'' but
+not ``how many times?''. The \S2.4 idempotence contract is a statement about
+\emph{lines}: appending when absent adds exactly one, a second \texttt{enable}
+adds none, and \texttt{disable} removes every match, collapsing an accidental
+duplicate to zero. To state and check those, the model refines the host file to
+a line count.
+
+\begin{schema}{ImportFile}
+  importLines : \nat
+  \where
+  importLines \leq maxImports
+\end{schema}
+
+\texttt{importLines} is the number of canonical \texttt{@.punt-labs/vox/CLAUDE.md}
+lines the host file carries, matched net of its terminator and outside code
+blocks per \S2.4. It relates to the boolean of Section~\ref{sec:state} by
+$importPresent = ztrue \iff importLines \geq 1$; the enablement state observes
+only presence, while the writer observes the count.
+
+\subsection{AppendImport --- append if absent, idempotently}
+
+The \texttt{enable} step ``add the import if absent; never add it twice''
+(\S2.3, \S2.4). From zero lines it writes one; from one or more it writes none.
+
+\begin{schema}{AppendImport}
+  \Delta ImportFile
+  \where
+  (importLines = 0 \implies importLines' = 1) \\
+  (importLines \geq 1 \implies importLines' = importLines)
+\end{schema}
+
+$AppendImport \semi AppendImport$ from an empty file yields $0 \to 1 \to 1$: the
+line appears exactly once, and the second \texttt{enable} adds nothing. Crucially
+\texttt{AppendImport} \emph{never} raises the count above one on its own, so a
+conformant writer cannot create a duplicate --- the $importLines = 2$ state is
+reachable only through a non-conformant or racing writer, never through this
+operation.
+
+\subsection{RemoveImport --- remove every match}
+
+The \texttt{disable} step removes the import. It removes \emph{every} matching
+line, so a file that somehow carried two collapses to zero.
+
+\begin{schema}{RemoveImport}
+  \Delta ImportFile
+  \where
+  importLines' = 0
+\end{schema}
+
+This is the one operation that repairs a duplicate: from $importLines = 2$ it
+reaches $0$. \texttt{AppendImport} preserves the audit's ``no duplicates''
+property ($importLines \leq 1$) but does not by itself restore it from a
+pre-existing duplicate --- only \texttt{RemoveImport}, i.e. \texttt{disable},
+does (finding~\ref{sec:findings}, item~3).
+
+\section{Predicate Schemas --- Invariants that are not Transitions}
+\label{sec:predicates}
+
+Three properties of the design are not transitions but constraints that must
+hold in every state. They are stated as predicate schemas so that
+\texttt{fuzz} type-checks them against the same state and \texttt{probcli} can
+witness them.
+
+\subsection{HookFires --- gating on the marker and the tool}
+
+Vox's plugin session hooks fire in a repo only when the marker is present
+\emph{and} the tool is installed (design \S3.5, standard \S2.7). The two-line
+gate is exactly this conjunction; the \texttt{toolInstalled} conjunct is what
+makes a clone of a marker-enabled repo on a box without vox a graceful no-op
+rather than a ``command not found''.
+
+\begin{schema}{HookFires}
+  RepoEnablement \\
+  toolInstalled : ZBOOL \\
+  hookFires : ZBOOL
+  \where
+  hookFires = ztrue \iff \\
+  \quad~ (markerPresent = ztrue \land toolInstalled = ztrue)
+\end{schema}
+
+A \texttt{Dormant} or \texttt{Absent} repo has $markerPresent = zfalse$, so
+$hookFires = zfalse$ regardless of \texttt{toolInstalled}: vox is silent in a
+repo that did not opt in. An \texttt{Enabled} repo on a box without the tool
+($toolInstalled = zfalse$) is also silent --- the second conjunct fails --- which
+is the \S2.11 ``no stale enabled tools'' behaviour at gate time.
+
+\subsection{AuditPass --- the \S2.11 checks the model covers}
+
+\texttt{punt audit} is clean when the biconditional holds, no import is an
+orphan, and no import line is duplicated. The guide file that the import points
+at is deposited into the directory by \texttt{enable} and left in place by
+\texttt{disable}, so it is present exactly when the directory is:
+$guideFilePresent = dirPresent$.
+
+\begin{schema}{AuditPass}
+  RepoEnablement \\
+  ImportFile \\
+  guideFilePresent : ZBOOL
+  \where
+  guideFilePresent = dirPresent \\
+  importPresent = ztrue \iff importLines \geq 1 \\
+  markerPresent = importPresent \\
+  importPresent = ztrue \implies guideFilePresent = ztrue \\
+  importLines \leq 1
+\end{schema}
+
+The ``no orphan import'' check --- $importPresent = ztrue \implies
+guideFilePresent = ztrue$ --- is not an extra obligation but a consequence:
+$importPresent = ztrue$ gives $markerPresent = ztrue$ (biconditional), which
+gives $dirPresent = ztrue$ (state invariant), which gives $guideFilePresent =
+ztrue$ ($guideFilePresent = dirPresent$). The only way to break it is a
+\texttt{Purge} that fails to remove the import (finding~\ref{sec:findings},
+item~1) --- exactly the orphan the audit exists to catch
+(finding~\ref{sec:findings}, item~4).
+
+\subsection{CliAgentGuided --- the intersection property}
+
+The design's load-bearing intersection (\S1, \S3.4): after \texttt{enable} on a
+box \emph{without} the plugin layer, the import is present and the deposited
+guide carries the CLI-drive section, so a plugin-less agent can still drive vox
+through the \texttt{vox} CLI. Because one static guide is deposited at both
+scopes (\S2.5) and it carries the CLI section by construction, the CLI section is
+present whenever the guide file is --- independent of the plugin.
+
+\begin{schema}{CliAgentGuided}
+  RepoEnablement \\
+  pluginPresent : ZBOOL \\
+  guideFilePresent : ZBOOL \\
+  cliSection : ZBOOL
+  \where
+  guideFilePresent = dirPresent \\
+  guideFilePresent = ztrue \implies cliSection = ztrue
+\end{schema}
+
+The intersection theorem specialises this to the plugin-less \texttt{enable}.
+Compose \texttt{Enable} with \texttt{CliAgentGuided} read on the after-state and
+fix $pluginPresent = zfalse$: \texttt{Enable} gives $importPresent' = ztrue$ and
+$dirPresent' = ztrue$; the latter forces $guideFilePresent = ztrue$
+($guideFilePresent = dirPresent$), which forces $cliSection = ztrue$. So after a
+plugin-less \texttt{enable} both $importPresent$ and $cliSection$ hold --- a
+working CLI-driving agent, the design's explicit acceptance scenario. The
+plugin-less box is not a special case in the model; it is the general case read
+at $pluginPresent = zfalse$, and the CLI section is present there for the same
+reason it is present everywhere (finding~\ref{sec:findings}, item~5). The theorem
+is stated as a composition rather than a new operation deliberately: folding it
+into an \texttt{Enable}-plus-observation schema would make \texttt{CliAgentGuided}
+an auxiliary of that schema and cost \texttt{Enable} its own standing as a
+transition to animate.
+
+\section{Key Properties}
+
+The following hold by construction (state invariants) or as operation
+postconditions; they are the intended proof obligations for animation.
+
+\begin{itemize}
+  \item \textbf{The biconditional is universal}: $markerPresent = importPresent$
+    is a state invariant, so every reachable state satisfies it. Each of the
+    three transitions writes one of the three legal triples, so none can leave a
+    state that violates it. This is the property model-checked in
+    Section~\ref{sec:modelcheck}.
+  \item \textbf{Exactly three states}: the two invariants admit only
+    \texttt{Enabled}, \texttt{Dormant}, \texttt{Absent}; the biconditional rules
+    out the four mismatched triples and $markerPresent \implies dirPresent$ rules
+    out the last outlier.
+  \item \textbf{Enable is total and idempotent}: \texttt{Enable} has no
+    precondition, reaches \texttt{Enabled} from any state, and $Enable \semi
+    Enable = Enable$; at the line level $AppendImport \semi AppendImport$ takes
+    $0 \to 1 \to 1$, so the import appears exactly once.
+  \item \textbf{Disable is non-destructive}: $dirPresent' = dirPresent$, so the
+    directory survives; \texttt{disable} reaches \texttt{Dormant} from
+    \texttt{Enabled} and stays \texttt{Absent} from \texttt{Absent}, never
+    creating a directory.
+  \item \textbf{Disable collapses a duplicate}: \texttt{RemoveImport} sets
+    $importLines' = 0$ from any count, so a $importLines = 2$ file is repaired to
+    $0$ and the audit's $importLines \leq 1$ is restored.
+  \item \textbf{Purge clears the import too}: \texttt{Purge} sets
+    $importPresent' = zfalse$ as well as $dirPresent' = zfalse$, so it leaves no
+    orphan import; a directory-only purge would violate the biconditional.
+  \item \textbf{No orphan import}: $importPresent \implies guideFilePresent$ is a
+    theorem given $guideFilePresent = dirPresent$ and the state invariants, not a
+    separate runtime check.
+  \item \textbf{Hooks gate on marker and tool}: $hookFires \iff (markerPresent
+    \land toolInstalled)$, so vox is silent in a non-enabled repo and a graceful
+    no-op on a box without the tool.
+  \item \textbf{CLI guidance is plugin-independent}: after \texttt{enable} the
+    CLI section is present whenever the guide file is, so a plugin-less box that
+    enables yields an agent that can drive vox through the CLI.
+\end{itemize}
+
+\section{Model Checking}
+\label{sec:modelcheck}
+
+The biconditional is the property worth exploring exhaustively, because it is
+the one \texttt{punt audit} keys on and the one a wrong transition could break
+silently. The state is tiny --- three booleans, hence eight raw configurations,
+of which the invariant admits three --- so the reachable state space of
+\texttt{Init} together with \texttt{Enable}, \texttt{Disable}, and \texttt{Purge}
+is finite and small.
+
+\texttt{probcli} explores it in full: from \texttt{Init} ($=$ \texttt{Absent}),
+\texttt{Enable} reaches \texttt{Enabled}, \texttt{Disable} from \texttt{Enabled}
+reaches \texttt{Dormant}, \texttt{Disable} from \texttt{Dormant} or
+\texttt{Absent} stays there, \texttt{Purge} from \texttt{Enabled} or
+\texttt{Dormant} reaches \texttt{Absent}. Three states are reachable ---
+\texttt{Absent}, \texttt{Dormant}, \texttt{Enabled} --- and in every one
+$markerPresent = importPresent$ holds. No sequence of \texttt{Enable},
+\texttt{Disable}, \texttt{Purge} reaches a state in which the marker and the
+import disagree; the invariant is never violated and the machine does not
+deadlock.
+
+\section{Findings from Formalisation}
+\label{sec:findings}
+
+Writing the model surfaced these decisions, which the implementation design must
+realise consistently. Each is a place where the informal \S4 state machine was
+silent, underspecified, or would --- read literally --- break the biconditional.
+
+\begin{enumerate}
+  \item \textbf{\texttt{Purge} must remove the import line, not only the
+    directory.} The design's \S4 lists \texttt{Purge}'s postcondition as
+    $\neg dirPresent$ alone. But the import line lives in \texttt{CLAUDE.md},
+    outside the subtree \texttt{Purge} deletes, while the marker lives inside it.
+    A \texttt{Purge} that removes only the subtree would, from \texttt{Enabled},
+    leave $(dirPresent, markerPresent, importPresent) = (zfalse, zfalse, ztrue)$
+    --- a state that both violates the \S2.11 biconditional and leaves a dangling
+    \texttt{@}-import that 404s at read time (the \S2.11 ``no orphan imports''
+    hard fail). The model therefore makes $importPresent' = zfalse$ a required
+    postcondition of \texttt{Purge}: \texttt{disable --purge} is \texttt{disable}
+    (which removes the import) \emph{then} the subtree removal, never the subtree
+    removal alone. The prose of \S3.3 sequences it correctly; the \S4 state
+    machine's one-line summary does not, and an implementation that follows only
+    \S4 would ship the orphan.
+
+  \item \textbf{\texttt{Disable}'s non-destructiveness is $dirPresent' =
+    dirPresent$, not $dirPresent' = ztrue$.} ``Leave the directory in place'' is
+    a frame, not an assertion of presence. If \texttt{disable} instead
+    \emph{ensured} a directory, running it on an already-\texttt{Absent} repo
+    would create an empty \texttt{.punt-labs/vox/} with no marker --- a spurious
+    \texttt{Dormant} state conjured from nothing, and a directory the tool did
+    not just create, against the org ``never delete/create what you did not
+    handle'' rule. The frame $dirPresent' = dirPresent$ is the correct reading:
+    \texttt{disable} reaches \texttt{Dormant} only from a state that already had
+    the directory.
+
+  \item \textbf{The boolean \texttt{importPresent} cannot express the \S2.4
+    duplicate-collapse; the line count is required.} The biconditional treats
+    ``one import'' and ``two imports'' alike --- both are $importPresent =
+    ztrue$ --- so ``\texttt{disable} removes every match'' and ``a second
+    \texttt{enable} adds none'' are invisible at the boolean level. The
+    \texttt{ImportFile} machine ($importLines : 0 \upto maxImports$, with
+    $maxImports = 2$) is what makes \texttt{AppendImport}'s idempotence and
+    \texttt{RemoveImport}'s total removal checkable. \texttt{AppendImport}
+    \emph{preserves} the audit's $importLines \leq 1$ but does not by itself
+    repair a pre-existing duplicate; only \texttt{RemoveImport} --- i.e.
+    \texttt{disable} --- collapses $2$ to $0$. A design that models the import as
+    a boolean would silently drop the requirement that \texttt{disable} heal a
+    racing writer's duplicate.
+
+  \item \textbf{``No orphan import'' is a theorem, not an independent check.}
+    Once the deposited guide is present exactly when the directory is
+    ($guideFilePresent = dirPresent$ --- \texttt{enable} deposits it,
+    \texttt{disable} leaves it dormant), the \S2.11 orphan check $importPresent
+    \implies guideFilePresent$ follows from the two state invariants. The single
+    way to falsify it is the directory-only \texttt{Purge} of item~1. So the
+    orphan the audit forbids and the \texttt{Purge} bug are the same defect seen
+    from two sides, and fixing item~1 discharges the orphan check for free.
+
+  \item \textbf{The intersection property is unconditional on the plugin.} The
+    ``a plugin-less box that enables yields a CLI-driving agent'' scenario is not
+    a special case: because one static guide is deposited at both scopes (\S2.5)
+    and it carries the CLI-drive section by construction, $cliSection$ tracks
+    $guideFilePresent$, which tracks $dirPresent$, with no dependence on
+    $pluginPresent$. \texttt{CliAgentGuided} holds at $pluginPresent = zfalse$
+    for the same reason it holds everywhere. The design implication is a
+    constraint on the guide's \emph{content}: its CLI section must not be gated
+    on plugin absence --- it is always present, and the preamble merely tells the
+    agent which surface to prefer. A guide that emitted the CLI section only when
+    the plugin was absent would still satisfy the scenario but would break the
+    single-static-file contract of \S2.5.
+\end{enumerate}
+
+\end{document}
