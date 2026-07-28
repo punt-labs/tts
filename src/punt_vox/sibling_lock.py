@@ -65,16 +65,16 @@ class SiblingLock:
                 fcntl.flock(lock, fcntl.LOCK_UN)
 
     def _acquire(self, lock: IO[str]) -> None:
-        """Take the exclusive lock, retrying briefly, then failing loud.
+        """Take the exclusive lock, retrying on contention, then failing loud.
 
-        Poll ``LOCK_EX | LOCK_NB`` a bounded number of times, sleeping between
-        attempts, so contention never blocks indefinitely. On timeout raise a
-        clear error naming the contended host.
+        Only ``BlockingIOError`` (EAGAIN/EWOULDBLOCK) is contention worth a
+        bounded retry; every other ``OSError`` (ENOLCK, an ``flock``-less
+        filesystem, EBADF) propagates at once, never a false ``TimeoutError``.
         """
         for _ in range(self._ACQUIRE_ATTEMPTS):
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except OSError:
+            except BlockingIOError:
                 time.sleep(self._ACQUIRE_INTERVAL_S)
             else:
                 return

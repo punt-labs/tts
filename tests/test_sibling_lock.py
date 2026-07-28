@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import fcntl
 from pathlib import Path
 from typing import IO
@@ -72,6 +73,34 @@ def test_acquire_times_out_and_names_the_host(
 
     # One sleep per failed attempt, bounded by the acquire budget.
     assert len(sleeps) == SiblingLock._ACQUIRE_ATTEMPTS
+
+
+def test_non_contention_oserror_propagates_without_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A non-contention flock failure -- ENOLCK, an flock-less filesystem, EBADF --
+    # is a genuine error, not a wedged peer. It must propagate immediately with its
+    # true cause, never be retried and relabelled as a false TimeoutError.
+    lock = SiblingLock(tmp_path / "CLAUDE.md")
+
+    def no_locks(_fileobj: IO[str], _operation: int) -> None:
+        raise OSError(errno.ENOLCK, "no locks available")
+
+    sleeps: list[float] = []
+
+    def record_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("punt_vox.sibling_lock.fcntl.flock", no_locks)
+    monkeypatch.setattr("punt_vox.sibling_lock.time.sleep", record_sleep)
+
+    with pytest.raises(OSError) as caught, lock.held():
+        pass
+
+    # The true errno survives; it is not a TimeoutError, and no retry happened.
+    assert caught.value.errno == errno.ENOLCK
+    assert not isinstance(caught.value, TimeoutError)
+    assert sleeps == []
 
 
 def test_held_releases_on_exception(tmp_path: Path) -> None:
