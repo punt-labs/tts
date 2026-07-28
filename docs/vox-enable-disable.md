@@ -173,7 +173,13 @@ take the same lock (`.settings.json.punt-import.lock`).
 - Parse `--no-plugin` from `"$@"`; honor `VOX_NO_PLUGIN=1` identically; unknown
   flags exit 2 with usage.
 - When set, skip only the marketplace + plugin steps (7–8). Binary install,
-  PATH, dirs, seed, and the user-scope `install` enable/import still run.
+  PATH, dirs, seed, and the user-scope `install` enable/import still run — a
+  `--no-plugin` box still gets a working `vox` CLI *and* its guidance import.
+- **Capability auto-skip** (install-cli-only.md §108–119, required, not just
+  flag/env): also skip the plugin when `claude` (or `git`) is absent, so the
+  CLI-only audience (Codex/Cursor/plain terminal, no `claude`) reaches the CLI
+  install instead of hard-failing. Explicit flag/env force-skip regardless; the
+  default — `claude` present, no flag — installs the plugin.
 - Both `curl … | sh -s -- --no-plugin` and `curl … | VOX_NO_PLUGIN=1 sh` work.
 - README documents the default and the `--no-plugin` one-liner.
 
