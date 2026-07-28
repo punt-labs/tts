@@ -109,33 +109,35 @@ class SettingsRegistration:
 
         Only an *absent* ``permissions`` key is created here; a present one is
         guaranteed a dict by :meth:`_existing_allow` (which runs first and raises
-        on a malformed value), so this never overwrites the user's data.
+        on a malformed value -- including an explicit ``null``), so this never
+        overwrites the user's data.
         """
-        perms: Any = data.get("permissions")
-        if perms is None:
-            perms = {}
-            data["permissions"] = perms
-        cast("dict[str, Any]", perms)["allow"] = allow
+        if "permissions" not in data:
+            data["permissions"] = {}
+        perms = cast("dict[str, Any]", data["permissions"])
+        perms["allow"] = allow
         self._file.replace(json.dumps(data, indent=2) + "\n")
 
     def _existing_allow(self, data: dict[str, Any]) -> list[str]:
         """Return the current ``permissions.allow`` entries as strings, else ``[]``.
 
         Symmetric with :meth:`_load`'s root check: a *present but malformed*
-        nested value is a boundary error, not an empty default. A ``permissions``
-        that is not an object, or a ``permissions.allow`` that is not an array,
-        raises rather than being silently discarded. Only an *absent* key is safe
-        to treat as empty and create later.
+        nested value is a boundary error, not an empty default. Presence is keyed
+        on membership, never on truthiness -- a present but ``null`` ``permissions``
+        (or ``permissions.allow``) is malformed and raises, exactly like a string
+        or number would, rather than being read as absent and silently overwritten.
+        Only a genuinely *absent* key is safe to treat as empty and create later.
         """
-        perms: Any = data.get("permissions")
-        if perms is None:
+        if "permissions" not in data:
             return []
+        perms: Any = data["permissions"]
         if not isinstance(perms, dict):
             msg = f"{self._file.path}: permissions must be a JSON object"
             raise ValueError(msg)
-        allow: Any = cast("dict[str, Any]", perms).get("allow")
-        if allow is None:
+        perms_dict = cast("dict[str, Any]", perms)
+        if "allow" not in perms_dict:
             return []
+        allow: Any = perms_dict["allow"]
         if not isinstance(allow, list):
             msg = f"{self._file.path}: permissions.allow must be a JSON array"
             raise ValueError(msg)

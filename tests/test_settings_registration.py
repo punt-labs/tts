@@ -154,6 +154,33 @@ def test_deregister_raises_when_permissions_is_not_an_object(tmp_path: Path) -> 
         _reg(tmp_path).deregister()
 
 
+def test_register_raises_when_permissions_is_null(tmp_path: Path) -> None:
+    # A present-but-null permissions is malformed, not absent: a JSON `null` is a
+    # value the user wrote, so treating it as "key absent" and overwriting it
+    # would silently discard it. Symmetric with the non-dict case.
+    settings = _write_settings(tmp_path, {"permissions": None})
+    with pytest.raises(ValueError, match="permissions must be a JSON object"):
+        _reg(tmp_path).register()
+    assert json.loads(settings.read_text(encoding="utf-8")) == {"permissions": None}
+
+
+def test_register_raises_when_allow_is_null(tmp_path: Path) -> None:
+    # A present-but-null allow is malformed, not absent -- never silently created
+    # over the user's explicit null.
+    settings = _write_settings(tmp_path, {"permissions": {"allow": None}})
+    with pytest.raises(ValueError, match=r"permissions\.allow must be a JSON array"):
+        _reg(tmp_path).register()
+    assert json.loads(settings.read_text(encoding="utf-8")) == {
+        "permissions": {"allow": None}
+    }
+
+
+def test_deregister_raises_when_permissions_is_null(tmp_path: Path) -> None:
+    _write_settings(tmp_path, {"permissions": None})
+    with pytest.raises(ValueError, match="permissions must be a JSON object"):
+        _reg(tmp_path).deregister()
+
+
 def test_register_creates_absent_permissions_key(tmp_path: Path) -> None:
     # An ABSENT permissions key is safe to add (create-when-absent), leaving
     # unrelated keys untouched.

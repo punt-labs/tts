@@ -164,18 +164,21 @@ class EnablementCli:
 
     @staticmethod
     def _transition(action: Callable[[RepoEnablement], None]) -> RepoEnablement:
-        """Wire the repo, run *action*, and return it, guarding both against ValueError.
+        """Wire the repo, run *action*, and return it; map boundary faults to exit 1.
 
-        A non-repo working directory (``for_cwd``) and a malformed
-        ``.claude/settings.json`` reached during *action* (the
-        :class:`~punt_vox.settings_registration.SettingsRegistration` guard) both
-        raise ``ValueError``; each becomes a clean CLI error and exit, not a
-        traceback.
+        Two fault classes reach here, both at the filesystem boundary. A non-repo
+        working directory (``for_cwd``) and a malformed ``.claude/settings.json``
+        reached during *action* (the
+        :class:`~punt_vox.settings_registration.SettingsRegistration` guard) raise
+        ``ValueError``; a failed write of the marker, guide, or settings
+        (permission denied, ``ENOSPC``; ``TimeoutError`` is an ``OSError``) raises
+        ``OSError``. Each becomes a clean CLI error and exit, symmetric with the
+        MCP surface, never a traceback.
         """
         try:
             enablement = RepoEnablement.for_cwd()
             action(enablement)
-        except ValueError as exc:
+        except (OSError, ValueError) as exc:
             typer.echo(f"vox: {exc}", err=True)
             raise typer.Exit(code=1) from exc
         return enablement

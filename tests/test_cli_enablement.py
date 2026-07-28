@@ -118,3 +118,24 @@ def test_disable_with_malformed_settings_exits_cleanly(
     assert result.exit_code == 1
     assert "permissions.allow must be a JSON array" in result.output
     assert "Traceback" not in result.output
+
+
+def test_enable_with_write_failure_exits_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A write that fails with OSError (permission denied, ENOSPC) during enable()
+    # must map to the same clean exit 1 + stderr the ValueError paths give -- the
+    # CLI catch is symmetric with the MCP surface, never a raw traceback.
+    _point_repo_at(monkeypatch, tmp_path)
+
+    def deny_write(_self: object, _text: str) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr("punt_vox.tool_owned_file.ToolOwnedFile.write", deny_write)
+    result = CliRunner().invoke(app, ["enable"])
+    assert result.exit_code == 1
+    assert "vox: " in result.output
+    assert "Permission denied" in result.output
+    assert "Traceback" not in result.output
+    # The typer.Exit is what surfaced, not the raw OSError.
+    assert not isinstance(result.exception, PermissionError)

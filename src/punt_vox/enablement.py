@@ -58,9 +58,9 @@ class VoxMarker:
 
     _file: ToolOwnedFile
 
-    def __new__(cls, path: Path) -> Self:
+    def __new__(cls, path: Path, base: Path) -> Self:
         self = super().__new__(cls)
-        self._file = ToolOwnedFile(path)
+        self._file = ToolOwnedFile(path, base)
         return self
 
     @property
@@ -95,9 +95,9 @@ class DepositedGuide:
 
     _ASSET_NAME = "global-guidance.md"
 
-    def __new__(cls, path: Path) -> Self:
+    def __new__(cls, path: Path, base: Path) -> Self:
         self = super().__new__(cls)
-        self._file = ToolOwnedFile(path)
+        self._file = ToolOwnedFile(path, base)
         return self
 
     @property
@@ -159,8 +159,8 @@ class RepoEnablement:
         vox_dir = repo_root / ".punt-labs" / "vox"
         return cls(
             import_writer=ClaudeMdImport(repo_root / "CLAUDE.md", _IMPORT_LINE),
-            marker=VoxMarker(vox_dir / "enabled"),
-            guide=DepositedGuide(vox_dir / "CLAUDE.md"),
+            marker=VoxMarker(vox_dir / "enabled", repo_root),
+            guide=DepositedGuide(vox_dir / "CLAUDE.md", repo_root),
             settings=SettingsRegistration(repo_root / ".claude" / "settings.json"),
         )
 
