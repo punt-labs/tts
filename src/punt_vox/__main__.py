@@ -16,6 +16,7 @@ import typer
 
 from punt_vox import __version__
 from punt_vox.api_key_resolver import ApiKeyResolver
+from punt_vox.cli_enablement import build_enablement_commands
 from punt_vox.cli_io import OutputFlags, TextInput
 from punt_vox.cli_music import build_music_app
 from punt_vox.cli_rec import build_rec_app
@@ -395,42 +396,14 @@ def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
 
 
 # ---------------------------------------------------------------------------
-# notify — notification mode (y/n/c)
+# enable / disable / notify — per-repo enablement + notification level
+#
+# vox enable / vox disable (+ --purge) and vox notify normal|continuous live in
+# cli_enablement as bound methods, registered here as top-level commands so they
+# read `vox enable`, not `vox enablement enable`.
 # ---------------------------------------------------------------------------
 
-
-@app.command("notify")
-def notify_cmd(  # pyright: ignore[reportUnusedFunction]
-    mode: Annotated[
-        str,
-        typer.Argument(help="Notification mode: y (on), n (off), c (continuous)."),
-    ],
-    voice: Annotated[
-        str | None,
-        typer.Option("--voice", help="Set session voice in the same call."),
-    ] = None,
-) -> None:
-    """Set notification mode."""
-    if mode not in ("y", "n", "c"):
-        typer.echo("Error: mode must be y, n, or c.", err=True)
-        raise typer.Exit(code=1)
-
-    config_dir = find_config_dir() or DEFAULT_CONFIG_DIR
-    store = ConfigStore(config_dir)
-    first_init = store.read_field("notify") is None
-    updates: dict[str, str] = {"notify": mode}
-    if mode == "c" or (first_init and mode == "y"):
-        updates["speak"] = "y"
-    if voice is not None:
-        updates["voice"] = voice
-    store.write_fields(updates)
-
-    labels = {
-        "y": "Notifications enabled.",
-        "n": "Notifications disabled.",
-        "c": "Continuous mode on.",
-    }
-    _formatter.emit(updates, labels[mode])
+build_enablement_commands(app, _formatter, _flags)
 
 
 # ---------------------------------------------------------------------------

@@ -838,78 +838,78 @@ class TestVibeCommand:
 
 
 class TestNotifyCommand:
-    def test_notify_y(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+    """`vox notify` sets the per-repo level (normal|continuous), not enablement.
+
+    The y|n|c arm is retired: `n` (off) is now `vox disable`, and the level maps
+    to the stored config values (normal->y, continuous->c) so hooks read one
+    unchanged contract.
+    """
+
+    def test_notify_normal(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr("punt_vox.cli_enablement.find_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
-        result = runner.invoke(app, ["notify", "y"])
+        result = runner.invoke(app, ["notify", "normal"])
         assert result.exit_code == 0
-        assert "enabled" in result.output.lower()
+        assert "normal" in result.output.lower()
+        assert 'notify: "y"' in (tmp_path / "vox.md").read_text()
 
-    def test_notify_n(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+    def test_notify_continuous(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr("punt_vox.cli_enablement.find_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
-        result = runner.invoke(app, ["notify", "n"])
-        assert result.exit_code == 0
-        assert "disabled" in result.output.lower()
-
-    def test_notify_c(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
-        import punt_vox.config as cfg
-
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
-
-        runner = CliRunner()
-        result = runner.invoke(app, ["notify", "c"])
+        result = runner.invoke(app, ["notify", "continuous"])
         assert result.exit_code == 0
         assert "continuous" in result.output.lower()
+        assert 'notify: "c"' in (tmp_path / "vox.md").read_text()
 
-    def test_notify_c_always_enables_speak(
+    def test_notify_continuous_always_enables_speak(
         self, tmp_path: Path, monkeypatch: MagicMock
     ) -> None:
-        """Continuous mode always sets speak=y, even if file exists."""
+        """Continuous always sets speak=y, even when the file already had speak n."""
         import punt_vox.config as cfg
 
         vox_md = tmp_path / "vox.md"
         vox_md.write_text('---\nspeak: "n"\nnotify: "n"\n---\n')
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr("punt_vox.cli_enablement.find_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
-        result = runner.invoke(app, ["notify", "c"])
+        result = runner.invoke(app, ["notify", "continuous"])
         assert result.exit_code == 0
         text = vox_md.read_text()
         assert 'speak: "y"' in text
         assert 'notify: "c"' in text
 
-    def test_notify_c_with_voice(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+    def test_notify_continuous_with_voice(
+        self, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr("punt_vox.cli_enablement.find_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
-        result = runner.invoke(app, ["notify", "c", "--voice", "matilda"])
+        result = runner.invoke(app, ["notify", "continuous", "--voice", "matilda"])
         assert result.exit_code == 0
-        vox_md = tmp_path / "vox.md"
-        text = vox_md.read_text()
+        text = (tmp_path / "vox.md").read_text()
         assert 'voice: "matilda"' in text
         assert 'notify: "c"' in text
         assert 'speak: "y"' in text
 
     def test_notify_invalid(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        monkeypatch.setattr("punt_vox.cli_enablement.find_config_dir", lambda: tmp_path)
 
         runner = CliRunner()
         result = runner.invoke(app, ["notify", "x"])
-        assert result.exit_code == 1
+        # A bad level is a usage error (BadParameter -> exit 2).
+        assert result.exit_code == 2
 
 
 class TestSpeakCommand:
