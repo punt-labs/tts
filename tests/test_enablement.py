@@ -237,6 +237,54 @@ def test_enable_leaves_no_marker_when_settings_register_raises(
     )
 
 
+# ---------------------------------------------------------------------------
+# Symlink refusal: an untrusted repo cannot redirect a tool-owned write
+# ---------------------------------------------------------------------------
+
+
+def test_enable_refuses_symlink_at_marker_path_leaving_target_intact(
+    tmp_path: Path,
+) -> None:
+    """A symlink planted at ``.punt-labs/vox/enabled`` is refused, not followed.
+
+    Without the ``O_NOFOLLOW`` guard, ``enable`` would overwrite the symlink's
+    *target* (e.g. ``~/.ssh/id_rsa``) with the marker text -- data destruction.
+    """
+    secret = tmp_path / "secret.txt"
+    secret.write_text("PRIVATE KEY\n", encoding="utf-8")
+    vox = tmp_path / ".punt-labs" / "vox"
+    vox.mkdir(parents=True)
+    (vox / "enabled").symlink_to(secret)
+
+    with pytest.raises(ValueError, match="symlink at a tool-owned path"):
+        RepoEnablement.for_repo(tmp_path).enable()
+
+    assert (vox / "enabled").is_symlink()
+    assert secret.read_text(encoding="utf-8") == "PRIVATE KEY\n"
+
+
+def test_enable_refuses_symlink_at_guide_path_leaving_target_intact(
+    tmp_path: Path,
+) -> None:
+    """A symlink planted at the deposited ``CLAUDE.md`` guide is refused.
+
+    The guide is the first step of ``enable``, so its target is protected and the
+    marker is never written (the repo stays observably OFF).
+    """
+    secret = tmp_path / "secret.txt"
+    secret.write_text("PRIVATE KEY\n", encoding="utf-8")
+    vox = tmp_path / ".punt-labs" / "vox"
+    vox.mkdir(parents=True)
+    (vox / "CLAUDE.md").symlink_to(secret)
+
+    with pytest.raises(ValueError, match="symlink at a tool-owned path"):
+        RepoEnablement.for_repo(tmp_path).enable()
+
+    assert (vox / "CLAUDE.md").is_symlink()
+    assert secret.read_text(encoding="utf-8") == "PRIVATE KEY\n"
+    assert not _marker_present(tmp_path)
+
+
 def test_root_property_reports_the_repo_root(tmp_path: Path) -> None:
     assert RepoEnablement.for_repo(tmp_path).root == tmp_path
 

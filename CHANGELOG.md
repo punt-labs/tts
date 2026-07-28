@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`/vox y|n|c` is retired** (`tool-enable-disable.md` §2.3 — `y|n` is not an enablement vocabulary). Per-repo on/off is now `/vox enable` / `/vox disable`; the notify level moves to `vox notify normal|continuous`. The legacy managed-section `CLAUDE.md` marker code (`managed_section.py`, `markdown_fence.py`) is removed in favor of the bare `@`-import writer.
 
+### Security
+
+- **`vox enable` refuses to follow a symlink at its tool-owned paths.** The `.punt-labs/vox/enabled` marker and the deposited `.punt-labs/vox/CLAUDE.md` guide are now written with `O_NOFOLLOW`, so an untrusted repo that plants either path as a symlink to a sensitive file (`~/.ssh/id_rsa`, credentials) can no longer redirect the write onto the link's target. Such a path is refused with a clear error across all three surfaces (CLI, `mic`, slash command); the target is never overwritten. The host `CLAUDE.md` and `.claude/settings.json` writes remain intentionally symlink-resolving (dotfile managers symlink those).
+
 ## [4.15.0] - 2026-07-25
 
 ### Added

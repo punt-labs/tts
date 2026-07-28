@@ -67,6 +67,26 @@ def test_enable_outside_a_repo_fails_cleanly(
     assert "git repository" in result.output.lower()
 
 
+def test_enable_with_symlinked_marker_exits_cleanly_target_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An untrusted repo plants .punt-labs/vox/enabled as a symlink to a secret.
+    # `vox enable` must refuse (exit 1, clean stderr) and never overwrite the
+    # target -- the O_NOFOLLOW guard mapped to a ValueError the CLI catches.
+    _point_repo_at(monkeypatch, tmp_path)
+    secret = tmp_path / "secret.txt"
+    secret.write_text("PRIVATE KEY\n", encoding="utf-8")
+    vox = tmp_path / ".punt-labs" / "vox"
+    vox.mkdir(parents=True)
+    (vox / "enabled").symlink_to(secret)
+
+    result = CliRunner().invoke(app, ["enable"])
+    assert result.exit_code == 1
+    assert "symlink at a tool-owned path" in result.output
+    assert "Traceback" not in result.output
+    assert secret.read_text(encoding="utf-8") == "PRIVATE KEY\n"
+
+
 def _write_malformed_settings(repo: Path) -> None:
     settings = repo / ".claude" / "settings.json"
     settings.parent.mkdir(parents=True)

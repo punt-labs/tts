@@ -94,6 +94,24 @@ def test_malformed_settings_json_is_a_clean_error_object(tmp_path: Path) -> None
     assert not _marker(tmp_path).is_file()
 
 
+def test_enable_symlinked_marker_is_a_clean_error_object(tmp_path: Path) -> None:
+    # An untrusted repo plants .punt-labs/vox/enabled as a symlink to a secret.
+    # The MCP tool must refuse (clean error object, never raise across the
+    # boundary) and never overwrite the link target -- the ValueError from the
+    # O_NOFOLLOW guard is caught by dispatch's (OSError, ValueError) handler.
+    secret = tmp_path / "secret.txt"
+    secret.write_text("PRIVATE KEY\n", encoding="utf-8")
+    vox = tmp_path / ".punt-labs" / "vox"
+    vox.mkdir(parents=True)
+    (vox / "enabled").symlink_to(secret)
+
+    reply = json.loads(_tool(tmp_path).dispatch("enable"))
+    assert "error" in reply
+    assert "symlink at a tool-owned path" in reply["error"]
+    assert (vox / "enabled").is_symlink()
+    assert secret.read_text(encoding="utf-8") == "PRIVATE KEY\n"
+
+
 def test_disable_reports_observed_state_not_intent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

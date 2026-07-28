@@ -30,6 +30,7 @@ from typing import Self, final
 from punt_vox.claude_md import ClaudeMdImport
 from punt_vox.dirs import find_repo_root
 from punt_vox.settings_registration import SettingsRegistration
+from punt_vox.tool_owned_file import ToolOwnedFile
 
 __all__ = ["DepositedGuide", "RepoEnablement", "VoxMarker"]
 
@@ -51,34 +52,38 @@ _MARKER_TEXT = (
 
 @final
 class VoxMarker:
-    """The ``.punt-labs/vox/enabled`` marker file -- vox's per-repo on signal."""
+    """The ``.punt-labs/vox/enabled`` marker file -- vox's per-repo on signal.
 
-    __slots__ = ("_path",)
+    Composes a :class:`~punt_vox.tool_owned_file.ToolOwnedFile` so the write
+    refuses a symlink planted at the marker path rather than clobbering the
+    link's target.
+    """
 
-    _path: Path
+    __slots__ = ("_file",)
+
+    _file: ToolOwnedFile
 
     def __new__(cls, path: Path) -> Self:
         self = super().__new__(cls)
-        self._path = path
+        self._file = ToolOwnedFile(path)
         return self
 
     @property
     def path(self) -> Path:
         """Return the marker file path."""
-        return self._path
+        return self._file.path
 
     def is_present(self) -> bool:
         """Return whether the marker exists."""
-        return self._path.is_file()
+        return self._file.is_present()
 
     def write(self) -> None:
-        """Create the marker, making its directory if absent."""
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(_MARKER_TEXT, encoding="utf-8")
+        """Create the marker, making its directory if absent; refuse a symlink."""
+        self._file.write(_MARKER_TEXT)
 
     def remove(self) -> None:
         """Delete the marker; an already-absent marker is a clean no-op."""
-        self._path.unlink(missing_ok=True)
+        self._file.remove()
 
 
 @final
@@ -87,32 +92,33 @@ class DepositedGuide:
 
     The guide is static content shipped beside the package (§ 2.5); ``enable``
     overwrites it wholesale so it can never drift from the running vox version.
+    Composes a :class:`~punt_vox.tool_owned_file.ToolOwnedFile` so the deposit
+    refuses a symlink at the guide path rather than following it to its target.
     """
 
-    __slots__ = ("_path",)
+    __slots__ = ("_file",)
 
-    _path: Path
+    _file: ToolOwnedFile
 
     _ASSET_NAME = "global-guidance.md"
 
     def __new__(cls, path: Path) -> Self:
         self = super().__new__(cls)
-        self._path = path
+        self._file = ToolOwnedFile(path)
         return self
 
     @property
     def path(self) -> Path:
         """Return the deposited guide path."""
-        return self._path
+        return self._file.path
 
     def is_present(self) -> bool:
         """Return whether the guide file exists."""
-        return self._path.is_file()
+        return self._file.is_present()
 
     def deposit(self) -> None:
-        """Write the guide wholesale, making its directory if absent."""
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(self._asset_text(), encoding="utf-8")
+        """Write the guide wholesale, making the dir if absent; refuse a symlink."""
+        self._file.write(self._asset_text())
 
     @classmethod
     def _asset_text(cls) -> str:
