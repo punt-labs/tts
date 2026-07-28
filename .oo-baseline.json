@@ -493,6 +493,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/markdown_doc.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.91,
+    "max_complexity": 7.0,
+    "avg_complexity": 3.27,
+    "module_size": 146.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/music_hint.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -956,6 +969,19 @@
     "avg_complexity": 0.0,
     "module_size": 8.0,
     "classes_per_module": 0.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
+  "src/punt_vox/sibling_lock.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.33,
+    "max_complexity": 1.0,
+    "avg_complexity": 1.0,
+    "module_size": 40.0,
+    "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
     "public_attr_violations": 0.0,
