@@ -65,3 +65,36 @@ def test_enable_outside_a_repo_fails_cleanly(
     result = CliRunner().invoke(app, ["enable"])
     assert result.exit_code == 1
     assert "git repository" in result.output.lower()
+
+
+def _write_malformed_settings(repo: Path) -> None:
+    settings = repo / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text('{"permissions": {"allow": "not-a-list"}}', encoding="utf-8")
+
+
+def test_enable_with_malformed_settings_exits_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A malformed .claude/settings.json makes the SettingsRegistration guard raise
+    # ValueError from inside enable() -- not the not-a-repo case. The CLI must map
+    # it to a clean stderr message and exit 1, never dump a traceback.
+    _point_repo_at(monkeypatch, tmp_path)
+    _write_malformed_settings(tmp_path)
+    result = CliRunner().invoke(app, ["enable"])
+    assert result.exit_code == 1
+    assert "permissions.allow must be a JSON array" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_disable_with_malformed_settings_exits_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The same guard fires on the disable path (deregister reads settings.json);
+    # the CLI maps the ValueError to a clean exit 1, never a traceback.
+    _point_repo_at(monkeypatch, tmp_path)
+    _write_malformed_settings(tmp_path)
+    result = CliRunner().invoke(app, ["disable"])
+    assert result.exit_code == 1
+    assert "permissions.allow must be a JSON array" in result.output
+    assert "Traceback" not in result.output

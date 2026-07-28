@@ -21,6 +21,8 @@ from punt_vox.enablement import RepoEnablement
 from punt_vox.types_synthesis import SynthesisSpec
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from punt_vox.cli_io import OutputFlags
     from punt_vox.output_formatter import OutputFormatter
 
@@ -83,8 +85,7 @@ class EnablementCli:
         import. Writes a working-tree change committed via a PR, never runs git.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        enablement = self._for_cwd()
-        enablement.enable()
+        enablement = self._transition(lambda e: e.enable())
         self._formatter.emit(
             {
                 "enabled": True,
@@ -109,11 +110,10 @@ class EnablementCli:
         so no orphan ``@``-import is left behind).
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        enablement = self._for_cwd()
-        if purge:
-            enablement.purge()
-        else:
-            enablement.disable()
+        transition: Callable[[RepoEnablement], None] = (
+            (lambda e: e.purge()) if purge else (lambda e: e.disable())
+        )
+        enablement = self._transition(transition)
         verb = "purged" if purge else "disabled"
         self._formatter.emit(
             {"enabled": False, "purged": purge, "repo": str(enablement.root)},
@@ -163,13 +163,22 @@ class EnablementCli:
         return normalized
 
     @staticmethod
-    def _for_cwd() -> RepoEnablement:
-        """Wire the repo from the working directory, or fail with a clean CLI error."""
+    def _transition(action: Callable[[RepoEnablement], None]) -> RepoEnablement:
+        """Wire the repo, run *action*, and return it, guarding both against ValueError.
+
+        A non-repo working directory (``for_cwd``) and a malformed
+        ``.claude/settings.json`` reached during *action* (the
+        :class:`~punt_vox.settings_registration.SettingsRegistration` guard) both
+        raise ``ValueError``; each becomes a clean CLI error and exit, not a
+        traceback.
+        """
         try:
-            return RepoEnablement.for_cwd()
+            enablement = RepoEnablement.for_cwd()
+            action(enablement)
         except ValueError as exc:
             typer.echo(f"vox: {exc}", err=True)
             raise typer.Exit(code=1) from exc
+        return enablement
 
 
 def build_enablement_commands(
