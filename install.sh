@@ -22,20 +22,58 @@ PACKAGE="punt-vox"
 VERSION="4.15.0"
 BINARY="vox"
 
+# --- Argument parsing: --no-plugin / VOX_NO_PLUGIN (install-cli-only.md) ---
+#
+# `--no-plugin` (or VOX_NO_PLUGIN=1) installs the harness-neutral CLI and skips
+# ONLY the Claude Code marketplace-register + plugin-install steps. Every other
+# step -- binary, PATH, daemon, tool dirs, seed, and the user-scope CLAUDE.md
+# @-import -- runs unchanged. Both forms work over `curl ... | sh`:
+#   curl ... | sh -s -- --no-plugin      (flag)
+#   curl ... | VOX_NO_PLUGIN=1 sh        (env)
+usage() {
+  printf 'Usage: install.sh [--no-plugin]\n'
+  printf '  --no-plugin   Install the vox CLI without the Claude Code plugin\n'
+  printf '                (equivalent to VOX_NO_PLUGIN=1).\n'
+}
+
+# Skip resolution is a single boolean, OR-combined from the flag, the env var,
+# and capability-absence (Step 1). VOX_NO_PLUGIN skips only when set to exactly
+# "1"; any other value -- empty, "0", "true", "yes" -- is ignored, matching the
+# installer's internal 0/1 convention.
+SKIP_PLUGIN=0
+if [ "${VOX_NO_PLUGIN:-}" = "1" ]; then
+  SKIP_PLUGIN=1
+fi
+
+for arg in "$@"; do
+  case "$arg" in
+    --no-plugin) SKIP_PLUGIN=1 ;;
+    -h|--help)   usage; exit 0 ;;
+    *)           printf 'install.sh: unknown option: %s\n' "$arg" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
 # --- Step 1: Prerequisites ---
 
 info "Checking prerequisites..."
 
+# Capability auto-skip: `claude` and `git` are needed ONLY to register the
+# marketplace and clone/install the plugin. When either is absent there is no
+# plugin to install into, so the plugin steps auto-skip and the CLI installs
+# regardless -- the non-Claude-harness path (Codex, Cursor, a plain terminal).
+# This OR-combines with the explicit --no-plugin / VOX_NO_PLUGIN request.
 if command -v claude >/dev/null 2>&1; then
   ok "claude CLI found"
 else
-  fail "'claude' CLI not found. Install Claude Code first: https://docs.anthropic.com/en/docs/claude-code"
+  SKIP_PLUGIN=1
+  warn "'claude' CLI not found -- installing the vox CLI only (no Claude Code plugin)"
 fi
 
 if command -v git >/dev/null 2>&1; then
   ok "git found"
 else
-  fail "'git' not found. Install git first: https://git-scm.com/downloads"
+  SKIP_PLUGIN=1
+  warn "'git' not found -- installing the vox CLI only (no Claude Code plugin)"
 fi
 
 # --- Step 2: uv ---
@@ -170,55 +208,71 @@ else
   warn "Could not install vox daemon (run '$_vox_path daemon install' manually)"
 fi
 
-# --- Step 6: Register marketplace ---
+# --- Steps 6-8: Claude Code plugin ---
+#
+# Skipped as a unit when SKIP_PLUGIN=1 (--no-plugin, VOX_NO_PLUGIN=1, or the
+# claude/git capability auto-skip from Step 1). The scope is exactly the
+# marketplace-register + plugin-install steps; the user-scope guide import
+# below runs in both modes.
 
-info "Registering Punt Labs marketplace..."
+if [ "$SKIP_PLUGIN" = "0" ]; then
+  # --- Step 6: Register marketplace ---
 
-if claude plugin marketplace list < /dev/null 2>/dev/null | grep -q "$MARKETPLACE_NAME"; then
-  ok "marketplace already registered"
-  claude plugin marketplace update "$MARKETPLACE_NAME" < /dev/null 2>/dev/null || true
-else
-  claude plugin marketplace add "$MARKETPLACE_REPO" < /dev/null || fail "Failed to register marketplace"
-  ok "marketplace registered"
-fi
+  info "Registering Punt Labs marketplace..."
 
-# --- Step 7: SSH fallback for plugin install ---
-
-# claude plugin install clones via SSH (git@github.com:...).
-# Users without SSH keys need an HTTPS fallback.
-NEED_HTTPS_REWRITE=0
-cleanup_https_rewrite() {
-  if [ "$NEED_HTTPS_REWRITE" = "1" ]; then
-    git config --global --unset url."https://github.com/".insteadOf 2>/dev/null || true
-    NEED_HTTPS_REWRITE=0
+  if claude plugin marketplace list < /dev/null 2>/dev/null | grep -q "$MARKETPLACE_NAME"; then
+    ok "marketplace already registered"
+    claude plugin marketplace update "$MARKETPLACE_NAME" < /dev/null 2>/dev/null || true
+  else
+    claude plugin marketplace add "$MARKETPLACE_REPO" < /dev/null || fail "Failed to register marketplace"
+    ok "marketplace registered"
   fi
-}
-trap cleanup_https_rewrite EXIT INT TERM
 
-if ! ssh -n -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=5 -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
-  warn "SSH auth to GitHub unavailable, using HTTPS fallback"
-  git config --global url."https://github.com/".insteadOf "git@github.com:"
-  NEED_HTTPS_REWRITE=1
-fi
+  # --- Step 7: SSH fallback for plugin install ---
 
-# --- Step 8: Install or upgrade plugin ---
+  # claude plugin install clones via SSH (git@github.com:...).
+  # Users without SSH keys need an HTTPS fallback.
+  NEED_HTTPS_REWRITE=0
+  cleanup_https_rewrite() {
+    if [ "$NEED_HTTPS_REWRITE" = "1" ]; then
+      git config --global --unset url."https://github.com/".insteadOf 2>/dev/null || true
+      NEED_HTTPS_REWRITE=0
+    fi
+  }
+  trap cleanup_https_rewrite EXIT INT TERM
 
-info "Installing $PLUGIN_NAME plugin..."
+  if ! ssh -n -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=5 -T git@github.com 2>&1 | grep -q "successfully authenticated"; then
+    warn "SSH auth to GitHub unavailable, using HTTPS fallback"
+    git config --global url."https://github.com/".insteadOf "git@github.com:"
+    NEED_HTTPS_REWRITE=1
+  fi
 
-claude plugin uninstall "${PLUGIN_NAME}@${MARKETPLACE_NAME}" < /dev/null 2>/dev/null || true
-if ! claude plugin install "${PLUGIN_NAME}@${MARKETPLACE_NAME}" < /dev/null; then
+  # --- Step 8: Install or upgrade plugin ---
+
+  info "Installing $PLUGIN_NAME plugin..."
+
+  claude plugin uninstall "${PLUGIN_NAME}@${MARKETPLACE_NAME}" < /dev/null 2>/dev/null || true
+  if ! claude plugin install "${PLUGIN_NAME}@${MARKETPLACE_NAME}" < /dev/null; then
+    cleanup_https_rewrite
+    fail "Failed to install $PLUGIN_NAME"
+  fi
+  if ! claude plugin list < /dev/null 2>/dev/null | grep -q "$PLUGIN_NAME@$MARKETPLACE_NAME"; then
+    cleanup_https_rewrite
+    fail "$PLUGIN_NAME install reported success but plugin not found"
+  fi
+  ok "$PLUGIN_NAME plugin installed"
+
   cleanup_https_rewrite
-  fail "Failed to install $PLUGIN_NAME"
+else
+  info "Skipping Claude Code plugin (CLI-only install)"
 fi
-if ! claude plugin list < /dev/null 2>/dev/null | grep -q "$PLUGIN_NAME@$MARKETPLACE_NAME"; then
-  cleanup_https_rewrite
-  fail "$PLUGIN_NAME install reported success but plugin not found"
-fi
-ok "$PLUGIN_NAME plugin installed"
 
-# Register the agent usage guide as a CLAUDE.md @-import so it loads in every
-# session. This path installs the plugin directly (never via `vox install`),
-# so the registration must happen here too. Idempotent + best-effort.
+# --- Register the agent usage guide (user-scope CLAUDE.md @-import) ---
+#
+# Runs in BOTH plugin and CLI-only modes. The plugin path installs directly
+# (never via `vox install`), so the import must be registered here; and a
+# --no-plugin box still needs the ~/.punt-labs/vox/CLAUDE.md import so an agent
+# driving vox through the `vox` CLI gets the guidance. Idempotent + best-effort.
 #
 # `register-guidance` is unreleased plumbing: a punt-vox pinned to an older
 # VERSION won't have the subcommand, so probe with `--help` (typer exits
@@ -235,8 +289,6 @@ else
   info "usage guide registration not supported by $PACKAGE $VERSION (skipped)"
 fi
 
-cleanup_https_rewrite
-
 # --- Step 9: Verify ---
 
 info "Verifying installation..."
@@ -245,8 +297,22 @@ printf '\n'
 printf '\n'
 
 # --- Done ---
+#
+# The final message is gated on the skip boolean, not on the reason for it, so
+# the capability auto-skip and the explicit --no-plugin print the same
+# CLI-only block -- and neither prints "Restart Claude Code" when no plugin was
+# installed.
 
-printf '%b%b%s is ready!%b\n\n' "$GREEN" "$BOLD" "$PLUGIN_NAME" "$NC"
-printf 'Restart Claude Code, then:\n'
-printf '  /vox y        # hear when tasks complete or need input\n'
-printf '  /recap        # spoken summary of what just happened\n\n'
+if [ "$SKIP_PLUGIN" = "0" ]; then
+  printf '%b%b%s is ready!%b\n\n' "$GREEN" "$BOLD" "$PLUGIN_NAME" "$NC"
+  printf 'Restart Claude Code, then:\n'
+  printf '  /enable       # turn vox on for this repo\n'
+  printf '  /recap        # spoken summary of what just happened\n\n'
+else
+  printf '%b%bvox CLI is ready!%b\n\n' "$GREEN" "$BOLD" "$NC"
+  printf 'The vox CLI is installed (no Claude Code plugin). Try:\n'
+  printf '  vox say "Build finished"   # speak text through the daemon\n'
+  printf '  vox enable                 # turn vox on for a repo\n'
+  printf '  vox doctor                 # check providers and daemon\n\n'
+  printf 'To add the Claude Code plugin later, re-run this installer without --no-plugin.\n\n'
+fi

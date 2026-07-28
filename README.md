@@ -40,9 +40,23 @@ curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/ad2aa26/install.sh | 
 Restart Claude Code, then:
 
 ```text
-/vox y        # hear when tasks complete or need input
+/enable       # turn vox on for this repo
 /recap        # spoken summary of what just happened
 ```
+
+### CLI-only install (no Claude Code plugin)
+
+Install the `vox` CLI without the Claude Code plugin — for a non-Claude harness (Codex, Cursor, a plain terminal) or a Claude environment where org policy blocks plugin installation. The binary, daemon, tool directories, seed content, and the `~/.punt-labs/vox/CLAUDE.md` guide import all still install; only the marketplace + plugin steps are skipped. Turn a repo on with `vox enable`.
+
+```bash
+# Flag form
+curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/ad2aa26/install.sh | sh -s -- --no-plugin
+
+# Environment form (for argument-hostile contexts — CI templates, proxies)
+curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/ad2aa26/install.sh | VOX_NO_PLUGIN=1 sh
+```
+
+`VOX_NO_PLUGIN` skips the plugin only when set to exactly `1`; any other value is ignored. The plugin also auto-skips when `claude` or `git` is absent.
 
 <details>
 <summary>Manual install (if you already have uv)</summary>
