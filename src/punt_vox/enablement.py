@@ -202,15 +202,18 @@ class RepoEnablement:
     def enable(self) -> None:
         """Reach the Enabled state from anywhere; idempotent (also the upgrade path).
 
-        Deposit the guide (creating the directory), write the marker, add the
-        import if absent, and additively register the settings entries. Re-running
+        Order matters for crash-safety: guide first (so the import never points
+        at a missing guide), then the import, then the settings, and the marker
+        **last**. The marker is vox's on-signal -- the hooks gate on it -- so if
+        any earlier step raises, the repo is left observably OFF (no marker)
+        rather than half-on (a marker with no guidance behind it). Re-running
         rewrites the guide, leaves the single import in place, and adds no
         duplicate.
         """
         self._guide.deposit()
-        self._marker.write()
         self._import.register()
         self._settings.register()
+        self._marker.write()
 
     def disable(self) -> None:
         """Reach the Dormant/Absent state non-destructively.

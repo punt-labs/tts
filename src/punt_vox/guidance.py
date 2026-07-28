@@ -104,9 +104,10 @@ class VoxGuidance:
         permissions error, or a race that already removed the doc) must not
         skip the prune, or the managed ``@``-import would be orphaned --
         pointing at a now-deleted guide. Both are attempted before any error
-        is re-raised, so a partial failure still tears down as much as it can.
+        is re-raised. When both fail neither is lost: the prune (orphaned-import)
+        failure is raised with the ``unlink`` failure chained as its ``__cause__``.
         """
-        errors: list[OSError] = []
+        doc_error: OSError | None = None  # a prior unlink failure, chained below
         try:
             # ``missing_ok=True`` makes an already-gone guide a clean no-op
             # atomically -- an ``is_file()`` guard would leave a TOCTOU window
@@ -115,13 +116,15 @@ class VoxGuidance:
             # A real failure (a permissions error) still surfaces below.
             self._doc_path.unlink(missing_ok=True)
         except OSError as exc:
-            errors.append(exc)
+            doc_error = exc
         try:
             self._import.prune()
         except OSError as exc:
-            errors.append(exc)
-        if errors:
-            raise errors[0]
+            # ``from doc_error`` chains the unlink failure when both failed, and
+            # is a plain ``raise exc`` (cause None) when the unlink succeeded.
+            raise exc from doc_error
+        if doc_error is not None:
+            raise doc_error
         return (
             f"vox usage guide removed ({self._doc_path}); "
             f"import pruned from {self._import.path}"

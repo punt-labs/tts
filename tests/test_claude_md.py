@@ -316,7 +316,8 @@ def test_register_locks_the_sibling_not_the_target(
 
     def spy_flock(fileobj: IO[str], operation: int) -> None:
         # Record the path flock is applied to (only on the exclusive acquire).
-        if operation == fcntl.LOCK_EX:
+        # The acquire is non-blocking (LOCK_EX | LOCK_NB), so match the EX bit.
+        if operation & fcntl.LOCK_EX:
             locked.append(Path(fileobj.name))
         real_flock(fileobj, operation)
 
@@ -340,7 +341,8 @@ def test_prune_takes_the_sibling_lock(
     real_flock = fcntl.flock
 
     def spy_flock(fileobj: IO[str], operation: int) -> None:
-        if operation == fcntl.LOCK_EX:
+        # The acquire is non-blocking (LOCK_EX | LOCK_NB), so match the EX bit.
+        if operation & fcntl.LOCK_EX:
             locked.append(Path(fileobj.name))
         real_flock(fileobj, operation)
 

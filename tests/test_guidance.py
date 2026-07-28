@@ -166,6 +166,31 @@ def test_uninstall_prunes_import_even_when_unlink_raises(
     assert _VOX not in global_path.read_text(encoding="utf-8")
 
 
+def test_uninstall_surfaces_both_teardown_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # When BOTH teardown steps fail, neither is lost: the prune (orphaned-import)
+    # failure is raised with the unlink failure chained as its __cause__.
+    guide = _guidance(tmp_path)
+    guide.install()
+
+    def boom_unlink(self: Path, *_args: object, **_kwargs: object) -> None:
+        raise OSError("unlink boom")
+
+    def boom_prune(self: ClaudeMdImport) -> None:
+        raise OSError("prune boom")
+
+    monkeypatch.setattr(Path, "unlink", boom_unlink)
+    monkeypatch.setattr(ClaudeMdImport, "prune", boom_prune)
+
+    with pytest.raises(OSError, match="prune boom") as exc_info:
+        guide.uninstall()
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, OSError)
+    assert "unlink boom" in str(cause)
+
+
 def test_for_current_user_import_line() -> None:
     guide = VoxGuidance.for_current_user()
     assert guide.import_line == _VOX

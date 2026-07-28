@@ -44,6 +44,17 @@ def _write_vox_stub(bin_dir: Path, sentinel: Path) -> None:
     stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
+def _write_failing_git(bin_dir: Path) -> None:
+    """Install a `git` stub on PATH that always exits non-zero.
+
+    Simulates git being unavailable (or the cwd not being a repo) so the hook
+    gate falls back to walking parent directories for the marker.
+    """
+    stub = bin_dir / "git"
+    stub.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
 def _path_without_vox() -> str:
     """The current PATH with every directory that contains a `vox` removed."""
     entries = os.environ.get("PATH", "").split(os.pathsep)
@@ -120,6 +131,49 @@ class TestHookGate:
         rc = _run_hook(name, str(repo), _GATED_HOOKS[name], env)
 
         assert rc == 0
+
+    def test_marker_resolved_by_walking_parents_when_git_unavailable(
+        self, tmp_path: Path
+    ) -> None:
+        # git is stubbed to fail (unavailable / not a repo). From a subdir, the
+        # gate must walk parents for the marker instead of stopping at cwd -- a
+        # cwd-only fallback would wrongly suppress audio in an enabled repo.
+        root = tmp_path / "tree"
+        marker = root / ".punt-labs" / "vox" / "enabled"
+        marker.parent.mkdir(parents=True)
+        marker.write_text("", encoding="utf-8")
+        subdir = root / "src" / "nested"
+        subdir.mkdir(parents=True)
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        sentinel = tmp_path / "sentinel"
+        _write_vox_stub(bin_dir, sentinel)
+        _write_failing_git(bin_dir)
+        env = dict(os.environ)
+        env["PATH"] = f"{bin_dir}{os.pathsep}{os.environ['PATH']}"
+
+        rc = _run_hook("notify.sh", str(subdir), "Stop", env)
+
+        assert rc == 0
+        assert sentinel.exists(), "gate did not walk parents to the marker"
+
+    def test_git_unavailable_and_no_marker_is_silent(self, tmp_path: Path) -> None:
+        # git stubbed to fail and no marker in any parent: the parent walk bottoms
+        # out at "/" and the hook exits silently rather than firing.
+        subdir = tmp_path / "tree" / "src" / "nested"
+        subdir.mkdir(parents=True)
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        sentinel = tmp_path / "sentinel"
+        _write_vox_stub(bin_dir, sentinel)
+        _write_failing_git(bin_dir)
+        env = dict(os.environ)
+        env["PATH"] = f"{bin_dir}{os.pathsep}{os.environ['PATH']}"
+
+        rc = _run_hook("notify.sh", str(subdir), "Stop", env)
+
+        assert rc == 0
+        assert not sentinel.exists(), "hook fired with no marker in any parent"
 
     def test_marker_resolved_from_git_root_of_subdir(self, tmp_path: Path) -> None:
         # cwd is a nested subdir; the marker lives at the git worktree root.

@@ -11,7 +11,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
+from punt_vox.claude_md import ClaudeMdImport
 from punt_vox.enablement import RepoEnablement
+from punt_vox.settings_registration import SettingsRegistration
 
 _IMPORT = "@.punt-labs/vox/CLAUDE.md"
 
@@ -184,6 +188,53 @@ def test_disable_heals_a_racing_writers_duplicate(tmp_path: Path) -> None:
     host.write_text(f"# rules\n{_IMPORT}\nmore\n{_IMPORT}\n", encoding="utf-8")
     RepoEnablement.for_repo(tmp_path).disable()
     assert _import_count(tmp_path) == 0
+
+
+# ---------------------------------------------------------------------------
+# Crash-safety: the marker is written LAST, so a partial enable leaves vox OFF
+# ---------------------------------------------------------------------------
+
+
+def _raise_oserror(*_args: object, **_kwargs: object) -> None:
+    raise OSError("simulated step failure")
+
+
+def _assert_partial_enable_writes_no_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target: type,
+    method: str,
+) -> None:
+    """A step failing mid-``enable`` must leave no marker (vox observably OFF).
+
+    The marker is written last precisely so this holds: the hooks gate on the
+    marker, so a crash mid-``enable`` degrades to OFF rather than half-on (a
+    marker with no guidance behind it). The reverse residue -- an import already
+    written when a later step fails -- is benign: the hooks ignore it, and a
+    subsequent ``disable`` or a re-run of ``enable`` heals it. The § 2.11
+    biconditional is a steady-state property of a *completed* transition, not of
+    a crash, so it is not asserted here.
+    """
+    monkeypatch.setattr(target, method, _raise_oserror)
+    with pytest.raises(OSError, match="simulated step failure"):
+        RepoEnablement.for_repo(tmp_path).enable()
+    assert not _marker_present(tmp_path)
+
+
+def test_enable_leaves_no_marker_when_import_register_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _assert_partial_enable_writes_no_marker(
+        tmp_path, monkeypatch, ClaudeMdImport, "register"
+    )
+
+
+def test_enable_leaves_no_marker_when_settings_register_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _assert_partial_enable_writes_no_marker(
+        tmp_path, monkeypatch, SettingsRegistration, "register"
+    )
 
 
 def test_root_property_reports_the_repo_root(tmp_path: Path) -> None:

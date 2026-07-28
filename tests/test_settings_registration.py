@@ -121,3 +121,54 @@ def test_non_object_root_raises(tmp_path: Path) -> None:
     settings.write_text("[1, 2, 3]", encoding="utf-8")
     with pytest.raises(ValueError):
         _reg(tmp_path).register()
+
+
+def _write_settings(tmp_path: Path, data: object) -> Path:
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps(data), encoding="utf-8")
+    return settings
+
+
+def test_register_raises_when_permissions_is_not_an_object(tmp_path: Path) -> None:
+    # A present-but-malformed nested value is a boundary error, symmetric with
+    # the root check: never silently discarded, never overwritten.
+    settings = _write_settings(tmp_path, {"permissions": "nope"})
+    with pytest.raises(ValueError, match="permissions must be a JSON object"):
+        _reg(tmp_path).register()
+    assert json.loads(settings.read_text(encoding="utf-8")) == {"permissions": "nope"}
+
+
+def test_register_raises_when_allow_is_not_a_list(tmp_path: Path) -> None:
+    settings = _write_settings(tmp_path, {"permissions": {"allow": "nope"}})
+    with pytest.raises(ValueError, match=r"permissions\.allow must be a JSON array"):
+        _reg(tmp_path).register()
+    assert json.loads(settings.read_text(encoding="utf-8")) == {
+        "permissions": {"allow": "nope"}
+    }
+
+
+def test_deregister_raises_when_permissions_is_not_an_object(tmp_path: Path) -> None:
+    _write_settings(tmp_path, {"permissions": 5})
+    with pytest.raises(ValueError, match="permissions must be a JSON object"):
+        _reg(tmp_path).deregister()
+
+
+def test_register_creates_absent_permissions_key(tmp_path: Path) -> None:
+    # An ABSENT permissions key is safe to add (create-when-absent), leaving
+    # unrelated keys untouched.
+    settings = _write_settings(tmp_path, {"model": "opus"})
+    assert _reg(tmp_path).register() is True
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    assert data["model"] == "opus"
+    assert data["permissions"]["allow"] == [_ENTRY]
+
+
+def test_register_creates_absent_allow_key(tmp_path: Path) -> None:
+    # permissions present as an object but with no allow list: the list is
+    # created, the object is not overwritten.
+    settings = _write_settings(tmp_path, {"permissions": {"deny": ["X"]}})
+    assert _reg(tmp_path).register() is True
+    data = json.loads(settings.read_text(encoding="utf-8"))
+    assert data["permissions"]["deny"] == ["X"]
+    assert data["permissions"]["allow"] == [_ENTRY]

@@ -61,18 +61,33 @@ class EnablementTool:
             enablement = self._source()
         except ValueError as exc:
             return self._error(str(exc))
-        if action == "enable":
-            enablement.enable()
-        else:
-            enablement.disable()
+        try:
+            self._apply(enablement, action)
+        except OSError as exc:
+            # A filesystem failure (permission-denied, ENOSPC, a racing removal)
+            # is reported as a clean error object -- it must never cross the tool
+            # boundary as an exception.
+            return self._error(str(exc))
         return json.dumps(
             {
                 "action": action,
                 "repo": str(enablement.root),
-                "enabled": action == "enable",
+                # Report the observed state, not the intent: a disable that could
+                # not remove the marker must not claim the repo is off.
+                "enabled": enablement.is_enabled(),
                 "marker": str(enablement.marker_path),
             }
         )
+
+    @staticmethod
+    def _apply(
+        enablement: RepoEnablement, action: Literal["enable", "disable"]
+    ) -> None:
+        """Run the requested enablement transition on *enablement*."""
+        if action == "enable":
+            enablement.enable()
+        else:
+            enablement.disable()
 
     @staticmethod
     def _error(message: str) -> str:

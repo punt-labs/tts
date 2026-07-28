@@ -62,6 +62,41 @@ def test_outside_a_repo_is_a_clean_error_object() -> None:
     assert "git repository" in reply["error"]
 
 
+def test_enable_oserror_is_a_clean_error_object(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A filesystem failure inside enable() (permission-denied, ENOSPC, a racing
+    # removal) must be reported as an error object, never raised across the tool
+    # boundary.
+    def boom(_self: RepoEnablement) -> None:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(RepoEnablement, "enable", boom)
+    reply = json.loads(_tool(tmp_path).dispatch("enable"))
+    assert "error" in reply
+    assert "permission denied" in reply["error"]
+    assert not _marker(tmp_path).is_file()
+
+
+def test_disable_reports_observed_state_not_intent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # "enabled" reports the observed marker state, not the action's intent: a
+    # disable that could not remove the marker must not claim the repo is off.
+    tool = _tool(tmp_path)
+    tool.dispatch("enable")
+
+    def noop(_self: RepoEnablement) -> None:
+        return None
+
+    monkeypatch.setattr(RepoEnablement, "disable", noop)
+    reply = json.loads(tool.dispatch("disable"))
+    assert reply["action"] == "disable"
+    # The marker still exists (disable was a no-op), so the observed state is on.
+    assert reply["enabled"] is True
+    assert _marker(tmp_path).is_file()
+
+
 def test_cli_and_mcp_write_byte_identical_markers(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

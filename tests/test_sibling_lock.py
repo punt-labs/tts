@@ -33,8 +33,9 @@ def test_held_creates_the_lock_and_flocks_it_exclusively(
     with lock.held():
         assert lock.path.exists()
 
-    # An exclusive acquire then a release, both on the sibling -- never the host.
-    assert ops[0] == (lock.path, fcntl.LOCK_EX)
+    # A non-blocking exclusive acquire then a release, both on the sibling --
+    # never the host. The acquire is LOCK_EX | LOCK_NB so contention cannot hang.
+    assert ops[0] == (lock.path, fcntl.LOCK_EX | fcntl.LOCK_NB)
     assert ops[-1] == (lock.path, fcntl.LOCK_UN)
     assert all(path == lock.path for path, _ in ops)
     assert host not in [path for path, _ in ops]
@@ -45,6 +46,32 @@ def test_held_creates_missing_parent_directory(tmp_path: Path) -> None:
     lock = SiblingLock(host)
     with lock.held():
         assert lock.path.exists()
+
+
+def test_acquire_times_out_and_names_the_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A wedged peer must not hang the caller forever: the non-blocking acquire
+    # polls a bounded number of times, then raises a clear error naming the host.
+    host = tmp_path / "CLAUDE.md"
+    lock = SiblingLock(host)
+
+    def always_blocked(_fileobj: IO[str], _operation: int) -> None:
+        raise BlockingIOError
+
+    sleeps: list[float] = []
+
+    def record_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("punt_vox.sibling_lock.fcntl.flock", always_blocked)
+    monkeypatch.setattr("punt_vox.sibling_lock.time.sleep", record_sleep)
+
+    with pytest.raises(TimeoutError, match=r"CLAUDE\.md"), lock.held():
+        pass
+
+    # One sleep per failed attempt, bounded by the acquire budget.
+    assert len(sleeps) == SiblingLock._ACQUIRE_ATTEMPTS
 
 
 def test_held_releases_on_exception(tmp_path: Path) -> None:
