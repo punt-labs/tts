@@ -8,19 +8,19 @@ import pytest
 from typer.testing import CliRunner
 
 from punt_vox.__main__ import app
-from punt_vox.claude_md import GlobalClaudeImports
+from punt_vox.claude_md import ClaudeMdImport
 from punt_vox.guidance import VoxGuidance
 
 _VOX = "@~/.punt-labs/vox/CLAUDE.md"
 
 
-def _global(tmp_path: Path) -> GlobalClaudeImports:
-    return GlobalClaudeImports(tmp_path / ".claude" / "CLAUDE.md")
+def _writer(tmp_path: Path) -> ClaudeMdImport:
+    return ClaudeMdImport(tmp_path / ".claude" / "CLAUDE.md", _VOX)
 
 
 def _guidance(tmp_path: Path) -> VoxGuidance:
     doc = tmp_path / "vox" / "CLAUDE.md"
-    return VoxGuidance(doc, _global(tmp_path), _VOX)
+    return VoxGuidance(doc, _writer(tmp_path))
 
 
 # ---------------------------------------------------------------------------
@@ -58,10 +58,10 @@ def test_install_cleans_up_guide_when_register_raises(
     # and re-raise the original error, symmetric with the uninstall teardown.
     guide = _guidance(tmp_path)
 
-    def boom_register(self: GlobalClaudeImports, line: str) -> bool:
+    def boom_register(self: ClaudeMdImport) -> bool:
         raise OSError("simulated register failure")
 
-    monkeypatch.setattr(GlobalClaudeImports, "register", boom_register)
+    monkeypatch.setattr(ClaudeMdImport, "register", boom_register)
 
     with pytest.raises(OSError, match="simulated register failure"):
         guide.install()

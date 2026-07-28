@@ -1,27 +1,22 @@
-"""Own the punt-managed ``@``-import section of ``~/.claude/CLAUDE.md``.
+"""Own a single bare ``@``-import line inside a host ``CLAUDE.md``.
 
-Claude Code loads ``~/.claude/CLAUDE.md`` into every session and resolves any
-top-level ``@path`` line as an included file. Punt tools register their usage
-guides as such lines inside a shared managed section so the guides load in
-every project without a per-project edit.
+Claude Code loads a ``CLAUDE.md`` and resolves any top-level ``@path`` line as
+an included file. A punt tool registers exactly one *bare* import line pointing
+at a file it owns entirely -- ``@.punt-labs/vox/CLAUDE.md`` in a repo's
+``CLAUDE.md`` (repo scope) or ``@~/.punt-labs/vox/CLAUDE.md`` in
+``~/.claude/CLAUDE.md`` (user scope) -- so the guide loads with no per-project
+edit. Composition happens at read time, when Claude Code resolves the import;
+this module never merges, marks, or manages a section inside the user's file
+(``tool-enable-disable.md`` § 2.1). Every byte outside the single import line is
+preserved verbatim.
 
-:class:`GlobalClaudeImports` owns ``~/.claude/CLAUDE.md``. It reconciles the
-managed section by composing two collaborators: a :class:`ManagedSection`
-parses the file into the user's verbatim content plus the managed import set
-and renders it back deterministically (import lines sorted), and an
-:class:`AtomicFile` reads the bytes verbatim and rewrites them atomically. The
-reconcile writes only when the rendered text differs from what is already on
-disk -- so re-running never churns the file's mtime. The vox-side artifact that
-writes a usage guide and registers its own import line lives in
-:mod:`punt_vox.guidance`.
-
-**Single-writer assumption.** The managed section is shared: any punt tool may
-register its own import line at its own install time. Those installs are rare
-and manual, so writes are serialized in practice rather than by a lock. Each
-write is atomic (temp file + ``fsync`` + ``os.replace``), so a crash mid-write
-never corrupts the user's hand-authored ``CLAUDE.md``; two *concurrent*
-installers could still lose one registration to a last-writer-wins race, which
-is out of scope here (a lock would be overkill for manual, infrequent installs).
+:class:`ClaudeMdImport` implements the full § 2.4 write contract. It composes an
+:class:`~punt_vox.atomic_file.AtomicFile` for the atomic, symlink-resolving,
+byte-preserving, mode-preserving read/write, and a
+:class:`~punt_vox.markdown_doc.MarkdownDoc` for the top-level match
+(terminator-insensitive, code-block-aware with balanced-pair fences and the
+unterminated-opener guard), and a :class:`~punt_vox.sibling_lock.SiblingLock` to
+serialize the read-modify-write against parallel invocations.
 """
 
 from __future__ import annotations
@@ -29,82 +24,93 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.atomic_file import AtomicFile
-from punt_vox.managed_section import ManagedSection
+from punt_vox.markdown_doc import MarkdownDoc
+from punt_vox.sibling_lock import SiblingLock
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
-__all__ = ["GlobalClaudeImports"]
+__all__ = ["ClaudeMdImport"]
 
 
 @final
-class GlobalClaudeImports:
-    """Owns the punt-managed import section of ``~/.claude/CLAUDE.md``.
+class ClaudeMdImport:
+    """Registers or prunes one bare ``@``-import line in a host ``CLAUDE.md``.
 
-    Delegates the marker grammar to a :class:`ManagedSection` and the atomic,
-    byte-preserving read/write to an :class:`AtomicFile`. Import lines in the
-    section are kept sorted, and the whole file is rewritten only when its text
-    actually changes.
+    Bind the host file and the exact canonical import line at construction; the
+    line is validated once at that boundary (:meth:`_validate`) because it is
+    spliced into the host verbatim. :meth:`register` appends it if absent and
+    :meth:`prune` removes every top-level match, both under an exclusive sibling
+    lock so parallel invocations never lose an update.
     """
 
-    __slots__ = ("_file", "_section")
+    __slots__ = ("_file", "_import_line", "_lock")
 
     _file: AtomicFile
-    _section: ManagedSection
+    _import_line: str
+    _lock: SiblingLock
 
-    def __new__(cls, path: Path) -> Self:
+    def __new__(cls, host_path: Path, import_line: str) -> Self:
+        cls._validate(import_line)
         self = super().__new__(cls)
-        self._file = AtomicFile(path)
-        self._section = ManagedSection()
+        self._file = AtomicFile(host_path)
+        self._import_line = import_line
+        self._lock = SiblingLock(host_path)
         return self
 
     @property
     def path(self) -> Path:
-        """Return the managed ``CLAUDE.md`` path."""
+        """Return the host ``CLAUDE.md`` path (the symlink itself when it is one)."""
         return self._file.path
 
-    def register(self, import_line: str) -> bool:
-        """Add *import_line* to the managed section. Return True if written.
+    @property
+    def import_line(self) -> str:
+        """Return the canonical ``@``-import line this instance owns."""
+        return self._import_line
 
-        *import_line* is validated at this boundary (see
-        :meth:`_validate_import_line`) before it is ever written verbatim into
-        the section.
+    def is_registered(self) -> bool:
+        """Return whether the import line is present at top level.
+
+        A pure read -- no lock needed, since every write lands atomically and a
+        read therefore never observes a torn file.
         """
-        self._validate_import_line(import_line)
-        return self._reconcile(lambda imports: imports | {import_line})
+        return MarkdownDoc(self._file.read()).contains(self._import_line)
 
-    def prune(self, import_line: str) -> bool:
-        """Remove *import_line* from the managed section. Return True if written.
+    def register(self) -> bool:
+        """Append the import line if absent. Return ``True`` if the file changed.
 
-        *import_line* is validated at this boundary (see
-        :meth:`_validate_import_line`): a malformed line could never have been
-        registered, so asking to prune one is a caller error, not a silent
-        no-op.
+        Idempotent by exact match net of terminator, top-level only: a line
+        already present is a no-op, so re-running ``enable`` never duplicates it
+        (``AppendImport`` 0->1->1).
         """
-        self._validate_import_line(import_line)
-        return self._reconcile(lambda imports: imports - {import_line})
+        with self._lock.held():
+            doc = MarkdownDoc(self._file.read())
+            if doc.contains(self._import_line):
+                return False
+            self._file.replace(doc.with_appended(self._import_line))
+            return True
+
+    def prune(self) -> bool:
+        """Remove every top-level occurrence. Return ``True`` if the file changed.
+
+        Collapses an accidental duplicate to zero (``RemoveImport`` 2->0) and
+        leaves any inert copy inside a code block untouched.
+        """
+        with self._lock.held():
+            text = self._file.read()
+            new_text = MarkdownDoc(text).without(self._import_line)
+            if new_text == text:
+                return False
+            self._file.replace(new_text)
+            return True
 
     @staticmethod
-    def _validate_import_line(import_line: str) -> None:
+    def _validate(import_line: str) -> None:
         """Raise ``ValueError`` unless *import_line* is a lone top-level ``@`` line.
 
-        :meth:`register` and :meth:`prune` splice *import_line* into the managed
-        section verbatim (one line, sorted among its peers). Today's only caller
-        passes a constant, but this class is the reference reconciler other punt
-        tools drive with their *own* lines, so the untrusted text is validated
-        here at the boundary (PY-EH-1) rather than trusted downstream. A line
-        with leading or trailing whitespace, an embedded newline, or a missing
-        ``@`` prefix would otherwise inject a blank line, a second import, or
-        stray markdown into the block. The rejected shapes:
-
-        * empty / whitespace-only -- no import to register;
-        * leading or trailing whitespace -- the renderer never indents an
-          import, so a padded line would never match on a later prune;
-        * an embedded ``\\n`` or ``\\r`` -- would splice multiple lines (or a
-          second import) into the section from one call;
-        * not starting with ``@`` -- Claude Code only resolves ``@path`` lines,
-          so a non-``@`` line is inert markdown, not an import.
+        Validated at the construction boundary (PY-EH-1): the line is spliced
+        into the host file verbatim, so a padded, multi-line, or non-``@`` value
+        would inject a duplicate, a blank line, or inert markdown.
         """
         if not import_line or import_line.isspace():
             raise ValueError("import line must be non-empty")
@@ -116,19 +122,3 @@ class GlobalClaudeImports:
             )
         if not import_line.startswith("@"):
             raise ValueError(f"import line must begin with '@': {import_line!r}")
-
-    def _reconcile(self, update: Callable[[frozenset[str]], frozenset[str]]) -> bool:
-        """Parse, apply *update* to the import set, and write only if changed.
-
-        The no-op-when-unchanged guard runs first: if the rendered text equals
-        what is already on disk the file is never touched, so re-running never
-        churns its mtime. See the module docstring for the single-writer
-        assumption that lets an atomic replace stand in for a lock.
-        """
-        original = self._file.read()
-        kept, imports = self._section.parse(original)
-        new_text = self._section.render(kept, update(imports))
-        if new_text == original:
-            return False
-        self._file.replace(new_text)
-        return True

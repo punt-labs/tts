@@ -1,0 +1,52 @@
+"""Serialize a read-modify-write with an exclusive lock on a sibling lock file."""
+
+from __future__ import annotations
+
+import contextlib
+import fcntl
+from typing import TYPE_CHECKING, Self, final
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+    from pathlib import Path
+
+__all__ = ["SiblingLock"]
+
+
+@final
+class SiblingLock:
+    """An exclusive ``flock`` on a sibling of a host file, held across a whole RMW.
+
+    ``tool-enable-disable.md`` § 2.4 mandates locking a **sibling**, never the
+    host itself: the atomic rename that replaces the host swaps its inode, so a
+    lock held on the host travels with the dead inode and the next writer
+    serializes against nothing. The lock name is **tool-agnostic**
+    (``.<host>.punt-import.lock``) so every punt CLI mutating the same host file
+    takes the identical lock -- a per-tool name would serialize a tool only
+    against itself and leave the cross-tool lost update in place.
+    """
+
+    __slots__ = ("_path",)
+
+    _path: Path
+
+    def __new__(cls, host_path: Path) -> Self:
+        self = super().__new__(cls)
+        self._path = host_path.parent / f".{host_path.name}.punt-import.lock"
+        return self
+
+    @property
+    def path(self) -> Path:
+        """Return the sibling lock file path."""
+        return self._path
+
+    @contextlib.contextmanager
+    def held(self) -> Generator[None]:
+        """Hold the exclusive lock for the duration of the ``with`` block."""
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        with self._path.open("w", encoding="utf-8") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
