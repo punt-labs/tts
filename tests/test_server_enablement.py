@@ -78,6 +78,22 @@ def test_enable_oserror_is_a_clean_error_object(
     assert not _marker(tmp_path).is_file()
 
 
+def test_malformed_settings_json_is_a_clean_error_object(tmp_path: Path) -> None:
+    # A malformed .claude/settings.json makes SettingsRegistration raise ValueError
+    # from inside enable() -- not an OSError. The tool must still return a clean
+    # error object, never let the ValueError cross the MCP boundary (never-raise).
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text('{"permissions": "not-an-object"}', encoding="utf-8")
+
+    reply = json.loads(_tool(tmp_path).dispatch("enable"))
+    assert "error" in reply
+    assert "permissions must be a JSON object" in reply["error"]
+    # enable() writes the marker last, so an abort on the settings step leaves the
+    # repo observably OFF -- no marker.
+    assert not _marker(tmp_path).is_file()
+
+
 def test_disable_reports_observed_state_not_intent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

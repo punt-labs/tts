@@ -63,10 +63,10 @@ class EnablementTool:
             return self._error(str(exc))
         try:
             self._apply(enablement, action)
-        except OSError as exc:
-            # A filesystem failure (permission-denied, ENOSPC, a racing removal)
-            # is reported as a clean error object -- it must never cross the tool
-            # boundary as an exception.
+        except (OSError, ValueError) as exc:
+            # A filesystem failure (permission-denied, ENOSPC, a racing removal) or
+            # a malformed .claude/settings.json (a ValueError from the settings
+            # guard) is a clean error object, never raised across the tool boundary.
             return self._error(str(exc))
         return json.dumps(
             {
