@@ -52,12 +52,7 @@ _MARKER_TEXT = (
 
 @final
 class VoxMarker:
-    """The ``.punt-labs/vox/enabled`` marker file -- vox's per-repo on signal.
-
-    Composes a :class:`~punt_vox.tool_owned_file.ToolOwnedFile` so the write
-    refuses a symlink planted at the marker path rather than clobbering the
-    link's target.
-    """
+    """The ``.punt-labs/vox/enabled`` marker file -- vox's per-repo on signal."""
 
     __slots__ = ("_file",)
 
@@ -92,8 +87,6 @@ class DepositedGuide:
 
     The guide is static content shipped beside the package (§ 2.5); ``enable``
     overwrites it wholesale so it can never drift from the running vox version.
-    Composes a :class:`~punt_vox.tool_owned_file.ToolOwnedFile` so the deposit
-    refuses a symlink at the guide path rather than following it to its target.
     """
 
     __slots__ = ("_file",)
