@@ -413,7 +413,7 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/server.py": {
-    "efferent_coupling": 14.0,
+    "efferent_coupling": 15.0,
     "public_names": 10.0,
     "circular_imports": 0.0,
     "max_lcom": 0.748,
@@ -425,6 +425,13 @@
     "circular_imports": 0.0,
     "max_lcom": 0.19,
     "avg_lcom": 0.19
+  },
+  "src/punt_vox/server_enablement.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
   },
   "src/punt_vox/server_music_tool.py": {
     "efferent_coupling": 4.0,
