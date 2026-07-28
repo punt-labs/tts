@@ -1,38 +1,25 @@
 ---
-description: "Enable or disable vox"
-argument-hint: "y | n | c | model <name> | provider <name>"
-allowed-tools: ["mcp__plugin_vox_mic__notify", "mcp__plugin_vox_mic__who", "mcp__plugin_vox_mic__unmute"]
+description: "Switch TTS model or provider mid-session"
+argument-hint: "model <name> | provider <name>"
+allowed-tools: ["mcp__plugin_vox_mic__unmute"]
 ---
 
 # /vox command
 
-Enable or disable vox notifications, or switch TTS model/provider mid-session.
+Switch the TTS model or provider mid-session.
+
+Enablement moved to its own commands: use `/enable` and `/disable` to turn vox on
+and off for a repo. The notification level (task-completion vs continuous) is a
+per-repo config, set with `vox notify normal|continuous` from a shell.
 
 ## Usage
 
-- `/vox y` — enable vox (notifications on task completion and permission prompts)
-- `/vox n` — disable vox (no notifications)
-- `/vox c` — continuous mode (notifications on task completion, permission prompts, and real-time signals)
 - `/vox model <name>` — switch TTS model (e.g. `v3`, `flash`, `turbo`)
 - `/vox provider <name>` — switch TTS provider (e.g. `elevenlabs`, `openai`, `polly`, `say`)
 
 ## Implementation
 
 Parse `$ARGUMENTS`:
-
-### `y`
-
-Call the `notify` MCP tool with `mode="y"`. No text output — the panel confirms.
-
-### `n`
-
-Call the `notify` MCP tool with `mode="n"`. No text output — the panel confirms.
-
-### `c`
-
-1. Call the `notify` MCP tool with `mode="c"`.
-2. Call the `who` MCP tool to list voices.
-3. Display featured voices with blurbs. Tell user they can pick with `/unmute <name>`.
 
 ### `model <name>`
 
@@ -54,4 +41,4 @@ Valid providers: `elevenlabs`, `openai`, `polly`, `say`, `espeak`.
 
 ### No argument or unrecognized
 
-Tell user: "Usage: `/vox y|n|c`, `/vox model <name>`, `/vox provider <name>`"
+Tell user: "Usage: `/vox model <name>` or `/vox provider <name>`. To turn vox on/off use `/enable` / `/disable`; for the notification level use `vox notify normal|continuous`."
