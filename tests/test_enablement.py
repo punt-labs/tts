@@ -14,10 +14,17 @@ from pathlib import Path
 import pytest
 
 from punt_vox.claude_md import ClaudeMdImport
+from punt_vox.config import ConfigStore
 from punt_vox.enablement import RepoEnablement
+from punt_vox.hook_payload import StopPayload
+from punt_vox.hooks import handle_stop
 from punt_vox.settings_registration import SettingsRegistration
 
 _IMPORT = "@.punt-labs/vox/CLAUDE.md"
+
+
+def _config_store(repo: Path) -> ConfigStore:
+    return ConfigStore(repo / ".punt-labs" / "vox")
 
 
 def _import_count(repo: Path) -> int:
@@ -76,6 +83,51 @@ def test_enable_is_idempotent_no_second_import(tmp_path: Path) -> None:
     assert _import_count(tmp_path) == 1
     assert _marker_present(tmp_path)
     _assert_biconditional(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Enable -> audible: an enabled repo chimes/speaks by default (silence is disable)
+# ---------------------------------------------------------------------------
+
+
+def test_enable_leaves_repo_audible(tmp_path: Path) -> None:
+    # The enable->audible property: a fresh enable must establish an audible
+    # notify level so the notify-gated hooks fire. Without it the marker gate
+    # passes yet handle_stop skips on notify=n, and the repo is silent -- audibly
+    # identical to disabled.
+    RepoEnablement.for_repo(tmp_path).enable()
+    assert _config_store(tmp_path).read().notify == "y"
+
+
+def test_enable_makes_handle_stop_fire_in_enabled_repo(tmp_path: Path) -> None:
+    # End-to-end: after enable, the stop hook returns a decision-block (speak),
+    # not None. This is the audible outcome a user hears on task completion.
+    RepoEnablement.for_repo(tmp_path).enable()
+    config = _config_store(tmp_path).read()
+    result = handle_stop(
+        StopPayload(stop_hook_active=False), config, tmp_path / ".punt-labs" / "vox"
+    )
+    assert result is not None
+    assert result["decision"] == "block"
+
+
+def test_enable_preserves_a_continuous_level(tmp_path: Path) -> None:
+    # The upgrade path must not downgrade a user's continuous choice back to
+    # normal: a re-enable over notify=c leaves it continuous.
+    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement.enable()
+    _config_store(tmp_path).write_field("notify", "c")
+    enablement.enable()
+    assert _config_store(tmp_path).read().notify == "c"
+
+
+def test_disable_closes_the_gate(tmp_path: Path) -> None:
+    # Silence is disable, not notify=n: after disable the marker is gone, so the
+    # hook gate is closed regardless of the (dormant) notify value.
+    enablement = RepoEnablement.for_repo(tmp_path)
+    enablement.enable()
+    enablement.disable()
+    assert not _marker_present(tmp_path)
 
 
 def test_enable_preserves_user_prose_in_claude_md(tmp_path: Path) -> None:

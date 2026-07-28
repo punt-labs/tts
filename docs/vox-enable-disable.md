@@ -103,6 +103,16 @@ first use.
 3. Add `@.punt-labs/vox/CLAUDE.md` to `<repo>/CLAUDE.md` if absent (never twice).
 4. Additively register repo-scoped hook/permission entries in
    `<repo>/.claude/settings.json` (§2.8), if any.
+5. Establish an audible notify level through the config layer: raise an absent or
+   silent `notify` to `normal` (`y`), preserving an already-audible `continuous`
+   (`c`). This is the post-state **enabled ⇒ audible**. Both `vox notify normal`
+   and `vox notify continuous` are audible levels, and `enable` is the successor
+   to the retired `/vox y` (voice on), so an enabled repo must be audible by
+   default. Silence is expressed by `disable` (marker removed, hook gate closed),
+   never by an enabled repo sitting at `notify=n` — the `n` default in
+   `VoxConfig` is a leftover of the old model where `n` was a level. This step
+   lands before the marker so a completed `enable` is audible; it is idempotent
+   and never downgrades a user's chosen level.
 
 `disable`:
 

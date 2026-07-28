@@ -7,8 +7,9 @@ facts (``docs/vox-enable-disable.tex``): the tool-owned directory
 invariant is the § 2.11 biconditional -- the marker is present exactly when the
 import is present -- which every transition preserves:
 
-- ``enable``  deposits the guide, writes the marker, adds the import, registers
-  settings; idempotent, and the upgrade path.
+- ``enable``  deposits the guide, adds the import, registers settings, sets an
+  audible notify default, then writes the marker; idempotent, and the upgrade
+  path. An enabled repo is audible by default -- silence is ``disable``.
 - ``disable`` removes the import, deletes the marker, deregisters settings, and
   leaves the directory exactly as found (a frame, never a create/remove) -- the
   dormant state.
@@ -16,9 +17,11 @@ import is present -- which every transition preserves:
   subtree removal; removing the subtree alone would strand a 404ing import.
 
 :class:`RepoEnablement` is the facade; it composes the import writer
-(:class:`~punt_vox.claude_md.ClaudeMdImport`), the :class:`VoxMarker`, the
-:class:`DepositedGuide`, and the
-:class:`~punt_vox.settings_registration.SettingsRegistration`.
+(:class:`~punt_vox.claude_md.ClaudeMdImport`), the
+:class:`~punt_vox.deposited_files.VoxMarker`, the
+:class:`~punt_vox.deposited_files.DepositedGuide`, the
+:class:`~punt_vox.settings_registration.SettingsRegistration`, and the
+:class:`~punt_vox.audible_notify.AudibleNotify` default.
 """
 
 from __future__ import annotations
@@ -27,116 +30,37 @@ import shutil
 from pathlib import Path
 from typing import Self, final
 
+from punt_vox.audible_notify import AudibleNotify
 from punt_vox.claude_md import ClaudeMdImport
+from punt_vox.deposited_files import DepositedGuide, VoxMarker
 from punt_vox.dirs import find_repo_root
 from punt_vox.settings_registration import SettingsRegistration
-from punt_vox.tool_owned_file import ToolOwnedFile
 
-__all__ = ["DepositedGuide", "RepoEnablement", "VoxMarker"]
+__all__ = ["RepoEnablement"]
 
 # The exact canonical repo-scope import line (§ 2.4). Byte-identical across all
 # tools and both surfaces; what ``enable`` writes and ``disable`` prunes.
 _IMPORT_LINE = "@.punt-labs/vox/CLAUDE.md"
-
-# The marker's bytes are irrelevant to enablement (presence is the signal), but
-# both surfaces write this exact content, so a CLI marker and an MCP marker are
-# byte-identical (§ 2.14).
-_MARKER_TEXT = (
-    "vox is enabled in this repository.\n"
-    "\n"
-    "Managed by `vox enable` / `vox disable` (and the `/enable` / `/disable`\n"
-    "slash commands). Presence turns vox's per-repo guidance and hooks on;\n"
-    "remove it with `vox disable`, not by hand.\n"
-)
-
-
-@final
-class VoxMarker:
-    """The ``.punt-labs/vox/enabled`` marker file -- vox's per-repo on signal."""
-
-    __slots__ = ("_file",)
-
-    _file: ToolOwnedFile
-
-    def __new__(cls, path: Path, base: Path) -> Self:
-        self = super().__new__(cls)
-        self._file = ToolOwnedFile(path, base)
-        return self
-
-    @property
-    def path(self) -> Path:
-        """Return the marker file path."""
-        return self._file.path
-
-    def is_present(self) -> bool:
-        """Return whether the marker exists."""
-        return self._file.is_present()
-
-    def write(self) -> None:
-        """Create the marker, making its directory if absent; refuse a symlink."""
-        self._file.write(_MARKER_TEXT)
-
-    def remove(self) -> None:
-        """Delete the marker; an already-absent marker is a clean no-op."""
-        self._file.remove()
-
-
-@final
-class DepositedGuide:
-    """The surface-aware user guide vox deposits at ``.punt-labs/vox/CLAUDE.md``.
-
-    The guide is static content shipped beside the package (§ 2.5); ``enable``
-    overwrites it wholesale so it can never drift from the running vox version.
-    """
-
-    __slots__ = ("_file",)
-
-    _file: ToolOwnedFile
-
-    _ASSET_NAME = "global-guidance.md"
-
-    def __new__(cls, path: Path, base: Path) -> Self:
-        self = super().__new__(cls)
-        self._file = ToolOwnedFile(path, base)
-        return self
-
-    @property
-    def path(self) -> Path:
-        """Return the deposited guide path."""
-        return self._file.path
-
-    def is_present(self) -> bool:
-        """Return whether the guide file exists."""
-        return self._file.is_present()
-
-    def deposit(self) -> None:
-        """Write the guide wholesale, making the dir if absent; refuse a symlink."""
-        self._file.write(self._asset_text())
-
-    @classmethod
-    def _asset_text(cls) -> str:
-        """Read the guide bundled beside this package."""
-        asset = Path(__file__).resolve().parent / "assets" / cls._ASSET_NAME
-        return asset.read_text(encoding="utf-8")
 
 
 @final
 class RepoEnablement:
     """Turn vox on and off in one repo, preserving the marker-import biconditional.
 
-    Bind the four collaborators at construction; :meth:`for_repo` wires the real
+    Bind the five collaborators at construction; :meth:`for_repo` wires the real
     per-repo paths and :meth:`for_cwd` discovers the repo from the working
     directory. Each transition writes one of the three legal states, so no
     sequence of :meth:`enable` / :meth:`disable` / :meth:`purge` can leave the
     marker and the import disagreeing.
     """
 
-    __slots__ = ("_guide", "_import", "_marker", "_settings")
+    __slots__ = ("_audible", "_guide", "_import", "_marker", "_settings")
 
     _import: ClaudeMdImport
     _marker: VoxMarker
     _guide: DepositedGuide
     _settings: SettingsRegistration
+    _audible: AudibleNotify
 
     def __new__(
         cls,
@@ -145,12 +69,14 @@ class RepoEnablement:
         marker: VoxMarker,
         guide: DepositedGuide,
         settings: SettingsRegistration,
+        audible: AudibleNotify,
     ) -> Self:
         self = super().__new__(cls)
         self._import = import_writer
         self._marker = marker
         self._guide = guide
         self._settings = settings
+        self._audible = audible
         return self
 
     @classmethod
@@ -162,6 +88,7 @@ class RepoEnablement:
             marker=VoxMarker(vox_dir / "enabled", repo_root),
             guide=DepositedGuide(vox_dir / "CLAUDE.md", repo_root),
             settings=SettingsRegistration(repo_root / ".claude" / "settings.json"),
+            audible=AudibleNotify(vox_dir),
         )
 
     @classmethod
@@ -202,16 +129,20 @@ class RepoEnablement:
         """Reach the Enabled state from anywhere; idempotent (also the upgrade path).
 
         Order matters for crash-safety: guide first (so the import never points
-        at a missing guide), then the import, then the settings, and the marker
-        **last**. The marker is vox's on-signal -- the hooks gate on it -- so if
-        any earlier step raises, the repo is left observably OFF (no marker)
-        rather than half-on (a marker with no guidance behind it). Re-running
-        rewrites the guide, leaves the single import in place, and adds no
-        duplicate.
+        at a missing guide), then the import, the settings, the audible notify
+        default, and the marker **last**. The marker is vox's on-signal -- the
+        hooks gate on it -- so if any earlier step raises, the repo is left
+        observably OFF (no marker) rather than half-on (a marker with no guidance
+        behind it). The audible default lands before the marker so a completed
+        ``enable`` is audible: silence is ``disable`` (marker gone), never an
+        enabled repo left at ``notify=n``. Re-running rewrites the guide, leaves
+        the single import in place, preserves an existing audible level, and adds
+        no duplicate.
         """
         self._guide.deposit()
         self._import.register()
         self._settings.register()
+        self._audible.ensure_audible()
         self._marker.write()
 
     def disable(self) -> None:
