@@ -1,0 +1,282 @@
+%
+% vox-music-player.tex
+%
+% Z Specification for the voxd Music Player's view state machine.
+%
+% The player owns NO playback machinery. Its play/stop/advance transitions are
+% StartRadio / RadioOff / RadioRotate on a single-album selection, already
+% fuzz-clean and ProB-checked in docs/audio-programs.tex. This model pins the one
+% new, stable thing: the PlayerView --- the projection of voxd's single active
+% source onto a lux scene --- and its invariants across the player transitions:
+%
+%   I1  at most one album playing
+%   I2  now-playing present iff playing
+%   I3  a played album is catalogued (and a playing album cannot be removed)
+%
+% The phase-2 connection / subscribe / lease lifecycle depends on lux's
+% not-yet-pinned subscribe API and is deferred to an amendment (see section 6).
+%
+
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fuzz}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+
+\begin{document}
+
+\title{The voxd Music Player: A Z Specification}
+\author{Formal model of the PlayerView state machine}
+\date{July 2026}
+\hypersetup{
+  pdftitle={The voxd Music Player: A Z Specification},
+  pdfauthor={Punt Labs},
+  pdfsubject={Z Specification},
+  pdfcreator={fuzz/probcli}
+}
+\maketitle
+
+\section{Introduction}
+
+The Music Player is a headless app inside \texttt{voxd} that projects the
+daemon's one active source onto a lux scene and translates in-scene clicks back
+into playback commands. It adds no playback machinery: playing a saved album is
+\texttt{ProgramService.replay\_album}, stopping is \texttt{off}, and advancing
+within the album is the playback loop driving \texttt{SelectionPlayback.rotate}.
+Those transitions --- \texttt{StartRadio}, \texttt{RadioOff},
+\texttt{RadioRotate}, and the \texttt{MusicRemove} refusal of a playing album ---
+are already modelled and \texttt{fuzz}-clean in \texttt{docs/audio-programs.tex}.
+
+This specification pins the one new, stable object: the \emph{PlayerView}, and
+the three invariants the design must preserve across every player transition.
+The phase-2 lux connection/subscribe/lease lifecycle depends on lux's
+not-yet-pinned subscribe API and is deferred (Section~\ref{sec:deferred}).
+
+\section{Basic Types and Modes}
+
+An \texttt{ALBUM} is an opaque catalog identifier --- the id \texttt{vox music
+list} prints and the scene's Play button carries. It is a catalog key, never a
+filesystem path; the model treats it as opaque, exactly as
+\texttt{audio-programs.tex} does.
+
+\begin{zed}
+  [ALBUM]
+\end{zed}
+
+The player is a two-mode machine: nothing playing, or one album playing.
+
+\begin{zed}
+  PlayerMode ::= idle | playing
+\end{zed}
+
+\section{State}
+\label{sec:state}
+
+The \texttt{PlayerView} carries the catalog of saved albums, the mode, the
+optional playing album (a set of at most one, mirroring the ``optional Part''
+cursor of \texttt{audio-programs.tex}), and the now-playing cursor
+\texttt{(index, of)} --- the 1-based track position and the album's track count,
+both zero when idle.
+
+The predicate carries every invariant. \texttt{I1} bounds the playing album to
+at most one. \texttt{I2} is the biconditional the design names ``now-playing
+present iff playing'': the mode is \texttt{playing} exactly when one album is
+playing, exactly when the cursor is live (\texttt{of} $\geq 1$). \texttt{I3}
+contains the playing album in the catalog. The cursor-validity conjuncts tie the
+index into $1 \upto of$ while playing and pin it to zero while idle.
+
+\begin{schema}{PlayerView}
+  catalogued : \power ALBUM \\
+  mode : PlayerMode \\
+  album : \power ALBUM \\
+  index : \nat \\
+  of : \nat
+  \where
+  \# album \leq 1 \\
+  album \subseteq catalogued \\
+  (mode = playing \iff \# album = 1) \\
+  (mode = idle \iff album = \emptyset) \\
+  (mode = playing \implies (1 \leq index \land index \leq of \land of \geq 1)) \\
+  (mode = idle \implies (index = 0 \land of = 0))
+\end{schema}
+
+The now-playing cursor is the \texttt{(index, of)} pair the status API reports as
+``Part $N$ of $M$''; \texttt{I2} makes ``present iff playing'' a fact of the state
+schema, not a runtime check. Because \texttt{PlayerMode} has only two
+inhabitants, $mode = idle$ and $mode = playing$ are complementary, so the two
+biconditionals are consistent: $album = \emptyset \iff \# album = 0 \iff mode
+\neq playing$.
+
+\section{Initialisation}
+
+The daemon starts with a (possibly empty) catalog and nothing playing.
+
+\begin{schema}{PlayerInit}
+  PlayerView' \\
+  cat0? : \power ALBUM
+  \where
+  catalogued' = cat0? \\
+  mode' = idle \\
+  album' = \emptyset \\
+  index' = 0 \\
+  of' = 0
+\end{schema}
+
+\section{Player Transitions}
+
+Each transition is the projection of an \texttt{audio-programs.tex} operation
+onto the view. They are gated on mode alone, never on a session --- any client
+(the lux button, the CLI, or an MCP tool) may drive any of them, which is why the
+scene must re-push on every state change regardless of origin.
+
+\subsection{PlayerPlay --- play a saved album}
+
+A client plays the album \texttt{target?}, whose ready-track count is
+\texttt{count?}. The album must be catalogued and non-empty ($count? \geq 1$):
+\texttt{replay\_album} refuses an unknown id and an album with no playable
+tracks. There is \emph{no} mode precondition: from \texttt{idle} this is
+\texttt{StartRadio}; while already \texttt{playing} it is
+\texttt{SwitchSelection}, displacing the old album. Either way the after-state
+has exactly one album playing, so \texttt{I1} holds and two albums never play at
+once.
+
+\begin{schema}{PlayerPlay}
+  \Delta PlayerView \\
+  target? : ALBUM \\
+  count? : \nat
+  \where
+  target? \in catalogued \\
+  count? \geq 1 \\
+  catalogued' = catalogued \\
+  mode' = playing \\
+  album' = \{ target? \} \\
+  index' = 1 \\
+  of' = count?
+\end{schema}
+
+The cursor starts at track~1 of \texttt{count?}. Because $count? \geq 1$, the
+after-state satisfies the cursor-validity invariant ($1 \leq 1 \leq of'$ and
+$of' \geq 1$), and because $target? \in catalogued$, \texttt{I3}
+($album' \subseteq catalogued'$) holds. \texttt{PlayerPlay} is the single verb
+for both ``start'' and ``switch'', exactly as \texttt{SwitchSelection} $\defs$
+\texttt{StartRadio} in \texttt{audio-programs.tex}.
+
+\subsection{PlayerTrackEnd --- auto-advance within the album}
+
+When the current track ends, the playback loop advances the cursor to another
+track of the same album, avoiding an immediate repeat when the album holds more
+than one and replaying when it holds exactly one. This is \texttt{RadioRotate}
+projected onto the cursor: the album and its count are unchanged, only the index
+moves.
+
+\begin{schema}{PlayerTrackEnd}
+  \Delta PlayerView
+  \where
+  mode = playing \\
+  catalogued' = catalogued \\
+  mode' = playing \\
+  album' = album \\
+  of' = of \\
+  1 \leq index' \land index' \leq of \\
+  (of \geq 2 \implies index' \neq index) \\
+  (of = 1 \implies index' = index)
+\end{schema}
+
+The automatic track-end advance and a user-driven \texttt{next}/\texttt{skip} are
+one transition, mirroring \texttt{RadioNext} $\defs$ \texttt{RadioRotate}. The
+mode, album, and count are all held, so \texttt{I1}, \texttt{I2}, and \texttt{I3}
+are trivially preserved; only the cursor moves, and it stays in range.
+
+\subsection{PlayerStop --- stop, return to idle}
+
+Stopping tears the source down and returns the view to \texttt{idle}: no album,
+no cursor. This is \texttt{RadioOff}. It is enabled while playing; a stop while
+already idle is a no-op the daemon need not model as a transition.
+
+\begin{schema}{PlayerStop}
+  \Delta PlayerView
+  \where
+  mode = playing \\
+  catalogued' = catalogued \\
+  mode' = idle \\
+  album' = \emptyset \\
+  index' = 0 \\
+  of' = 0
+\end{schema}
+
+The after-state is the \texttt{idle} shape: \texttt{I2} holds because emptying
+the album empties the cursor, discharging ``stop returns to idle''.
+
+\section{Catalog Transitions}
+
+The catalog changes under the player via \texttt{music new} and \texttt{music
+remove}. They are modelled here only for their interaction with the view ---
+specifically, that a playing album cannot be removed.
+
+\subsection{CatalogAdd --- a fresh album appears}
+
+\texttt{music new} files a fresh album. It grows the catalog and leaves playback
+untouched, so the scene re-pushes with a new row but the same now-playing.
+
+\begin{schema}{CatalogAdd}
+  \Delta PlayerView \\
+  new? : ALBUM
+  \where
+  new? \notin catalogued \\
+  catalogued' = catalogued \cup \{ new? \} \\
+  mode' = mode \\
+  album' = album \\
+  index' = index \\
+  of' = of
+\end{schema}
+
+Because the catalog only grows, $album \subseteq catalogued'$ still holds and
+\texttt{I3} is preserved with playback unchanged.
+
+\subsection{CatalogRemove --- delete a non-playing album}
+
+\texttt{music remove} deletes a catalogued album, but the playing album is
+refused --- the model image of the \texttt{active\_backing\_locators} guard and of
+\texttt{MusicRemove}'s precondition in \texttt{audio-programs.tex}. The
+precondition $gone? \notin album$ is exactly ``you cannot delete the album you
+are playing''.
+
+\begin{schema}{CatalogRemove}
+  \Delta PlayerView \\
+  gone? : ALBUM
+  \where
+  gone? \in catalogued \\
+  gone? \notin album \\
+  catalogued' = catalogued \setminus \{ gone? \} \\
+  mode' = mode \\
+  album' = album \\
+  index' = index \\
+  of' = of
+\end{schema}
+
+The guard is what preserves \texttt{I3} across a removal: with $gone? \notin
+album$ and $album \subseteq catalogued$, removing \texttt{gone?} leaves
+$album \subseteq catalogued'$. Deleting the playing album would break
+$album' \subseteq catalogued'$, so the invariant is not decoration --- it forces
+the guard rather than the guard being an ad-hoc check.
+
+\section{Deferred: the connection / subscribe / lease lifecycle}
+\label{sec:deferred}
+
+Phase~2 adds the receive leg: a persistent WebSocket subscription over the public
+\texttt{LuxRestClient} extension, decoding \texttt{music.play} / \texttt{music.stop}
+into the transitions above, and a ``Music'' menu callback held by a $\sim$30s
+lease renewed by contact. That lifecycle --- \texttt{disconnected} $\to$
+\texttt{connected} $\to$ \texttt{subscribed} $\to$ \texttt{lease-renewed}, with a
+click received while disconnected dropped and the lease expiring unless renewed
+--- is itself a stateful machine with invariants (at most one live subscription;
+no dispatch while disconnected). It is \emph{not} modelled here because its
+transitions depend on lux's subscribe/lease API, which is not yet pinned. When
+lux pins that API, this specification gains a \texttt{Connection} schema and its
+operations as an amendment, before the phase-2 subscribe loop is implemented.
+
+The separation is deliberate and mirrors the design: the \texttt{PlayerView} is
+stable today because a transition's \emph{trigger} --- a lux click or a CLI call
+--- is immaterial to the view's invariants. Only the plumbing that carries the
+trigger is unpinned.
+
+\end{document}
