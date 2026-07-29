@@ -55,9 +55,10 @@ async def test_get_self_heals_from_a_wake_with_no_scene(
         await asyncio.sleep(0.05)
         mailbox.submit(_scene("real"))
 
-    asyncio.create_task(_submit_soon())  # noqa: RUF006
+    submitter = asyncio.create_task(_submit_soon())
     with caplog.at_level(logging.WARNING):
         result = await asyncio.wait_for(mailbox.get(), timeout=1.0)
+    await submitter  # join the helper so it is cleaned up before assertions
 
     assert result.scene_id == "real"  # recovered by re-awaiting, never raised
     assert any("no scene" in r.getMessage() for r in caplog.records)

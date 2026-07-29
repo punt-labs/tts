@@ -32,8 +32,6 @@ __all__ = ["LuxScenePublisher"]
 
 logger = logging.getLogger(__name__)
 
-_SCENE_ID = "vox.music"
-
 
 @final
 class LuxScenePublisher:
@@ -76,12 +74,12 @@ class LuxScenePublisher:
             result = await asyncio.to_thread(client.render, request)
         except HubUnavailableError:
             self._client = None  # force a reconnect on the next scene
-            logger.warning("lux unavailable; dropped %s scene push", _SCENE_ID)
+            logger.warning("lux unavailable; dropped %s scene push", request.scene_id)
             return
         if isinstance(result, OpError):
             # A refused scene is a projection defect, not an absent display: log
             # at error so it reads distinctly from the down-luxd warning above.
-            logger.error("lux rejected %s scene: %s", _SCENE_ID, result.reason)
+            logger.error("lux rejected %s scene: %s", request.scene_id, result.reason)
 
     async def _ensure_client(self) -> LuxRenderer:
         """Return the connected client, connecting off-thread on first use."""

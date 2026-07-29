@@ -53,8 +53,10 @@ def test_playing_row_is_marked_and_carries_its_play_button(
     view = PlayerView.from_status(playing_of(first, 2, 3), (first, second))
 
     rows = AlbumListScene((first, second), view).render_request().elements[4:]
-    playing_children = list(rows[0]["children"])  # type: ignore[call-overload]
-    idle_children = list(rows[1]["children"])  # type: ignore[call-overload]
+    playing_children = rows[0]["children"]
+    idle_children = rows[1]["children"]
+    assert isinstance(playing_children, list)  # each row nests its cells in a list
+    assert isinstance(idle_children, list)
 
     assert playing_children[0]["content"] == "▶ Techno Mix"
     assert playing_children[1] == {
@@ -83,5 +85,6 @@ def test_idle_scene_says_nothing_playing_and_disables_stop(
 def test_unnamed_album_falls_back_to_its_id(album_of: AlbumFactory) -> None:
     album = album_of("aa11bb", name=None)
     rows = AlbumListScene((album,), PlayerView.idle()).render_request().elements[4:]
-    children = list(rows[0]["children"])  # type: ignore[call-overload]
+    children = rows[0]["children"]
+    assert isinstance(children, list)  # each row nests its cells in a list
     assert children[0]["content"] == "album aa11bb"
