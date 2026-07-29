@@ -109,14 +109,18 @@ async def test_a_down_lux_is_dropped_then_reconnects() -> None:
     assert [r.scene_id for r in fake.rendered] == ["second"]  # no raise, recovered
 
 
-async def test_an_op_error_is_logged_not_raised(
+async def test_an_op_error_is_logged_at_error_not_raised(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     publisher = LuxScenePublisher(_RejectingRenderer)
     publisher.submit(_scene("vox.music"))
     with caplog.at_level(logging.WARNING):
         await _drain_once(publisher)
-    assert any("lux rejected" in r.getMessage() for r in caplog.records)
+    rejected = [r for r in caplog.records if "lux rejected" in r.getMessage()]
+    assert rejected  # logged, never raised
+    # A refused scene is a defect, not a down display: it reads at ERROR, distinct
+    # from the WARNING a HubUnavailableError (luxd down) logs.
+    assert all(r.levelno == logging.ERROR for r in rejected)
 
 
 async def test_a_slow_render_does_not_block_the_event_loop() -> None:

@@ -5,8 +5,10 @@ scene to a latest-wins :class:`SceneMailbox` -- it never blocks. :meth:`run` is 
 publisher's own task: it drains the mailbox and performs the *blocking* REST render
 inside :func:`asyncio.to_thread`, so a slow luxd cannot stall the event loop (and
 thus playback). A lux timeout / :class:`HubUnavailableError` is logged and dropped
-and the client is dropped for a fresh reconnect; an engine-side ``OpError`` is
-logged. No lux failure is ever propagated back into audio control.
+and the client is dropped for a fresh reconnect; an engine-side ``OpError`` --
+a scene luxd refused, almost always a projection defect rather than an absent
+display -- is logged at error. No lux failure is propagated back into audio
+control.
 """
 
 from __future__ import annotations
@@ -77,7 +79,9 @@ class LuxScenePublisher:
             logger.warning("lux unavailable; dropped %s scene push", _SCENE_ID)
             return
         if isinstance(result, OpError):
-            logger.warning("lux rejected %s scene: %s", _SCENE_ID, result.reason)
+            # A refused scene is a projection defect, not an absent display: log
+            # at error so it reads distinctly from the down-luxd warning above.
+            logger.error("lux rejected %s scene: %s", _SCENE_ID, result.reason)
 
     async def _ensure_client(self) -> LuxRenderer:
         """Return the connected client, connecting off-thread on first use."""
