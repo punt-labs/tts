@@ -1,17 +1,20 @@
 """``LuxSubscription`` -- voxd's receive leg: one hub connection, menu, dispatch.
 
 The subscription holds a *single* live connection to luxd at a time (Z model
-invariant I). Each connect (re-)registers the ``Music`` menu entry, subscribes to
-``music.play`` and ``music.stop``, and holds the connection open -- the
-``LuxHubClient`` reconnects and re-subscribes internally across transient drops, so
-voxd depends on no surviving Hub state (invariant III, register-fresh). A guarded
-restart loop wraps the whole connect/register/subscribe/listen cycle: any fault --
-a down luxd, or a protocol frame that fails validation deep inside ``listen`` -- is
-logged to the persistent daemon log and the cycle restarts after a backoff, so the
-receive leg can never die silently. Each inbound event is decoded and applied exactly
-once (invariants II, V); the phase-1 change signal then re-pushes the scene. Every
-handler is a boundary that logs and drops on any fault, so one bad frame can never
-drop the connection.
+invariant I). It subscribes to ``music.play`` and ``music.stop`` and holds the
+connection open; the ``LuxHubClient`` reconnects and re-subscribes internally across
+transient drops, firing the subscription's ``on_connect`` hook after *every*
+successful handshake -- first connect and every internal reconnect. That hook
+re-registers the ``Music`` menu entry and re-pushes the scene, so a >30s luxd outage
+that lapses the menu lease (swept by luxd) is healed the instant the listener rejoins
+internally, without waiting for an outer fault (invariant III, register-fresh). A
+guarded restart loop still wraps the whole connect/subscribe/listen cycle as a
+backstop: a fault the internal reconnect cannot ride out -- a down luxd, or a
+protocol frame that fails validation deep inside ``listen`` -- is logged to the
+persistent daemon log and the cycle restarts after a backoff, so the receive leg can
+never die silently. Each inbound event is decoded and applied exactly once
+(invariants II, V). Every handler is a boundary that logs and drops on any fault, so
+one bad frame can never drop the connection.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
     from punt_lux import CallbackHandler, EventHandler
+    from punt_lux.hub_client import ConnectHandler
 
     from punt_vox.voxd.music_player.command_ports import PlayerCommands
     from punt_vox.voxd.music_player.hub_ports import HubListener, MenuRegistrar
@@ -51,7 +55,7 @@ class LuxSubscription:
     _service: PlayerCommands
     _opener: ChangeListener
     _menu: MenuRegistrar
-    _connect_hub: Callable[[EventHandler, CallbackHandler], HubListener]
+    _connect_hub: Callable[[EventHandler, CallbackHandler, ConnectHandler], HubListener]
     _codec: PlayerEventCodec
 
     def __new__(
@@ -59,7 +63,9 @@ class LuxSubscription:
         service: PlayerCommands,
         opener: ChangeListener,
         menu: MenuRegistrar,
-        connect_hub: Callable[[EventHandler, CallbackHandler], HubListener],
+        connect_hub: Callable[
+            [EventHandler, CallbackHandler, ConnectHandler], HubListener
+        ],
     ) -> Self:
         self = super().__new__(cls)
         self._service = service
@@ -72,14 +78,16 @@ class LuxSubscription:
     async def run(self) -> None:
         """Hold voxd's receive leg open, restarting the whole cycle on any fault.
 
-        Each iteration builds one fresh connection, (re-)registers the ``Music``
-        menu, subscribes, and listens. ``listen`` returns only when the daemon
-        requests a stop, so a clean return ends the leg. A down luxd is retried with
-        a warning; any other fault -- notably a protocol frame that fails validation
-        deep inside ``listen`` -- is logged with its traceback to the persistent
-        daemon log and the cycle restarts after a backoff, so a transient or protocol
-        error can never leave the receive leg silently dead (invariants I, III).
-        Cancellation on shutdown is a ``BaseException`` that propagates cleanly out.
+        Each iteration builds one fresh connection, subscribes, and listens; the
+        ``Music`` menu registration and the scene re-push ride the ``on_connect``
+        hook the hub client fires on every handshake (:meth:`on_connect`), not this
+        outer loop. ``listen`` returns only when the daemon requests a stop, so a
+        clean return ends the leg. A down luxd is retried with a warning; any other
+        fault -- notably a protocol frame that fails validation deep inside
+        ``listen`` -- is logged with its traceback to the persistent daemon log and
+        the cycle restarts after a backoff, so a transient or protocol error can
+        never leave the receive leg silently dead (invariants I, III). Cancellation
+        on shutdown is a ``BaseException`` that propagates cleanly out.
         """
         while True:
             try:
@@ -93,18 +101,17 @@ class LuxSubscription:
                 await asyncio.sleep(_RETRY_SECONDS)
 
     async def _connect_and_listen(self) -> None:
-        """Build one fresh connection, register the menu, subscribe, and listen.
+        """Build one fresh connection, subscribe, and listen.
 
-        Registering on *every* fresh connection -- not once at startup -- is what
-        restores the ``Music`` menu after a >30s outage: once the lease lapses luxd
-        sweeps the entry, and the registration is an idempotent upsert keyed by
-        callback id, so first-connect and reconnect-after-expiry are the one
-        register-fresh path (Z model register-fresh, §6.11). At most one live
+        The ``Music`` menu registration and the scene re-push no longer live here:
+        they ride the ``on_connect`` hook (:meth:`on_connect`) the hub client fires
+        after *every* handshake, so an internal reconnect that ``listen`` rides out
+        -- the one a >30s outage triggers after luxd sweeps the lease -- re-registers
+        without an outer fault (Z model register-fresh, §6.11). At most one live
         connection exists at a time -- a new one is built only after the prior
         ``listen`` has returned or raised (invariant I).
         """
-        listener = self._connect_hub(self.on_event, self.on_callback)
-        await self._menu.register(_MENU_CALLBACK_ID, _MENU_LABEL)
+        listener = self._connect_hub(self.on_event, self.on_callback, self.on_connect)
         listener.subscribe(MusicTopic.PLAY, MusicTopic.STOP)
         await listener.listen()
 
@@ -129,3 +136,21 @@ class LuxSubscription:
             self._opener.notify_changed()
         except Exception:
             logger.exception("music menu open failed for %r", callback_id)
+
+    async def on_connect(self) -> None:
+        """Re-register the ``Music`` menu and re-push the scene after every handshake.
+
+        The hub client fires this once per successful handshake -- first connect and
+        every internal reconnect -- after the ready frame and re-subscribe. A >30s
+        luxd outage lapses the menu lease, luxd sweeps the entry, and the internal
+        reconnect ``listen`` rides out then fires this to restore it, without waiting
+        for an outer fault (register-fresh, invariant III). The registration is
+        best-effort and never raises; the scene re-push is guarded here so a transient
+        projection failure is logged, not lost, and never skips the registration. lux
+        logs-and-continues if this raises, so the session survives regardless.
+        """
+        await self._menu.register(_MENU_CALLBACK_ID, _MENU_LABEL)
+        try:
+            self._opener.notify_changed()
+        except Exception:
+            logger.exception("music scene projection on connect failed")

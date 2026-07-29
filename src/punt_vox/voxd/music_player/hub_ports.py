@@ -16,6 +16,7 @@ from punt_vox.voxd.music_player.ports import LuxRenderer
 
 if TYPE_CHECKING:
     from punt_lux import CallbackHandler, EventHandler, OpError
+    from punt_lux.hub_client import ConnectHandler
     from punt_lux.operations import Ok
 
 __all__ = [
@@ -80,6 +81,16 @@ class LuxClientFactory(Protocol):
         """Build the REST client that renders scenes and registers the menu."""
         ...
 
-    def hub(self, on_event: EventHandler, on_callback: CallbackHandler) -> HubListener:
-        """Build the hub client carrying the pub-sub receive stream."""
+    def hub(
+        self,
+        on_event: EventHandler,
+        on_callback: CallbackHandler,
+        on_connect: ConnectHandler,
+    ) -> HubListener:
+        """Build the hub client carrying the pub-sub receive stream.
+
+        ``on_connect`` is fired after every handshake -- first connect and every
+        internal reconnect -- so the receive leg re-registers its menu and re-pushes
+        its scene register-fresh, not only on an outer fault.
+        """
         ...

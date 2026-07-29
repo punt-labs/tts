@@ -37,9 +37,10 @@ dependencies = [
     # voxd hosts the lux music-player app: the public LuxRestClient + LuxHubClient
     # are a hard runtime dependency — identity/lease (for_identity, ClientIdentity),
     # the rendered session menu (register_callback), the subscribe/callback listener
-    # (reconnect with port re-resolution), and the publish-button surface all ship
-    # in punt-lux 0.22.0.
-    "punt-lux>=0.22.0",
+    # (reconnect with port re-resolution), and the publish-button surface. 0.22.1
+    # adds the listener on_connect hook (fired after every handshake, including
+    # internal reconnects) that voxd uses to re-register the Music menu register-fresh.
+    "punt-lux>=0.22.1",
 ]
 
 [project.urls]

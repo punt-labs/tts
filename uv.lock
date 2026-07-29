@@ -1184,7 +1184,7 @@ wheels = [
 
 [[package]]
 name = "punt-lux"
-version = "0.22.0"
+version = "0.22.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastapi" },
@@ -1197,9 +1197,9 @@ dependencies = [
     { name = "uvicorn" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/69/d0/869005a39708356a2d9913ce92de3cc1eddc39837f41dbff8145bb5110eb/punt_lux-0.22.0.tar.gz", hash = "sha256:4311ee986ffd570f6b22d019a11d07b017e1c88d8649cdd65b7acc06b4352f18", size = 847941, upload-time = "2026-07-29T13:28:30.594Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5b/55/773191c46af87b90258ad821d3b81c71bd0b57b1e7d2616dc4264cacf7aa/punt_lux-0.22.1.tar.gz", hash = "sha256:1151dd7049fc8438eb763688cb080f9f674d4d763e0d4f71f8ff76bded8c8863", size = 848125, upload-time = "2026-07-29T15:41:06.568Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6e/45/1e1d27b5562ae1fc69953012811bda6f4d5ef13576a87bfa2116a482d1ad/punt_lux-0.22.0-py3-none-any.whl", hash = "sha256:3227b8e5fb2cd61fe109be32bad1065c73d0c0f3a8da2b787773498e9bae2c7d", size = 1092590, upload-time = "2026-07-29T13:28:29.049Z" },
+    { url = "https://files.pythonhosted.org/packages/b1/04/a7a378ab964b44f68f2d11a772db4e4afd598b7d7e6643d88cd2a43523d5/punt_lux-0.22.1-py3-none-any.whl", hash = "sha256:2f94907e41f01decdbfd6c7fb4906619ac99a84684b5e83c7aaaff7432e4c366", size = 1091313, upload-time = "2026-07-29T15:41:04.941Z" },
 ]
 
 [[package]]
@@ -1242,7 +1242,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.28.1" },
     { name = "mutagen", specifier = ">=1.47.0" },
     { name = "openai", specifier = ">=1.0.0" },
-    { name = "punt-lux", specifier = ">=0.22.0" },
+    { name = "punt-lux", specifier = ">=0.22.1" },
     { name = "pydub", specifier = ">=0.25.0" },
     { name = "typer", specifier = ">=0.24.1" },
     { name = "websockets", specifier = ">=14.0" },

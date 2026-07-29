@@ -3,8 +3,10 @@
 These wire the real ChangeSignal -> MusicPlayer -> LuxScenePublisher chain and prove
 the mandatory non-blocking property: emitting a change (as the control channel or
 catalog would, on the single-writer) returns at once even when lux is slow. The
-receive leg runs alongside with a fake hub listener, so the subsystem drives both
-legs as one task without a running luxd.
+receive leg runs alongside with a fake hub listener that fires on_connect on its
+handshake, so the initial menu registration and initial scene push ride that hook
+(as they do in production) and the subsystem drives both legs as one task without a
+running luxd.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ if TYPE_CHECKING:
         RenderRequest,
         SceneShown,
     )
+    from punt_lux.hub_client import ConnectHandler
 
     from punt_vox.voxd.music_player.hub_ports import HubListener
     from punt_vox.voxd.music_player.lux_scene_publisher import LuxScenePublisher
@@ -126,16 +129,25 @@ class _BlockingRenderer:
 
 @final
 class _FakeHubListener:
-    """A HubListener double: records the one subscription, blocks until stopped."""
+    """A HubListener double: fires on_connect once (a handshake), then blocks.
 
-    def __init__(self) -> None:
+    Firing on_connect models the real client's per-handshake setup: it is what the
+    initial menu registration and initial scene push now ride, so the fake must fire
+    it for the subsystem to paint its first scene.
+    """
+
+    def __init__(self, on_connect: ConnectHandler) -> None:
         self.subscribed: tuple[str, ...] = ()
+        self._on_connect = on_connect
         self._stopped = asyncio.Event()
 
     def subscribe(self, *topics: str) -> None:
         self.subscribed = self.subscribed + topics
 
     async def listen(self) -> None:
+        result = self._on_connect()  # the handshake fires the app's on_connect
+        if result is not None:
+            await result
         await self._stopped.wait()
 
     def stop(self) -> None:
@@ -149,14 +161,18 @@ class _FakeClients:
     def __init__(self, renderer: _FakeRenderer | _BlockingRenderer) -> None:
         self._renderer = renderer
         self.hub_calls = 0
-        self.listener = _FakeHubListener()
 
     def rest(self) -> _FakeRenderer | _BlockingRenderer:
         return self._renderer
 
-    def hub(self, on_event: EventHandler, on_callback: CallbackHandler) -> HubListener:
+    def hub(
+        self,
+        on_event: EventHandler,
+        on_callback: CallbackHandler,
+        on_connect: ConnectHandler,
+    ) -> HubListener:
         self.hub_calls += 1
-        return self.listener
+        return _FakeHubListener(on_connect)
 
 
 @final
@@ -250,10 +266,13 @@ async def test_emit_returns_at_once_even_when_lux_is_slow(
     await _stop(task)
 
 
-async def test_a_failing_initial_projection_does_not_kill_the_publisher(
+async def test_a_failing_on_connect_projection_does_not_kill_the_publisher(
     album_of: AlbumFactory,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    # The initial projection now rides on_connect (fired on the handshake). A failing
+    # first read is logged and dropped there, so both legs keep running and a later
+    # change re-projects onto the still-live drainer.
     service = _FlakyService(ProgramStatus.idle(), (album_of("aa11bb"),))
     changes = ChangeSignal()
     renderer = _FakeRenderer()
@@ -261,14 +280,15 @@ async def test_a_failing_initial_projection_does_not_kill_the_publisher(
 
     with caplog.at_level(logging.ERROR):
         task = await _run(sub, settle=0.1)
-        assert renderer.rendered == []  # the initial projection raised -> no push
+        assert renderer.rendered == []  # the on_connect projection raised -> no push
+        assert renderer.menus == [("music", "Music")]  # menu still registered first
 
         changes.emit()  # a later change re-projects onto the still-live drainer
         await asyncio.sleep(0.1)
         assert len(renderer.rendered) == 1  # the publisher survived and drained it
 
     await _stop(task)
-    assert any("initial scene projection" in r.getMessage() for r in caplog.records)
+    assert any("scene projection on connect" in r.getMessage() for r in caplog.records)
 
 
 async def test_a_fatal_leg_fault_restarts_both_legs(

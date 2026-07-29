@@ -40,5 +40,7 @@ def test_hub_raises_when_luxd_is_down(monkeypatch: pytest.MonkeyPatch) -> None:
 
     async def on_callback(callback_id: str) -> None: ...
 
+    async def on_connect() -> None: ...
+
     with pytest.raises(HubUnavailableError):
-        VoxLuxClients().hub(on_event, on_callback)
+        VoxLuxClients().hub(on_event, on_callback, on_connect)

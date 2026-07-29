@@ -15,6 +15,7 @@ from punt_lux import ClientIdentity, LuxHubClient, LuxRestClient
 
 if TYPE_CHECKING:
     from punt_lux import CallbackHandler, EventHandler
+    from punt_lux.hub_client import ConnectHandler
 
     from punt_vox.voxd.music_player.hub_ports import HubListener, LuxClient
 
@@ -46,12 +47,25 @@ class VoxLuxClients:
         """
         return LuxRestClient.for_identity(self._identity)
 
-    def hub(self, on_event: EventHandler, on_callback: CallbackHandler) -> HubListener:
+    def hub(
+        self,
+        on_event: EventHandler,
+        on_callback: CallbackHandler,
+        on_connect: ConnectHandler,
+    ) -> HubListener:
         """Build the hub client that carries the pub-sub receive stream.
+
+        ``on_connect`` is wired straight into the client: it fires after every
+        handshake -- first connect and every internal reconnect the ``listen`` loop
+        rides out -- so the receive leg re-registers its menu and re-pushes its scene
+        register-fresh, without waiting for an outer fault.
 
         Raises ``HubUnavailableError`` when luxd is down at construction; the
         subscription's run loop retries, so a late-starting luxd is picked up.
         """
         return LuxHubClient.connect(
-            self._identity, on_callback=on_callback, on_event=on_event
+            self._identity,
+            on_callback=on_callback,
+            on_event=on_event,
+            on_connect=on_connect,
         )

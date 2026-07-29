@@ -693,6 +693,17 @@ buffer and a fresh lease, and there is no \texttt{ReconnectAndDrain} path out of
 first boot connection are therefore the same transition, exactly as a warm and a
 cold start of the socket are indistinguishable once the buffer is empty.
 
+In the implementation this register-fresh re-entry rides the hub client's
+\texttt{on\_connect} hook, which fires after \emph{every} successful handshake ---
+the first connect and every internal reconnect the client's own \texttt{listen}
+loop rides out --- rather than only the outer restart loop. That distinction is
+what makes the model faithful to the code: a $>$30\,s luxd outage is ridden out
+\emph{inside} \texttt{listen} as an internal reconnect, so pinning re-registration
+to the outer cycle alone would leave the swept menu unregistered until an unrelated
+fault. Because \texttt{on\_connect} re-registers the ``Music'' menu and re-pushes
+the scene on each handshake, every reconnect --- internal or outer --- is the same
+\texttt{Connect}-then-\texttt{Subscribe} transition this section models.
+
 That no click can arrive at a dead session is already a fact of the model:
 \texttt{EnqueueDuringGap} requires $present = ztrue$, and expiry sets
 $present' = zfalse$, so buffering is disabled the moment the menu withdraws.
