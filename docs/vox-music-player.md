@@ -110,7 +110,7 @@ Phase 2 adds the receive leg to the same package:
 
 | Module | Class | Responsibility |
 |--------|-------|----------------|
-| `player_events.py` | `PlayAlbum`, `StopMusic` | The inbound command objects — a discriminated union, each with `apply(service)` (Command pattern, PY-DP-8 / PY-OO-6), so the coordinator dispatches by message, not an `if`-ladder |
+| `player_events.py` | `PlayAlbum`, `StopMusic` | The inbound event objects — a discriminated union, each with `apply(service)` (polymorphic dispatch — oo.md *Polymorphism Over Conditionals*, PY-OO-6), so the coordinator dispatches by message, not an `if`-ladder |
 | `lux_subscription.py` | `LuxSubscription` | The persistent WS subscribe loop over the `LuxRestClient` extension: decode `music.play` / `music.stop` into `PlayerEvent`s, and own the ~30s menu-callback lease renewed by contact. **Gated on lux's not-yet-pinned subscribe API** (§7) |
 
 ### 3.2 Change signal on `ProgramService` (voxd-internal, not lux-gated)
@@ -132,7 +132,19 @@ truthful:
   catalog mutation (`new` / `remove`).
 
 `MusicPlayer` registers one listener; `notify_changed()` reads `status()` +
-`catalog_albums()`, builds the `PlayerView` and `AlbumListScene`, and pushes.
+`catalog_albums()` and builds the `PlayerView` and `AlbumListScene`.
+
+**The lux `PUT` must never run synchronously in the single-writer.**
+`_notify_change()` fires inside the `ControlChannel` single-writer, so a
+synchronous `PUT /scenes/vox.music` would let a slow or unreachable `luxd`
+stall the daemon's playback control loop — a dead display would freeze audio.
+`notify_changed()` therefore only *builds* the scene and hands it to an async
+publish task via a **latest-wins** channel (a one-slot mailbox that coalesces to
+the newest scene): the single-writer returns immediately, and `LuxScenePublisher`
+drains the mailbox on its own task, where a lux timeout or `HubUnavailable` is
+logged and dropped, never propagated back into audio control. Playback is never
+hostage to the display.
+
 This lives in phase 1 — it is a daemon-internal concern, independent of lux's
 gated PRs, and a read-only scene is worthless if it lies.
 
