@@ -36,9 +36,10 @@ dependencies = [
     "websockets>=14.0",
     # voxd hosts the lux music-player app: the public LuxRestClient is a hard
     # runtime dependency. INTERIM git pin to the lux-main commit that first
-    # exports LuxRestClient (PR #292) — no released punt-lux carries it yet.
+    # exports LuxRestClient + the phase-2 surface (through lux #294) with the
+    # HTTPS-submodule fix (#295) so a recursive clone needs no credentials in CI.
     # Moves to `punt-lux>=0.22.0` once lux cuts that release (bead vox-hnfr).
-    "punt-lux @ git+https://github.com/punt-labs/lux.git@c1370c3149160f5852c3aa9bc184ba43c53118aa",
+    "punt-lux @ git+https://github.com/punt-labs/lux.git@2abf64b",
 ]
 
 [project.urls]

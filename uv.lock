@@ -1185,7 +1185,7 @@ wheels = [
 [[package]]
 name = "punt-lux"
 version = "0.21.0"
-source = { git = "https://github.com/punt-labs/lux.git?rev=c1370c3149160f5852c3aa9bc184ba43c53118aa#c1370c3149160f5852c3aa9bc184ba43c53118aa" }
+source = { git = "https://github.com/punt-labs/lux.git?rev=2abf64b#2abf64ba03b6857fabfa4269e3b40c1753c792ae" }
 dependencies = [
     { name = "fastapi" },
     { name = "fastmcp" },
@@ -1195,6 +1195,7 @@ dependencies = [
     { name = "starlette" },
     { name = "typer" },
     { name = "uvicorn" },
+    { name = "websockets" },
 ]
 
 [[package]]
@@ -1237,7 +1238,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.28.1" },
     { name = "mutagen", specifier = ">=1.47.0" },
     { name = "openai", specifier = ">=1.0.0" },
-    { name = "punt-lux", git = "https://github.com/punt-labs/lux.git?rev=c1370c3149160f5852c3aa9bc184ba43c53118aa" },
+    { name = "punt-lux", git = "https://github.com/punt-labs/lux.git?rev=2abf64b" },
     { name = "pydub", specifier = ">=0.25.0" },
     { name = "typer", specifier = ">=0.24.1" },
     { name = "websockets", specifier = ">=14.0" },
