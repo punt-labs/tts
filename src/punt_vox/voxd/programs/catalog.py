@@ -20,6 +20,7 @@ from punt_vox.voxd.programs.album_tags import PromptFingerprint, TagQuery
 from punt_vox.voxd.programs.selection import Selection
 
 if TYPE_CHECKING:
+    from punt_vox.voxd.programs.change_signal import ChangeSignal
     from punt_vox.voxd.programs.manifest import AlbumManifest
     from punt_vox.voxd.programs.part import Part
     from punt_vox.voxd.programs.store import ProgramStore
@@ -97,19 +98,25 @@ class Album:
 class Catalog:
     """The in-memory index over album manifests -- the sole query surface."""
 
-    __slots__ = ("_by_id", "_reservations")
+    __slots__ = ("_by_id", "_changes", "_reservations")
     _by_id: dict[AlbumId, Album]
     # The single held-names authority both authoring paths consult: ``music new``
     # holds a curated name here across its generation await, and ``music on
     # --name`` unions these holds with the catalogued names when it mints, so
     # neither path can duplicate a name the other has claimed but not yet filed.
     _reservations: NameReservations
+    _changes: ChangeSignal | None  # fires on add/remove; None until wired
 
     def __new__(cls, albums: tuple[Album, ...]) -> Self:
         self = super().__new__(cls)
         self._by_id = {album.id: album for album in albums}
         self._reservations = NameReservations(self.taken_names)
+        self._changes = None
         return self
+
+    def attach_change_signal(self, changes: ChangeSignal) -> None:
+        """Wire the signal fired after each catalog mutation (``new`` / ``remove``)."""
+        self._changes = changes
 
     @property
     def reservations(self) -> NameReservations:
@@ -127,6 +134,7 @@ class Catalog:
     def add(self, album: Album) -> None:
         """Register a freshly created album so it is queryable without a re-scan."""
         self._by_id[album.id] = album
+        self._notify_change()
 
     def remove(self, album_id: AlbumId) -> None:
         """Drop the album with ``album_id`` from the index (idempotent on absence).
@@ -136,6 +144,12 @@ class Catalog:
         ``play``/``get`` afterward.
         """
         self._by_id.pop(album_id, None)
+        self._notify_change()
+
+    def _notify_change(self) -> None:
+        """Fire the change signal so the scene re-projects with the new catalog."""
+        if self._changes is not None:
+            self._changes.emit()
 
     def mint_id(self) -> AlbumId:
         """Return a fresh id absent from the catalog (delegates to AlbumId.mint)."""

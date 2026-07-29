@@ -586,6 +586,22 @@ wheels = [
 ]
 
 [[package]]
+name = "fastapi"
+version = "0.140.13"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "annotated-doc" },
+    { name = "pydantic" },
+    { name = "starlette" },
+    { name = "typing-extensions" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2f/cb/7a4d2c2eb5a5d8a91763c05b7383d72917862e32f780daa0e27ffbb34cc6/fastapi-0.140.13.tar.gz", hash = "sha256:500172a08cf1459901f90b05c37d93060dada3b573fec8f0862445db52ba6b4b", size = 424843, upload-time = "2026-07-28T15:37:00.805Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/84/4e/f9e8c762ef5e05c40482131e3d5e8b36bca13fa127578261f1d6b35a25d4/fastapi-0.140.13-py3-none-any.whl", hash = "sha256:8b017110e1e9f30a95e8bdb8f71fbe2f0fe3af5717109e5b14f9e069df54f6d4", size = 131222, upload-time = "2026-07-28T15:37:02.124Z" },
+]
+
+[[package]]
 name = "fastmcp"
 version = "3.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1168,19 +1184,18 @@ wheels = [
 
 [[package]]
 name = "punt-lux"
-version = "0.18.0"
-source = { registry = "https://pypi.org/simple" }
+version = "0.21.0"
+source = { git = "https://github.com/punt-labs/lux.git?rev=2abf64b#2abf64ba03b6857fabfa4269e3b40c1753c792ae" }
 dependencies = [
+    { name = "fastapi" },
     { name = "fastmcp" },
+    { name = "mcp" },
     { name = "pydantic" },
     { name = "rich" },
     { name = "starlette" },
     { name = "typer" },
     { name = "uvicorn" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/ce/51/89118d10a041281af6a09be708995632771c2026d3a6b429700d7a3dd3ff/punt_lux-0.18.0.tar.gz", hash = "sha256:6fbcbe60ab9395e0ce23985a8d52cc44394657cfe21efec3050461e6d91e3e8f", size = 87556, upload-time = "2026-05-13T03:44:18.521Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d7/94/345493974528416c147a2bd5b5a3e5cbccc6289d274fb170e1f65619ef10/punt_lux-0.18.0-py3-none-any.whl", hash = "sha256:95864fd652f89f096961676ab6cd1aaa23d89120c5b821ed02faac19955eb2f0", size = 93417, upload-time = "2026-05-13T03:44:17.233Z" },
+    { name = "websockets" },
 ]
 
 [[package]]
@@ -1196,14 +1211,10 @@ dependencies = [
     { name = "mcp" },
     { name = "mutagen" },
     { name = "openai" },
+    { name = "punt-lux" },
     { name = "pydub" },
     { name = "typer" },
     { name = "websockets" },
-]
-
-[package.optional-dependencies]
-lux = [
-    { name = "punt-lux" },
 ]
 
 [package.dev-dependencies]
@@ -1227,12 +1238,11 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.28.1" },
     { name = "mutagen", specifier = ">=1.47.0" },
     { name = "openai", specifier = ">=1.0.0" },
-    { name = "punt-lux", marker = "extra == 'lux'", specifier = ">=0.9.0" },
+    { name = "punt-lux", git = "https://github.com/punt-labs/lux.git?rev=2abf64b" },
     { name = "pydub", specifier = ">=0.25.0" },
     { name = "typer", specifier = ">=0.24.1" },
     { name = "websockets", specifier = ">=14.0" },
 ]
-provides-extras = ["lux"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1580,15 +1590,15 @@ wheels = [
 
 [[package]]
 name = "rich"
-version = "13.9.4"
+version = "15.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "markdown-it-py" },
     { name = "pygments" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ab/3a/0316b28d0761c6734d6bc14e770d85506c986c85ffb239e688eeaab2c2bc/rich-13.9.4.tar.gz", hash = "sha256:439594978a49a09530cff7ebc4b5c7103ef57baf48d5ea3184f21d9a2befa098", size = 223149, upload-time = "2024-11-01T16:43:57.873Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c0/8f/0722ca900cc807c13a6a0c696dacf35430f72e0ec571c4275d2371fca3e9/rich-15.0.0.tar.gz", hash = "sha256:edd07a4824c6b40189fb7ac9bc4c52536e9780fbbfbddf6f1e2502c31b068c36", size = 230680, upload-time = "2026-04-12T08:24:00.75Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/19/71/39c7c0d87f8d4e6c020a393182060eaefeeae6c01dab6a84ec346f2567df/rich-13.9.4-py3-none-any.whl", hash = "sha256:6049d5e6ec054bf2779ab3358186963bac2ea89175919d699e378b99738c2a90", size = 242424, upload-time = "2024-11-01T16:43:55.817Z" },
+    { url = "https://files.pythonhosted.org/packages/82/3b/64d4899d73f91ba49a8c18a8ff3f0ea8f1c1d75481760df8c68ef5235bf5/rich-15.0.0-py3-none-any.whl", hash = "sha256:33bd4ef74232fb73fe9279a257718407f169c09b78a87ad3d296f548e27de0bb", size = 310654, upload-time = "2026-04-12T08:24:02.83Z" },
 ]
 
 [[package]]

@@ -87,9 +87,9 @@ async def test_lifespan_starts_tasks_and_applies_a_command(
 
     with caplog.at_level(logging.INFO, logger="punt_vox.voxd.daemon"):
         async with daemon._lifespan(app):  # pyright: ignore[reportPrivateUsage]
-            # (a) all three background tasks were announced started.
+            # (a) the background tasks (incl. the scene publisher) were announced.
             assert any(
-                "control writer, and playback loop started" in r.getMessage()
+                "control writer, loop, and scene publisher up" in r.getMessage()
                 for r in caplog.records
             )
             # (b) a posted command is applied end-to-end by the running writer.

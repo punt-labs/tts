@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **voxd music player — the `vox.music` lux scene (phase 1, push-only, vox-efa6).** `voxd` now hosts a headless app that mirrors the saved-album catalog and the current now-playing onto a lux scene, keeping a live browse-your-music surface truthful as playback and the catalog change. The daemon holds lux's public `LuxRestClient`, builds the `vox.music` scene (a now-playing marquee, a Stop control, and one Play-buttoned row per album), and re-pushes it on every state change — a play or stop from any surface (CLI, `mic`, or a lux click), an auto-advance on track-end, or a catalog `music new`/`music remove`. The player adds no audio machinery: it is a projection of voxd's one active source, and the modelled `PlayerView` invariants (at most one album playing; now-playing present iff playing; a played album is catalogued) are pinned in `docs/vox-music-player.tex`. The re-push never blocks playback: the change signal fires inside the control-channel single-writer but only hands the freshly built scene to a latest-wins mailbox, and the blocking `PUT /scenes/vox.music` runs off-thread on the publisher's own task, where a slow or unreachable luxd is logged and dropped — a dead display can never stall audio. The in-scene Play/Stop buttons render but are inert until the phase-2 receive leg lands.
+
 ## [4.16.0] - 2026-07-28
 
 ### Added

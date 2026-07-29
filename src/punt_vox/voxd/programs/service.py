@@ -25,6 +25,7 @@ from punt_vox.voxd.programs.active_context import (
 from punt_vox.voxd.programs.album_binder import AlbumBinder
 from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint, TagQuery
 from punt_vox.voxd.programs.catalog import Album, Catalog
+from punt_vox.voxd.programs.change_signal import ChangeSignal
 from punt_vox.voxd.programs.control_channel import ControlChannel
 from punt_vox.voxd.programs.fill_reconciler import FillReconciler
 from punt_vox.voxd.programs.filler import Filler
@@ -66,6 +67,7 @@ class ProgramService:
     __slots__ = (
         "_binder",
         "_catalog",
+        "_changes",
         "_channel",
         "_context",
         "_filler",
@@ -83,6 +85,7 @@ class ProgramService:
     _filler: Filler
     _health: PlaybackHealth
     _loop: ProgramLoop
+    _changes: ChangeSignal
 
     def __new__(
         cls, producer: Producer, store: ProgramStore, root: Path, sleeper: Sleeper
@@ -100,7 +103,17 @@ class ProgramService:
         self._loop = ProgramLoop(
             self._channel, SubprocessPlayer(self), sleeper, self._health
         )
+        # One change signal drives the scene re-push: the single-writer fires it
+        # after each applied command, the catalog after each new/remove.
+        self._changes = ChangeSignal()
+        self._channel.attach_change_signal(self._changes)
+        self._catalog.attach_change_signal(self._changes)
         return self
+
+    @property
+    def changes(self) -> ChangeSignal:
+        """Return the change signal the music player subscribes to (PY-DP-8)."""
+        return self._changes
 
     # -- injected seams (FillPlanSource + PlayerDirectory) ------------------
 
