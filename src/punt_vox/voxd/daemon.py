@@ -35,6 +35,7 @@ from punt_vox.voxd.config import (
 from punt_vox.voxd.crash_logging import CrashLogger
 from punt_vox.voxd.handler_registry import HandlerRegistry
 from punt_vox.voxd.health import DaemonHealth
+from punt_vox.voxd.music_player import MusicPlayerSubsystem
 from punt_vox.voxd.playback import PlaybackQueue
 from punt_vox.voxd.programs.music_producer import LengthPolicy, MusicProducer
 from punt_vox.voxd.programs.wiring import ProgramSubsystem
@@ -160,17 +161,22 @@ class VoxDaemon:
 
         The Programs subsystem contributes two background tasks: the single
         control-channel writer (the sole mutator of the Program, O2) and the
-        playback loop that plays and advances Parts. Both ride the daemon's
-        lifetime and are cancelled on shutdown.
+        playback loop that plays and advances Parts. The music player adds a
+        third -- the lux scene publisher, which pushes the initial ``vox.music``
+        scene and re-pushes on every change signal. All ride the daemon's
+        lifetime and are cancelled on shutdown; a down luxd never blocks them.
         """
         service = self._programs.service
+        music = MusicPlayerSubsystem(service, service.changes)
         consumer_task = asyncio.create_task(self._playback.consumer())
         control_task = asyncio.create_task(service.serve_control())
         playback_task = asyncio.create_task(service.run_playback())
-        logger.info("Playback consumer, control writer, and playback loop started")
+        scene_task = asyncio.create_task(music.run())
+        logger.info("Playback consumer, control writer, loop, and scene publisher up")
         try:
             yield
         finally:
+            await VoxDaemon._cancel(scene_task)
             await VoxDaemon._cancel(playback_task)
             await VoxDaemon._cancel(control_task)
             service.shutdown()
