@@ -1,0 +1,50 @@
+mission_id: m-2026-07-28-008
+status: closed
+type: implement
+created_at: "2026-07-28T03:26:04Z"
+updated_at: "2026-07-28T04:40:17Z"
+closed_at: "2026-07-28T04:40:17Z"
+leader: claude
+worker: mdm
+evaluator:
+    handle: rmh
+    pinned_at: "2026-07-28T03:26:04Z"
+    hash: 5b496cf24ebb9b95b94676bb1d6671dcc6f8eb7d56747e0648efc9f7ae36a953
+inputs: {}
+write_set:
+    - src/punt_vox/
+    - src/punt_vox/__main__.py
+    - src/punt_vox/server.py
+    - commands/
+    - tests/
+success_criteria:
+    - 'Core enable(repo)/disable(repo)/purge functions (a commands module), matching the Z model docs/vox-enable-disable.tex: Enable is idempotent and reaches Enabled (deposit .punt-labs/vox/CLAUDE.md guide, write .punt-labs/vox/enabled marker, add the import via M1''s ClaudeMdImport, additively register .claude/settings.json entries via M1''s SiblingLock + the permissions.md §6 jq pattern). Disable reaches Dormant/Absent: remove the import, delete the marker, deregister settings — dirPresent'' = dirPresent (a FRAME; never create or remove the dir). Purge = disable (REMOVE THE IMPORT) then remove the subtree — never leave an orphan @-import (§2.11).'
+    - 'The biconditional holds after every op: marker present <=> exactly one @.punt-labs/vox/CLAUDE.md import in the repo CLAUDE.md. No auto-enable (§2.3): vox never self-enables on first use.'
+    - 'CLI verbs in __main__.py: `vox enable`, `vox disable` (+ `--purge`), and `vox notify normal|continuous` (the retired /vox `c`-level as per-repo config, separate from the marker). Retire the `y|n|c` arm.'
+    - 'MCP: a `mic` tool taking `action: "enable" | "disable"` (NOT enabled: bool, §2.14) that routes to the same core — the marker written by /vox enable is byte-identical to `vox enable`. Both surfaces, one marker.'
+    - 'Slash commands: commands/enable.md, commands/disable.md (via the mic action); update commands/vox.md to retire y|n|c, keep model/provider, and point notify at `vox notify`.'
+    - 'The deposited .punt-labs/vox/CLAUDE.md guide is surface-aware per design §3.4: a preamble routing to the available surface, an MCP/slash section, and an UNCONDITIONAL CLI section (the plugin-less agent is the general case) documenting the agent-relevant `vox` CLI commands so a --no-plugin+enable agent can drive vox. Respect DES-042 (MCP unmute vs CLI invocation).'
+    - 'TDD per the .tex: Enable idempotence (second enable adds no second import); Disable non-destructive + removes import+marker; Purge removes the import (no orphan) + the subtree; the biconditional after each; the MCP action and CLI produce identical markers. make check green AND — after the LAST commit that adds any new file — run make update-oo + make update-coupling, confirm new modules are in both baselines, then make check on a CLEAN tree (git stash unrelated dirt first) EXIT 0. Commit incrementally.'
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 1
+context: |
+    M2 of vox-ck3w (branch feat/vox-enable-disable, already checked out). The M1
+    import writer (ClaudeMdImport in src/punt_vox/claude_md.py, SiblingLock in
+    sibling_lock.py, MarkdownDoc in markdown_doc.py) is merged into the branch and
+    ACCEPTED — USE it, do not reimplement the import/lock/atomic machinery. Read the
+    ratified design docs/vox-enable-disable.md (all of §3, esp. §3.3 operations,
+    §3.4 guide, §3.5 hook-gate note) and the Z model docs/vox-enable-disable.tex
+    (Enable/Disable/Purge, the biconditional invariant, the Purge-removes-import and
+    Disable-frames-dir corrections the model surfaced). Both are on the branch.
+
+    This mission is the enable/disable CORE + the three surfaces (CLI, MCP, slash) +
+    the deposited guide. It does NOT touch install.sh (M4) or gate the plugin
+    session hooks (M3) — those are separate missions on this branch.
+
+    Follow the OO rules; the state machine is the correctness crux — a wrong Disable
+    or Purge orphans an @-import that 404s in every session (§2.11 hard fail), so
+    the tests must assert the biconditional and the no-orphan property by name. Do
+    NOT push, open a PR, run make install, or restart the daemon. Submit via ethos
+    mission result.

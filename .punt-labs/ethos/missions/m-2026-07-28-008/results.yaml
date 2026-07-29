@@ -1,0 +1,73 @@
+results:
+    - mission: m-2026-07-28-008
+      round: 1
+      created_at: "2026-07-28T04:33:07Z"
+      author: mdm
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/enablement.py
+          added: 243
+          removed: 0
+        - path: src/punt_vox/settings_registration.py
+          added: 125
+          removed: 0
+        - path: src/punt_vox/cli_enablement.py
+          added: 182
+          removed: 0
+        - path: src/punt_vox/server_enablement.py
+          added: 80
+          removed: 0
+        - path: src/punt_vox/__main__.py
+          added: 7
+          removed: 34
+        - path: src/punt_vox/server.py
+          added: 7
+          removed: 0
+        - path: src/punt_vox/assets/global-guidance.md
+          added: 48
+          removed: 10
+        - path: commands/enable.md
+          added: 17
+          removed: 0
+        - path: commands/disable.md
+          added: 17
+          removed: 0
+        - path: commands/vox.md
+          added: 9
+          removed: 22
+        - path: tests/test_enablement.py
+          added: 202
+          removed: 0
+        - path: tests/test_settings_registration.py
+          added: 123
+          removed: 0
+        - path: tests/test_cli_enablement.py
+          added: 67
+          removed: 0
+        - path: tests/test_server_enablement.py
+          added: 82
+          removed: 0
+        - path: tests/test_cli.py
+          added: 27
+          removed: 27
+        - path: tests/test_server.py
+          added: 2
+          removed: 2
+      evidence:
+        - name: 'make check exits 0 on the clean tree (only unrelated dirt: daemon-owned .punt-labs/vox/vox.md and ethos files).'
+          status: pass
+        - name: test_enablement.py asserts the 2.11 biconditional after every op and the no-orphan-on-purge property by name; enable idempotence and disable-frames-the-dir covered.
+          status: pass
+        - name: 'test_server_enablement.py::test_cli_and_mcp_write_byte_identical_markers proves both surfaces write the same marker; the mic tool takes action=enable|disable, not enabled: bool.'
+          status: pass
+        - name: 'E2E smoke drove the real vox CLI in a fresh git repo: enable -> marker+guide+import(1)+prose preserved+Bash(vox:*); re-enable -> import stays 1; notify continuous -> exit 0; disable -> marker gone, import 0, dir dormant; disable --purge -> dir gone, zero orphan import.'
+          status: pass
+        - name: Four new modules pass all absolute OO thresholds and are in both .oo-baseline.json and .oo-coupling-baseline.json; __main__.py improved (module_size 837->813, avg_complexity 3.27->3.12).
+          status: pass
+        - name: Reused M1's ClaudeMdImport / SiblingLock / MarkdownDoc unchanged; SettingsRegistration takes the same sibling lock for the .claude/settings.json write.
+          status: pass
+      open_questions:
+        - 'hooks/session-start.sh got a 2-line edit (added Skill(enable)/Skill(disable) to PLUGIN_RULES) because scripts/check-skill-permissions.sh, part of make lint, fails make check unless every commands/*.md has a matching Skill() auto-allow. This is the mechanical companion to the mandated slash commands, not the marker hook-gate M3 owns, but it is outside the listed write_set (src/punt_vox/, commands/, tests/). Flagging for the leader: the write_set should be extended to include it, or M3 should own it.'
+      prose: |
+        Commits (oldest first): 5a6c3f8 core enable/disable/purge + settings registration; 4420a9b CLI verbs (enable/disable/--purge/notify normal|continuous, y|n|c retired); 3718d75 mic enablement tool; b57f786 surface-aware guide + /enable /disable slash + /vox cutover. Two scoped OO/coupling relaxations were recorded via --relax with justifications: server.py module_size 603->609 and efferent +1 for the mic tool registration, and __main__.py efferent 13->14 for wiring the cli_enablement command group (matching cli_music/cli_rec). Did not touch install.sh (M4) or the chime/ narration marker hook-gate (M3); no push, PR, make install, or daemon restart.

@@ -1,0 +1,138 @@
+results:
+    - mission: m-2026-07-28-001
+      round: 1
+      created_at: "2026-07-28T02:46:06Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/claude_md.py
+          added: 104
+          removed: 134
+        - path: src/punt_vox/markdown_doc.py
+          added: 174
+          removed: 0
+        - path: src/punt_vox/sibling_lock.py
+          added: 55
+          removed: 0
+        - path: src/punt_vox/guidance.py
+          added: 10
+          removed: 15
+        - path: src/punt_vox/managed_section.py
+          added: 0
+          removed: 145
+        - path: src/punt_vox/markdown_fence.py
+          added: 0
+          removed: 77
+        - path: tests/test_claude_md.py
+          added: 383
+          removed: 703
+        - path: tests/test_markdown_doc.py
+          added: 178
+          removed: 0
+        - path: tests/test_sibling_lock.py
+          added: 71
+          removed: 0
+        - path: tests/test_guidance.py
+          added: 6
+          removed: 6
+        - path: tests/test_managed_section.py
+          added: 0
+          removed: 71
+        - path: tests/test_markdown_fence.py
+          added: 0
+          removed: 57
+      evidence:
+        - name: make check EXITS 0 on the committed tree -- ruff, format, shellcheck, skill-permissions, mypy, pyright, markdownlint, 3267 tests, OO ratchet, coupling ratchet, suppression ratchet all green
+          status: pass
+        - name: 'raw merge-base OO ratchet (--base-ref $(git merge-base origin/main HEAD) --require-base) PASS: claude_md.py + guidance.py all metrics IMPROVED, no regressions'
+          status: pass
+        - name: merge-base coupling ratchet PASS (no regressions); suppression ratchet decreased by 6
+          status: pass
+        - name: balanced-pair fence + unterminated-trailing-opener guard via two-pass matched-range classification (not the naive odd-count rule) -- test_markdown_doc + test_claude_md dangling-opener cases
+          status: pass
+        - name: sibling lock .<host>.punt-import.lock taken for the RMW; target itself never locked (fcntl.flock spy) -- test_claude_md + test_sibling_lock
+          status: pass
+        - name: byte-identical LF/CRLF/lone-CR register->prune round-trips + host-EOL appended line; symlink host followed; mode preserved (new file 0644)
+          status: pass
+        - name: 'ImportFile machine: AppendImport 0->1->1 (no self-duplicate); RemoveImport removes every match, collapsing 2->0 -- test_claude_md'
+          status: pass
+        - name: 'live API exercise on temp files: register-once/second-noop, dangling-opener import matched+pruned, fenced import inert, CRLF round-trip, sibling lock created -- expected==actual'
+          status: pass
+      prose: |
+        Commit: 219fff2b711737d215042c7625ccfd7c69c207e0 on feat/vox-enable-disable
+        (not pushed; no PR per mission).
+
+        Rewrote claude_md.py to the full tool-enable-disable.md §2.4 bare-line
+        contract, serving both the user-scope (@~/.punt-labs/vox/CLAUDE.md) and the
+        new repo-scope (@.punt-labs/vox/CLAUDE.md) import. Forward integration: the
+        retired managed-section marker grammar (managed_section.py) and its streaming
+        Fence scanner (markdown_fence.py) are deleted, not shimmed.
+
+        ClaudeMdImport(host_path, import_line) exposes register/prune/is_registered
+        and composes three collaborators: MarkdownDoc (top-level @-import
+        classification -- terminator-insensitive match, balanced-pair fence semantics,
+        the unterminated-trailing-opener guard, indented-code exclusion, plus EOL-aware
+        append), SiblingLock (the mandated exclusive flock on the tool-agnostic sibling
+        .<host>.punt-import.lock, never the target -- reusable by the later
+        settings.json writer), and the existing AtomicFile.
+
+        The old GlobalClaudeImports carried a multi-import managed SECTION; the bare
+        line model is single-line-bound, so the import line binds at construction
+        (matching biff's ClaudeMdImport reference). VoxGuidance and its tests updated
+        forward.
+
+        One commit: the writer swap is a single rollback-coherent unit -- deleting the
+        markers, rewriting claude_md, adding the two collaborators, and updating
+        callers/tests are mutually dependent, so no intermediate state is independently
+        green. Ratchet state (.oo-baseline.json, .oo-audit.jsonl,
+        .oo-coupling-baseline.json, .oo-coupling-audit.jsonl) is staged in the same
+        commit (not listed above -- repo-root artifacts outside the write_set).
+
+        Also fixed a blocking MD040 (bare code fence, line 185) in the untracked design
+        doc docs/vox-enable-disable.md so the local docs gate is green; left it
+        untracked (leader's artifact). Did not push, open a PR, run make install, or
+        restart the daemon.
+    - mission: m-2026-07-28-001
+      round: 2
+      created_at: "2026-07-28T03:22:22Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.95
+      files_changed: []
+      evidence:
+        - name: 'root cause -- markdown_doc.py and sibling_lock.py were absent from .oo-baseline.json / .oo-coupling-baseline.json: the round-1 update-oo ran while both were still untracked, so the git-diff touched set (merge-base..worktree) excluded them; a clean tree at 219fff2 failed check-oo with ''touched file(s) not in baseline'''
+          status: pass
+        - name: fix, no source change -- with both modules committed, make update-oo recorded them (grep .oo-baseline.json = 2) and make update-coupling recorded them (grep .oo-coupling-baseline.json = 2)
+          status: pass
+        - name: follow-up commit 74651feef52c820620df18c1f81ba017158deba1 stages the four ratchet-state files + the design artifacts docs/vox-enable-disable.md (with the MD040 fix) and docs/vox-enable-disable.tex
+          status: pass
+        - name: make check EXITS 0 on a CLEAN tree at HEAD (74651fe) -- verified after git stash of the two tracked ethos-session files; git status showed no tracked modifications, make check returned EXIT=0; stash popped cleanly, ethos state restored
+          status: pass
+        - name: merge-base OO ratchet + merge-base coupling ratchet both PASS on the committed HEAD; suppression ratchet -6
+          status: pass
+      prose: |
+        Round-2 blocking finding (djb): baseline gap. The round-1 make update-oo /
+        update-coupling ran while markdown_doc.py and sibling_lock.py were still
+        untracked, so the git-diff touched set excluded them and neither baseline
+        recorded the two new modules. A clean checkout at 219fff2 failed check-oo
+        ('touched file(s) not in baseline').
+
+        Fixed with no source change. With both modules committed (219fff2), the
+        git-diff touched set now includes them, so make update-oo added them to
+        .oo-baseline.json and make update-coupling added them to
+        .oo-coupling-baseline.json (grep confirms 2 each). Follow-up commit 74651fe
+        stages the four ratchet-state files plus the design + Z model
+        (docs/vox-enable-disable.md, .tex) this PR builds on.
+
+        Verified make check EXITS 0 on a CLEAN tree at HEAD: git-stashed the two
+        tracked ethos-session files (claude.yaml, missions.jsonl), confirmed git
+        status showed no tracked modifications (only untracked ethos artifacts, which
+        are outside the gate -- not .py in src/tests, not .md), ran make check ->
+        EXIT=0, then popped the stash to restore ethos state.
+
+        files_changed is empty: round 2 touched only the four repo-root ratchet-state
+        files and the two docs/ artifacts, all outside the contract write_set (which
+        is src/punt_vox/ and tests/). Lesson locked as a habit: after the LAST commit
+        that adds any new file, run make update-oo + make update-coupling, then make
+        check on a clean tree. Did not push or open a PR.

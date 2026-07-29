@@ -1,0 +1,102 @@
+results:
+    - mission: m-2026-07-26-019
+      round: 1
+      created_at: "2026-07-26T17:43:34Z"
+      author: djb
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: docs/wire-host-info-boundary.md
+          added: 245
+          removed: 0
+      evidence:
+        - name: enumerated every client-facing reply (HTTP /health, /ws verbs, program/music, router frames, WireReply fault)
+          status: pass
+        - name: field-by-field KEEP/SANITIZE/DROP audit table with file:line citations
+          status: pass
+        - name: identified systemic fault-frame path leak (10 str(exc) sites send verbatim on the wire)
+          status: pass
+        - name: specified Category-B fixes (doctor verdicts, status log health, vox-log INFO floor, cache_status.path)
+          status: pass
+        - name: flagged additional leaks (record.path, WS health diagnostic block, play stderr, program-status reason)
+          status: pass
+        - name: listed 5 operator decisions and a 10-item bead-ready fix list
+          status: pass
+      open_questions:
+        - 'D1: drop `provider` from the unauthenticated /health route (backend fingerprint to a network probe)?'
+        - 'D2: drop audio_env, player_binary, last_playback.file/stderr from the authenticated WS health payload while keeping pid + daemon_version for daemon restart/doctor?'
+        - 'D3: confirm daemon_version is acceptable over the authenticated channel only, never on unauthenticated /health?'
+        - 'D4: sanitize/bound program-status reason/last_error (provider SDK text can embed URL/path), or use a closed reason-code set?'
+        - 'D5: confirm hostname/username is never acceptable in any reply (they leak only via absolute paths today)?'
+      prose: |
+        Design/review only, no production code changed (write set: docs/). The invariant
+        is stated as a predicate over every frame: hostPaths = binaryInventory = identity
+        = empty, and version only over the authenticated channel.
+
+        The single biggest finding is systemic, not one field: WireReply.error/fault
+        (voxd/wire_reply.py:71) sanitizes the LOG record for injection but sends the wire
+        message VERBATIM. Every str(OSError) fault reply therefore leaks an absolute path
+        with the username -- 10 sites: cache_handlers.py:55,89; rec_handlers.py:103;
+        record_handler.py:136,145; chunked_fetch.py:152,162; speech_handlers.py:212,217,229;
+        play_handler.py:95. The fix is the pattern two handlers already use (voices, the
+        fetch stat branch): logger.exception the detail, reply fault("operation failed").
+
+        The four named leaks (cache_status.path, doctor detail, MCP status log path, the
+        vox-log floor) are joined by record's audio-reply path, the WS health diagnostic
+        block (player_binary/audio_env/last_playback.file+stderr), the play stderr fault,
+        and program-status free-form reason/last_error sourced from str(exc). Ten fixes
+        enumerated for beads; five operator decisions gate three of them. Full table and
+        fix list in docs/wire-host-info-boundary.md.
+    - mission: m-2026-07-26-019
+      round: 2
+      created_at: "2026-07-26T19:34:51Z"
+      author: djb
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: docs/wire-host-info-boundary.md
+          added: 90
+          removed: 70
+      evidence:
+        - name: reframed invariant §1 as a conceptual chroot; updated predicate to relativeToDataRoot
+          status: pass
+        - name: specified the relativize_to_data_root(path) boundary helper and the two labeled roots (state / output)
+          status: pass
+        - name: reclassified in-jail path leaks DROP->RELATIVIZE (cache_status.path, record.path, last_playback.file, MCP status log, doctor dirs)
+          status: pass
+        - name: improved the systemic fault fix to build from exc.filename relativized + exc.strerror with a generic fallback
+          status: pass
+        - name: re-scoped beads
+          status: pass
+        - name: recorded D1-D5 as settled in §6; scrubbed the banned term load-bearing (grep exit 1)
+          status: pass
+      prose: |
+        Round 2 folds in the operator's chroot ruling and rmh's cross-surface REVISE.
+        Design only, no code.
+
+        Invariant reframed: the daemon is conceptually chrooted to its data root; a
+        path crosses relative to that root, the absolute prefix never does. The
+        predicate is now forall p in paths(frame): p = relativeToDataRoot(p). Two
+        labeled roots confirmed against source -- state = ~/.punt-labs/vox (holds
+        cache/, recordings/, logs/vox.log; paths.py) and output = VOX_OUTPUT_DIR /
+        ~/Music/vox (dirs.py:86-93). One helper relativize_to_data_root(path) at the
+        wire boundary resolves both roots and the candidate, returns (label, relpath)
+        in-jail or None out-of-jail; it is bead #0, the shared dependency.
+
+        Most former DROPs are now RELATIVIZE: cache_status.path -> cache, record.path
+        -> recordings/foo.mp3, last_playback.file -> relative, MCP status log ->
+        logs/vox.log + healthy/degraded, doctor output/music dirs -> relative.
+        Out-of-jail host facts stay verdict-only: player_binary, audio_env, provider,
+        versions, hostname. The systemic fault fix improves from generic to
+        exc.filename-relativized + exc.strerror ("recordings/foo.mp3: permission
+        denied"), generic fallback only for an unrelativizable filename or non-OSError;
+        raw str(exc) still to the log.
+
+        rmh's REVISE confirmed against client.py: CacheStatus.from_wire does
+        require_str("path") (client.py:101) and record() reads terminal["path"] into
+        RecordResult.store_path (client.py:67,709). Beads #2/#3 re-scoped to daemon +
+        client.py + CLI in lockstep; §2.3 no longer claims name+bytes replaces the
+        locator, and §7 no longer calls #2/#3 shippable without a socket.
+
+        D1-D5 recorded as settled in §6. Banned term "load-bearing" scrubbed.
+        Revised doc: docs/wire-host-info-boundary.md.

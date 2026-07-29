@@ -1,0 +1,65 @@
+mission_id: m-2026-07-26-020
+status: closed
+type: implement
+created_at: "2026-07-26T23:01:33Z"
+updated_at: "2026-07-27T00:53:36Z"
+closed_at: "2026-07-27T00:53:36Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: djb
+    pinned_at: "2026-07-26T23:01:33Z"
+    hash: 19095bb477fb03f170676196565c083685e3346baca4f3aabae4314b6bec37c0
+inputs: {}
+write_set:
+    - src/punt_vox/voxd/
+    - src/punt_vox/
+    - tests/
+    - docs/
+success_criteria:
+    - 'relativize_to_data_root(path) -> (label, relpath) | None implemented per doc S1.1: resolves the state and output roots and the candidate with .resolve() BEFORE comparing (symlink/../ cannot appear in-jail when it is not; mirror the ContainmentRoot discipline); in-jail returns (label, relative path), out-of-jail returns None. Unit-testable without a socket.'
+    - 'WireReply fault contract per doc S2.6: fault message built from relativize_to_data_root(exc.filename) + exc.strerror (''recordings/foo.mp3: permission denied''); generic ''operation failed'' fallback for out-of-jail / None-filename / non-OSError; raw str(exc) always logged via logger.exception. Every one of the 10 sites in the S2.6 table converted.'
+    - Client-rejection ERROR frames that echo the client's own input (hostile ref, unknown chime signal, 'unknown message type') stay verbatim — not host recon.
+    - No fault frame carries an absolute prefix or home dir (wire test asserts the message matches no absolute path and no 'Errno'). The helper is traversal-safe. No migration/compat/shim — the verbatim-fault path is replaced, not bridged.
+    - The design doc docs/wire-host-info-boundary.md (on the branch, uncommitted) is committed as part of the work, with any markdownlint fixed so make check passes.
+    - 'TDD: helper unit tests (in-jail relative, out-of-jail None, symlink/../ no-escape) and fault wire tests (relativized message, generic fallback, no absolute prefix) written first, each failing pre-fix. make check green and the raw merge-base OO ratchet exits 0 on every commit (stage .oo-baseline.json + .oo-audit.jsonl, and .oo-coupling-baseline.json if coupling grows). Commit incrementally, one logical step per commit, each green, never >30 min uncommitted.'
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 2
+context: |
+    Implement bead vox-a7dd (branch fix/vox-a7dd, already checked out) per the
+    ratified design docs/wire-host-info-boundary.md — read S1.1 (the helper) and
+    S2.6 (the fault contract) first. This is the FIRST and foundational bead of the
+    vox-93ej trust-boundary epic; four sibling beads build on the helper.
+
+    Two deliverables:
+
+    (a) relativize_to_data_root(path) -> (label, relpath) | None — a new
+    wire-boundary helper (S1.1). Two data roots: state = paths.user_state_dir()
+    (~/.punt-labs/vox), output = dirs.default_output_dir() (VOX_OUTPUT_DIR or
+    ~/Music/vox). Resolve both roots and the candidate with .resolve() BEFORE
+    comparing, so a symlink or ..-bearing path cannot appear in-jail when it is
+    not — the same containment discipline ContainmentRoot already applies to
+    inbound names. In-jail returns (label, path-relative-to-root); under neither
+    root returns None.
+
+    (b) WireReply fault contract (S2.6). Today WireReply.error/fault send the
+    message VERBATIM on the wire while only sanitizing the log record, so 10
+    str(exc) sites leak an absolute prefix with the username. Rebuild the wire
+    message from the exception's own fields:
+      rel = relativize_to_data_root(exc.filename)
+      if rel is not None:  wire = f"{rel.path}: {exc.strerror.lower()}"
+      else:                wire = "operation failed"
+    and always log the raw str(exc) via logger.exception. Convert every site in the
+    S2.6 table: cache_handlers.py:55,89; rec_handlers.py:103; record_handler.py:136,
+    145; chunked_fetch.py:152,162; speech_handlers.py:212,217,229; play_handler.py:95.
+    Client-rejection ERROR frames that echo the client's OWN input (a hostile ref,
+    an unknown chime signal, "unknown message type") stay verbatim — the attacker
+    supplied the value; it is not host recon.
+
+    You decide the helper's module placement within the admitted paths and follow
+    the OO rules. The design doc is on your branch uncommitted; commit it as part of
+    the work (fix any markdownlint). Do NOT push, open a PR, run make install, or
+    restart the daemon — the leader handles verification and the PR. Submit via
+    ethos mission result.

@@ -1,0 +1,70 @@
+results:
+    - mission: m-2026-07-28-009
+      round: 1
+      created_at: "2026-07-28T05:43:54Z"
+      author: mdm
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: hooks/notify.sh
+          added: 5
+          removed: 1
+        - path: hooks/notify-permission.sh
+          added: 5
+          removed: 1
+        - path: hooks/acknowledge.sh
+          added: 5
+          removed: 1
+        - path: hooks/farewell.sh
+          added: 5
+          removed: 1
+        - path: hooks/pre-compact.sh
+          added: 5
+          removed: 1
+        - path: hooks/subagent.sh
+          added: 5
+          removed: 1
+        - path: hooks/vibe-nudge.sh
+          added: 5
+          removed: 1
+        - path: tests/test_hook_gate.py
+          added: 141
+          removed: 0
+        - path: tests/test_hook_scripts.py
+          added: 13
+          removed: 3
+      evidence:
+        - name: make check exit 0 — ruff, shellcheck -x hooks/*.sh, mypy, pyright, markdownlint, pytest (3300+), check-oo (no regressions), check-coupling (no regressions), check-suppressions.
+          status: pass
+        - name: 'test_hook_gate.py drives all 7 gated hooks as subprocesses: marker present + stub vox on PATH -> hook reaches vox (sentinel written); marker absent -> silent exit 0; vox absent from PATH -> silent exit 0; git-subdir case proves the root resolves via git rev-parse, not cwd.'
+          status: pass
+        - name: test_hook_scripts.py asserts the marker gate (.punt-labs/vox/enabled + command -v vox) and the removal of the retired vox.md/vox.local.md config-presence check.
+          status: pass
+        - name: make update-oo + make update-coupling both report baselines UNCHANGED (oo_score/oo_coupling score src/punt_vox/ only; shell + tests are unscored); the no-op .oo-audit.jsonl append was reverted to keep the change scoped.
+          status: pass
+      prose: |
+        Gated the seven audio/narration session hooks on the per-repo enabled
+        marker per design vox-enable-disable.md §3.5 and standard
+        tool-enable-disable.md §2.7. Each hook, after extracting cwd from stdin,
+        resolves the repo root:
+
+          _repo_root=$(git -C "$_cwd" rev-parse --show-toplevel 2>/dev/null) || _repo_root="$_cwd"
+          [ -f "$_repo_root/.punt-labs/vox/enabled" ] || exit 0
+          command -v vox >/dev/null 2>&1 || exit 0
+
+        git rev-parse falls back to the hook cwd outside a git worktree and never
+        errors. The gate REPLACES the retired vox.md/vox.local.md config-presence
+        check — keeping it would keep firing audio in a disabled repo whose config
+        is left dormant.
+
+        Scope note on the hook set: the mission named notify.sh, signal.sh,
+        notify-permission.sh. signal.sh does not exist; the real audio session
+        hooks are the seven gated here (notify, notify-permission, acknowledge,
+        vibe-nudge, pre-compact, farewell, subagent) — exactly the group the
+        existing test _SCRIPTS tuple tracks. Design §3.5 gates "vox's plugin
+        session hooks"; gating only three would leave the other four firing off
+        dormant config after `disable`. session-start.sh and suppress-output.sh
+        stay ungated so the slash commands and mic MCP tools remain available to
+        run `vox enable` in a not-yet-enabled repo.
+
+        Touched only hooks/ and tests/. No src/, no install.sh.

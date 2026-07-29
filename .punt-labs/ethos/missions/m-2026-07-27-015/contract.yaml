@@ -1,0 +1,53 @@
+mission_id: m-2026-07-27-015
+status: closed
+type: implement
+created_at: "2026-07-27T15:37:45Z"
+updated_at: "2026-07-27T18:51:54Z"
+closed_at: "2026-07-27T18:51:54Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: djb
+    pinned_at: "2026-07-27T15:37:45Z"
+    hash: 19095bb477fb03f170676196565c083685e3346baca4f3aabae4314b6bec37c0
+inputs: {}
+write_set:
+    - src/punt_vox/voxd/
+    - src/punt_vox/
+    - tests/
+success_criteria:
+    - 'vox-9qfr / #2 / #3 (CROSS-SURFACE, daemon + client.py + CLI in lockstep): relativize record.path (record_handler -> recordings/foo.mp3; client.py record()/RecordResult parse the relative form; vox rec CLI) and cache_status.path (cache_handlers -> `cache`; CacheStatus.from_wire parse relative; vox cache status CLI). The client REQUIRES `path` today (require_str / required-field loop) — change all three surfaces together; the client parses a RELATIVE path, not an absolute one.'
+    - 'vox-aijb / #7: MCP status log health — replace `log`/`vibe_trace` {path, writable} (SinkHealth) with a relative name (logs/vox.log) plus a healthy/degraded verdict, no absolute path (server.py; add a prefix-free health view alongside SinkHealth or map at the status boundary).'
+    - 'vox-aijb / #8: doctor verdicts — out-of-jail which/config paths (ffmpeg, espeak, uvx, claude_desktop) -> present/absent verdicts with no `which` path and no version string; in-jail output/music dirs -> relative under the output root + writable verdict; drop raw OSError text (doctor.py). daemon_version stays authenticated-only, printed to the LOCAL operator only (D3).'
+    - 'vox-yuph / #9: a new wire op to set the daemon''s log level, clamped SERVER-SIDE to >= INFO so a token-holding client cannot drop the daemon below the audit trail; vox log routes through it, replacing the local-config write (__main__.py); reject or clamp any sub-INFO request. A single clamped setter (no state machine, no z-spec).'
+    - Reuse the MERGED helpers relativize_to_data_root (voxd/data_root_boundary.py), SafeText (voxd/wire_text.py), SafeFault (voxd/wire_fault.py); do NOT reimplement. No absolute prefix / host-binary inventory / version in any of these client-facing outputs (the chroot invariant). No migration/compat/shim.
+    - 'TDD: tests assert the relativized record/cache path on the wire and through the client; the status log verdict (no path); doctor''s present/absent verdicts (no which-path/version); the log-op INFO floor (a sub-INFO wire request is rejected/clamped). Each fails pre-fix. make check green and the raw merge-base OO ratchet exits 0 on every commit; commit incrementally per bead/concern, never >30 min uncommitted.'
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 2
+context: |
+    PR 2 of the vox-93ej epic (beads vox-9qfr + vox-aijb + vox-yuph), on branch
+    feat/wire-boundary-client (already checked out). Theme: the client/CLI/MCP side
+    of the trust boundary — relativized paths, verdicts instead of host inventory,
+    and log-level control with an audit floor. Read the ratified design
+    docs/wire-host-info-boundary.md — §2.3/§2.4 (#2/#3), §3 (#7), §4 (#8), §5 and
+    §7 #9, §6 D3.
+
+    The foundation and the daemon-reply hygiene (PR 1) are already merged to main:
+    relativize_to_data_root, SafeText, SafeFault, and the health/play/program
+    sanitization. This PR USES those and finishes the client-facing surface. The
+    invariant is a7dd's chroot: an in-jail path crosses relativized, an out-of-jail
+    host fact crosses as a verdict, version stays authenticated-only.
+
+    Three concerns, commit each separately:
+    1. #2/#3 cross-surface path relativization (record + cache_status) — daemon +
+       client.py + CLI in lockstep, because the client requires `path` today.
+    2. #7/#8 MCP status log-health verdict + doctor verdicts/relative paths.
+    3. #9 vox log wire op with a server-side INFO floor.
+
+    You decide the exact edits within the admitted paths and follow the OO rules.
+    Note: two untracked files in the tree (.github/workflows/biff-notify.yml,
+    .punt-labs/biff/enabled) are NOT part of this work — leave them alone, do not
+    stage them. Do NOT push, open a PR, run make install, or restart the daemon —
+    the leader handles verification and the PR. Submit via ethos mission result.

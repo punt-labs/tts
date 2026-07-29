@@ -1,0 +1,43 @@
+mission_id: m-2026-07-28-011
+status: closed
+type: implement
+created_at: "2026-07-28T05:46:18Z"
+updated_at: "2026-07-28T06:38:55Z"
+closed_at: "2026-07-28T06:38:55Z"
+leader: claude
+worker: adb
+evaluator:
+    handle: djb
+    pinned_at: "2026-07-28T05:46:18Z"
+    hash: 19095bb477fb03f170676196565c083685e3346baca4f3aabae4314b6bec37c0
+inputs: {}
+write_set:
+    - install.sh
+    - README.md
+    - tests/
+success_criteria:
+    - install.sh parses `--no-plugin` from "$@" and honors `VOX_NO_PLUGIN=1` identically (skip iff the env var equals exactly `1`; any other value ignored). Unknown flags exit 2 with a usage message.
+    - When skip is requested, ONLY the marketplace + plugin steps (the `claude plugin marketplace add/update` + `claude plugin install` steps) are skipped. The binary install, PATH setup, tool directories, seed content, and the user-scope import/enable all still run — a --no-plugin box still gets a working `vox` CLI and its `~/.punt-labs/vox/CLAUDE.md` import.
+    - 'Both invocation forms work over `curl … | sh`: `sh -s -- --no-plugin` (flag) and `VOX_NO_PLUGIN=1 sh` (env). The final ''is ready'' message reflects CLI-only when the plugin was skipped.'
+    - README documents both the default one-liner and the `--no-plugin` one-liner (flag and env forms), per install-cli-only.md §80-82 and the checklist §171-180.
+    - 'shellcheck -x clean on install.sh (make lint). A scripted test or docs/testing addition covers: flag form skips the plugin steps; env form does the same; unknown flag exits 2; absent flag installs the plugin (default).'
+    - make check green. install.sh + README are not OO-scored, so no baseline change is expected; if any new scored file is added, run make update-oo/update-coupling post-commit and make check on a clean tree exits 0.
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 1
+context: |
+    M4 (final) of vox-ck3w (branch feat/vox-enable-disable, already checked out).
+    Read ../punt-kit/standards/install-cli-only.md in full — it is the spec, names
+    `VOX_NO_PLUGIN`, and carries a conformance checklist (§171-180) and a reference
+    parse (§94, §114). Also read design docs/vox-enable-disable.md §3.7 and §1 (the
+    intersection: a --no-plugin box relies on `vox enable` at the CLI, which the
+    enable/disable work — already merged into this branch — provides).
+
+    This is the install-cli-only.md conformance piece. It touches ONLY install.sh,
+    README.md, and tests. It does NOT touch src/, hooks/, or the enable/disable
+    code (already done). The enable/disable CLI verbs already exist on this branch,
+    so a --no-plugin user has `vox enable` to turn a repo on without the plugin.
+
+    Do NOT push, open a PR, run make install, or restart the daemon. Submit via
+    ethos mission result.

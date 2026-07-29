@@ -1,0 +1,142 @@
+results:
+    - mission: m-2026-07-25-031
+      round: 1
+      created_at: "2026-07-26T00:37:42Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/types_programs/prompts.py
+          added: 15
+          removed: 0
+        - path: src/punt_vox/server_music_tool.py
+          added: 333
+          removed: 0
+        - path: src/punt_vox/server.py
+          added: 30
+          removed: 178
+        - path: src/punt_vox/server_audio_tools.py
+          added: 145
+          removed: 127
+        - path: src/punt_vox/catalog_gateway.py
+          added: 11
+          removed: 3
+        - path: src/punt_vox/client_catalog_gateway.py
+          added: 6
+          removed: 3
+        - path: src/punt_vox/client_sync.py
+          added: 8
+          removed: 3
+        - path: src/punt_vox/voxd/programs/library_handlers.py
+          added: 11
+          removed: 4
+        - path: src/punt_vox/cli_music.py
+          added: 152
+          removed: 12
+        - path: src/punt_vox/cli_rec.py
+          added: 54
+          removed: 8
+        - path: src/punt_vox/__main__.py
+          added: 2
+          removed: 2
+        - path: commands/music.md
+          added: 12
+          removed: 8
+        - path: commands/vibe.md
+          added: 1
+          removed: 1
+        - path: tests/test_server_music_tool.py
+          added: 321
+          removed: 0
+        - path: tests/test_server.py
+          added: 52
+          removed: 7
+        - path: tests/test_server_rec_music.py
+          added: 91
+          removed: 146
+        - path: tests/test_cli_music.py
+          added: 115
+          removed: 6
+        - path: tests/test_cli_rec.py
+          added: 28
+          removed: 3
+        - path: tests/test_client.py
+          added: 4
+          removed: 3
+        - path: tests/test_client_catalog_gateway.py
+          added: 5
+          removed: 3
+        - path: tests/test_music_prompts.py
+          added: 27
+          removed: 0
+        - path: tests/test_suppress_output.py
+          added: 49
+          removed: 31
+        - path: tests/programs/test_library_handlers.py
+          added: 17
+          removed: 13
+        - path: .oo-baseline.json
+          added: 36
+          removed: 23
+        - path: .oo-audit.jsonl
+          added: 16
+          removed: 0
+        - path: .oo-coupling-baseline.json
+          added: 18
+          removed: 11
+      evidence:
+        - name: make check (lint + mypy/pyright strict + 3166 tests + check-oo + check-coupling + check-suppressions)
+          status: pass
+        - name: 'raw merge-base OO ratchet: oo_score.py --check --base-ref $(git merge-base origin/main HEAD) --require-base -> exit 0'
+          status: pass
+        - name: 'test count delta: 3138 (origin/main) -> 3166 (HEAD) = +28 tests; coverage rises'
+          status: pass
+        - name: 'Section 1 verified: music new sends PromptSet on both surfaces, wire key base_prompt, bare-string path deleted (grep clean)'
+          status: pass
+        - name: 'leader amendment: subcommand is Literal on both tools; dispatch via explicit ClassVar method table (no if-ladder, no getattr)'
+          status: pass
+        - name: 'live CLI smoke: vox music --help lists on; malformed piped pool -> clean typer.Exit, no crash'
+          status: pass
+        - name: 'MCP surface uniform: tool count 18 -> 8; fold-to-single-tool tests confirm old per-verb names are gone'
+          status: pass
+      open_questions:
+        - 'OUT-OF-WRITE-SET EDITS (leader audit + recommend write_set expansion): (1) src/punt_vox/client.py -- VoxClient.music_new builds the wire message, so the prompt->base_prompt rename is impossible without it; (2) hooks/suppress-output.sh -- the panel router switched on the seven now-deleted music tool names and five rec names, so after the collapse it MUST route the single music/rec tools on their subcommand input, or control-action-no-text and query-keeps-RESULT break. Also .oo-coupling-audit.jsonl (coupling audit companion, not listed beside .oo-coupling-baseline.json in the write set) was appended by the coupling relaxations. Each is the unavoidable reach of the collapse (PY-RF-6), not a design choice.'
+        - 'DESIGN CORRECTION: the design said MusicNewHandler parses PromptSet.from_wire, but from_wire requires exactly 12 variations and cannot parse a base-only single-track message; the handler instead reads base_prompt directly and wraps PromptSet.single(base).prompt_for(0) -- the correct base-only path, matching the design intent.'
+        - 'SCOPED RATCHET RELAXES (each justified in the audit logs): prompts.py, server_audio_tools.py, catalog_gateway, client_catalog_gateway, client_sync, client, library_handlers, cli_music, cli_rec -- all unavoidable per-file costs of forward integration and the --json/on features; the PR net is a large improvement (server.py -136 module_size, server_audio_tools -52 and -1 class). server_music_tool.py (289) and cli_music.py (~340) are the largest touched modules; further splitting is a follow-up, not a blocker.'
+      prose: |
+        Phase 1.5 -- the music AND rec command-surface tidy -- is implemented in five
+        commits on feat/vox-music-tidy, per the operator ruling that both groups
+        collapse in one PR so the MCP surface is never uneven.
+
+        Commit SHAs (each passes make check):
+          dc2183e  PromptSet.single (one-track authored input)
+          f40db77  single `music` tool + music_new PromptSet migration (base_prompt wire)
+          6eaffa8  single `rec` tool
+          b4efcb8  --json parity on every music and rec CLI verb (vox-cnak)
+          2e97200  vox music on (stdin pool via isatty gate)
+
+        The shape is uniform: `vox <group> <subcommand>` maps to the MCP tool
+        `<group>` with its first argument `<subcommand>`. One MusicTool
+        (server_music_tool.py, new) and one reshaped RecTool (server_audio_tools.py)
+        each dispatch a Literal subcommand through an explicit ClassVar method table to
+        per-verb handlers that read a frozen Args bundle (MusicArgs / RecArgs, PY-OO-3).
+        Playback verbs drive the ProgramGateway seam, catalog/store verbs the
+        CatalogGateway / VoxClientSync seams -- the same seams the CLI hits, so both
+        surfaces share one code path. Seven music tools and five rec tools collapse to
+        two mcp.tool registrations; MusicCatalogTools is deleted (folded in).
+
+        music new sends the authored-input object on both surfaces: PromptSet.single
+        built by the CLI and the MCP tool, its base carried as the base_prompt wire key,
+        parsed daemon-side into a single-track PromptSet. The bare-string path is gone
+        end to end.
+
+        vox music on is the CLI twin of music(subcommand="on"): a wire-form pool piped
+        on stdin (isatty gate, no --file flag), vibe from config via an injected seam, a
+        malformed pool a clean CLI error. --json parity puts the three output flags on
+        every music and rec verb, routed through one OutputFlags, so the flag parses
+        after the subcommand as well as before it.
+
+        No state-machine change, so no z-spec. The two out-of-write-set edits (client.py,
+        hooks/suppress-output.sh) and the one design correction in open_questions are the
+        only items needing the leader's eye before the PR opens. Not pushed; no PR; make
+        install / daemon restart not run.

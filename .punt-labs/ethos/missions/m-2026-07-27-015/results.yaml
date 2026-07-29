@@ -1,0 +1,160 @@
+results:
+    - mission: m-2026-07-27-015
+      round: 1
+      created_at: "2026-07-27T18:30:00Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/voxd/record_store.py
+          added: 7
+          removed: 0
+        - path: src/punt_vox/voxd/record_handler.py
+          added: 1
+          removed: 1
+        - path: src/punt_vox/voxd/cache_handlers.py
+          added: 5
+          removed: 1
+        - path: src/punt_vox/client.py
+          added: 18
+          removed: 7
+        - path: src/punt_vox/append_log.py
+          added: 15
+          removed: 6
+        - path: src/punt_vox/doctor.py
+          added: 31
+          removed: 41
+        - path: src/punt_vox/logging_config.py
+          added: 15
+          removed: 4
+        - path: src/punt_vox/voxd/audit_log_level.py
+          added: 66
+          removed: 0
+        - path: src/punt_vox/voxd/log_level_handler.py
+          added: 59
+          removed: 0
+        - path: src/punt_vox/voxd/handler_registry.py
+          added: 3
+          removed: 0
+        - path: src/punt_vox/client_sync.py
+          added: 8
+          removed: 0
+        - path: src/punt_vox/__main__.py
+          added: 15
+          removed: 10
+        - path: tests/test_voxd_cache_handlers.py
+          added: 30
+          removed: 15
+        - path: tests/test_voxd_record_handler.py
+          added: 4
+          removed: 4
+        - path: tests/test_client.py
+          added: 6
+          removed: 2
+        - path: tests/test_logging_config.py
+          added: 12
+          removed: 6
+        - path: tests/test_vibe_trace.py
+          added: 4
+          removed: 8
+        - path: tests/test_server.py
+          added: 8
+          removed: 6
+        - path: tests/test_doctor.py
+          added: 34
+          removed: 8
+        - path: tests/test_cli.py
+          added: 34
+          removed: 21
+        - path: tests/test_voxd_audit_log_level.py
+          added: 66
+          removed: 0
+        - path: tests/test_voxd_log_level_handler.py
+          added: 89
+          removed: 0
+      evidence:
+        - name: '#2 record path relativized -- RecordWrite.wire_path -> recordings/<name> via relativize_to_data_root; record_handler sends write.wire_path; bare-name fallback out of jail'
+          status: pass
+        - name: '#3 cache_status path relativized -- cache_handlers -> cache; client CacheStatus.path / RecordResult.store_path parse the relative form; CLI output shape unchanged'
+          status: pass
+        - name: '#2/#3 tests -- daemon wire tests (in-jail relative + out-of-jail bare-name, no leading /); client parses recordings/x.mp3 into store_path (not absolute)'
+          status: pass
+        - name: '#7 status log/vibe_trace -- AtomicAppendLog.health() returns prefix-free {name,status} = logs/vox.log + healthy/degraded; abs path unrepresentable; server.py passes through'
+          status: pass
+        - name: '#8 doctor verdicts -- ffmpeg/espeak/uvx/claude_desktop present/absent no which-path/version; output/music writable/absent no abs path or raw OSError; daemon_version local-only (D3)'
+          status: pass
+        - name: '#8 security test -- no which/config path leaks into any run_all message (patched which+config+output, asserted absent)'
+          status: pass
+        - name: '#9 INFO floor -- AuditFloorLevel caps at INFO (warning/error clamp to info; unknown -> ValueError); LogLevelHandler applies clamped via injected applier; set_log_level registered'
+          status: pass
+        - name: '#9 vox log routes through set_log_level, replacing the local-config write; logging_config.apply_log_level is the shared live level-switch (daemon + client reapply)'
+          status: pass
+        - name: '#9 tests -- AuditFloorLevel clamp/reject; LogLevelHandler applies clamped/rejects unknown/applies nothing on reject; CLI routes through + reports effective; unreachable daemon exits nonzero'
+          status: pass
+        - name: 'end-to-end via build_app + TestClient: set_log_level debug->applied, warning->clamped to info, loud->rejected error frame'
+          status: pass
+        - name: make check EXITS 0 on each of three commits -- ruff/mypy/pyright/markdownlint, 3258 tests; merge-base OO PASS, coupling PASS, suppressions -6
+          status: pass
+        - name: OO paydowns -- doctor module_size -13; record_store avg_params+avg_complexity; client method_ratio+avg_params+avg_complexity; client_sync avg_complexity; logging_config max+avg complexity
+          status: pass
+      prose: |
+        PR 2 of the vox-93ej epic on feat/wire-boundary-client, three commits on
+        top of merged PR 1 (1edd048): d4eade0 (vox-9qfr paths), d4164e8 (vox-aijb
+        status+doctor verdicts), 299998e (vox-yuph log wire op). Each commit passes
+        make check; the merge-base OO + coupling ratchets exit 0 with staged baselines.
+
+        #2/#3: the relative wire path lives on the value objects (RecordWrite.wire_path)
+        and at the wire boundary (cache_handlers), not on standalone cache.py -- so
+        cache stays dependency-free and each site reuses relativize_to_data_root. For
+        #7 the abs-path leak is UNREPRESENTABLE at the source: SinkHealth became
+        {name,status} and AtomicAppendLog.health() relativizes its own path, so no
+        consumer can leak it -- consistent with the epic's SafeFault/SafeText stance.
+
+        BEHAVIOR-CHANGE NOTE for the leader: per the mission ("replacing the
+        local-config write"), vox log no longer writes log_level to global config. It
+        now sets the RUNNING daemon's level live (works remotely) with the INFO audit
+        floor. Client-side verbosity via config is no longer toggled by vox log;
+        --verbose still raises a single client command. vox status still displays
+        resolve_log_level() from config, which vox log no longer changes -- flagging
+        in case that surface should be revisited.
+
+        Two untracked files (.github/workflows/biff-notify.yml, .punt-labs/biff/enabled)
+        left unstaged as instructed. Did not run make install or restart the daemon --
+        leader owns verification and the PR.
+    - mission: m-2026-07-27-015
+      round: 2
+      created_at: "2026-07-27T20:15:00Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.95
+      files_changed: []
+      evidence:
+        - name: 'root cause -- the two new #9 modules (audit_log_level.py, log_level_handler.py) were relaxed-around in commit 3 but never entered .oo-baseline.json / .oo-coupling-baseline.json; a clean checkout failed check-oo with ''touched file(s) not in baseline'''
+          status: pass
+        - name: 'fix, no source change -- make update-oo (files improved: 2) + make update-coupling (files improved: 4) recorded both new modules; verified grep shows each present in both baselines'
+          status: pass
+        - name: follow-up commit a97a8f0 stages .oo-baseline.json + .oo-coupling-baseline.json + .oo-audit.jsonl + .oo-coupling-audit.jsonl
+          status: pass
+        - name: make check EXITS 0 on a CLEAN tree at HEAD (a97a8f0) -- ruff/mypy/pyright/markdownlint/tests green; OO ratchet PASS (new modules NEW, no 'missing'), coupling PASS, suppressions -6; only ethos session yaml/jsonl remain dirty (outside the gate), biff files unstaged
+          status: pass
+      prose: |
+        files_changed is empty because round 2 touched only the four repo-root
+        baseline/audit files (.oo-baseline.json, .oo-coupling-baseline.json,
+        .oo-audit.jsonl, .oo-coupling-audit.jsonl) -- outside the write_set but the
+        mandated home of ratchet state, staged in follow-up commit a97a8f0.
+
+        Round-2 blocking finding: baseline gap. In commit 3 (299998e) I relaxed the
+        CHANGED files but never ran make update-oo/update-coupling after adding the two
+        NEW #9 modules, so audit_log_level.py and log_level_handler.py were in neither
+        baseline and .oo-audit.jsonl had no entry for the commit. A clean checkout
+        failed check-oo with "touched file(s) not in baseline". (Same baseline-gap as
+        a7dd -- noted; will run update-oo after the LAST new-file commit every time.)
+
+        Fixed with no source change: make update-oo added both modules (files improved:
+        2), make update-coupling added them to the coupling baseline (files improved:
+        4). Follow-up commit a97a8f0 stages the four baseline/audit files. Verified
+        make check EXITS 0 on a clean tree at HEAD -- OO ratchet now lists the two
+        modules as NEW (not "missing"), coupling PASS, suppressions -6, all tests green.
+        Only .punt-labs/ethos/{identities/claude.yaml, missions.jsonl} remain dirty
+        (ethos session artifacts, outside the gate; dirty since session start); the two
+        biff files stay unstaged. Did not push or open a PR.

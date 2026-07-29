@@ -1,0 +1,47 @@
+results:
+    - mission: m-2026-07-28-011
+      round: 1
+      created_at: "2026-07-28T06:30:00Z"
+      author: adb
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: install.sh
+          added: 112
+          removed: 46
+        - path: README.md
+          added: 15
+          removed: 1
+        - path: tests/test_install_script.py
+          added: 201
+          removed: 0
+      evidence:
+        - name: 'A POSIX `for arg in "$@"` case loop parses --no-plugin and -h/--help; VOX_NO_PLUGIN skips only when exactly "1" (any other value ignored). Unknown flags print usage to stderr and exit 2. Verified live: `sh install.sh --bogus` -> rc 2 with "unknown option"; `sh install.sh --help` -> rc 0.'
+          status: pass
+        - name: SKIP_PLUGIN is one boolean OR-combining flag, VOX_NO_PLUGIN=1, and claude/git capability-absence (the two prerequisite hard-fails became auto-skips). Only Steps 6-8 (marketplace list/add/update, ssh HTTPS fallback, plugin uninstall/install/verify) are gated on it.
+          status: pass
+        - name: Binary install, PATH, daemon install, tool dirs, seed, and register-guidance (the user-scope ~/.punt-labs/vox/CLAUDE.md @-import) were pulled OUT of the plugin block and run in both modes; a --no-plugin box still gets a working vox CLI + its import.
+          status: pass
+        - name: 'Both curl forms resolve SKIP_PLUGIN=1: `sh -s -- --no-plugin` (flag) and `VOX_NO_PLUGIN=1 sh` (env). The final message is gated on the boolean not the reason: on skip prints "vox CLI is ready!" + next CLI steps + how to add the plugin later, and omits "Restart Claude Code". Plugin message updated retired /vox y -> /enable.'
+          status: pass
+        - name: 'README Quick Start gained a "CLI-only install (no Claude Code plugin)" subsection: flag one-liner (sh -s -- --no-plugin), env one-liner (VOX_NO_PLUGIN=1 sh), the exactly-"1" rule, and the capability auto-skip note.'
+          status: pass
+        - name: 'tests/test_install_script.py runs the real install.sh under a stubbed PATH (uv/claude/git/ssh/vox stubs logging argv, XDG_DATA_HOME isolated): default installs the plugin; --no-plugin and VOX_NO_PLUGIN=1 skip the `claude plugin ...` steps while still running uv tool install + vox daemon install + register-guidance; VOX_NO_PLUGIN=true is ignored (plugin installs); unknown flag exits 2. 9 tests pass.'
+          status: pass
+        - name: 'make check EXIT 0 on HEAD after commit: ruff, format, shellcheck -x install.sh, skill-permissions, mypy, pyright, markdownlint, 3322 pytest passed, OO ratchet PASS, coupling PASS, suppression PASS. install.sh + README are not OO-scored; the new test under tests/ is not scored (ratchet scoped to src/punt_vox/), so no baseline change was needed.'
+          status: pass
+      open_questions:
+        - 'The design doc §3.7 scoped this to explicit flag/env only; I additionally implemented the capability auto-skip that install-cli-only.md §108-119 and checklist items 5/8 require. Without it, the claude prerequisite hard-fail blocked the standard''s primary audience (non-Claude harnesses: Codex, Cursor, plain terminal) from ever reaching the plugin steps, so the feature would not work for them. Flagging the scope delta for the leader/evaluator: if the auto-skip is unwanted, it can be reverted to a flag/env-only skip, but the CLI-only install then fails on any box without claude.'
+      prose: |
+        Commit 176a8f8 on feat/vox-enable-disable. Full install-cli-only.md
+        conformance (checklist §171-180): items 1-10 met. install.sh changes:
+        (1) arg-parse block + usage() after the constants; (2) claude/git
+        prerequisite hard-fails converted to SKIP_PLUGIN auto-skips; (3) Steps
+        6-8 wrapped in `if [ "$SKIP_PLUGIN" = "0" ]` with an else "Skipping
+        Claude Code plugin (CLI-only install)"; (4) register-guidance moved
+        out of the plugin block to run in both modes; (5) two-branch done
+        message gated on the boolean. Working tree still carries daemon-owned
+        .punt-labs/vox/vox.md and ethos-managed identity/mission/audit records
+        (dirty going into this mission); none are make check inputs and none
+        were touched. The commit sealed the ethos audit chunk via the
+        pre-commit hook. No push, PR, make install, or daemon restart.
