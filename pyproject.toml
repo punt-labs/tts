@@ -182,11 +182,6 @@ warn_unreachable = true
 strict_equality = true
 enable_error_code = ["ignore-without-code"]
 
-[[tool.mypy.overrides]]
-module = "punt_lux.*"
-ignore_missing_imports = true
-
-
 [tool.pyright]
 pythonVersion = "3.13"
 typeCheckingMode = "strict"
