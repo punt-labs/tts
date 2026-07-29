@@ -9,6 +9,7 @@ slow -- the whole project-and-submit chain never touches the network inline.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import TYPE_CHECKING, final
 
@@ -19,6 +20,7 @@ from punt_vox.voxd.programs.change_signal import ChangeSignal
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    import pytest
     from punt_lux import OpError, RenderRequest, SceneShown
 
     from punt_vox.voxd.programs.catalog import Album
@@ -36,6 +38,26 @@ class _FakeService:
         return self._status
 
     def catalog_albums(self) -> tuple[Album, ...]:
+        return self._albums
+
+
+@final
+class _FlakyService:
+    """Raise on the first projection, then succeed -- a bad status/catalog read."""
+
+    def __init__(self, status: ProgramStatus, albums: tuple[Album, ...]) -> None:
+        self._status = status
+        self._albums = albums
+        self._calls = 0
+
+    def status(self) -> ProgramStatus:
+        return self._status
+
+    def catalog_albums(self) -> tuple[Album, ...]:
+        self._calls += 1
+        if self._calls == 1:
+            msg = "catalog read failed at startup"
+            raise RuntimeError(msg)
         return self._albums
 
 
@@ -104,3 +126,24 @@ async def test_emit_returns_at_once_even_when_lux_is_slow(
 
     assert elapsed < 0.1  # did not wait on the 5s render
     await _stop(task)
+
+
+async def test_a_failing_initial_projection_does_not_kill_the_publisher(
+    album_of: AlbumFactory,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    service = _FlakyService(ProgramStatus.idle(), (album_of("aa11bb"),))
+    changes = ChangeSignal()
+    renderer = _FakeRenderer()
+    sub = MusicPlayerSubsystem(service, changes, lambda: renderer)
+
+    with caplog.at_level(logging.ERROR):
+        task = await _run(sub, settle=0.1)
+        assert renderer.rendered == []  # the initial projection raised -> no push
+
+        changes.emit()  # a later change re-projects onto the still-live drainer
+        await asyncio.sleep(0.1)
+        assert len(renderer.rendered) == 1  # the publisher survived and drained it
+
+    await _stop(task)
+    assert any("initial scene projection" in r.getMessage() for r in caplog.records)

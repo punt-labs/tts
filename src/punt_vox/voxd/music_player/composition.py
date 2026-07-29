@@ -11,6 +11,7 @@ siblings. The ``connect`` callable is injected so tests drive it with a fake.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Self, final
 
 from punt_lux import LuxRestClient
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
     from punt_vox.voxd.programs.change_signal import ChangeSignal
 
 __all__ = ["MusicPlayerSubsystem"]
+
+logger = logging.getLogger(__name__)
 
 
 @final
@@ -48,6 +51,16 @@ class MusicPlayerSubsystem:
         return self
 
     async def run(self) -> None:
-        """Push the initial scene, then drain scene updates to luxd forever."""
-        self._player.notify_changed()
+        """Push the initial scene, then drain scene updates to luxd forever.
+
+        The initial projection is guarded like the publisher's own drain loop:
+        a fault building the first scene is logged, never fatal, so the drainer
+        still starts and a later change-signal re-projects onto a live task. An
+        unguarded initial push would kill the task before the loop began and
+        freeze the scene forever.
+        """
+        try:
+            self._player.notify_changed()
+        except Exception:
+            logger.exception("music player: initial scene projection failed")
         await self._publisher.run()
