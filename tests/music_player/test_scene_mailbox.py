@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 from punt_lux import RenderRequest
@@ -42,3 +43,21 @@ async def test_submit_never_blocks_the_caller() -> None:
     for i in range(1000):
         mailbox.submit(_scene(f"s{i}"))
     assert (await mailbox.get()).scene_id == "s999"
+
+
+async def test_get_self_heals_from_a_wake_with_no_scene(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mailbox = SceneMailbox()
+    mailbox._ready.set()  # force the "unreachable" wake: event set, no scene stored
+
+    async def _submit_soon() -> None:
+        await asyncio.sleep(0.05)
+        mailbox.submit(_scene("real"))
+
+    asyncio.create_task(_submit_soon())  # noqa: RUF006
+    with caplog.at_level(logging.WARNING):
+        result = await asyncio.wait_for(mailbox.get(), timeout=1.0)
+
+    assert result.scene_id == "real"  # recovered by re-awaiting, never raised
+    assert any("no scene" in r.getMessage() for r in caplog.records)

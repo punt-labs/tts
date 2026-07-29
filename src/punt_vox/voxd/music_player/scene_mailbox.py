@@ -10,12 +10,15 @@ never back pressure the writer, and a burst of state changes collapses to one PU
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING, Self, final
 
 if TYPE_CHECKING:
     from punt_lux import RenderRequest
 
 __all__ = ["SceneMailbox"]
+
+logger = logging.getLogger(__name__)
 
 
 @final
@@ -38,11 +41,17 @@ class SceneMailbox:
         self._ready.set()
 
     async def get(self) -> RenderRequest:
-        """Await and return the newest submitted scene, coalescing intermediates."""
-        await self._ready.wait()
-        self._ready.clear()
-        request = self._latest
-        if request is None:  # unreachable: the event is set only by a submit
-            msg = "scene mailbox woke with no scene"
-            raise RuntimeError(msg)
-        return request
+        """Await and return the newest submitted scene, coalescing intermediates.
+
+        A wake with no scene is unreachable in the single-threaded event loop
+        (``submit`` sets ``_latest`` before the event). Should that invariant
+        ever break, self-heal: log and re-await the next submit rather than
+        raise, so the drainer never dies silently on a spurious wakeup.
+        """
+        while True:
+            await self._ready.wait()
+            self._ready.clear()
+            request = self._latest
+            if request is not None:
+                return request
+            logger.warning("scene mailbox woke with no scene; awaiting next submit")
