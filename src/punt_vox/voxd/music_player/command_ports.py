@@ -1,0 +1,38 @@
+"""The write-side daemon seam the receive leg drives, and the combined seam.
+
+The player's *read* seam lives in :mod:`ports` (:class:`PlayerService`: status +
+catalog). This module adds the *write* seam a click needs -- :class:`PlayerCommands`
+(replay an album, or turn the source off) -- and :class:`ProgramSeam`, the union of
+the two that the composition root types its one ``ProgramService`` as, so it can hand
+the same object to the read-only player and the write-only subscription and mypy sees
+each half structurally.
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+from punt_vox.voxd.music_player.ports import PlayerService
+
+if TYPE_CHECKING:
+    from punt_vox.voxd.programs.album_id import AlbumId
+
+__all__ = ["PlayerCommands", "ProgramSeam"]
+
+
+@runtime_checkable
+class PlayerCommands(Protocol):
+    """The write seam an inbound event applies: play a saved album, or stop."""
+
+    def replay_album(self, album_id: AlbumId) -> None:
+        """Replay the single saved album named by ``album_id`` (StartRadio)."""
+        ...
+
+    def off(self) -> None:
+        """Turn the active source off, returning the player to idle (RadioOff)."""
+        ...
+
+
+@runtime_checkable
+class ProgramSeam(PlayerService, PlayerCommands, Protocol):
+    """The full daemon seam: the read side (:class:`PlayerService`) plus commands."""

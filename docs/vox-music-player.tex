@@ -13,8 +13,12 @@
 %   I2  now-playing present iff playing
 %   I3  a played album is catalogued (and a playing album cannot be removed)
 %
-% The phase-2 connection / subscribe / lease lifecycle depends on lux's
-% not-yet-pinned subscribe API and is deferred to an amendment (see section 6).
+% The phase-2 connection / subscribe / lease lifecycle is modelled in the final
+% section, now that lux has pinned its subscribe/lease API: one outbound
+% WebSocket with modes disconnected -> connected -> subscribed, Hub-side
+% buffering that drains in order on reconnect PROVIDED the reconnect precedes
+% lease expiry (gap-bounded, fork (B): an expired lease sweeps the buffer), and
+% a 30s menu lease renewed by any authenticated contact.
 %
 
 \documentclass[a4paper,10pt,fleqn]{article}
@@ -48,8 +52,8 @@ are already modelled and \texttt{fuzz}-clean in \texttt{docs/audio-programs.tex}
 
 This specification pins the one new, stable object: the \emph{PlayerView}, and
 the three invariants the design must preserve across every player transition.
-The phase-2 lux connection/subscribe/lease lifecycle depends on lux's
-not-yet-pinned subscribe API and is deferred (Section~\ref{sec:deferred}).
+The phase-2 lux connection/subscribe/lease lifecycle is modelled in
+Section~\ref{sec:conn}, now that lux has pinned its subscribe and lease API.
 
 \section{Basic Types and Modes}
 
@@ -259,24 +263,461 @@ $album \subseteq catalogued'$. Deleting the playing album would break
 $album' \subseteq catalogued'$, so the invariant is not decoration --- it forces
 the guard rather than the guard being an ad-hoc check.
 
-\section{Deferred: the connection / subscribe / lease lifecycle}
-\label{sec:deferred}
+\section{The Connection, Subscribe, and Lease Lifecycle}
+\label{sec:conn}
 
-Phase~2 adds the receive leg: a persistent WebSocket subscription over the public
-\texttt{LuxRestClient} extension, decoding \texttt{music.play} / \texttt{music.stop}
-into the transitions above, and a ``Music'' menu callback held by a $\sim$30s
-lease renewed by contact. That lifecycle --- \texttt{disconnected} $\to$
-\texttt{connected} $\to$ \texttt{subscribed} $\to$ \texttt{lease-renewed}, with a
-click received while disconnected dropped and the lease expiring unless renewed
---- is itself a stateful machine with invariants (at most one live subscription;
-no dispatch while disconnected). It is \emph{not} modelled here because its
-transitions depend on lux's subscribe/lease API, which is not yet pinned. When
-lux pins that API, this specification gains a \texttt{Connection} schema and its
-operations as an amendment, before the phase-2 subscribe loop is implemented.
+The earlier draft of this specification deferred the phase-2 connection model,
+because lux's subscribe and lease API was not yet pinned. It is now pinned, and
+this section supplies the model in full; the deferral in Section~6 of the design
+is discharged here.
 
-The separation is deliberate and mirrors the design: the \texttt{PlayerView} is
-stable today because a transition's \emph{trigger} --- a lux click or a CLI call
---- is immaterial to the view's invariants. Only the plumbing that carries the
-trigger is unpinned.
+Phase~2 gives \texttt{voxd} a receive leg: \emph{one} outbound WebSocket to
+\texttt{luxd} (the \texttt{LuxHubClient}) carrying both pub-sub subscriptions and
+menu-callback invocations. The connection is a three-mode machine ---
+\texttt{disconnected} $\to$ \texttt{connected} $\to$ \texttt{subscribed} --- with
+automatic reconnect on a drop. An inbound \texttt{music.play}\{album\} or
+\texttt{music.stop} received while subscribed is dispatched to the playback
+transitions of \texttt{audio-programs.tex} (\texttt{StartRadio} for a play,
+\texttt{RadioOff} for a stop); events that arrive during a connection gap are
+\emph{buffered Hub-side} and \emph{drain in order} on reconnect, \emph{as long as
+the reconnect precedes lease expiry} --- an expired lease sweeps the buffer, so a
+click undrained by then is discarded as stale (fork~(B), settled with the lux
+agent). A menu lease of $30$ seconds, carried on the identity, is renewed by any
+authenticated contact and withdraws \texttt{voxd}'s menu entries only after the
+lease expires with no contact --- the state that models ``\texttt{voxd} died''.
+
+The model pins five invariants, stated in the state predicate below:
+
+\begin{description}
+  \item[(I)] at most one live connection, and at most one subscription, which
+    can exist only over that one connection;
+  \item[(II)] an event received while subscribed is dispatched exactly once;
+  \item[(III)] events buffered during a gap drain in order on reconnect
+    \emph{provided the reconnect precedes lease expiry}; a lease that expires
+    first discards the buffer as stale (this is the gap-bounded reading, fork
+    (B) below);
+  \item[(IV)] the lease is renewed on any authenticated contact and expires only
+    after the full \texttt{leaseTtl} elapses with no contact;
+  \item[(V)] each \texttt{music.play}/\texttt{music.stop} event maps to exactly
+    one playback transition.
+\end{description}
+
+\subsection{Types and the lease constant}
+
+A \texttt{ZBOOL} is a Z boolean, named to avoid the ProB/B clash with
+\texttt{BOOL}. It flags whether \texttt{voxd}'s menu entries are currently
+present Hub-side.
+
+\begin{zed}
+  ZBOOL ::= ztrue | zfalse
+\end{zed}
+
+The connection has three modes and the lease three phases. Separating the
+\emph{connection} mode (\texttt{voxd}'s view of its own socket) from the
+\emph{lease} phase (the Hub's view of \texttt{voxd}'s liveness) is deliberate:
+after a drop the socket is \texttt{disconnected} while the lease is still
+\texttt{held} --- the grace window in which the menu stays up and clicks buffer.
+
+\begin{zed}
+  ConnMode ::= disconnected | connected | subscribed
+\end{zed}
+
+\begin{zed}
+  LeasePhase ::= noLease | held | expired
+\end{zed}
+
+An inbound event is a \texttt{music.play} carrying an album, or a
+\texttt{music.stop}. \texttt{ALBUM} is the catalog identifier already declared
+in Section~\ref{sec:state}.
+
+\begin{zed}
+  MusicEvent ::= playEvent \ldata ALBUM \rdata | stopEvent
+\end{zed}
+
+A playback transition is one of the two \texttt{audio-programs.tex} verbs the
+receive leg drives. They are named here only to record the mapping; the
+transitions themselves are modelled and \texttt{fuzz}-clean there.
+
+\begin{zed}
+  PlaybackOp ::= startRadio | radioOff
+\end{zed}
+
+The dispatch function is total and deterministic: every event names exactly one
+playback transition --- a play starts a radio, a stop stops it. This total
+function \emph{is} invariant~(V), pinned before any state is declared.
+
+\begin{axdef}
+  dispatch : MusicEvent \fun PlaybackOp
+  \where
+  \forall a : ALBUM @ dispatch~(playEvent~a) = startRadio \\
+  dispatch~stopEvent = radioOff
+\end{axdef}
+
+The lease runs for \texttt{leaseTtl} seconds; the design value is $30$.
+
+\begin{axdef}
+  leaseTtl : \nat_1
+  \where
+  leaseTtl = 30
+\end{axdef}
+
+\subsection{State}
+
+The \texttt{LuxListener} carries the connection mode; two $0 \upto 1$ counters
+\texttt{conns} and \texttt{subs} that make invariant~(I) an explicit,
+model-checkable predicate rather than a mere consequence of \texttt{mode} being a
+scalar; the Hub-side \texttt{buffer} of events awaiting drain; the
+\texttt{dispatched} history of events handed to playback, in dispatch order; the
+\texttt{fired} history of the playback transitions those dispatches drove; the
+lease phase, its age in seconds, and the \texttt{present} flag for the menu
+entries.
+
+\begin{schema}{LuxListener}
+  mode : ConnMode \\
+  conns : 0 \upto 1 \\
+  subs : 0 \upto 1 \\
+  buffer : \seq MusicEvent \\
+  dispatched : \seq MusicEvent \\
+  fired : \seq PlaybackOp \\
+  leasePhase : LeasePhase \\
+  leaseAge : 0 \upto leaseTtl \\
+  present : ZBOOL
+  \where
+  (conns = 1 \iff mode \neq disconnected) \\
+  (subs = 1 \iff mode = subscribed) \\
+  subs \leq conns \\
+  (buffer \neq \langle \rangle \implies (mode = disconnected \land present = ztrue)) \\
+  fired = dispatched \comp dispatch \\
+  (leasePhase = held \implies leaseAge < leaseTtl) \\
+  (leasePhase = expired \implies leaseAge = leaseTtl) \\
+  (leasePhase = noLease \implies leaseAge = 0) \\
+  (present = ztrue \iff leasePhase = held)
+\end{schema}
+
+The first three conjuncts are invariant~(I): \texttt{conns} and \texttt{subs} are
+each at most one by type, \texttt{subs} $\leq$ \texttt{conns} says a subscription
+rides on the single connection, and the two biconditionals tie both counters to
+\texttt{mode}. The fourth is the state face of the gap-bounded invariant~(III): a
+non-empty buffer can exist only during the \emph{grace window} --- the socket
+down \emph{and} the lease still held, so the menu is still present
+($present = ztrue \iff leasePhase = held$) --- and there are exactly two exits
+from a buffered state, \texttt{ReconnectAndDrain} (which drains it) and
+\texttt{LeaseExpire} (which discards it). A buffered click therefore survives if
+and only if the reconnect wins the race against the lease clock. The fifth is
+invariant~(V) lifted to
+the history: \texttt{fired} is exactly \texttt{dispatched} composed with
+\texttt{dispatch}, so every dispatched event contributed exactly one playback
+transition, the mapped one, in order; hence $\# fired = \# dispatched$. The last
+four are invariant~(IV): a \texttt{held} lease has not exceeded its age, an
+\texttt{expired} lease sits exactly at \texttt{leaseTtl}, an unborn lease is at
+age zero, and the menu is present exactly while the lease is held.
+
+The exactly-once discipline of invariant~(II) is a property of the transitions
+rather than of a single state: an event instance is created by exactly one
+arrival --- \texttt{ReceiveEvent} appends it straight to \texttt{dispatched} while
+subscribed, or \texttt{EnqueueDuringGap} appends it to \texttt{buffer} while
+disconnected --- and \texttt{dispatched} and \texttt{buffer} only ever grow by a
+single append or, on \texttt{ReconnectAndDrain}, move the whole buffer across in
+one step. No event is ever dispatched twice. Invariant~(II) governs the events
+that \emph{reach} playback; it is not contradicted by \texttt{LeaseExpire}
+discarding a still-buffered event, since a discarded click was buffered while
+disconnected and never dispatched at all --- its loss is invariant~(III)'s
+gap-boundedness, the deliberate stale-drop of fork~(B), not a double or missing
+dispatch of a delivered event.
+
+\subsection{Initialisation}
+
+The daemon boots the listener with the socket down, no lease yet, and empty
+histories.
+
+\begin{schema}{LuxListenerInit}
+  LuxListener'
+  \where
+  mode' = disconnected \\
+  conns' = 0 \\
+  subs' = 0 \\
+  buffer' = \langle \rangle \\
+  dispatched' = \langle \rangle \\
+  fired' = \langle \rangle \\
+  leasePhase' = noLease \\
+  leaseAge' = 0 \\
+  present' = zfalse
+\end{schema}
+
+\subsection{Connect --- open the one socket}
+
+From \texttt{disconnected} with nothing buffered, \texttt{voxd} dials
+\texttt{luxd} and authenticates. This is the first, clean connection --- the
+buffered-reconnect path is \texttt{ReconnectAndDrain} below --- so
+$buffer = \langle \rangle$ is a precondition. Authenticating is contact, so the
+lease is born (or revived) into \texttt{held} at age zero.
+
+\begin{schema}{Connect}
+  \Delta LuxListener
+  \where
+  mode = disconnected \\
+  buffer = \langle \rangle \\
+  mode' = connected \\
+  conns' = 1 \\
+  subs' = 0 \\
+  buffer' = buffer \\
+  dispatched' = dispatched \\
+  fired' = fired \\
+  leasePhase' = held \\
+  leaseAge' = 0 \\
+  present' = ztrue
+\end{schema}
+
+\subsection{Subscribe --- establish the single subscription}
+
+From \texttt{connected}, \texttt{voxd} subscribes to the music topics. Because a
+\texttt{connected} state already has an empty buffer (invariant~(III)), the
+subscription starts clean. Subscribing is contact and renews the lease.
+
+\begin{schema}{Subscribe}
+  \Delta LuxListener
+  \where
+  mode = connected \\
+  mode' = subscribed \\
+  conns' = 1 \\
+  subs' = 1 \\
+  buffer' = buffer \\
+  dispatched' = dispatched \\
+  fired' = fired \\
+  leasePhase' = held \\
+  leaseAge' = 0 \\
+  present' = ztrue
+\end{schema}
+
+\subsection{ReceiveEvent --- dispatch one event, exactly once}
+
+While subscribed, an inbound \texttt{ev?} is dispatched straight to playback:
+\texttt{dispatched} grows by exactly that one event, and \texttt{fired} by the one
+playback transition \texttt{dispatch~ev?}. The single append is invariant~(II);
+the paired append preserves invariant~(V), since
+$dispatched' \comp dispatch = (dispatched \comp dispatch) \cat \langle
+dispatch~ev? \rangle = fired'$. Receiving is contact, so the lease is renewed.
+
+\begin{schema}{ReceiveEvent}
+  \Delta LuxListener \\
+  ev? : MusicEvent
+  \where
+  mode = subscribed \\
+  mode' = subscribed \\
+  conns' = 1 \\
+  subs' = 1 \\
+  buffer' = buffer \\
+  dispatched' = dispatched \cat \langle ev? \rangle \\
+  fired' = fired \cat \langle dispatch~ev? \rangle \\
+  leasePhase' = held \\
+  leaseAge' = 0 \\
+  present' = ztrue
+\end{schema}
+
+\subsection{Drop --- lose the socket, keep the lease}
+
+The socket drops from \texttt{connected} or \texttt{subscribed}. The connection
+counters fall to zero, but a drop is \emph{not} contact: the lease keeps ageing
+in whatever phase it held, so the menu stays present in the grace window. The
+buffer, empty at the moment of the drop, is now ready to accumulate.
+
+\begin{schema}{Drop}
+  \Delta LuxListener
+  \where
+  mode \neq disconnected \\
+  mode' = disconnected \\
+  conns' = 0 \\
+  subs' = 0 \\
+  buffer' = buffer \\
+  dispatched' = dispatched \\
+  fired' = fired \\
+  leasePhase' = leasePhase \\
+  leaseAge' = leaseAge \\
+  present' = present
+\end{schema}
+
+\subsection{EnqueueDuringGap --- buffer a click Hub-side}
+
+While the socket is down but the menu is still present (the lease
+\texttt{held}), a user click publishes an event that the Hub buffers rather than
+delivers. The event is appended to \texttt{buffer}; nothing is dispatched, and
+the lease --- untouched by \texttt{voxd} --- keeps ageing. Once the lease expires
+the menu withdraws, so this transition is disabled ($present = ztrue$ is
+required), and no event can be buffered after withdrawal.
+
+\begin{schema}{EnqueueDuringGap}
+  \Delta LuxListener \\
+  ev? : MusicEvent
+  \where
+  mode = disconnected \\
+  present = ztrue \\
+  mode' = mode \\
+  conns' = conns \\
+  subs' = subs \\
+  buffer' = buffer \cat \langle ev? \rangle \\
+  dispatched' = dispatched \\
+  fired' = fired \\
+  leasePhase' = leasePhase \\
+  leaseAge' = leaseAge \\
+  present' = present
+\end{schema}
+
+\subsection{ReconnectAndDrain --- automatic reconnect, drain in order}
+
+The automatic reconnect re-establishes the socket and re-subscribes in one step,
+and the Hub drains the whole buffer in arrival order. It is enabled only while
+the lease is still \texttt{held} --- the grace window --- so it is precisely the
+reconnect that \emph{wins} the race against the lease clock; a reconnect that
+loses (the lease has expired) is a fresh registration, not a drain
+(Section~\ref{sec:regfresh}). This is the heart of the gap-bounded
+invariant~(III): \texttt{dispatched} gains exactly \texttt{buffer}, appended in
+order, and \texttt{buffer} is emptied, so every buffered event that survived the
+window is dispatched exactly once and none is lost or reordered. \texttt{fired}
+gains the matching playback transitions, preserving invariant~(V) because
+$dispatched' \comp dispatch = (dispatched \comp dispatch) \cat (buffer \comp
+dispatch) = fired'$. Reconnecting is contact and renews the lease.
+
+\begin{schema}{ReconnectAndDrain}
+  \Delta LuxListener
+  \where
+  mode = disconnected \\
+  leasePhase = held \\
+  mode' = subscribed \\
+  conns' = 1 \\
+  subs' = 1 \\
+  buffer' = \langle \rangle \\
+  dispatched' = dispatched \cat buffer \\
+  fired' = fired \cat (buffer \comp dispatch) \\
+  leasePhase' = held \\
+  leaseAge' = 0 \\
+  present' = ztrue
+\end{schema}
+
+\subsection{LeaseRenew --- a heartbeat}
+
+A subscribed but idle \texttt{voxd} keeps its lease alive by a heartbeat: any
+authenticated contact with no other effect resets the age to zero. It is enabled
+whenever \texttt{voxd} has a live socket ($mode \neq disconnected$); a
+disconnected \texttt{voxd} cannot heartbeat and must reconnect instead. This is
+the pure form of invariant~(IV)'s ``renewed on any contact''.
+
+\begin{schema}{LeaseRenew}
+  \Delta LuxListener
+  \where
+  mode \neq disconnected \\
+  mode' = mode \\
+  conns' = conns \\
+  subs' = subs \\
+  buffer' = buffer \\
+  dispatched' = dispatched \\
+  fired' = fired \\
+  leasePhase' = held \\
+  leaseAge' = 0 \\
+  present' = ztrue
+\end{schema}
+
+\subsection{Tick --- time passes with no contact}
+
+With no contact, a second elapses and the held lease ages by one, staying below
+the cap. The final second before the cap is \texttt{LeaseExpire}, not
+\texttt{Tick}, so the guard is $leaseAge < leaseTtl - 1$; this keeps
+$leasePhase = held \implies leaseAge < leaseTtl$ true after the step. Nothing
+else moves.
+
+\begin{schema}{Tick}
+  \Delta LuxListener
+  \where
+  leasePhase = held \\
+  leaseAge < leaseTtl - 1 \\
+  leaseAge' = leaseAge + 1 \\
+  mode' = mode \\
+  conns' = conns \\
+  subs' = subs \\
+  buffer' = buffer \\
+  dispatched' = dispatched \\
+  fired' = fired \\
+  leasePhase' = leasePhase \\
+  present' = present
+\end{schema}
+
+\subsection{LeaseExpire --- the menu withdraws}
+
+When a held lease reaches its last second with still no contact, it expires: the
+phase becomes \texttt{expired} at the full \texttt{leaseTtl}, the menu withdraws
+($present' = zfalse$), and the Hub tears the socket down
+($mode' = disconnected$) --- the modelled image of ``\texttt{voxd} died, so its
+menu entries withdraw''. The buffer is \emph{cleared}
+($buffer' = \langle \rangle$): this is fork~(B), settled with the lux agent.
+\texttt{luxd}'s lease sweep drops the dead session together with its menu
+callbacks and its Hub-side invocation hold in one motion --- and the hold is a
+bounded per-session deque in any case (oldest-dropped past capacity), so an
+expired session's buffered clicks are gone twice over. Any click undrained when
+the lease lapses is discarded as stale; this is exactly the gap-boundedness of
+invariant~(III), and it restores the strengthened state predicate
+$buffer \neq \langle \rangle \implies present = ztrue$, which a preserved buffer
+would have broken the instant the menu withdrew. Because the precondition is
+$leaseAge = leaseTtl - 1$, expiry is reachable only after the full tick chain
+from the last renewal --- invariant~(IV)'s ``only after \texttt{leaseTtl} with no
+contact''.
+
+\begin{schema}{LeaseExpire}
+  \Delta LuxListener
+  \where
+  leasePhase = held \\
+  leaseAge = leaseTtl - 1 \\
+  mode' = disconnected \\
+  conns' = 0 \\
+  subs' = 0 \\
+  buffer' = \langle \rangle \\
+  dispatched' = dispatched \\
+  fired' = fired \\
+  leasePhase' = expired \\
+  leaseAge' = leaseTtl \\
+  present' = zfalse
+\end{schema}
+
+\subsection{Register-fresh: re-entry after a dead session}
+\label{sec:regfresh}
+
+Once the lease has expired, the session is gone Hub-side --- its menu entry
+withdrawn, its buffer swept. \texttt{voxd} does not \emph{resume} the dead
+session; it \emph{re-registers}. Because \texttt{voxd}'s lux identity is
+deterministic, a re-registration re-identifies under the same name, re-registers
+the ``Music'' menu entry, re-subscribes, and re-pushes its scene from
+\texttt{ProgramService} state --- nothing depends on any surviving connection
+state. In this model that re-entry is \texttt{Connect} (then \texttt{Subscribe}):
+its precondition $buffer = \langle \rangle$ holds vacuously after an expiry (the
+buffer was swept), so the re-entry starts a \emph{fresh} connection with an empty
+buffer and a fresh lease, and there is no \texttt{ReconnectAndDrain} path out of
+\texttt{expired} to resume a stale buffer. The register-fresh re-entry and the
+first boot connection are therefore the same transition, exactly as a warm and a
+cold start of the socket are indistinguishable once the buffer is empty.
+
+In the implementation this register-fresh re-entry rides the hub client's
+\texttt{on\_connect} hook, which fires after \emph{every} successful handshake ---
+the first connect and every internal reconnect the client's own \texttt{listen}
+loop rides out --- rather than only the outer restart loop. That distinction is
+what makes the model faithful to the code: a $>$30\,s luxd outage is ridden out
+\emph{inside} \texttt{listen} as an internal reconnect, so pinning re-registration
+to the outer cycle alone would leave the swept menu unregistered until an unrelated
+fault. Because \texttt{on\_connect} re-registers the ``Music'' menu and re-pushes
+the scene on each handshake, every reconnect --- internal or outer --- is the same
+\texttt{Connect}-then-\texttt{Subscribe} transition this section models.
+
+That no click can arrive at a dead session is already a fact of the model:
+\texttt{EnqueueDuringGap} requires $present = ztrue$, and expiry sets
+$present' = zfalse$, so buffering is disabled the moment the menu withdraws.
+Only clicks buffered \emph{before} expiry are ever at risk, and those are
+precisely the ones the lease race decides.
+
+\subsection{Why the split from PlayerView holds}
+
+The separation of this machine from the \texttt{PlayerView} of
+Sections~\ref{sec:state}--\ref{sec:conn} is the same one the design draws: a
+transition's \emph{trigger} --- a lux click carried over this connection, or a
+CLI call --- is immaterial to the view's invariants, so \texttt{PlayerView} needed
+no connection state to be modelled. What this section adds is only the plumbing
+that carries the trigger, and its own invariants (I--V) live entirely in the
+connection state, disjoint from the view's I1--I3.
 
 \end{document}
