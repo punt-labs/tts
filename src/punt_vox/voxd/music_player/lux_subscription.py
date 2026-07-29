@@ -1,13 +1,17 @@
 """``LuxSubscription`` -- voxd's receive leg: one hub connection, menu, dispatch.
 
-The subscription holds a *single* live connection to luxd (Z model invariant I): it
-registers the ``Music`` menu entry, subscribes once to ``music.play`` and
-``music.stop``, and then holds the connection open -- the ``LuxHubClient`` reconnects
-and re-subscribes internally, so voxd depends on no surviving Hub state (invariant
-III, register-fresh). Each inbound event is decoded and applied exactly once
-(invariants II, V); the phase-1 change signal then re-pushes the scene. Every handler
-is a boundary that logs and drops on any fault, so one bad frame can never drop the
-connection.
+The subscription holds a *single* live connection to luxd at a time (Z model
+invariant I). Each connect (re-)registers the ``Music`` menu entry, subscribes to
+``music.play`` and ``music.stop``, and holds the connection open -- the
+``LuxHubClient`` reconnects and re-subscribes internally across transient drops, so
+voxd depends on no surviving Hub state (invariant III, register-fresh). A guarded
+restart loop wraps the whole connect/register/subscribe/listen cycle: any fault --
+a down luxd, or a protocol frame that fails validation deep inside ``listen`` -- is
+logged to the persistent daemon log and the cycle restarts after a backoff, so the
+receive leg can never die silently. Each inbound event is decoded and applied exactly
+once (invariants II, V); the phase-1 change signal then re-pushes the scene. Every
+handler is a boundary that logs and drops on any fault, so one bad frame can never
+drop the connection.
 """
 
 from __future__ import annotations
@@ -43,13 +47,12 @@ _RETRY_SECONDS = 5.0
 class LuxSubscription:
     """Own voxd's one hub connection, the ``Music`` menu, and event dispatch."""
 
-    __slots__ = ("_codec", "_connect_hub", "_listener", "_menu", "_opener", "_service")
+    __slots__ = ("_codec", "_connect_hub", "_menu", "_opener", "_service")
     _service: PlayerCommands
     _opener: ChangeListener
     _menu: MenuRegistrar
     _connect_hub: Callable[[EventHandler, CallbackHandler], HubListener]
     _codec: PlayerEventCodec
-    _listener: HubListener | None  # the one connection; None until run opens it
 
     def __new__(
         cls,
@@ -64,35 +67,46 @@ class LuxSubscription:
         self._menu = menu
         self._connect_hub = connect_hub
         self._codec = PlayerEventCodec()
-        self._listener = None
         return self
 
     async def run(self) -> None:
-        """Register the menu, open the one connection, subscribe, and listen forever.
+        """Hold voxd's receive leg open, restarting the whole cycle on any fault.
 
-        ``listen`` returns only when the daemon cancels this task on shutdown; the
-        ``LuxHubClient`` reconnects and re-subscribes internally across drops, so a
-        single ``subscribe`` here holds for the connection's whole life (invariant I).
-        """
-        await self._menu.register(_MENU_CALLBACK_ID, _MENU_LABEL)
-        listener = await self._open_listener()
-        listener.subscribe(MusicTopic.PLAY, MusicTopic.STOP)
-        self._listener = listener
-        await listener.listen()
-
-    async def _open_listener(self) -> HubListener:
-        """Build the one hub connection, retrying while luxd is unreachable.
-
-        The retry only ever *replaces a construction that never connected*, so at
-        most one live connection is ever built (invariant I); a late-starting luxd
-        is picked up rather than losing the receive leg for the daemon's lifetime.
+        Each iteration builds one fresh connection, (re-)registers the ``Music``
+        menu, subscribes, and listens. ``listen`` returns only when the daemon
+        requests a stop, so a clean return ends the leg. A down luxd is retried with
+        a warning; any other fault -- notably a protocol frame that fails validation
+        deep inside ``listen`` -- is logged with its traceback to the persistent
+        daemon log and the cycle restarts after a backoff, so a transient or protocol
+        error can never leave the receive leg silently dead (invariants I, III).
+        Cancellation on shutdown is a ``BaseException`` that propagates cleanly out.
         """
         while True:
             try:
-                return self._connect_hub(self.on_event, self.on_callback)
+                await self._connect_and_listen()
+                return
             except HubUnavailableError:
                 logger.warning("luxd down; retrying the music receive leg")
                 await asyncio.sleep(_RETRY_SECONDS)
+            except Exception:
+                logger.exception("music receive leg failed; restarting after backoff")
+                await asyncio.sleep(_RETRY_SECONDS)
+
+    async def _connect_and_listen(self) -> None:
+        """Build one fresh connection, register the menu, subscribe, and listen.
+
+        Registering on *every* fresh connection -- not once at startup -- is what
+        restores the ``Music`` menu after a >30s outage: once the lease lapses luxd
+        sweeps the entry, and the registration is an idempotent upsert keyed by
+        callback id, so first-connect and reconnect-after-expiry are the one
+        register-fresh path (Z model register-fresh, §6.11). At most one live
+        connection exists at a time -- a new one is built only after the prior
+        ``listen`` has returned or raised (invariant I).
+        """
+        listener = self._connect_hub(self.on_event, self.on_callback)
+        await self._menu.register(_MENU_CALLBACK_ID, _MENU_LABEL)
+        listener.subscribe(MusicTopic.PLAY, MusicTopic.STOP)
+        await listener.listen()
 
     async def on_event(self, topic: str, payload: Mapping[str, object]) -> None:
         """Decode and apply one inbound event exactly once; never drop the leg.

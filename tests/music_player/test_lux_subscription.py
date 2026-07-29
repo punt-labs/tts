@@ -89,6 +89,43 @@ class _RecordingListener:
         pass
 
 
+@final
+class _RaisingListener:
+    """A HubListener whose ``listen`` raises as a skewed protocol frame would.
+
+    ``LuxHubClient.listen`` validates each server frame; a frame that fails
+    validation raises ``pydantic.ValidationError`` -- a ``ValueError`` subtype -- out
+    of ``listen``, uncaught by its ``(OSError, WebSocketException)`` reconnect guard.
+    This double raises the same base type to pin the subscription's guarded restart.
+    """
+
+    def __init__(self) -> None:
+        self.subscribed: tuple[str, ...] = ()
+
+    def subscribe(self, *topics: str) -> None:
+        self.subscribed = self.subscribed + topics
+
+    async def listen(self) -> None:
+        msg = "skewed frame failed validation"
+        raise ValueError(msg)
+
+    def stop(self) -> None:
+        pass
+
+
+def _sequence_connect(
+    listeners: list[HubListener], handed: list[int]
+) -> Callable[[EventHandler, CallbackHandler], HubListener]:
+    """Return a connect_hub that hands out ``listeners`` in order, one per connect."""
+
+    def connect(on_event: EventHandler, on_callback: CallbackHandler) -> HubListener:
+        listener = listeners[len(handed)]
+        handed.append(1)
+        return listener
+
+    return connect
+
+
 def _connect(
     listener: HubListener, log: list[int]
 ) -> Callable[[EventHandler, CallbackHandler], HubListener]:
@@ -155,6 +192,52 @@ async def test_run_retries_until_luxd_is_up_then_registers_fresh(
 
     assert len(attempts) == 2  # retried once, then one connection
     assert listener.subscribed == ("music.play", "music.stop")
+
+
+async def test_run_restarts_and_recovers_after_a_listen_fault(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Invariant I: a fault out of ``listen`` (here a ValidationError-like error, as a
+    # skewed protocol frame raises deep in the real ``listen``) is logged to the
+    # daemon log and the whole cycle restarts on a fresh connection, rather than
+    # leaving the receive leg silently dead. The leg recovers and listens again.
+    monkeypatch.setattr(
+        "punt_vox.voxd.music_player.lux_subscription._RETRY_SECONDS", 0.001
+    )
+    recovered = _RecordingListener()
+    listeners: list[HubListener] = [_RaisingListener(), recovered]
+    handed: list[int] = []
+    connect = _sequence_connect(listeners, handed)
+    sub = LuxSubscription(_FakeCommands(), _FakeOpener(), _FakeMenu(), connect)
+
+    with caplog.at_level(logging.ERROR):
+        await sub.run()
+
+    assert len(handed) == 2  # the faulted connection was replaced by a fresh one
+    assert recovered.listens == 1  # the leg recovered and listened again
+    assert any("music receive leg failed" in r.getMessage() for r in caplog.records)
+
+
+async def test_run_re_registers_the_menu_on_reconnect_after_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Invariant III (register-fresh, Z model §6.11): once a >30s outage lapses the
+    # lease luxd sweeps the Music menu; the reconnect must register it fresh. Each
+    # fresh connection re-registers, so a fault that forces a reconnect re-registers.
+    monkeypatch.setattr(
+        "punt_vox.voxd.music_player.lux_subscription._RETRY_SECONDS", 0.001
+    )
+    menu = _FakeMenu()
+    listeners: list[HubListener] = [_RaisingListener(), _RecordingListener()]
+    sub = LuxSubscription(
+        _FakeCommands(), _FakeOpener(), menu, _sequence_connect(listeners, [])
+    )
+
+    await sub.run()
+
+    # Registered once per fresh connection -- the swept menu is restored on reconnect.
+    assert menu.registered == [("music", "Music"), ("music", "Music")]
 
 
 async def test_on_event_play_dispatches_to_replay_album() -> None:

@@ -39,7 +39,14 @@ class LuxMenuRegistrar:
         return self
 
     async def register(self, callback_id: str, label: str) -> None:
-        """Register the ``label`` menu entry off-thread, dropping any lux failure."""
+        """Register the ``label`` menu entry off-thread, dropping any lux failure.
+
+        This is a best-effort REST I/O boundary. A down luxd logs a warning; any
+        other transport fault -- a refused connection, a timeout, a client-side
+        error -- is logged with its traceback and swallowed. Nothing is raised, so a
+        failed menu registration can never escape into the receive leg's guarded
+        restart and turn a missing menu into a dropped connection.
+        """
         try:
             client = await asyncio.to_thread(self._connect)
             result = await asyncio.to_thread(
@@ -47,6 +54,9 @@ class LuxMenuRegistrar:
             )
         except HubUnavailableError:
             logger.warning("lux unavailable; %r menu entry not registered", label)
+            return
+        except Exception:
+            logger.exception("%r menu registration failed", label)
             return
         if isinstance(result, OpError):
             logger.error(

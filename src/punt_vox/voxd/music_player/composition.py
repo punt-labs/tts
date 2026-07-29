@@ -58,15 +58,24 @@ class MusicPlayerSubsystem:
         return self
 
     async def run(self) -> None:
-        """Push the initial scene, then run the push and receive legs forever.
+        """Push the initial scene, then run the push and receive legs together.
 
         The initial projection is guarded like the drain loop: a fault building the
         first scene is logged, never fatal, so both legs still start and a later
-        change-signal re-projects. Publisher and subscription run concurrently as
-        one task; cancelling it on shutdown tears both down together.
+        change-signal re-projects. Publisher and subscription then run under one
+        :class:`asyncio.TaskGroup`: each leg self-heals in its own guarded loop, but
+        should either ever fail fatally the TaskGroup cancels the other and re-raises,
+        rather than leaving a half-dead subsystem with one orphaned leg. That fatal
+        case is logged here, so nothing escapes unrecorded; cancelling this task on
+        shutdown tears both legs down together and propagates cleanly.
         """
         try:
             self._player.notify_changed()
         except Exception:
             logger.exception("music player: initial scene projection failed")
-        await asyncio.gather(self._publisher.run(), self._subscription.run())
+        try:
+            async with asyncio.TaskGroup() as legs:
+                legs.create_task(self._publisher.run())
+                legs.create_task(self._subscription.run())
+        except Exception:
+            logger.exception("music player: a leg failed fatally; both legs torn down")
