@@ -1,4 +1,9 @@
-"""Tests for AlbumListScene: the element tree it projects for a known catalog."""
+"""Tests for AlbumListScene: the element tree it projects for a known catalog.
+
+The Play/Stop button assertions are the offline substitute for the (PR-3-gated)
+live click: they pin the exact ``publish`` attribute each button carries, which is
+the wire contract :class:`LuxSubscription` decodes on the other leg.
+"""
 
 from __future__ import annotations
 
@@ -37,8 +42,12 @@ def test_scene_header_controls_and_one_row_per_album(
     assert elements[1]["kind"] == "text"
     assert "Techno Mix" in str(elements[1]["content"])
     assert "1 of 3" in str(elements[1]["content"])
-    assert elements[2]["kind"] == "button"
-    assert elements[2]["id"] == "music.stop"
+    assert elements[2] == {
+        "kind": "button",
+        "id": "stop",
+        "label": "Stop",
+        "publish": {"topic": "music.stop"},
+    }
     assert elements[3]["kind"] == "separator"
 
     rows = elements[4:]
@@ -61,24 +70,25 @@ def test_playing_row_is_marked_and_carries_its_play_button(
     assert playing_children[0]["content"] == "▶ Techno Mix"
     assert playing_children[1] == {
         "kind": "button",
-        "id": "music.play.aa11bb",
+        "id": "play-aa11bb",
         "label": "Play",
+        "publish": {"topic": "music.play", "payload": {"album_id": "aa11bb"}},
     }
     assert idle_children[0]["content"] == "Ambient Drift"  # unmarked, not playing
 
 
-def test_idle_scene_says_nothing_playing_and_disables_stop(
-    album_of: AlbumFactory,
-) -> None:
+def test_stop_button_always_publishes_even_when_idle(album_of: AlbumFactory) -> None:
     album = album_of("aa11bb", name="Techno Mix")
     request = AlbumListScene((album,), PlayerView.idle()).render_request()
 
     assert request.elements[1]["content"] == "Nothing playing"
+    # Stop always carries its publish and is never disabled: a stop-while-idle is a
+    # harmless no-op (Z model PlayerStop), so no mode-dependent button state is needed.
     assert request.elements[2] == {
         "kind": "button",
-        "id": "music.stop",
+        "id": "stop",
         "label": "Stop",
-        "disabled": True,
+        "publish": {"topic": "music.stop"},
     }
 
 
