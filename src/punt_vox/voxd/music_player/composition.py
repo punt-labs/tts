@@ -30,6 +30,8 @@ __all__ = ["MusicPlayerSubsystem"]
 
 logger = logging.getLogger(__name__)
 
+_RESTART_SECONDS = 5.0
+
 
 @final
 class MusicPlayerSubsystem:
@@ -58,24 +60,47 @@ class MusicPlayerSubsystem:
         return self
 
     async def run(self) -> None:
-        """Push the initial scene, then run the push and receive legs together.
+        """Project the scene and run both legs, restarting the whole cycle on a fault.
 
-        The initial projection is guarded like the drain loop: a fault building the
-        first scene is logged, never fatal, so both legs still start and a later
-        change-signal re-projects. Publisher and subscription then run under one
-        :class:`asyncio.TaskGroup`: each leg self-heals in its own guarded loop, but
-        should either ever fail fatally the TaskGroup cancels the other and re-raises,
-        rather than leaving a half-dead subsystem with one orphaned leg. That fatal
-        case is logged here, so nothing escapes unrecorded; cancelling this task on
-        shutdown tears both legs down together and propagates cleanly.
+        This is a guarded restart loop mirroring each leg's own pattern one level up.
+        Each iteration re-projects the initial scene, then runs the push and receive
+        legs together under one :class:`asyncio.TaskGroup`. Every leg self-heals in
+        its own guarded loop; but should either ever fail fatally, the TaskGroup
+        cancels its sibling and raises, and this loop logs the traceback to the
+        persistent daemon log and restarts both legs after a backoff.
+
+        The subsystem is fire-and-forget from ``daemon.py`` (no restart path), so it
+        must never re-raise: re-raising would route the fault into a scene task whose
+        error is swallowed on shutdown, leaving the whole music player silently dead.
+        Restarting instead re-creates both legs -- a fresh subscription reconnects,
+        re-registers the menu, re-subscribes, and the re-projection re-pushes the
+        scene (register-fresh). Both legs are safely re-runnable: the publisher
+        reconnects its REST client lazily and the subscription builds a fresh hub
+        listener per connect, so neither re-runs a spent per-connection object.
+
+        Only ``Exception`` is caught, never ``BaseException``: the ``CancelledError``
+        raised when the daemon cancels this task on shutdown propagates out of the
+        loop, tearing both legs down together and ending the subsystem cleanly.
+        """
+        while True:
+            self._project_initial_scene()
+            try:
+                async with asyncio.TaskGroup() as legs:
+                    legs.create_task(self._publisher.run())
+                    legs.create_task(self._subscription.run())
+            except Exception:
+                logger.exception(
+                    "music player: a leg failed fatally; restarting both after backoff"
+                )
+                await asyncio.sleep(_RESTART_SECONDS)
+
+    def _project_initial_scene(self) -> None:
+        """Push the initial scene, guarded so a projection fault never blocks the legs.
+
+        A fault building the first scene is logged, never fatal, so both legs still
+        start and a later change signal (or the next restart) re-projects.
         """
         try:
             self._player.notify_changed()
         except Exception:
             logger.exception("music player: initial scene projection failed")
-        try:
-            async with asyncio.TaskGroup() as legs:
-                legs.create_task(self._publisher.run())
-                legs.create_task(self._subscription.run())
-        except Exception:
-            logger.exception("music player: a leg failed fatally; both legs torn down")

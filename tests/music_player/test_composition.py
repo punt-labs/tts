@@ -12,11 +12,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, cast, final
 
 from punt_lux.operations import Ok
 
 from punt_vox.types_programs.status import ProgramStatus
+from punt_vox.voxd.music_player import composition
 from punt_vox.voxd.music_player.composition import MusicPlayerSubsystem
 from punt_vox.voxd.programs.change_signal import ChangeSignal
 
@@ -33,6 +34,8 @@ if TYPE_CHECKING:
     )
 
     from punt_vox.voxd.music_player.hub_ports import HubListener
+    from punt_vox.voxd.music_player.lux_scene_publisher import LuxScenePublisher
+    from punt_vox.voxd.music_player.lux_subscription import LuxSubscription
     from punt_vox.voxd.programs.album_id import AlbumId
     from punt_vox.voxd.programs.catalog import Album
 
@@ -156,6 +159,50 @@ class _FakeClients:
         return self.listener
 
 
+@final
+class _CollapsingLeg:
+    """A leg that raises once (escaping its own guard), then blocks on re-run.
+
+    The per-leg guards make a fatal escape unreachable in practice; this double
+    simulates that defensive case to exercise the subsystem's restart loop. It
+    raises on the first ``run`` and blocks on the second so the restart settles.
+    """
+
+    def __init__(self) -> None:
+        self.runs = 0
+        self._blocked = asyncio.Event()
+
+    async def run(self) -> None:
+        self.runs += 1
+        if self.runs == 1:
+            msg = "leg collapsed fatally"
+            raise RuntimeError(msg)
+        await self._blocked.wait()
+
+
+@final
+class _BlockingLeg:
+    """A leg that records each run and blocks until the task is cancelled."""
+
+    def __init__(self) -> None:
+        self.runs = 0
+        self._blocked = asyncio.Event()
+
+    async def run(self) -> None:
+        self.runs += 1
+        await self._blocked.wait()
+
+
+def _inject_legs(
+    sub: MusicPlayerSubsystem,
+    publisher: _CollapsingLeg | _BlockingLeg,
+    subscription: _CollapsingLeg | _BlockingLeg,
+) -> None:
+    """Replace the subsystem's two legs with test doubles to drive the run loop."""
+    sub._publisher = cast("LuxScenePublisher", publisher)
+    sub._subscription = cast("LuxSubscription", subscription)
+
+
 async def _run(sub: MusicPlayerSubsystem, *, settle: float) -> asyncio.Task[None]:
     task = asyncio.create_task(sub.run())
     await asyncio.sleep(settle)
@@ -222,3 +269,48 @@ async def test_a_failing_initial_projection_does_not_kill_the_publisher(
 
     await _stop(task)
     assert any("initial scene projection" in r.getMessage() for r in caplog.records)
+
+
+async def test_a_fatal_leg_fault_restarts_both_legs(
+    album_of: AlbumFactory,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(composition, "_RESTART_SECONDS", 0.0)  # no backoff wait
+    service = _FakeService(ProgramStatus.idle(), (album_of("aa11bb"),))
+    sub = MusicPlayerSubsystem(service, ChangeSignal(), _FakeClients(_FakeRenderer()))
+    publisher = _CollapsingLeg()  # the push leg collapses fatally once
+    subscription = _BlockingLeg()  # the sibling the TaskGroup cancels
+    _inject_legs(sub, publisher, subscription)
+
+    with caplog.at_level(logging.ERROR):
+        task = await _run(sub, settle=0.1)
+        # The fatal fault did not permanently stop the subsystem: both legs were
+        # re-created, so a fresh subscription reconnects and re-registers.
+        assert publisher.runs >= 2
+        assert subscription.runs >= 2
+
+    await _stop(task)
+    assert any("restarting both" in r.getMessage() for r in caplog.records)
+
+
+async def test_shutdown_cancellation_exits_the_loop_without_restart(
+    album_of: AlbumFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(composition, "_RESTART_SECONDS", 0.0)
+    service = _FakeService(ProgramStatus.idle(), (album_of("aa11bb"),))
+    sub = MusicPlayerSubsystem(service, ChangeSignal(), _FakeClients(_FakeRenderer()))
+    publisher = _BlockingLeg()
+    subscription = _BlockingLeg()
+    _inject_legs(sub, publisher, subscription)
+
+    task = await _run(sub, settle=0.05)
+    task.cancel()  # the daemon cancels the fire-and-forget scene task on shutdown
+    await asyncio.gather(task, return_exceptions=True)
+
+    # CancelledError is a BaseException: it propagates out of the while loop rather
+    # than being caught and retried, so the subsystem tears down instead of looping.
+    assert task.cancelled()
+    assert publisher.runs == 1
+    assert subscription.runs == 1
