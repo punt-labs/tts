@@ -28,9 +28,10 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.programs.control_signal import ControlSignal
 from punt_vox.voxd.programs.guard import GuardViolationError
-from punt_vox.voxd.programs.program import Program
+from punt_vox.voxd.programs.mode_transition_log import ModeTransitionLog
 
 if TYPE_CHECKING:
+    from punt_vox.voxd.programs.change_signal import ChangeSignal
     from punt_vox.voxd.programs.fill_reconciler import FillReconciler
     from punt_vox.voxd.programs.playback_source import PlaybackSource
 
@@ -51,7 +52,9 @@ class ControlChannel:
 
     __slots__ = (
         "_changed",
+        "_changes",
         "_interrupt",
+        "_mode_log",
         "_queue",
         "_reconciler",
         "_source",
@@ -61,6 +64,8 @@ class ControlChannel:
     _changed: asyncio.Event
     _interrupt: asyncio.Event
     _reconciler: FillReconciler | None
+    _changes: ChangeSignal | None
+    _mode_log: ModeTransitionLog
 
     def __new__(cls, source: PlaybackSource) -> Self:
         self = super().__new__(cls)
@@ -69,11 +74,17 @@ class ControlChannel:
         self._changed = asyncio.Event()
         self._interrupt = asyncio.Event()
         self._reconciler = None
+        self._changes = None
+        self._mode_log = ModeTransitionLog(source)
         return self
 
     def attach_reconciler(self, reconciler: FillReconciler) -> None:
         """Wire the fill reconciler the consumer runs after each applied command."""
         self._reconciler = reconciler
+
+    def attach_change_signal(self, changes: ChangeSignal) -> None:
+        """Wire the change signal the consumer fires after each applied command."""
+        self._changes = changes
 
     @property
     def source(self) -> PlaybackSource:
@@ -121,7 +132,6 @@ class ControlChannel:
         captures every transition uniformly, at INFO, without scattering loggers.
         """
         signal = await self._queue.get()
-        before = self._mode_label()
         try:
             self._apply_one(signal)
         finally:
@@ -132,27 +142,15 @@ class ControlChannel:
                 # The wake is unconditional: even a raising reconcile must not
                 # leave the playback loop blocked on ``changed``.
                 self._mark_applied(signal)
-        self._log_mode_change(before)
+                # The re-push rides the same finally so a raising apply still
+                # re-projects the settled state; ``emit`` is fail-soft.
+                self._emit_change()
+        self._mode_log.note(self._source)
 
-    def _mode_label(self) -> str | None:
-        """Return the active Program's fine-grained mode, or None for a radio.
-
-        A :class:`SelectionPlayback` (replay radio) has no lifecycle mode, so it
-        contributes no transition line -- only the generate-mode Program does.
-        """
-        source = self._source
-        return source.mode.value if isinstance(source, Program) else None
-
-    def _log_mode_change(self, before: str | None) -> None:
-        """Log one INFO line only when one Program mode changed to another.
-
-        Both sides must be real Program modes: a radio has no mode (``None``), so
-        a radio<->Program switch would otherwise read ``music: None -> playing``,
-        which is not a mode transition -- suppress it.
-        """
-        after = self._mode_label()
-        if before is not None and after is not None and before != after:
-            logger.info("music: %s → %s", before, after)
+    def _emit_change(self) -> None:
+        """Fire the change signal so subscribers re-project the settled state."""
+        if self._changes is not None:
+            self._changes.emit()
 
     def _apply_one(self, signal: ControlSignal) -> None:
         """Apply one command, swallowing only a benign lost-race guard."""

@@ -34,6 +34,11 @@ dependencies = [
     "audioop-lts>=0.2.1",
     "typer>=0.24.1",
     "websockets>=14.0",
+    # voxd hosts the lux music-player app: the public LuxRestClient is a hard
+    # runtime dependency. INTERIM git pin to the lux-main commit that first
+    # exports LuxRestClient (PR #292) — no released punt-lux carries it yet.
+    # Moves to `punt-lux>=0.22.0` once lux cuts that release (bead vox-hnfr).
+    "punt-lux @ git+https://github.com/punt-labs/lux.git@c1370c3149160f5852c3aa9bc184ba43c53118aa",
 ]
 
 [project.urls]
@@ -44,9 +49,6 @@ Repository = "https://github.com/punt-labs/vox"
 [project.scripts]
 vox = "punt_vox.__main__:app"
 voxd = "punt_vox.voxd:entrypoint"
-
-[project.optional-dependencies]
-lux = ["punt-lux>=0.9.0"]
 
 [dependency-groups]
 dev = [

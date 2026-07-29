@@ -124,7 +124,7 @@ class TestModeTransitionLogging:
         channel = ControlChannel(Program(ProgramState.initial(), policy))
         channel.post(TurnOn())
         with caplog.at_level(
-            logging.INFO, logger="punt_vox.voxd.programs.control_channel"
+            logging.INFO, logger="punt_vox.voxd.programs.mode_transition_log"
         ):
             await channel.apply_next()
         lines = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
@@ -140,29 +140,9 @@ class TestModeTransitionLogging:
         channel = ControlChannel(make_rotating(policy))
         channel.post(Rotate())
         with caplog.at_level(
-            logging.INFO, logger="punt_vox.voxd.programs.control_channel"
+            logging.INFO, logger="punt_vox.voxd.programs.mode_transition_log"
         ):
             await channel.apply_next()
-        transitions = [
-            r.getMessage()
-            for r in caplog.records
-            if r.levelno == logging.INFO and "music:" in r.getMessage()
-        ]
-        assert transitions == []
-
-    async def test_radio_to_program_switch_logs_no_none_transition(
-        self, policy: PlaybackPolicy, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """A radio->Program switch (before is None) must not log 'music: None -> ...'.
-
-        A radio has no lifecycle mode, so the prior label is None; the line is
-        suppressed unless BOTH sides are real Program modes.
-        """
-        channel = ControlChannel(Program(ProgramState.initial(), policy))
-        with caplog.at_level(
-            logging.INFO, logger="punt_vox.voxd.programs.control_channel"
-        ):
-            channel._log_mode_change(before=None)  # prior source was a radio
         transitions = [
             r.getMessage()
             for r in caplog.records
