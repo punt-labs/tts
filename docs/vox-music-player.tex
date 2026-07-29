@@ -16,8 +16,9 @@
 % The phase-2 connection / subscribe / lease lifecycle is modelled in the final
 % section, now that lux has pinned its subscribe/lease API: one outbound
 % WebSocket with modes disconnected -> connected -> subscribed, Hub-side
-% buffering that drains in order on reconnect, and a 30s menu lease renewed by
-% any authenticated contact.
+% buffering that drains in order on reconnect PROVIDED the reconnect precedes
+% lease expiry (gap-bounded, fork (B): an expired lease sweeps the buffer), and
+% a 30s menu lease renewed by any authenticated contact.
 %
 
 \documentclass[a4paper,10pt,fleqn]{article}
@@ -278,8 +279,10 @@ automatic reconnect on a drop. An inbound \texttt{music.play}\{album\} or
 \texttt{music.stop} received while subscribed is dispatched to the playback
 transitions of \texttt{audio-programs.tex} (\texttt{StartRadio} for a play,
 \texttt{RadioOff} for a stop); events that arrive during a connection gap are
-\emph{buffered Hub-side} and \emph{drain in order} on reconnect, never dropped.
-A menu lease of $30$ seconds, carried on the identity, is renewed by any
+\emph{buffered Hub-side} and \emph{drain in order} on reconnect, \emph{as long as
+the reconnect precedes lease expiry} --- an expired lease sweeps the buffer, so a
+click undrained by then is discarded as stale (fork~(B), settled with the lux
+agent). A menu lease of $30$ seconds, carried on the identity, is renewed by any
 authenticated contact and withdraws \texttt{voxd}'s menu entries only after the
 lease expires with no contact --- the state that models ``\texttt{voxd} died''.
 
@@ -289,8 +292,10 @@ The model pins five invariants, stated in the state predicate below:
   \item[(I)] at most one live connection, and at most one subscription, which
     can exist only over that one connection;
   \item[(II)] an event received while subscribed is dispatched exactly once;
-  \item[(III)] events buffered during a gap drain in order on reconnect, and
-    none is lost;
+  \item[(III)] events buffered during a gap drain in order on reconnect
+    \emph{provided the reconnect precedes lease expiry}; a lease that expires
+    first discards the buffer as stale (this is the gap-bounded reading, fork
+    (B) below);
   \item[(IV)] the lease is renewed on any authenticated contact and expires only
     after the full \texttt{leaseTtl} elapses with no contact;
   \item[(V)] each \texttt{music.play}/\texttt{music.stop} event maps to exactly
@@ -381,7 +386,7 @@ entries.
   (conns = 1 \iff mode \neq disconnected) \\
   (subs = 1 \iff mode = subscribed) \\
   subs \leq conns \\
-  (buffer \neq \langle \rangle \implies mode = disconnected) \\
+  (buffer \neq \langle \rangle \implies (mode = disconnected \land present = ztrue)) \\
   fired = dispatched \comp dispatch \\
   (leasePhase = held \implies leaseAge < leaseTtl) \\
   (leasePhase = expired \implies leaseAge = leaseTtl) \\
@@ -392,9 +397,14 @@ entries.
 The first three conjuncts are invariant~(I): \texttt{conns} and \texttt{subs} are
 each at most one by type, \texttt{subs} $\leq$ \texttt{conns} says a subscription
 rides on the single connection, and the two biconditionals tie both counters to
-\texttt{mode}. The fourth is the state face of invariant~(III): a non-empty
-buffer can exist only while the socket is down, so reconnection --- which drains
---- is the only exit from a buffered state. The fifth is invariant~(V) lifted to
+\texttt{mode}. The fourth is the state face of the gap-bounded invariant~(III): a
+non-empty buffer can exist only during the \emph{grace window} --- the socket
+down \emph{and} the lease still held, so the menu is still present
+($present = ztrue \iff leasePhase = held$) --- and there are exactly two exits
+from a buffered state, \texttt{ReconnectAndDrain} (which drains it) and
+\texttt{LeaseExpire} (which discards it). A buffered click therefore survives if
+and only if the reconnect wins the race against the lease clock. The fifth is
+invariant~(V) lifted to
 the history: \texttt{fired} is exactly \texttt{dispatched} composed with
 \texttt{dispatch}, so every dispatched event contributed exactly one playback
 transition, the mapped one, in order; hence $\# fired = \# dispatched$. The last
@@ -408,7 +418,12 @@ arrival --- \texttt{ReceiveEvent} appends it straight to \texttt{dispatched} whi
 subscribed, or \texttt{EnqueueDuringGap} appends it to \texttt{buffer} while
 disconnected --- and \texttt{dispatched} and \texttt{buffer} only ever grow by a
 single append or, on \texttt{ReconnectAndDrain}, move the whole buffer across in
-one step. No transition dispatches an event twice or discards one.
+one step. No event is ever dispatched twice. Invariant~(II) governs the events
+that \emph{reach} playback; it is not contradicted by \texttt{LeaseExpire}
+discarding a still-buffered event, since a discarded click was buffered while
+disconnected and never dispatched at all --- its loss is invariant~(III)'s
+gap-boundedness, the deliberate stale-drop of fork~(B), not a double or missing
+dispatch of a delivered event.
 
 \subsection{Initialisation}
 
@@ -550,19 +565,23 @@ required), and no event can be buffered after withdrawal.
 \subsection{ReconnectAndDrain --- automatic reconnect, drain in order}
 
 The automatic reconnect re-establishes the socket and re-subscribes in one step,
-and the Hub drains the whole buffer in arrival order. This is the heart of
+and the Hub drains the whole buffer in arrival order. It is enabled only while
+the lease is still \texttt{held} --- the grace window --- so it is precisely the
+reconnect that \emph{wins} the race against the lease clock; a reconnect that
+loses (the lease has expired) is a fresh registration, not a drain
+(Section~\ref{sec:regfresh}). This is the heart of the gap-bounded
 invariant~(III): \texttt{dispatched} gains exactly \texttt{buffer}, appended in
-order, and \texttt{buffer} is emptied, so every buffered event is dispatched
-exactly once and none is lost or reordered. \texttt{fired} gains the matching
-playback transitions, preserving invariant~(V) because
+order, and \texttt{buffer} is emptied, so every buffered event that survived the
+window is dispatched exactly once and none is lost or reordered. \texttt{fired}
+gains the matching playback transitions, preserving invariant~(V) because
 $dispatched' \comp dispatch = (dispatched \comp dispatch) \cat (buffer \comp
-dispatch) = fired'$. Reconnecting is contact and renews the lease, so a buffer
-accumulated across an \emph{expired} lease is still drained on the revive.
+dispatch) = fired'$. Reconnecting is contact and renews the lease.
 
 \begin{schema}{ReconnectAndDrain}
   \Delta LuxListener
   \where
   mode = disconnected \\
+  leasePhase = held \\
   mode' = subscribed \\
   conns' = 1 \\
   subs' = 1 \\
@@ -627,11 +646,19 @@ When a held lease reaches its last second with still no contact, it expires: the
 phase becomes \texttt{expired} at the full \texttt{leaseTtl}, the menu withdraws
 ($present' = zfalse$), and the Hub tears the socket down
 ($mode' = disconnected$) --- the modelled image of ``\texttt{voxd} died, so its
-menu entries withdraw''. The buffer is preserved: events buffered during the
-grace window survive the withdrawal and are still drained if \texttt{voxd}
-revives. Because the precondition is $leaseAge = leaseTtl - 1$, expiry is
-reachable only after the full tick chain from the last renewal --- invariant~(IV)'s
-``only after \texttt{leaseTtl} with no contact''.
+menu entries withdraw''. The buffer is \emph{cleared}
+($buffer' = \langle \rangle$): this is fork~(B), settled with the lux agent.
+\texttt{luxd}'s lease sweep drops the dead session together with its menu
+callbacks and its Hub-side invocation hold in one motion --- and the hold is a
+bounded per-session deque in any case (oldest-dropped past capacity), so an
+expired session's buffered clicks are gone twice over. Any click undrained when
+the lease lapses is discarded as stale; this is exactly the gap-boundedness of
+invariant~(III), and it restores the strengthened state predicate
+$buffer \neq \langle \rangle \implies present = ztrue$, which a preserved buffer
+would have broken the instant the menu withdrew. Because the precondition is
+$leaseAge = leaseTtl - 1$, expiry is reachable only after the full tick chain
+from the last renewal --- invariant~(IV)'s ``only after \texttt{leaseTtl} with no
+contact''.
 
 \begin{schema}{LeaseExpire}
   \Delta LuxListener
@@ -641,13 +668,36 @@ reachable only after the full tick chain from the last renewal --- invariant~(IV
   mode' = disconnected \\
   conns' = 0 \\
   subs' = 0 \\
-  buffer' = buffer \\
+  buffer' = \langle \rangle \\
   dispatched' = dispatched \\
   fired' = fired \\
   leasePhase' = expired \\
   leaseAge' = leaseTtl \\
   present' = zfalse
 \end{schema}
+
+\subsection{Register-fresh: re-entry after a dead session}
+\label{sec:regfresh}
+
+Once the lease has expired, the session is gone Hub-side --- its menu entry
+withdrawn, its buffer swept. \texttt{voxd} does not \emph{resume} the dead
+session; it \emph{re-registers}. Because \texttt{voxd}'s lux identity is
+deterministic, a re-registration re-identifies under the same name, re-registers
+the ``Music'' menu entry, re-subscribes, and re-pushes its scene from
+\texttt{ProgramService} state --- nothing depends on any surviving connection
+state. In this model that re-entry is \texttt{Connect} (then \texttt{Subscribe}):
+its precondition $buffer = \langle \rangle$ holds vacuously after an expiry (the
+buffer was swept), so the re-entry starts a \emph{fresh} connection with an empty
+buffer and a fresh lease, and there is no \texttt{ReconnectAndDrain} path out of
+\texttt{expired} to resume a stale buffer. The register-fresh re-entry and the
+first boot connection are therefore the same transition, exactly as a warm and a
+cold start of the socket are indistinguishable once the buffer is empty.
+
+That no click can arrive at a dead session is already a fact of the model:
+\texttt{EnqueueDuringGap} requires $present = ztrue$, and expiry sets
+$present' = zfalse$, so buffering is disabled the moment the menu withdraws.
+Only clicks buffered \emph{before} expiry are ever at risk, and those are
+precisely the ones the lease race decides.
 
 \subsection{Why the split from PlayerView holds}
 
