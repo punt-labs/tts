@@ -1,0 +1,14 @@
+reflections:
+    - round: 1
+      created_at: "2026-07-26T19:31:26Z"
+      author: claude
+      converging: true
+      signals:
+        - 'rmh evaluation: audit complete and correctly classified; systemic fault-verbatim leak, INFO-floor, and WS-health-trim safety all verified against the code'
+        - 'rmh REVISE: fixes #2/#3 (record.path, cache_status.path) are cross-surface, not daemon-only — client requires path today (CacheStatus.from_wire require_str; record()/RecordResult); re-scope with client-side write-set and correct the ''independently shippable'' + ''name+bytes is the locator'' lines'
+        - 'Operator ruling: invariant becomes a CONCEPTUAL CHROOT — relativize in-jail data paths to the data root, verdict-only for out-of-jail host facts; absolute prefix never crosses the wire'
+        - 'Operator decisions ruled: D1 drop provider from unauth /health YES; D2 YES (player_binary/audio_env drop, last_playback.file relativize); D3 daemon_version authenticated-only YES; D4 bounded+relativized+stripped reason (closed set is future); D5 hostname/username never YES'
+        - 'Fault fix improved under chroot: build the wire message from exc.filename relativized + exc.strerror, not generic ''operation failed'' and not str(exc)'
+        - Scrub 'load-bearing' (banned term) throughout
+      recommendation: continue
+      reason: Round 2 folds the operator's chroot ruling and rmh's cross-surface amendment into docs/wire-host-info-boundary.md; the full round-2 brief is in .tmp/missions/m-019-reflect.md

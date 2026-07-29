@@ -1,0 +1,42 @@
+mission_id: m-2026-07-28-009
+status: closed
+type: implement
+created_at: "2026-07-28T04:40:40Z"
+updated_at: "2026-07-28T05:46:18Z"
+closed_at: "2026-07-28T05:46:18Z"
+leader: claude
+worker: mdm
+evaluator:
+    handle: rop
+    pinned_at: "2026-07-28T04:40:40Z"
+    hash: 6e1a3cdfadb9e663c7a9ff6b37cad82ad05a05e94bb6f458ca592d20d1e5839b
+inputs: {}
+write_set:
+    - hooks/
+    - tests/
+success_criteria:
+    - 'Gate the plugin''s AUDIO session hooks on the enabled marker: notify.sh (Stop), signal.sh (PostToolUse Bash), notify-permission.sh (Notification) each begin with the §2.7 gate — resolve the repo root, then `[ -f "$REPO_ROOT/.punt-labs/vox/enabled" ] || exit 0` and `command -v vox >/dev/null 2>&1 || exit 0`. So vox chimes/narrates ONLY in repos that ran `vox enable`; a clone on a box without vox is a graceful no-op (exit 0, never ''command not found'').'
+    - Do NOT gate session-start.sh — it deploys the slash commands and auto-allows the mic MCP tools, which must remain available so `/vox enable` (and `vox enable`) can run in a not-yet-enabled repo. Leave the suppress-output hook ungated too.
+    - Resolve the repo root robustly (e.g. git rev-parse --show-toplevel with a fallback to the hook's working dir); the gate must not error when run outside a git repo.
+    - 'shellcheck clean (make lint runs shellcheck -x on hooks/*.sh); a scripted test (or the manual-tests doc) covers: marker present -> hook proceeds; marker absent -> hook exits 0 silently; vox absent -> exits 0 silently.'
+    - make check green; after the last commit that adds any new file, run make update-oo + make update-coupling, confirm baselines, then make check on a CLEAN tree (git stash unrelated dirt first) EXIT 0.
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 1
+context: |
+    M3 of vox-ck3w (branch feat/vox-enable-disable, already checked out). The
+    enable/disable core (M2) is merged into the branch and accepted: the marker is
+    <repo>/.punt-labs/vox/enabled. Read the design docs/vox-enable-disable.md §3.5
+    (the gate) and §2.7 of ../punt-kit/standards/tool-enable-disable.md.
+
+    Today vox's plugin session hooks fire in every project the plugin is installed
+    in. This mission makes them per-repo opt-in: the audio hooks gate on the marker,
+    so vox is silent in a repo until `vox enable` has been run there. This is the
+    behavior change that makes enablement meaningful — it is intended.
+
+    Note: hooks/session-start.sh already carries the Skill(enable)/Skill(disable)
+    permission additions from M2; you do not need to add them, only leave
+    session-start UNGATED. This mission touches only hooks/ (+ tests). It does NOT
+    touch install.sh (M4) or any src/. Do NOT push, open a PR, run make install, or
+    restart the daemon. Submit via ethos mission result.

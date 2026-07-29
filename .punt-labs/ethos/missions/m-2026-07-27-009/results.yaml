@@ -1,0 +1,63 @@
+results:
+    - mission: m-2026-07-27-009
+      round: 1
+      created_at: "2026-07-27T14:31:22Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed: []
+      evidence:
+        - name: '#6/D1 provider dropped from unauth /health, kept on authenticated full_payload'
+          status: pass
+        - name: '#5/D2 full_payload drops audio_env/player_binary, relativizes last_playback.file, sanitizes stderr, keeps pid/daemon_version/rc/elapsed_s/ts'
+          status: pass
+        - name: '#4 play fault frame carries rc/elapsed + relativized-or-stripped stderr; raw to vox.log'
+          status: pass
+        - name: '#10/D4 program reasons SafeText-sanitized at capture (loop, fill_recorder); raw via exc_info'
+          status: pass
+        - name: full suite 3236 passed; make check green each commit; merge-base OO + coupling ratchets exit 0
+          status: pass
+      prose: |
+        PR 1 of vox-93ej. Four commits on feat/wire-boundary-daemon:
+        7c69cdb SafeText path-token sanitizer (new voxd/wire_text.py); reused the
+        merged relativize_to_data_root + SafeFault, no fork.
+        8f41735 #5/#6 health payload: provider off unauth /health onto authenticated
+        full_payload; drop audio_env/player_binary; relativize last_playback; removed
+        dead _player_binary_path/_name; cured _log_result 7-param bloat.
+        99ba3ef #4 play fault: PlaybackResult.wire_failure_detail sanitizes stderr;
+        play_handler builds SafeFault(wire, detail) directly; raw to log.
+        7052a9b #10/D4 program reasons sanitized at loop._back_off_spawn and
+        FillRecorder._reason; raw exception to vox.log via exc_info.
+        No migration/compat/shim. Did not run make install or restart the daemon.
+        Scoped ratchet relaxes (justified in the audit logs) cover feature-substance
+        module_size/coupling growth in small far-under-threshold files; the one real
+        smell introduced (5-param _failed) was fixed genuinely, not waived.
+    - mission: m-2026-07-27-009
+      round: 2
+      created_at: "2026-07-27T15:07:44Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.95
+      files_changed: []
+      evidence:
+        - name: 'djb MEDIUM DoS fixed: SafeText.of caps the input BEFORE the regex (cls._capped(raw, cap)), so the super-linear _ABSOLUTE_PATH scan is bounded to cap chars regardless of caller input'
+          status: pass
+        - name: 'regression test: a 200k-char many-segment ''/a/a/.../a X'' input returns in < 1s (was ~133s uncapped) and still relativizes an in-jail path within the cap'
+          status: pass
+        - name: full suite 3238 passed; make check green; merge-base OO + coupling ratchets exit 0 on HEAD
+          status: pass
+      prose: |
+        Round 2 addresses djb's sole remaining finding (MEDIUM ReDoS).
+        Commit 6e707ac: SafeText.of previously ran the super-linear _ABSOLUTE_PATH
+        pattern on the raw uncapped input and capped only the output after re.sub. A
+        crafted 200k-char many-segment string backtracks O(n^2) (djb measured 133s),
+        which on the daemon's single event loop is worse than the raise a7dd guards
+        against. The fix caps the input first -- _ABSOLUTE_PATH.sub(_rewrite_token,
+        cls._capped(raw, cap)) -- bounding the scan to cap chars, self-contained and
+        independent of any caller's input discipline, which is also what D4 "cap the
+        length" intends. A load-bearing docstring records why (a future reader must
+        not revert to capping only the output). Two regression tests: the 200k-char
+        input returns in < 1s and completes; a capped input still sanitizes the
+        in-jail path within the first cap chars. The docstring grows the new-on-branch
+        wire_text.py to 67/300 (far under threshold) -- one scoped relax, justified in
+        .oo-audit.jsonl. No push, no PR, no make install (leader owns those).

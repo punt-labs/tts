@@ -1,0 +1,47 @@
+mission_id: m-2026-07-27-009
+status: closed
+type: implement
+created_at: "2026-07-27T03:33:33Z"
+updated_at: "2026-07-27T15:08:55Z"
+closed_at: "2026-07-27T15:08:55Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: djb
+    pinned_at: "2026-07-27T03:33:33Z"
+    hash: 19095bb477fb03f170676196565c083685e3346baca4f3aabae4314b6bec37c0
+inputs: {}
+write_set:
+    - src/punt_vox/voxd/
+    - src/punt_vox/
+    - tests/
+success_criteria:
+    - 'vox-qjvb / #6 / D1: drop `provider` from the unauthenticated GET /health minimal_payload (voxd/health.py) — out of jail, no relative form.'
+    - 'vox-qjvb / #5 / D2: WS health full_payload — drop audio_env and player_binary (verdict-only), relativize last_playback.file via relativize_to_data_root, relativize-or-strip last_playback.stderr; KEEP pid, daemon_version, last_playback.{rc,elapsed_s,ts}. Confirm HealthStatus.from_wire (.get() defaults) still parses; the client/daemon-restart/doctor contract survives.'
+    - 'vox-l5g6 / #4: play fault — relativize in-jail path tokens in the player stderr the client frame carries, strip the rest, keep rc/elapsed (play_handler.py, playback.py); raw stderr to the log.'
+    - 'vox-l5g6 / #10 / D4: program-status generation.last_error, playback_error.reason, failed_parts[].reason — relativize in-jail path tokens, strip out-of-jail ones, cap the length; raw exception text to the log (programs/loop.py, fill_recorder.py). Bounded free-form; a closed reason-code set is a future hardening, not now.'
+    - Reuse the MERGED helpers relativize_to_data_root (voxd/data_root_boundary.py) and SafeFault (voxd/wire_fault.py); do NOT reimplement or fork them. No migration/compat/shim.
+    - 'TDD: tests assert no absolute prefix / no ''/Users/'' / no host-binary path in the affected replies (health, play fault, program reason), the /health provider drop, and the health-trim parse. Each fails pre-fix. make check green and the raw merge-base OO ratchet exits 0 on every commit; commit incrementally, never >30 min uncommitted.'
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 2
+context: |
+    PR 1 of the vox-93ej epic (beads vox-qjvb + vox-l5g6), on branch
+    feat/wire-boundary-daemon (already checked out). Theme: the daemon stops leaking
+    host info in its own replies. Implement per the ratified design
+    docs/wire-host-info-boundary.md — read §2.1/§2.2 (health), §2.3 (play fault),
+    §2.5 (program-status), §6 (D1/D2/D4), and §7 items #4/#5/#6/#10.
+
+    The foundation (relativize_to_data_root + SafeFault) is already merged to main
+    (a7dd). This PR USES those helpers to sanitize the remaining daemon replies —
+    it does not rebuild them. The invariant is a7dd's: an in-jail path crosses the
+    wire relativized, an out-of-jail host fact (installed-binary path, env value,
+    provider name) crosses only as a verdict or is dropped, and version stays
+    authenticated-only.
+
+    You decide the exact edits within the admitted paths and follow the OO rules.
+    This is daemon-side — no client.py parser change is expected (HealthStatus.from_wire
+    reads with .get() defaults, so dropping full_payload fields is safe; confirm it).
+    Do NOT push, open a PR, run make install, or restart the daemon — the leader
+    handles verification and the PR. Submit via ethos mission result.

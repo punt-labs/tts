@@ -1,0 +1,48 @@
+mission_id: m-2026-07-28-001
+status: closed
+type: implement
+created_at: "2026-07-28T02:00:47Z"
+updated_at: "2026-07-28T03:26:01Z"
+closed_at: "2026-07-28T03:26:01Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: djb
+    pinned_at: "2026-07-28T02:00:47Z"
+    hash: 19095bb477fb03f170676196565c083685e3346baca4f3aabae4314b6bec37c0
+inputs: {}
+write_set:
+    - src/punt_vox/claude_md.py
+    - src/punt_vox/
+    - tests/
+success_criteria:
+    - 'A repo-scope CLAUDE.md import writer: add/remove the exact canonical line `@.punt-labs/vox/CLAUDE.md` to/from a target CLAUDE.md, alongside the existing user-scope `@~/.punt-labs/vox/CLAUDE.md`. One function/class both enable and disable will call; no side effects beyond the one host file (+ its lock).'
+    - 'Full tool-enable-disable.md §2.4 write contract: exact canonical string (fwd slashes, no ./ , no trailing slash/whitespace, one physical line); append-if-absent, idempotent, terminator-insensitive match (strip trailing CR/LF/CRLF before compare); skip fenced AND indented code blocks with balanced-pair fence semantics and the unterminated-trailing-opener guard (a dangling fence above the import must NOT swallow it — the naive odd-count rule is wrong); the shared sibling lock `.<host>.punt-import.lock` (NOT the target itself); atomic temp-write + rename; byte-preserving with host EOL for the appended line (no universal-newline translation); symlink-resolving; mode-preserving (existing mode kept, new file 0644).'
+    - 'Matches the Z model docs/vox-enable-disable.tex ImportFile machine: AppendImport is 0->1->1 (adds exactly one, never a duplicate on its own); RemoveImport removes EVERY match, collapsing a pre-existing duplicate 2->0. disable heals a racing writer''s duplicate.'
+    - 'The retired managed-section markers (§2.1) are removed from claude_md.py — forward integration, no compat. Cite biff''s ClaudeMdImport (punt-labs/biff src/biff/claude_md.py PR #312) as the reference for the full contract; port the correctness, do not import it.'
+    - 'TDD: tests cover add-once/second-add-noop; remove-every-match incl. the 2->0 duplicate collapse; a top-level fenced block, an indented block, and a DANGLING unterminated opener above the import (assert the import is still matched/pruned); LF, CRLF, and lone-CR host files (bytes outside the import identical before/after); a symlink target; the sibling lock is taken and the target is never locked. Each fails pre-fix where applicable. make check green + the raw merge-base OO ratchet exits 0 on every commit.'
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 2
+context: |
+    Foundation for vox-ck3w (vox enable|disable). Branch feat/vox-enable-disable
+    (already checked out). Read the design docs/vox-enable-disable.md §3.6, the Z
+    model docs/vox-enable-disable.tex (the ImportFile machine — these are on the
+    branch), and ../punt-kit/standards/tool-enable-disable.md §2.4 (the full write
+    contract) and §2.1 (no managed-section markers).
+
+    vox ORIGINATED the atomic/byte-preserving import machinery (GlobalClaudeImports
+    in src/punt_vox/claude_md.py); the standard names it as the origin of biff's
+    ClaudeMdImport. Your job: bring claude_md.py up to the full §2.4 contract for
+    BOTH the existing user-scope import and a new repo-scope import
+    (@.punt-labs/vox/CLAUDE.md in <repo>/CLAUDE.md), and drop the retired
+    managed-section markers. This is the writer that vox enable/disable will call
+    in a later mission — it must be correct in isolation first (the lock/atomic/
+    fence-parsing is the hardening magnet; that is why djb evaluates it before the
+    PR opens).
+
+    This mission does NOT add the enable/disable verbs, the marker, the MCP tool,
+    the hooks, or install.sh — only the import writer + its tests. You decide the
+    exact API within claude_md.py. Do NOT push, open a PR, run make install, or
+    restart the daemon. Submit via ethos mission result.

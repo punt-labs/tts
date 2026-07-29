@@ -1,0 +1,81 @@
+results:
+    - mission: m-2026-07-26-016
+      round: 1
+      created_at: "2026-07-26T16:59:31Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/voxd/cache_handlers.py
+          added: 92
+          removed: 0
+        - path: src/punt_vox/voxd/handler_registry.py
+          added: 4
+          removed: 0
+        - path: src/punt_vox/client.py
+          added: 45
+          removed: 0
+        - path: src/punt_vox/client_sync.py
+          added: 11
+          removed: 0
+        - path: src/punt_vox/__main__.py
+          added: 10
+          removed: 14
+        - path: tests/test_voxd_cache_handlers.py
+          added: 121
+          removed: 0
+        - path: tests/test_client.py
+          added: 64
+          removed: 0
+        - path: tests/test_cli.py
+          added: 108
+          removed: 0
+      evidence:
+        - name: make check — full gate exit 0 (3196 tests, lint/mypy/pyright/coupling/suppressions green)
+          status: pass
+        - name: functional — VOXD_PORT=1 vox cache status prints one-line Error and exits 1 (no traceback)
+          status: pass
+        - name: grep — zero cache/CACHE_DIR references remain in src/punt_vox/__main__.py
+          status: pass
+        - name: raw merge-base OO ratchet + coupling ratchet exit 0
+          status: pass
+        - name: TDD — daemon-handler (6) + client-method (4) + CLI (6) tests fail pre-fix, pass after
+          status: pass
+      prose: |
+        vox cache status / vox cache clear operated on the CLIENT's local CACHE_DIR;
+        the MP3 quip cache is daemon-owned, so against a remote daemon (VOXD_HOST set)
+        they touched the wrong machine -- clear silently no-oped, status reported
+        client numbers. Added two wire ops following the vox-tnum rec_list/rec_remove
+        template.
+
+        Commits (branch fix/vox-suvs):
+          f6c8ed9  add cache_status/cache_clear daemon wire handlers
+          a50c089  add cache_status/cache_clear client methods
+          be2d00e  route vox cache status/clear through the daemon
+
+        voxd/cache_handlers.py (new): CacheStatusHandler / CacheClearHandler each hold
+        their cache operation as an injected collaborator and reply through WireReply;
+        an OSError (denied unlink, stat error mid-scan) routes through fault (ERROR
+        "operation failed"), never a silent no-op or a torn connection. cache.py is
+        unchanged -- the registry injects its existing cache_status/cache_clear free
+        functions, run on the daemon's own CACHE_DIR. Wire shapes mirror cache.py's
+        returns: cache_status -> {entries,size_bytes,path}; cache_clear -> {cleared}.
+
+        VoxClient/VoxClientSync gained cache_status() -> CacheStatus and cache_clear()
+        -> int. CacheStatus is a frozen wire value object (from_wire raises on a bad
+        row) beside the sibling RecordResult/RecordingSummary/SynthesizeResult types.
+        A daemon fault frame surfaces as VoxdProtocolError, never a wrong/empty status.
+
+        cache_status_cmd/cache_clear_cmd repointed at VoxClientSync (honoring
+        VOXD_HOST/PORT/TOKEN); the local-cache path is DELETED, not bridged. A daemon
+        fault is a clean CLI error + Exit(1), mirroring status_cmd/daemon_status_cmd.
+
+        OO ratchet exit 0: genuine improvements on __main__.py (module_size 834->832,
+        dropped 2 inline cache imports), client.py (method_ratio, avg_params,
+        avg_complexity, class_to_func_ratio), client_sync.py (avg_params). Scoped,
+        individually-justified relaxations (in .oo-audit.jsonl / .oo-coupling-audit.jsonl)
+        for the unavoidable new-surface growth on handler_registry (composition root,
+        PL-CU-1), client, and client_sync. New file voxd/cache_handlers.py clears all
+        absolute thresholds.
+
+        Not pushed; no PR; make install / daemon restart not run (leader's job).

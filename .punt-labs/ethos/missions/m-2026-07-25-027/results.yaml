@@ -1,0 +1,39 @@
+results:
+    - mission: m-2026-07-25-027
+      round: 1
+      created_at: "2026-07-25T21:12:16Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: docs/audio-programs-music-tidy.md
+          added: 453
+          removed: 0
+      evidence:
+        - name: make check
+          status: pass
+        - name: markdownlint docs/audio-programs-music-tidy.md
+          status: pass
+      open_questions:
+        - 'rec MCP-tool collapse: recommended as an immediate fast-follow PR (separate rollback unit), not this pass. rec CLI --json parity ships this pass. Leader to confirm the split.'
+        - music_new carries the PromptSet object to the daemon per operator decision 1 (rejected build-then-extract-.base). Leader to confirm the daemon-side MusicNewHandler change is in scope (wiring, not state machine).
+      prose: |
+        Phase 1.5 music command-surface tidy design (docs/audio-programs-music-tidy.md,
+        committed 6cc7d60). Every success criterion answered with file:line citations.
+
+        Shared PromptSet: one authored-input type both surfaces build AND send to the
+        daemon; new PromptSet.single(prompt) replaces the bare string in music new
+        (cli_music.py:155, server_audio_tools.py:248-263, client_sync.py:235),
+        forward-integrated with no shim.
+
+        Single music MCP tool: first arg subcommand in
+        on/off/play/next/new/list/get/remove; base_prompt shared by on (12 variations)
+        and new (single). Collapses server.py music/music_play/music_list/music_next and
+        the three music_* registrations; absorbs MusicCatalogTools. Explicit dispatch
+        table plus a MusicArgs bundle, no if-ladder. First arg named subcommand (not
+        mode) for uniform group mapping.
+
+        rec: music this pass (reference); rec MCP collapse immediate fast-follow; rec CLI
+        --json ships now. vox music on: stdin pool as wire JSON, no --file, isatty gate.
+        --json parity: inject shared OutputFlags into build_music_app/build_rec_app.
+        No state-machine change so no z-spec; OO ratchet pays down.

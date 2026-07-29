@@ -1,0 +1,67 @@
+mission_id: m-2026-07-26-019
+status: closed
+type: implement
+created_at: "2026-07-26T17:37:16Z"
+updated_at: "2026-07-26T19:37:09Z"
+closed_at: "2026-07-26T19:37:09Z"
+leader: claude
+worker: djb
+evaluator:
+    handle: rmh
+    pinned_at: "2026-07-26T17:37:16Z"
+    hash: 5b496cf24ebb9b95b94676bb1d6671dcc6f8eb7d56747e0648efc9f7ae36a953
+inputs: {}
+write_set:
+    - docs/
+success_criteria:
+    - 'A design doc under docs/ that states the trust-boundary invariant precisely and holds a field-by-field audit table: every client-facing wire reply -> each field -> KEEP (service verdict/count) or SANITIZE/DROP (host path, binary inventory, identity) -> why.'
+    - Enumerates EVERY client-facing reply the daemon can send (health, status, cache_status, record/rec ops, playback, voices) AND error/fault frames — a fault echoing an absolute path or stack frame leaks the host too.
+    - 'Specifies the Category-B fixes field-by-field: doctor returns verdicts not paths/versions; status reports daemon log health as healthy/degraded with no path; vox log becomes a wire op with an audit-trail floor; cache_status drops `path` (or gates it to local).'
+    - Flags any additional host-info leaks found, and lists which decisions need the operator (e.g., does health expose version to an unauthenticated probe; is hostname ever acceptable).
+    - The resulting fix list is enumerated so it can become implementation beads. NO implementation — this is design/review only.
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 2
+context: |
+    Security / trust-boundary design review of the voxd daemon's client-facing wire
+    protocol. This is DESIGN AND REVIEW — do not write or change production code.
+
+    THE INVARIANT to formalize and enforce: the daemon's client wire replies carry
+    SERVICE-LEVEL verdicts and counts, NEVER host reconnaissance — no absolute
+    paths, no installed-binary locations or versions, no directory layout, no
+    hostname/username. VOXD_TOKEN authenticates a client to USE the audio service
+    (synthesize, play, manage recordings/cache by opaque id, "is it up + version");
+    it must not grant a map of the daemon host. Fine for the operator; for a
+    token-holding attacker (or anyone who reaches the socket) the host detail is
+    reconnaissance — install locations, the run-as user (paths carry the username),
+    what is installed to target by CVE.
+
+    Background — this came out of the vox-dvri remote-daemon audit's Category B. On
+    a remote daemon (VOXD_HOST set), several client commands would leak host detail.
+    The operator's ruling: keep the commands (they are legitimate from a client),
+    but limit the DETAIL — return the verdict the user needs, not the recon an
+    attacker wants:
+    - vox doctor (doctor.py): ffmpeg / music-dir / output-dir / espeak checks
+      currently inspect the CLIENT. Legit to run from a client, but the fix returns
+      VERDICTS (ffmpeg present y/n, output-dir writable y/n, espeak present y/n)
+      WITHOUT the `which` path, the version string, or the directory path.
+    - MCP status log health (server.py:703 -> log_health()): reports the client's
+      vox.log; should report the DAEMON's log health as a status (healthy /
+      degraded) with NO path.
+    - vox log <level> (__main__.py:464): writes local global config; to control a
+      remote daemon's level it needs a wire op, but with a FLOOR so a client cannot
+      drop the daemon below the level that records the audit trail.
+    - ALREADY SHIPPED, in scope to revisit: cache_status returns
+      {entries, size_bytes, path} — the `path` is the daemon's absolute cache dir
+      (home + username on a remote host). Drop `path`, or gate it to a local daemon.
+
+    Your job:
+    1. Enumerate every client-facing wire reply the daemon can send AND every
+       error/fault frame; list what host info each carries or would carry.
+    2. Classify each field against the invariant: KEEP or SANITIZE/DROP.
+    3. Specify the Category-B fixes field-by-field, plus any additional leaks you
+       find, plus the operator-decision items.
+    4. Write the design doc under docs/ (the invariant, the audit table, the fix
+       list). Read the wire code as needed (voxd/, server.py, client.py, doctor.py,
+       logging_config.py, the handlers). Submit via ethos mission result.

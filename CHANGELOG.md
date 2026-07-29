@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.16.0] - 2026-07-28
+
 ### Added
 
 - **`vox enable` / `vox disable` — per-repo enablement (vox-ck3w, `tool-enable-disable.md` conformance).** vox now turns on per repo via a committed `.punt-labs/vox/enabled` marker. `vox enable`, run in a repo, deposits the `.punt-labs/vox/CLAUDE.md` agent guide, writes the marker, adds the `@.punt-labs/vox/CLAUDE.md` import to the repo's `CLAUDE.md`, additively registers the enable/disable skill permissions, and establishes an audible notify level (`normal`) so a freshly-enabled repo chimes and speaks on task completion — silence is `vox disable` (marker removed, hook gate closed), never an enabled repo left at `notify=n`; a re-enable preserves an existing `continuous` choice. `vox disable` reverses the import and marker, leaving the guide dormant (non-destructive); `vox disable --purge` removes the subtree. The same verbs are on the `mic` MCP surface (`mic:enablement` with `action="enable"|"disable"`) and as `/enable` / `/disable` slash commands — all three write a byte-identical marker. No auto-enable: vox never turns itself on as a side effect of use.

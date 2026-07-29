@@ -1,0 +1,11 @@
+reflections:
+    - round: 1
+      created_at: "2026-07-27T00:30:38Z"
+      author: claude
+      converging: true
+      signals:
+        - 'djb cleared the core adversarially: helper traversal-safe (is_relative_to, sibling/symlink/.. all None), SafeFault correct (strerror is errno text not a path, out-of-jail/non-OSError generic), all 10 §2.6 sites + reject_or_fault + fetch_handler + system_handlers converted, tests genuinely fail pre-fix, OO relax is real import substance not gaming'
+        - 'BLOCKING: make check RED on branch HEAD — wire_fault.py missing from BOTH .oo-baseline.json and .oo-coupling-baseline.json (data_root_boundary.py present). check-oo exits 1 ''touched file not in baseline''. Fix: make update-oo, ensure wire_fault.py lands in the coupling baseline too, stage both + audit logs, verify make check exits 0 on a clean tree'
+        - 'REAL LEAK: rec_handlers.py:100-101 catches FileNotFoundError -> reply.error(str(exc)) verbatim, BEFORE the OSError->fault handler at :103. record_store.py:200 synthesized FileNotFoundError (filename=None) is the client''s own ref (verbatim ok), but a TOCTOU race at :201 path.unlink() raises a raw OSError with filename=absolute path, sent verbatim -> leaks home+username. Fix: discriminate on exc.filename (None -> error verbatim; set -> reply.fault(SafeFault.from_exception(exc))); add a race-path test asserting no prefix on the wire'
+      recommendation: continue
+      reason: 'Round 2: rmh fixes the red make check (baseline) and the rec_handlers TOCTOU prefix leak; both concrete with fixes specified, core design/implementation otherwise cleared by djb'

@@ -1,0 +1,63 @@
+mission_id: m-2026-07-25-031
+status: closed
+type: implement
+created_at: "2026-07-25T22:01:35Z"
+updated_at: "2026-07-26T01:32:10Z"
+closed_at: "2026-07-26T01:32:10Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: gvr
+    pinned_at: "2026-07-25T22:01:35Z"
+    hash: eb4247340456006562a94dd93747ddc68165b14d29f551bc6d4a8bd168877980
+inputs: {}
+write_set:
+    - src/punt_vox/server_music_tool.py
+    - src/punt_vox/types_programs/prompts.py
+    - src/punt_vox/server.py
+    - src/punt_vox/server_audio_tools.py
+    - src/punt_vox/catalog_gateway.py
+    - src/punt_vox/client_catalog_gateway.py
+    - src/punt_vox/client_sync.py
+    - src/punt_vox/voxd/programs/library_handlers.py
+    - src/punt_vox/cli_music.py
+    - src/punt_vox/cli_rec.py
+    - src/punt_vox/__main__.py
+    - commands/
+    - tests/
+    - .oo-baseline.json
+    - .oo-audit.jsonl
+    - .oo-coupling-baseline.json
+success_criteria:
+    - 'Implement the full Phase 1.5 tidy per docs/audio-programs-music-tidy.md on branch feat/vox-music-tidy. Operator ruling 2026-07-25: music AND rec collapse in ONE PR (PRs are not sacred), so the MCP surface is never uneven -- both groups get the uniform one-tool-per-group shape in this change.'
+    - 'Section 1: add PromptSet.single(prompt); `music new` on both surfaces builds and SENDS a PromptSet; rename the music_new wire key prompt -> base_prompt in MusicNewHandler; delete the bare-string path end to end (CatalogGateway, ClientCatalogGateway, VoxClientSync.music_new, the handler). No shim (PL-PP-1, PY-RF-6).'
+    - 'Section 2: collapse music/music_play/music_list/music_next plus the music_new/get/remove registrations into ONE `music` MCP tool in a NEW src/punt_vox/server_music_tool.py (MusicTool.dispatch + a MusicArgs bundle + an explicit method table -- NOT an if-ladder, NOT getattr). Delete MusicCatalogTools. LEADER AMENDMENT: the tool''s first argument is subcommand: Literal[''on'',''off'',''play'',''next'',''new'',''list'',''get'',''remove''], NOT a bare str, so the MCP schema shows the LLM the allowed values (oo.md illegal-states-unrepresentable). Return contract unchanged; control actions still emit no prose.'
+    - 'rec MCP collapse (SAME PR, per the operator ruling): apply the identical shape to rec -- one `rec` MCP tool (RecTool.dispatch + RecArgs, subcommand as a Literal), delete the five rec_new/rec_list/rec_play/rec_get/rec_remove registrations, update commands/ and guidance for the mic:rec subcommand= shape. The group/subcommand mapping is uniform across groups.'
+    - 'Section 4: add the `vox music on` CLI verb, reading the pool from stdin as wire-form JSON (isatty gate: piped -> PromptSet.from_wire; tty or empty -> None fallback); a malformed pool is a clean CLI error via the existing _guard. No --file flag. Read vibe from config.'
+    - 'Section 5: --json parity -- inject the shared OutputFlags into build_music_app and build_rec_app; add --json/--verbose/--quiet to every music and rec subcommand, routed through OutputFlags.apply; `vox music list --json` AND `vox rec list --json` both work (fixes vox-cnak, the trailing-form --json bug).'
+    - 'Tests per Section 8 (test_prompts, test_cli_music, test_cli_rec, test_server, test_server_music_tool, test_client_sync, test_library_handlers, catalog gateway tests): each modeled property asserted by name. make coverage shows coverage RISING and the test count UP; full pytest no INTERNALERROR; suppression ratchet unchanged; no # noqa / # type: ignore.'
+    - 'QUALITY: make check green on EVERY commit; the raw merge-base OO ratchet exits 0 with a genuine (not minimum-gamed) improvement -- verify unpiped: uv run python tools/oo_score.py src/punt_vox/ --check --base-ref $(git merge-base origin/main HEAD) --require-base; echo $? prints 0. Run make update-oo after green and stage .oo-baseline.json + .oo-audit.jsonl (and .oo-coupling-baseline.json if coupling changed).'
+    - Commit incrementally -- one commit per logical step (PromptSet, MusicTool, rec tool, vox music on, --json parity), each passing make check; keep under 30 min uncommitted. Do NOT push, open a PR, run make install, or restart the daemon. Submit via ethos mission result with the SHAs, coverage delta, and raw ratchet exit.
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 1
+context: |-
+    Phase 1.5 IMPLEMENTATION of the Audio Programs epic (vox-ys1p), on the existing
+    branch feat/vox-music-tidy where the design doc is already committed
+    (docs/audio-programs-music-tidy.md, plus the concept.md/phase1 updates). This
+    implements that design. Operator ruled 2026-07-25: music AND rec collapse in
+    ONE PR ("PRs are not sacred"), so the surface is never uneven. Leader amendment:
+    the subcommand argument is a Literal, not a bare str.
+
+    Read docs/audio-programs-music-tidy.md end to end first -- it is the spec, with
+    file:line for every change and the full write set (Section 6). No state-machine
+    change (surface + wiring only), so no z-spec. Forward integration throughout:
+    delete every old path in the same change, no compat shims or aliases. Follow the
+    OO rules in ../.claude/rules/python-*.md; keep server.py and server_audio_tools.py
+    thin and under the module-size / class-count thresholds (the new
+    server_music_tool.py holds MusicTool).
+
+    You are the design author, so the shape is yours -- implement it faithfully with
+    the two leader amendments. Work only on feat/vox-music-tidy. The COO owns the
+    CHANGELOG / README / DESIGN / CLAUDE.md doc updates; do not touch those.

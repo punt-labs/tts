@@ -1,0 +1,67 @@
+mission_id: m-2026-07-26-016
+status: closed
+type: implement
+created_at: "2026-07-26T15:44:32Z"
+updated_at: "2026-07-26T17:11:46Z"
+closed_at: "2026-07-26T17:11:46Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: bwk
+    pinned_at: "2026-07-26T15:44:32Z"
+    hash: b106f88d6d76d24f00c3960e9b2b7a7dbc94e7ef98c1036ccd20074c9e9bf944
+inputs: {}
+write_set:
+    - src/punt_vox/voxd/
+    - src/punt_vox/client.py
+    - src/punt_vox/client_sync.py
+    - src/punt_vox/__main__.py
+    - src/punt_vox/cache.py
+    - src/punt_vox/types_audio.py
+    - src/punt_vox/types.py
+    - tests/
+success_criteria:
+    - vox cache status and vox cache clear route 100% through the daemon via VoxClientSync; no local CACHE_DIR access remains in the CLI path.
+    - New daemon wire ops cache_status and cache_clear, with a daemon-side handler operating on the daemon's own cache, copying the vox-tnum rec_list/rec_remove template.
+    - VoxClient (async) and VoxClientSync gain cache_status() / cache_clear() methods; wire reply shapes mirror cache.py's existing cache_status()/cache_clear() returns.
+    - A daemon fault surfaces as a clean CLI error + nonzero exit (mirror daemon_status/status handling of VoxdConnectionError), never a silent no-op.
+    - 'No migration/compat/shim code: the old local-cache CLI path is deleted, not bridged.'
+    - 'TDD: daemon-handler, client-method, and CLI tests written first, each failing against current code and passing after (mirror the vox-4p5p TestDaemonStatusCommand pattern).'
+    - Every commit passes make check and the raw merge-base OO ratchet exits 0 (stage .oo-baseline.json + .oo-audit.jsonl, and .oo-coupling-baseline.json if coupling grows). Commit incrementally, one logical step per commit, each green, never >30 min uncommitted.
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 1
+context: |
+    Bug vox-suvs (branch fix/vox-suvs, already checked out): `vox cache status` and
+    `vox cache clear` operate on the CLIENT's local cache dir, not the daemon's.
+
+    Current: cache_status_cmd / cache_clear_cmd (__main__.py ~865, ~885) call
+    cache.cache_status() / cache.cache_clear() directly, reading/clearing the local
+    CACHE_DIR (~/.punt-labs/vox/cache). But the cache is DAEMON-owned — voxd
+    reads/writes it during synthesis (voxd/synthesis.py). On a remote daemon
+    (VOXD_HOST set) these commands hit the CLIENT's cache; the daemon's real cache
+    on the remote host is untouched — `cache clear` silently no-ops and
+    `cache status` reports the wrong (client) numbers.
+
+    Goal: route cache status/clear through the daemon so they operate on the
+    DAEMON's cache, honoring VOXD_HOST/PORT/TOKEN — exactly as `vox status`,
+    `vox voices`, and the music/rec commands already do.
+
+    The design is SETTLED: copy the vox-tnum daemon-handler template — the
+    rec_list / rec_remove wire ops registered in voxd/handler_registry.py, their
+    handler (voxd/rec_handlers.py), and the matching VoxClientSync methods. Add two
+    wire ops, cache_status and cache_clear, with a daemon-side handler that runs
+    cache.py's cache_status/cache_clear on the daemon's own cache, and add the
+    cache_status() / cache_clear() methods to VoxClient and VoxClientSync. Repoint
+    cache_status_cmd / cache_clear_cmd at the client methods; the CLI must no longer
+    import or call cache.py's local functions.
+
+    You decide the exact write-set within the admitted paths — which handler module,
+    the wire type definitions, the client method signatures. Follow the established
+    rec_* template and the OO rules (behavior with its data, tell-don't-ask, Literal
+    wire tags, illegal states unrepresentable). Do NOT prescribe a shape I did not
+    ask for; the reply shapes simply mirror cache.py's current return values.
+
+    Verification is the leader's job — do NOT push, open a PR, run make install, or
+    restart the daemon. Submit your result via `ethos mission result`.

@@ -1,0 +1,161 @@
+results:
+    - mission: m-2026-07-26-020
+      round: 1
+      created_at: "2026-07-26T20:30:00Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/voxd/data_root_boundary.py
+          added: 108
+          removed: 0
+        - path: src/punt_vox/voxd/wire_fault.py
+          added: 93
+          removed: 0
+        - path: src/punt_vox/voxd/wire_reply.py
+          added: 20
+          removed: 8
+        - path: src/punt_vox/voxd/cache_handlers.py
+          added: 3
+          removed: 2
+        - path: src/punt_vox/voxd/rec_handlers.py
+          added: 3
+          removed: 2
+        - path: src/punt_vox/voxd/record_handler.py
+          added: 7
+          removed: 2
+        - path: src/punt_vox/voxd/chunked_fetch.py
+          added: 16
+          removed: 10
+        - path: src/punt_vox/voxd/fetch_handler.py
+          added: 2
+          removed: 1
+        - path: src/punt_vox/voxd/speech_handlers.py
+          added: 7
+          removed: 4
+        - path: src/punt_vox/voxd/play_handler.py
+          added: 6
+          removed: 1
+        - path: src/punt_vox/voxd/system_handlers.py
+          added: 2
+          removed: 1
+        - path: tests/test_voxd_data_root_boundary.py
+          added: 142
+          removed: 0
+        - path: tests/test_voxd_wire_fault.py
+          added: 105
+          removed: 0
+        - path: docs/wire-host-info-boundary.md
+          added: 349
+          removed: 0
+      evidence:
+        - name: relativize_to_data_root resolves both roots + candidate before comparing (ContainmentRoot discipline); in-jail -> (label, relpath), else None
+          status: pass
+        - name: helper unit tests -- in-jail relative, out-of-jail None, symlink/.. cannot escape, .. landing back inside relativizes, string filename, state-wins-when-nested
+          status: pass
+        - name: SafeFault.from_exception -- in-jail OSError -> "recordings/foo.mp3 permission denied"; non-OSError/out-of-jail/absent filename/absent strerror -> "operation failed"; raw str(exc) kept for the log
+          status: pass
+        - name: every S2.6 fault site converted (cache 55/89, rec 52/103, record 136/145, chunked 152/162, speech 212/217/229, play 95) plus reject_or_fault, fetch 68, system 106
+          status: pass
+        - name: client-rejection ERROR frames (hostile ref, unknown chime, unknown message type) stay verbatim -- not host recon
+          status: pass
+        - name: fault wire tests assert relativized message, generic fallback, and no fault frame carries an absolute prefix or "Errno"
+          status: pass
+        - name: make check green -- 3218 tests, OO ratchet PASS (avg_params improved; module_size relaxed w/ justification), coupling PASS (relaxed), suppressions -5
+          status: pass
+        - name: runtime demo confirmed -- in-jail wire "recordings/foo.mp3 permission denied", abs path only in log; out-of-jail/non-OSError/opaque -> "operation failed"; None filename -> None
+          status: pass
+      prose: |
+        Two deliverables plus the ratified design doc, three commits on
+        fix/vox-a7dd: 44fe1c5 (helper), d5bc94b (fault contract), 91f1fac (doc).
+
+        (1) relativize_to_data_root (src/punt_vox/voxd/data_root_boundary.py):
+        the shared wire-boundary helper of the vox-93ej epic. Two roots --
+        state = paths.user_state_dir(), output = dirs.default_output_dir() --
+        and the candidate are all .resolve()d before comparing, mirroring
+        ContainmentRoot, so a symlink or ..-bearing path cannot appear in-jail
+        when it is not. State root is tested first. Returns a frozen
+        DataRootRelative(label, path) in-jail, None out of jail or for a None
+        filename.
+
+        (2) The WireReply fault contract (src/punt_vox/voxd/wire_fault.py):
+        SafeFault splits a fault into a prefix-free wire message and a raw log
+        detail. from_exception relativizes an in-jail OSError to
+        "recordings/foo.mp3: permission denied" (exc.filename via the helper +
+        exc.strerror.lower()) and falls back to "operation failed" for any
+        other exception, an out-of-jail/absent filename, or an absent strerror;
+        str(exc) with the absolute prefix stays in the log. opaque(detail) is
+        the generic-wire form for the two non-exception sites (a nonzero player
+        rc, PlaybackResult stderr). WireReply.fault now takes a SafeFault. All
+        ten S2.6 sites converted, plus reject_or_fault, fetch_handler:68 and
+        system_handlers:106 (same fault path). Client-rejection ERROR frames
+        that echo the client's own input stay verbatim.
+
+        TDD throughout: helper and SafeFault unit tests plus updated
+        WireReply/handler tests each assert the wire is the safe verdict and
+        the raw detail lands only in the log. No migration/compat/shim -- the
+        verbatim path is replaced, not bridged.
+
+        OO/coupling note for the evaluator: the 9 fault-emitting modules grew
+        module_size (+1..+8) and efferent_coupling (+1) purely from the
+        wire_fault import and call site of a cross-cutting security fix. Per
+        policy, module_size is not paid down by trimming security docstrings,
+        so each file+metric was relaxed with a one-line justification (scoped,
+        not a blanket rebaseline). chunked_fetch avg_params genuinely improved
+        (dropped the now-unused ref param from both abort methods).
+    - mission: m-2026-07-26-020
+      round: 2
+      created_at: "2026-07-26T21:45:00Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/voxd/rec_handlers.py
+          added: 26
+          removed: 12
+        - path: tests/test_voxd_rec_handlers.py
+          added: 40
+          removed: 0
+      evidence:
+        - name: BLOCKING fixed -- wire_fault.py added to BOTH .oo-baseline.json and .oo-coupling-baseline.json; a clean checkout of HEAD passes check-oo
+          status: pass
+        - name: make check EXITS 0 on a clean tree at HEAD (verified with no uncommitted source/baseline changes) -- 3219 tests, OO PASS, coupling PASS, suppressions -5
+          status: pass
+        - name: 'REAL LEAK fixed -- rec_handlers FileNotFoundError discriminated on exc.filename: None -> verbatim client rejection, set -> SafeFault fault (relativized/generic)'
+          status: pass
+        - name: regression test test_unlink_race_filenotfound_does_not_leak_absolute_path asserts the race wire frame carries no /Users/ prefix, no leading /, no Errno, and audits as a fault not a rejection
+          status: pass
+        - name: 'paydown -- collapsed four except clauses to one + extracted _reply_failure staticmethod: rec_handlers max_complexity 5->4, avg_complexity 2.5->2.4 IMPROVED; static keeps it out of LCOM'
+          status: pass
+        - name: 'runtime demo -- store not-found (filename None) verbatim; race (in-jail filename) wire ''recordings/foo.mp3: no such file or directory'', abs path only in log'
+          status: pass
+      prose: |
+        Round-2 review fixes, one green commit (2fdb4b8) on fix/vox-a7dd.
+
+        (1) BLOCKING baseline gap. wire_fault.py was in neither baseline -- round
+        1's make update-oo ran before the file was committed, so git-diff scoping
+        missed it, and my earlier "green" was stale. Both baselines now carry
+        wire_fault.py. I verified make check EXITS 0 on a clean tree at HEAD (git
+        status clean of tracked source/test/baseline files; only ethos session
+        artifacts remain, which the gate excludes): ruff, mypy, pyright,
+        markdownlint, 3219 tests, OO ratchet PASS, coupling PASS, suppressions -5.
+
+        (2) REAL LEAK at rec_handlers.py. The FileNotFoundError clause preceded the
+        OSError->fault branch and sent str(exc) verbatim. record_store.remove's
+        synthesized "no recording named X" has filename=None (the client's own ref
+        -- verbatim is correct), but the TOCTOU unlink race raises a raw OS
+        FileNotFoundError with filename=<absolute store path>, leaking the
+        username-bearing prefix. Fixed by collapsing the four except clauses into
+        one `except (ValueError, OSError)` and extracting a _reply_failure
+        staticmethod that discriminates: ValueError or filename-None
+        FileNotFoundError -> reply.error(str(exc)) (verbatim rejection); everything
+        else -> reply.fault(SafeFault.from_exception(exc)). A regression test drives
+        the race and asserts the wire frame has no absolute prefix, no leading '/',
+        no "Errno", and audits as a fault.
+
+        The extraction is a genuine paydown, not just a relax: rec_handlers
+        max_complexity improved 5->4 and avg_complexity 2.5->2.4. Making
+        _reply_failure a staticmethod (it touches no instance state) keeps it out of
+        the LCOM computation, so cohesion did not regress and PLR6301 stays clean.
+        Only avg_params (+0.1) and module_size (+8) were relaxed with a one-line
+        justification -- the unavoidable growth of adding the discrimination method.

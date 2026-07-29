@@ -1,0 +1,50 @@
+mission_id: m-2026-07-25-027
+status: closed
+type: implement
+created_at: "2026-07-25T20:54:17Z"
+updated_at: "2026-07-25T22:01:16Z"
+closed_at: "2026-07-25T22:01:16Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: mdm
+    pinned_at: "2026-07-25T20:54:17Z"
+    hash: cfb39e35cedde7372a1f0b92ae7c2d4b25a2db5ec0c3e44760ce00d094133a04
+inputs: {}
+write_set:
+    - docs/audio-programs-music-tidy.md
+success_criteria:
+    - 'DESIGN ONLY: write docs/audio-programs-music-tidy.md; change no production code. Commit the design doc; make check passes; keep under 30 min uncommitted.'
+    - Specify the exact PromptSet / authored-input shape that BOTH the CLI and the MCP tool build, and how `music new` uses it (today it sends a bare string; cite cli_music.py and server_audio_tools.py line numbers).
+    - 'Specify the single `music` MCP tool schema: the subcommand argument (on/off/play/next/new/list/get/remove) and each subcommand''s parameters. Collapse the current music_play/music_new/music_next/music_list tools into it. Cite server.py lines.'
+    - Give the plan and justification for folding `rec` to the same shape (one `rec` tool, subcommand as an argument), since the mapping rule -- vox <group> <subcommand> maps to tool <group> with first argument <subcommand> -- must be uniform. State whether rec folds in this pass or immediately after.
+    - Specify the CLI stdin wiring for a NEW `vox music on` verb (cat pool.json | vox music on); no --file flag. `vox music on` does not exist today.
+    - 'Specify the --json parity fix so `vox music list --json` works (vox-cnak: the music sub-app commands do not route the trailing flag).'
+    - 'State the WRITE SET: which modules, classes, and tools to create, change, or delete. Forward integration, no compatibility shims. Follow ../.claude/rules/python-*.md.'
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 1
+context: |-
+    Phase 1.5 of the Audio Programs epic (vox-ys1p). Phase 1 (the format-agnostic
+    Program state machine in src/punt_vox/voxd/programs/) is BUILT. This mission
+    DESIGNS the tidy of the MUSIC command surface so podcast and audiobook later
+    copy a clean, consistent pattern. Design only -- write to
+    docs/audio-programs-music-tidy.md; do NOT change production code.
+
+    Read: docs/audio-programs-concept.md (the "Phase 1.5" paragraph and the
+    "Decisions ... 2026-07-25" section), then src/punt_vox/cli_music.py,
+    src/punt_vox/server.py (music, music_play, music_new, music_next, music_list),
+    src/punt_vox/server_audio_tools.py, src/punt_vox/types_programs/prompts.py
+    (PromptSet), catalog_gateway.py, client_catalog_gateway.py, __main__.py.
+
+    Operator decisions (2026-07-25) the design MUST honor: (1) one PromptSet built
+    by both the CLI and the MCP tool, sent to the daemon; (2) MCP tools mirror the
+    CLI -- one tool per group named for the group, the subcommand as an argument,
+    not one tool per subcommand, uniform across groups; (3) the CLI reads authored
+    input from stdin, add `vox music on`, no --file flag; (4) --json works in every
+    position on the music subcommands.
+
+    Invariants: voxd holds the ElevenLabs key and generates; the CLI and MCP server
+    are thin clients; playback is free. NO state-machine change (surface and wiring
+    only), so no z-spec. No migration or compatibility shims (forward integration).
