@@ -34,12 +34,12 @@ dependencies = [
     "audioop-lts>=0.2.1",
     "typer>=0.24.1",
     "websockets>=14.0",
-    # voxd hosts the lux music-player app: the public LuxRestClient is a hard
-    # runtime dependency. INTERIM git pin to the lux-main commit that first
-    # exports LuxRestClient + the phase-2 surface (through lux #294) with the
-    # HTTPS-submodule fix (#295) so a recursive clone needs no credentials in CI.
-    # Moves to `punt-lux>=0.22.0` once lux cuts that release (bead vox-hnfr).
-    "punt-lux @ git+https://github.com/punt-labs/lux.git@2abf64b",
+    # voxd hosts the lux music-player app: the public LuxRestClient + LuxHubClient
+    # are a hard runtime dependency — identity/lease (for_identity, ClientIdentity),
+    # the rendered session menu (register_callback), the subscribe/callback listener
+    # (reconnect with port re-resolution), and the publish-button surface all ship
+    # in punt-lux 0.22.0.
+    "punt-lux>=0.22.0",
 ]
 
 [project.urls]

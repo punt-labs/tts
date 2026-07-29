@@ -1184,8 +1184,8 @@ wheels = [
 
 [[package]]
 name = "punt-lux"
-version = "0.21.0"
-source = { git = "https://github.com/punt-labs/lux.git?rev=2abf64b#2abf64ba03b6857fabfa4269e3b40c1753c792ae" }
+version = "0.22.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastapi" },
     { name = "fastmcp" },
@@ -1196,6 +1196,10 @@ dependencies = [
     { name = "typer" },
     { name = "uvicorn" },
     { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/69/d0/869005a39708356a2d9913ce92de3cc1eddc39837f41dbff8145bb5110eb/punt_lux-0.22.0.tar.gz", hash = "sha256:4311ee986ffd570f6b22d019a11d07b017e1c88d8649cdd65b7acc06b4352f18", size = 847941, upload-time = "2026-07-29T13:28:30.594Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/6e/45/1e1d27b5562ae1fc69953012811bda6f4d5ef13576a87bfa2116a482d1ad/punt_lux-0.22.0-py3-none-any.whl", hash = "sha256:3227b8e5fb2cd61fe109be32bad1065c73d0c0f3a8da2b787773498e9bae2c7d", size = 1092590, upload-time = "2026-07-29T13:28:29.049Z" },
 ]
 
 [[package]]
@@ -1238,7 +1242,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=1.28.1" },
     { name = "mutagen", specifier = ">=1.47.0" },
     { name = "openai", specifier = ">=1.0.0" },
-    { name = "punt-lux", git = "https://github.com/punt-labs/lux.git?rev=2abf64b" },
+    { name = "punt-lux", specifier = ">=0.22.0" },
     { name = "pydub", specifier = ">=0.25.0" },
     { name = "typer", specifier = ">=0.24.1" },
     { name = "websockets", specifier = ">=14.0" },
