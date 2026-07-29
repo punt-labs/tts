@@ -16,6 +16,7 @@ from punt_vox.voxd.programs import PartStatus
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint, TagQuery
 from punt_vox.voxd.programs.catalog import Album, Catalog
+from punt_vox.voxd.programs.change_signal import ChangeSignal
 from punt_vox.voxd.programs.manifest import AlbumManifest, PartEntry
 
 from .conftest import InMemoryProgramStore
@@ -52,6 +53,45 @@ def _album(
     store = InMemoryProgramStore()
     store.preload(manifest)
     return store.scan()[0]
+
+
+class _Recorder:
+    """A ChangeListener that counts notifications."""
+
+    def __init__(self) -> None:
+        self.count = 0
+
+    def notify_changed(self) -> None:
+        self.count += 1
+
+
+class TestChangeSignal:
+    """The catalog fires its change signal after each mutation (new / remove)."""
+
+    def test_add_fires_the_change_signal(self) -> None:
+        catalog = Catalog(())
+        signal = ChangeSignal()
+        recorder = _Recorder()
+        signal.subscribe(recorder)
+        catalog.attach_change_signal(signal)
+
+        catalog.add(_album("aa11bb", "techno", "ambient"))
+        assert recorder.count == 1  # a new album re-pushes the scene
+
+    def test_remove_fires_the_change_signal(self) -> None:
+        album = _album("aa11bb", "techno", "ambient")
+        catalog = Catalog((album,))
+        signal = ChangeSignal()
+        recorder = _Recorder()
+        signal.subscribe(recorder)
+        catalog.attach_change_signal(signal)
+
+        catalog.remove(album.id)
+        assert recorder.count == 1  # a removal re-pushes the scene
+
+    def test_mutation_without_a_signal_is_safe(self) -> None:
+        catalog = Catalog(())  # no signal attached
+        catalog.add(_album("aa11bb", "techno", "ambient"))  # must not raise
 
 
 class TestByIdAndName:

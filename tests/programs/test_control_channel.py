@@ -18,6 +18,7 @@ from punt_vox.voxd.programs import Part, PlaybackPolicy, Program, ProgramState
 from punt_vox.voxd.programs.active_context import ActiveContext
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint
+from punt_vox.voxd.programs.change_signal import ChangeSignal
 from punt_vox.voxd.programs.control_channel import ControlChannel
 from punt_vox.voxd.programs.control_signal import ControlSignal
 from punt_vox.voxd.programs.filesystem_store import FilesystemProgramStore
@@ -47,6 +48,16 @@ _PROMPTS = PromptSet(base="p", variations=())
 def _prog(channel: ControlChannel) -> Program:
     """Return the channel's active source narrowed to a Program."""
     return cast("Program", channel.source)
+
+
+class _ChangeRecorder:
+    """A ChangeListener that counts change notifications."""
+
+    def __init__(self) -> None:
+        self.count = 0
+
+    def notify_changed(self) -> None:
+        self.count += 1
 
 
 def _turn_off(channel: ControlChannel) -> TurnOff:
@@ -91,6 +102,20 @@ class TestSingleWriter:
         channel.post(TurnOn())
         await channel.apply_next()
         assert channel.changed.is_set()
+
+    async def test_change_signal_fires_after_an_applied_command(
+        self, policy: PlaybackPolicy
+    ) -> None:
+        # The scene re-push rides the single writer: after a command is applied
+        # (serialized with the state it reports), the change signal fires once.
+        channel = ControlChannel(Program(ProgramState.initial(), policy))
+        signal = ChangeSignal()
+        recorder = _ChangeRecorder()
+        signal.subscribe(recorder)
+        channel.attach_change_signal(signal)
+        channel.post(TurnOn())
+        await channel.apply_next()
+        assert recorder.count == 1
 
     async def test_lost_race_guard_is_swallowed(self, policy: PlaybackPolicy) -> None:
         # turn_on twice: the second is a lost race (already on) -> ValueError,

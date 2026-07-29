@@ -22,7 +22,9 @@ from punt_vox.voxd.music_player.scene_mailbox import SceneMailbox
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from punt_lux import LuxRestClient, RenderRequest
+    from punt_lux import RenderRequest
+
+    from punt_vox.voxd.music_player.ports import LuxRenderer
 
 __all__ = ["LuxScenePublisher"]
 
@@ -36,11 +38,11 @@ class LuxScenePublisher:
     """Own the scene mailbox and render each newest scene to luxd on its own task."""
 
     __slots__ = ("_client", "_connect", "_mailbox")
-    _connect: Callable[[], LuxRestClient]
-    _client: LuxRestClient | None  # None until first connect / after a drop
+    _connect: Callable[[], LuxRenderer]
+    _client: LuxRenderer | None  # None until first connect / after a drop
     _mailbox: SceneMailbox
 
-    def __new__(cls, connect: Callable[[], LuxRestClient]) -> Self:
+    def __new__(cls, connect: Callable[[], LuxRenderer]) -> Self:
         self = super().__new__(cls)
         self._connect = connect
         self._client = None
@@ -77,7 +79,7 @@ class LuxScenePublisher:
         if isinstance(result, OpError):
             logger.warning("lux rejected %s scene: %s", _SCENE_ID, result.reason)
 
-    async def _ensure_client(self) -> LuxRestClient:
+    async def _ensure_client(self) -> LuxRenderer:
         """Return the connected client, connecting off-thread on first use."""
         if self._client is None:
             self._client = await asyncio.to_thread(self._connect)

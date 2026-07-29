@@ -21,7 +21,7 @@ from punt_vox.voxd.music_player.player import MusicPlayer
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from punt_vox.voxd.music_player.ports import PlayerService
+    from punt_vox.voxd.music_player.ports import LuxRenderer, PlayerService
     from punt_vox.voxd.programs.change_signal import ChangeSignal
 
 __all__ = ["MusicPlayerSubsystem"]
@@ -39,7 +39,7 @@ class MusicPlayerSubsystem:
         cls,
         service: PlayerService,
         changes: ChangeSignal,
-        connect: Callable[[], LuxRestClient] = LuxRestClient.connect,
+        connect: Callable[[], LuxRenderer] = LuxRestClient.connect,
     ) -> Self:
         self = super().__new__(cls)
         self._publisher = LuxScenePublisher(connect)
