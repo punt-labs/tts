@@ -40,6 +40,20 @@ async def test_register_calls_the_client_on_success() -> None:
     assert client.calls == [("music", "Music")]
 
 
+async def test_register_logs_the_success_with_the_callback_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO):
+        await LuxMenuRegistrar(_OkClient).register("music", "Music")
+    registered = [
+        r
+        for r in caplog.records
+        if "[lux]" in r.getMessage() and "registered" in r.getMessage()
+    ]
+    assert registered
+    assert "'music'" in registered[-1].getMessage()  # the callback id is logged
+
+
 async def test_register_swallows_a_down_luxd(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

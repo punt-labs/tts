@@ -20,6 +20,7 @@ from punt_vox.voxd.music_player.lux_clients import VoxLuxClients
 from punt_vox.voxd.music_player.lux_menu import LuxMenuRegistrar
 from punt_vox.voxd.music_player.lux_scene_publisher import LuxScenePublisher
 from punt_vox.voxd.music_player.lux_subscription import LuxSubscription
+from punt_vox.voxd.music_player.lux_trace import LuxTrace
 from punt_vox.voxd.music_player.player import MusicPlayer
 
 if TYPE_CHECKING:
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
 __all__ = ["MusicPlayerSubsystem"]
 
 logger = logging.getLogger(__name__)
+_trace = LuxTrace(logger)
 
 _RESTART_SECONDS = 5.0
 
@@ -91,11 +93,13 @@ class MusicPlayerSubsystem:
         """
         while True:
             try:
+                _trace.info("music player subsystem starting both lux legs")
                 async with asyncio.TaskGroup() as legs:
                     legs.create_task(self._publisher.run())
                     legs.create_task(self._subscription.run())
             except Exception:
                 logger.exception(
-                    "music player: a leg failed fatally; restarting both after backoff"
+                    "[lux] a leg failed fatally; restarting both in %.1fs",
+                    _RESTART_SECONDS,
                 )
                 await asyncio.sleep(_RESTART_SECONDS)

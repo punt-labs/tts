@@ -80,6 +80,23 @@ async def test_run_renders_the_submitted_scene() -> None:
     assert [r.scene_id for r in renderer.rendered] == ["vox.music"]
 
 
+async def test_run_logs_the_push_with_element_count(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    renderer = _FakeRenderer()
+    publisher = LuxScenePublisher(lambda: renderer)
+    publisher.submit(_scene("vox.music"))
+    with caplog.at_level(logging.INFO):
+        await _drain_once(publisher)
+    pushed = [
+        r
+        for r in caplog.records
+        if "[lux]" in r.getMessage() and "pushed vox.music scene" in r.getMessage()
+    ]
+    assert pushed
+    assert "0 elements" in pushed[-1].getMessage()  # the empty scene's element count
+
+
 async def test_submit_neither_connects_nor_renders() -> None:
     connected = False
 
@@ -116,7 +133,11 @@ async def test_an_op_error_is_logged_at_error_not_raised(
     publisher.submit(_scene("vox.music"))
     with caplog.at_level(logging.WARNING):
         await _drain_once(publisher)
-    rejected = [r for r in caplog.records if "lux rejected" in r.getMessage()]
+    rejected = [
+        r
+        for r in caplog.records
+        if "[lux]" in r.getMessage() and "rejected" in r.getMessage()
+    ]
     assert rejected  # logged, never raised
     # A refused scene is a defect, not a down display: it reads at ERROR, distinct
     # from the WARNING a HubUnavailableError (luxd down) logs.

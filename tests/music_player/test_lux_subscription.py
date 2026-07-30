@@ -289,6 +289,83 @@ async def test_run_re_registers_the_menu_on_reconnect_after_expiry(
     assert menu.registered == [("music", "Music"), ("music", "Music")]
 
 
+async def test_run_logs_connect_subscribe_connected_and_clean_stop(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The connect/subscribe/connected/disconnect audit trail: one grep of [lux]
+    # shows the whole receive-leg lifecycle in order.
+    listener = _RecordingListener()
+    sub = LuxSubscription(
+        _FakeCommands(), _FakeOpener(), _FakeMenu(), _connect(listener, [])
+    )
+
+    with caplog.at_level(logging.INFO):
+        await sub.run()
+
+    lux = [r.getMessage() for r in caplog.records if "[lux]" in r.getMessage()]
+    assert any("connecting" in m for m in lux)
+    assert any("subscribed to topics music.play, music.stop" in m for m in lux)
+    assert any("handshake complete" in m for m in lux)  # connected
+    assert any("stopped cleanly" in m for m in lux)  # clean disconnect
+
+
+async def test_run_logs_the_reconnect_when_luxd_is_down(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A down luxd is retried; the [lux] warning names the attempt and backoff so a
+    # reconnect storm is legible in vox.log.
+    monkeypatch.setattr(
+        "punt_vox.voxd.music_player.lux_subscription._RETRY_SECONDS", 0.001
+    )
+    listener = _RecordingListener()
+    attempts: list[int] = []
+
+    def connect(
+        on_event: EventHandler,
+        on_callback: CallbackHandler,
+        on_connect: ConnectHandler,
+    ) -> HubListener:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise HubUnavailableError("luxd down")
+        listener.bind(on_connect)
+        return listener
+
+    sub = LuxSubscription(_FakeCommands(), _FakeOpener(), _FakeMenu(), connect)
+
+    with caplog.at_level(logging.WARNING):
+        await sub.run()
+
+    assert any(
+        "[lux]" in r.getMessage() and "luxd down" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def test_on_event_logs_the_inbound_play(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sub = _subscription()
+    with caplog.at_level(logging.INFO):
+        await sub.on_event("music.play", {"album_id": "aa11bb"})
+    assert any(
+        "[lux]" in r.getMessage() and "received music.play" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def test_on_callback_logs_the_menu_click(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sub = _subscription()
+    with caplog.at_level(logging.INFO):
+        await sub.on_callback("music")
+    assert any(
+        "[lux]" in r.getMessage() and "Music menu clicked" in r.getMessage()
+        for r in caplog.records
+    )
+
+
 async def test_on_event_play_dispatches_to_replay_album() -> None:
     # The offline substitute for a live click: play -> replay_album (invariant V).
     service = _FakeCommands()

@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_lux import HubUnavailableError
 
+from punt_vox.voxd.music_player.lux_trace import LuxTrace
 from punt_vox.voxd.music_player.player_events import PlayerEventCodec
 from punt_vox.voxd.music_player.wire import MusicTopic
 
@@ -41,6 +42,7 @@ if TYPE_CHECKING:
 __all__ = ["LuxSubscription"]
 
 logger = logging.getLogger(__name__)
+_trace = LuxTrace(logger)
 
 _MENU_CALLBACK_ID = "music"
 _MENU_LABEL = "Music"
@@ -89,15 +91,27 @@ class LuxSubscription:
         never leave the receive leg silently dead (invariants I, III). Cancellation
         on shutdown is a ``BaseException`` that propagates cleanly out.
         """
+        attempt = 0
         while True:
+            attempt += 1
             try:
+                _trace.info("music receive leg connecting (attempt %d)", attempt)
                 await self._connect_and_listen()
+                _trace.info("music receive leg stopped cleanly")
                 return
             except HubUnavailableError:
-                logger.warning("luxd down; retrying the music receive leg")
+                _trace.warning(
+                    "luxd down; retrying the music receive leg in %.1fs (attempt %d)",
+                    _RETRY_SECONDS,
+                    attempt,
+                )
                 await asyncio.sleep(_RETRY_SECONDS)
             except Exception:
-                logger.exception("music receive leg failed; restarting after backoff")
+                logger.exception(
+                    "[lux] music receive leg failed; restarting in %.1fs (attempt %d)",
+                    _RETRY_SECONDS,
+                    attempt,
+                )
                 await asyncio.sleep(_RETRY_SECONDS)
 
     async def _connect_and_listen(self) -> None:
@@ -113,6 +127,9 @@ class LuxSubscription:
         """
         listener = self._connect_hub(self.on_event, self.on_callback, self.on_connect)
         listener.subscribe(MusicTopic.PLAY, MusicTopic.STOP)
+        _trace.info(
+            "subscribed to topics %s, %s; listening", MusicTopic.PLAY, MusicTopic.STOP
+        )
         await listener.listen()
 
     async def on_event(self, topic: str, payload: Mapping[str, object]) -> None:
@@ -123,19 +140,21 @@ class LuxSubscription:
         single hub connection (invariants I, II, V). A play applies ``replay_album``
         and a stop applies ``off``; the change signal then re-pushes the scene.
         """
+        _trace.info("received %s %r; applying", topic, dict(payload))
         try:
             self._codec.decode(topic, payload).apply(self._service)
         except Exception:
-            logger.exception("dropping music event on %s: %r", topic, payload)
+            logger.exception("[lux] dropping music event on %s: %r", topic, payload)
 
     async def on_callback(self, callback_id: str) -> None:
         """Open (re-push) the music scene when the ``Music`` menu entry is clicked."""
         if callback_id != _MENU_CALLBACK_ID:
             return
+        _trace.info("Music menu clicked; re-pushing the scene")
         try:
             self._opener.notify_changed()
         except Exception:
-            logger.exception("music menu open failed for %r", callback_id)
+            logger.exception("[lux] music menu open failed for %r", callback_id)
 
     async def on_connect(self) -> None:
         """Re-register the ``Music`` menu and re-push the scene after every handshake.
@@ -149,8 +168,9 @@ class LuxSubscription:
         projection failure is logged, not lost, and never skips the registration. lux
         logs-and-continues if this raises, so the session survives regardless.
         """
+        _trace.info("hub handshake complete; re-registering menu and re-pushing scene")
         await self._menu.register(_MENU_CALLBACK_ID, _MENU_LABEL)
         try:
             self._opener.notify_changed()
         except Exception:
-            logger.exception("music scene projection on connect failed")
+            logger.exception("[lux] music scene projection on connect failed")
