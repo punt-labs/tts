@@ -1,6 +1,6 @@
 ---
 description: "Control background music generation"
-argument-hint: "on [--name ...] [style ...] | off | next | play <name> | list"
+argument-hint: "on [--title ...] [style ...] | off | next | prev | pause | resume | play <name> | list | status"
 allowed-tools: ["mcp__plugin_vox_mic__music", "mcp__plugin_vox_mic__status"]
 ---
 
@@ -35,19 +35,25 @@ prompt -- functional, but flavorless.
 
 - `/music on` -- start music with current vibe
 - `/music on style techno` -- start music with a style modifier
-- `/music on --name focus-beats` -- generate and save as "focus-beats", or replay if it exists
+- `/music on --title "Focus Beats"` -- start music and name the album "Focus Beats"
 - `/music off` -- stop music
 - `/music next` -- optional manual skip (playback auto-advances on its own): jump to the next track now — rotate the pool if it holds 12+ (zero credits), else generate a fresh one
-- `/music play <name>` -- replay a saved track by name
-- `/music list` -- show saved tracks with metadata
+- `/music prev` -- step back to the previous part of the now-playing album
+- `/music pause` -- suspend the current album in place
+- `/music resume` -- resume the suspended album in place
+- `/music play <name>` -- replay a saved album by name
+- `/music list` -- show saved albums with metadata
+- `/music status` -- show current music state (same as `/music` with no argument)
 - `/music` -- show current music state
 
-## Track naming
+## Album naming
 
-Tracks are auto-named on generation using a vibe-style-YYYYMMDD-HHMM pattern
-(e.g. "happy-techno-20260412-1118"). Use `--name` to provide a custom name.
-When a saved track with the given name exists, it is replayed without
-generation (zero credits).
+Use `--title` on `on`/`new` to give the album a short, human name coherent with
+the music (e.g. "Focus Beats"). The title becomes the album's `name` and rides
+the ID3 `TALB`/`TIT2` frames. Absent a `--title`, voxd falls back to a
+`{vibe}-{style}-{date}` slug (e.g. "happy-techno-20260412-1118"). To replay a
+saved album by that name later, use `play <name>` -- it plays the existing album
+without generation (zero credits).
 
 ## Style modifier
 
@@ -57,24 +63,25 @@ style jazz` changes it.
 
 ## Implementation
 
-> **Control actions produce NO agent text.** `on`, `off`, `next`, and `play`
-> are fire-and-forget: the `suppress-output.sh` hook and the audio panel are the
-> whole response. After calling their tool, stop -- write no summary, no
-> confirmation, no narration. Only the query actions (`list` and the no-arg
-> status) return data for you to report. The hook enforces this; this line is
-> the reminder behind it.
+> **Control actions produce NO agent text.** `on`, `off`, `next`, `prev`,
+> `pause`, `resume`, and `play` are fire-and-forget: the `suppress-output.sh`
+> hook and the audio panel are the whole response. After calling their tool,
+> stop -- write no summary, no confirmation, no narration. Only the query
+> actions (`list` and the no-arg/`status` state) return data for you to report.
+> The hook enforces this; this line is the reminder behind it.
 
 Parse `$ARGUMENTS`:
 
 Every music action is ONE call to the `music` MCP tool, whose first argument is
-`subcommand` (`on`/`off`/`play`/`next`/`list`/`new`/`get`/`remove`) -- uniform
-with `vox music <subcommand>` on the CLI.
+`subcommand`
+(`on`/`off`/`play`/`next`/`prev`/`pause`/`resume`/`list`/`status`/`new`/`get`/`remove`)
+-- uniform with `vox music <subcommand>` on the CLI.
 
-### `on` (with optional `--name ...` and `style ...`)
+### `on` (with optional `--title ...` and `style ...`)
 
 Call `music` with `subcommand="on"`. If the user provided style words after
-`on style`, join them and pass as `style`. If `--name` is provided, pass as
-`name`.
+`on style`, join them and pass as `style`. If `--title` is provided, pass as
+`title` -- a short, human album name coherent with the music.
 
 **Author the prompts.** Before calling the tool, write `base_prompt` plus
 exactly 12 `variations` for the requested style (see "Authoring prompts" below)
@@ -89,17 +96,30 @@ Call `music` with `subcommand="off"`.
 Call `music` with `subcommand="next"`. Triggers regeneration while the current
 track keeps playing (gapless).
 
+### `prev`
+
+Call `music` with `subcommand="prev"`. Steps back to the previous part of the
+now-playing album.
+
+### `pause`
+
+Call `music` with `subcommand="pause"`. Suspends the current album in place.
+
+### `resume`
+
+Call `music` with `subcommand="resume"`. Resumes the suspended album in place.
+
 ### `play <name>`
 
-Call `music` with `subcommand="play"` and the track name.
+Call `music` with `subcommand="play"` and the album name.
 
 ### `list`
 
-Call `music` with `subcommand="list"` and display the track library.
+Call `music` with `subcommand="list"` and display the album library.
 
-### No argument
+### `status` (or no argument)
 
-Call the `status` MCP tool and report current music state.
+Call `music` with `subcommand="status"` and report current music state.
 
 ## Authoring prompts
 
@@ -126,6 +146,10 @@ You write the descriptions -- Python does not. Follow these rules:
 - **Never** add generic "background music for deep work / smooth ambient texture
   that cycles / driving beat but not overwhelming / afternoon focus / steady
   working pace" boilerplate. That tail homogenizes every genre into smooth jazz.
+- **Supply a `title`.** On `on`/`new`, also pass a short, human album name
+  coherent with the music (e.g. "Klezmer Wedding"). It becomes the album's `name`
+  and rides the ID3 `TALB`/`TIT2` frames. Absent a `title`, voxd falls back to a
+  `{vibe}-{style}-{date}` slug.
 
 ### Worked example: `style Klezmer`, vibe "celebratory"
 
