@@ -1,8 +1,16 @@
 """Play a Part's file as a reduced-volume subprocess in the active directory.
 
 Resolves the active Program's directory live from an injected ``PlayerDirectory``
-on every spawn, builds the platform argv (``afplay``/``ffplay``) at reduced volume
-so speech and chimes overlay it, and spawns it; the handle logs a non-zero exit.
+on every spawn, builds the ``ffplay`` argv at reduced volume so speech and chimes
+overlay it -- optionally seeked to a resume offset -- and spawns it; the handle
+logs a non-zero exit.
+
+The player is ``ffplay`` on both macOS and Linux (``ffmpeg``/``ffplay`` are already
+vox dependencies). macOS's built-in ``afplay`` cannot seek, and a seek is what a
+click-free pause/resume needs: pause tears the player down and resume re-spawns it
+at ``-ss <offset>``. Unifying on ``ffplay`` gives one seek-capable code path on both
+platforms rather than a special-cased ``afplay`` that would have to pre-trim a temp
+segment to fake a seek.
 """
 
 from __future__ import annotations
@@ -10,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import platform
 import signal
 from typing import TYPE_CHECKING, Self, final
 
@@ -64,26 +71,23 @@ class SubprocessHandle:
         with contextlib.suppress(ProcessLookupError):
             await self._proc.wait()
 
-    def suspend(self) -> None:
-        """Pause the player in place with ``SIGSTOP`` (transport pause).
+    def stop_gracefully(self) -> None:
+        """Ask the player to exit cleanly with ``SIGTERM`` (transport pause).
 
-        A stopped process never exits, so the loop's ``wait`` stays pending and
-        the cursor never auto-advances while paused. A player that exited between
-        spawn and pause is gone (``ProcessLookupError``): suppressed, since there
-        is nothing to suspend.
+        ``ffplay`` handles ``SIGTERM`` by closing its audio device and exiting, so
+        the device stops with no underrun click -- the whole point of tearing the
+        player down on pause instead of freezing it. The loop reaps the exit
+        through its usual ``wait``; a player that exited between spawn and pause is
+        gone (``ProcessLookupError``): suppressed, since there is nothing to stop.
         """
-        self._send(signal.SIGSTOP)
-
-    def resume(self) -> None:
-        """Continue a ``SIGSTOP``-ed player with ``SIGCONT`` (transport resume)."""
-        self._send(signal.SIGCONT)
+        self._send(signal.SIGTERM)
 
     def terminate(self) -> None:
         """Kill the player now with ``SIGKILL`` (synchronous shutdown teardown).
 
-        ``SIGKILL`` terminates even a ``SIGSTOP``-ed process, so a paused player is
-        torn down on daemon stop with no orphan the OS could later ``SIGCONT`` into
-        a stray burst. Fire-and-forget: no reap, since the daemon is exiting.
+        Fire-and-forget: no reap, since the daemon is exiting. A paused source has
+        already torn its player down, so this covers only a player caught
+        mid-spawn at shutdown.
         """
         self._send(signal.SIGKILL)
 
@@ -117,10 +121,10 @@ class SubprocessPlayer:
         self._directories = directories
         return self
 
-    async def play(self, part: Part) -> SubprocessHandle:
-        """Spawn the player for ``part`` at its active-source path, resolved now."""
+    async def play(self, part: Part, offset: float = 0.0) -> SubprocessHandle:
+        """Spawn the player for ``part`` at its path, seeked to ``offset`` seconds."""
         proc = await asyncio.create_subprocess_exec(
-            *self._command(self._directories.locate(part)),
+            *self._command(self._directories.locate(part), offset),
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
@@ -129,15 +133,14 @@ class SubprocessPlayer:
         return SubprocessHandle(proc)
 
     @staticmethod
-    def _command(path: Path) -> list[str]:
-        """Return the reduced-volume player argv for ``path``."""
-        if platform.system() == "Darwin":
-            return ["afplay", "--volume", "0.3", str(path)]
-        return [
-            "ffplay",
-            "-nodisp",
-            "-autoexit",
-            "-volume",
-            str(_MUSIC_VOLUME),
-            str(path),
-        ]
+    def _command(path: Path, offset: float) -> list[str]:
+        """Return the reduced-volume ``ffplay`` argv for ``path``.
+
+        A positive ``offset`` adds ``-ss <seconds>`` so a resumed part starts where
+        pause froze it; a fresh part (offset 0) plays from the top.
+        """
+        argv = ["ffplay", "-nodisp", "-autoexit", "-volume", str(_MUSIC_VOLUME)]
+        if offset > 0:
+            argv += ["-ss", f"{offset:.3f}"]
+        argv.append(str(path))
+        return argv

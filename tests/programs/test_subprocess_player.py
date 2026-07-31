@@ -94,23 +94,26 @@ class TestSubprocessHandle:
 
 
 class TestSubprocessPlayer:
-    def test_darwin_command_uses_afplay(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            "punt_vox.voxd.programs.subprocess_player.platform.system",
-            lambda: "Darwin",
-        )
-        argv = SubprocessPlayer._command(Path("/m/001.mp3"))
-        assert argv[0] == "afplay"
+    def test_command_uses_ffplay_headless_reduced_volume(self) -> None:
+        # One seek-capable player on every platform: ffplay -nodisp -autoexit at
+        # reduced volume, so speech and chimes overlay the music.
+        argv = SubprocessPlayer._command(Path("/m/001.mp3"), 0.0)
+        assert argv[0] == "ffplay"
+        assert "-nodisp" in argv
+        assert "-autoexit" in argv
         assert argv[-1] == "/m/001.mp3"
 
-    def test_linux_command_uses_ffplay(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            "punt_vox.voxd.programs.subprocess_player.platform.system",
-            lambda: "Linux",
-        )
-        argv = SubprocessPlayer._command(Path("/m/001.mp3"))
-        assert argv[0] == "ffplay"
-        assert argv[-1] == "/m/001.mp3"
+    def test_command_without_offset_has_no_seek(self) -> None:
+        # A fresh part plays from the top -- no -ss flag.
+        argv = SubprocessPlayer._command(Path("/m/001.mp3"), 0.0)
+        assert "-ss" not in argv
+
+    def test_command_with_offset_seeks(self) -> None:
+        # A resumed part carries -ss <offset> so it starts where pause froze it.
+        argv = SubprocessPlayer._command(Path("/m/001.mp3"), 30.5)
+        assert "-ss" in argv
+        assert argv[argv.index("-ss") + 1] == "30.500"
+        assert argv[-1] == "/m/001.mp3"  # the file stays the last argument
 
     async def test_play_spawns_the_resolved_command(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

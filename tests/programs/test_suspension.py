@@ -1,9 +1,12 @@
-"""Tests for ``PlaybackSuspension`` -- the pause/resume seam over the live player.
+"""Tests for ``PlaybackSuspension`` -- the click-free pause/resume seam.
 
-The suspension is the mechanism behind the transport's ``pause``/``resume``: it
-suspends the running player in place (so ``T3`` -- a paused album never
-auto-advances -- holds because the ``SIGSTOP``-ed player never exits) and gates the
-playback loop so a paused player stays paused across a prev/next reposition (Fork B).
+Pause no longer freezes the player in place. It tears the player down gracefully
+(so the audio device closes with no underrun click) and records *where* the part
+was; resume re-spawns the player seeked to that offset. ``T3`` -- a paused album
+never auto-advances -- holds because a paused source has no running player at all,
+so the loop parks on the gate and spawns nothing. A ``prev``/``next`` while paused
+moves the cursor alone, and the loop plays the newly-cursored part on resume at
+offset~0 (Fork~B).
 """
 
 from __future__ import annotations
@@ -11,108 +14,208 @@ from __future__ import annotations
 import asyncio
 from typing import final
 
+from punt_vox.voxd.programs import Part
 from punt_vox.voxd.programs.suspension import PlaybackSuspension
 
 
 @final
 class _FakeProcess:
-    """A PlayerProcess double recording suspend/resume calls (never truly stops)."""
+    """A PlayerProcess double recording the graceful-stop and terminate calls."""
 
     def __init__(self) -> None:
-        self.suspends = 0
-        self.resumes = 0
+        self.stops = 0
         self.terminates = 0
+        self.kills = 0
 
     async def wait(self) -> int:  # pragma: no cover - unused here
         raise NotImplementedError
 
-    async def kill(self) -> None:  # pragma: no cover - unused here
-        raise NotImplementedError
+    async def kill(self) -> None:
+        self.kills += 1
 
-    def suspend(self) -> None:
-        self.suspends += 1
-
-    def resume(self) -> None:
-        self.resumes += 1
+    def stop_gracefully(self) -> None:
+        self.stops += 1
 
     def terminate(self) -> None:
         self.terminates += 1
 
 
-def test_new_suspension_is_not_paused_and_open() -> None:
+@final
+class _Clock:
+    """A monotonic clock a test drives by hand, to pin the elapsed-offset math."""
+
+    def __init__(self) -> None:
+        self._now = 0.0
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
+
+    def __call__(self) -> float:
+        return self._now
+
+
+_PART = Part("id001", 1)
+_OTHER = Part("id002", 2)
+
+
+def test_new_suspension_is_not_paused() -> None:
     suspension = PlaybackSuspension()
     assert suspension.is_paused is False
 
 
-def test_pause_suspends_the_attached_handle() -> None:
+def test_pause_stops_the_attached_handle_gracefully() -> None:
     suspension = PlaybackSuspension()
     proc = _FakeProcess()
-    suspension.attach(proc)
+    suspension.attach(proc, _PART, 0.0)
 
     suspension.pause()
 
     assert suspension.is_paused is True
-    assert proc.suspends == 1  # the live player was SIGSTOP-ed
+    assert proc.stops == 1  # the live player was torn down with SIGTERM, not frozen
 
 
-def test_resume_continues_the_attached_handle() -> None:
+def test_resume_opens_the_gate_without_touching_a_handle() -> None:
+    # The paused player is already gone; resume only opens the gate so the loop
+    # re-spawns. There is no live handle to continue.
     suspension = PlaybackSuspension()
     proc = _FakeProcess()
-    suspension.attach(proc)
+    suspension.attach(proc, _PART, 0.0)
     suspension.pause()
 
     suspension.resume()
 
     assert suspension.is_paused is False
-    assert proc.resumes == 1  # SIGCONT-ed from where it stopped
 
 
 def test_pause_is_idempotent() -> None:
     suspension = PlaybackSuspension()
     proc = _FakeProcess()
-    suspension.attach(proc)
+    suspension.attach(proc, _PART, 0.0)
     suspension.pause()
-    suspension.pause()  # already paused -> no second SIGSTOP
-    assert proc.suspends == 1
+    suspension.pause()  # already paused -> no second SIGTERM
+    assert proc.stops == 1
 
 
 def test_resume_is_idempotent() -> None:
     suspension = PlaybackSuspension()
-    proc = _FakeProcess()
-    suspension.attach(proc)
-    suspension.resume()  # not paused -> no SIGCONT
-    assert proc.resumes == 0
+    suspension.resume()  # not paused -> a no-op
+    assert suspension.is_paused is False
 
 
-def test_attach_while_paused_suspends_the_new_handle() -> None:
-    # The spawn-during-pause race: pause landed before the next spawn, so the
-    # freshly attached handle must be suspended on arrival.
+def test_attach_while_paused_stops_the_new_handle() -> None:
+    # The spawn-during-pause race: pause landed before this spawn, so the freshly
+    # attached handle must be stopped on arrival -- it must never play.
     suspension = PlaybackSuspension()
     suspension.pause()
 
     proc = _FakeProcess()
-    suspension.attach(proc)
+    suspension.attach(proc, _PART, 0.0)
 
-    assert proc.suspends == 1
+    assert proc.stops == 1
 
 
-def test_reset_continues_a_paused_handle_and_clears_state() -> None:
-    # A stop/switch resets: the held player is continued (never left a stopped
-    # orphan) and the suspension returns to the open, not-paused state.
+def test_reset_clears_paused_and_resume_state() -> None:
+    # A stop/switch resets: the suspension returns to the open, not-paused state
+    # and drops any frozen resume point (the next source starts fresh).
     suspension = PlaybackSuspension()
     proc = _FakeProcess()
-    suspension.attach(proc)
+    suspension.attach(proc, _PART, 5.0)
     suspension.pause()
 
     suspension.reset()
 
     assert suspension.is_paused is False
-    assert proc.resumes == 1  # continued so no stopped orphan is left behind
+    assert suspension.seek_for(_PART) == 0.0  # the resume point was dropped
+
+
+def test_seek_for_returns_the_frozen_offset_for_the_paused_part() -> None:
+    # Pause freezes the elapsed offset; resuming the SAME part seeks back to it.
+    clock = _Clock()
+    suspension = PlaybackSuspension(clock)
+    proc = _FakeProcess()
+    suspension.attach(proc, _PART, 0.0)
+    clock.advance(30.0)  # 30s played
+
+    suspension.pause()
+
+    assert suspension.seek_for(_PART) == 30.0
+
+
+def test_seek_for_a_different_part_is_zero() -> None:
+    # A prev/next moved the cursor while paused: the new part plays from its
+    # start, not the frozen offset of the part that was paused (Fork B).
+    clock = _Clock()
+    suspension = PlaybackSuspension(clock)
+    proc = _FakeProcess()
+    suspension.attach(proc, _PART, 0.0)
+    clock.advance(30.0)
+    suspension.pause()
+
+    assert suspension.seek_for(_OTHER) == 0.0
+
+
+def test_offset_accumulates_across_pause_resume_cycles() -> None:
+    # Pause at 10s, resume (re-spawn seeked to 10s), play 5s more, pause again:
+    # the frozen offset is the total 15s, not just the last 5s.
+    clock = _Clock()
+    suspension = PlaybackSuspension(clock)
+
+    first = _FakeProcess()
+    suspension.attach(first, _PART, 0.0)
+    clock.advance(10.0)
+    suspension.pause()
+    assert suspension.seek_for(_PART) == 10.0
+
+    suspension.resume()
+    suspension.detach()  # the loop settled the stopped first handle
+    second = _FakeProcess()
+    suspension.attach(second, _PART, 10.0)  # re-spawned seeked to 10s
+    clock.advance(5.0)
+    suspension.pause()
+
+    assert suspension.seek_for(_PART) == 15.0
+
+
+def test_pause_with_no_live_handle_records_no_offset() -> None:
+    # Pausing while nothing plays (e.g. generating_first): there is no live track,
+    # so no resume point is frozen and the eventual first part plays from 0.
+    suspension = PlaybackSuspension()
+    suspension.pause()
+    assert suspension.is_paused is True
+    assert suspension.seek_for(_PART) == 0.0
+
+
+def test_detach_after_natural_end_drops_the_resume_point() -> None:
+    # A natural track end (not paused) advances to a new part, so the resume point
+    # is cleared -- the next part starts fresh.
+    clock = _Clock()
+    suspension = PlaybackSuspension(clock)
+    proc = _FakeProcess()
+    suspension.attach(proc, _PART, 7.0)
+
+    suspension.detach()
+
+    assert suspension.seek_for(_PART) == 0.0
+
+
+def test_detach_while_paused_keeps_the_resume_point() -> None:
+    # The pause path detaches the settled (gracefully-stopped) handle but must
+    # keep the frozen offset for the resume spawn.
+    clock = _Clock()
+    suspension = PlaybackSuspension(clock)
+    proc = _FakeProcess()
+    suspension.attach(proc, _PART, 0.0)
+    clock.advance(12.0)
+    suspension.pause()
+
+    suspension.detach()
+
+    assert suspension.seek_for(_PART) == 12.0
 
 
 async def test_gate_blocks_while_paused_and_opens_on_resume() -> None:
-    # The loop gate: wait_resumed blocks while paused (so a repositioned paused
-    # player does not play until resume, Fork B) and returns at once when playing.
+    # The loop gate: wait_resumed blocks while paused (so nothing plays until
+    # resume) and returns at once when playing.
     suspension = PlaybackSuspension()
     suspension.pause()
     waiter = asyncio.ensure_future(suspension.wait_resumed())
@@ -129,17 +232,15 @@ async def test_gate_is_open_when_not_paused() -> None:
     await asyncio.wait_for(suspension.wait_resumed(), timeout=1.0)  # returns at once
 
 
-def test_shutdown_terminates_a_suspended_player() -> None:
-    # A paused (SIGSTOP-ed) player must be killed on daemon stop, not orphaned to
-    # be SIGCONT-ed into a stray burst after the daemon exits.
+def test_shutdown_terminates_a_live_player() -> None:
+    # A player playing at daemon stop must be killed, not orphaned.
     suspension = PlaybackSuspension()
     proc = _FakeProcess()
-    suspension.attach(proc)
-    suspension.pause()
+    suspension.attach(proc, _PART, 0.0)
 
     suspension.shutdown()
 
-    assert proc.terminates == 1  # the held player was SIGKILL-ed
+    assert proc.terminates == 1  # the live player was SIGKILL-ed
     assert suspension.is_paused is False  # and the state is reset
 
 

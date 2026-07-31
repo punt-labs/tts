@@ -104,8 +104,9 @@ class ProgramService:
         self._filler = Filler(producer, self._channel, sleeper)
         self._channel.attach_reconciler(FillReconciler(self._filler, self))
         self._health = PlaybackHealth()
-        # The suspension is shared by the loop (which suspends the live player on
-        # pause) and this service (which drives pause/resume and reports paused).
+        # The suspension is shared by the loop (which tears the live player down on
+        # pause and re-spawns it seeked on resume) and this service (which drives
+        # pause/resume and reports paused).
         self._suspension = PlaybackSuspension()
         self._loop = ProgramLoop(
             self._channel,
@@ -153,9 +154,9 @@ class ProgramService:
     def shutdown(self) -> None:
         """Tear down live work on daemon stop: cancel the fill, kill the player.
 
-        The suspension shutdown kills any live or suspended player, so a paused
-        (``SIGSTOP``-ed) track leaves no orphan the OS could later ``SIGCONT`` into
-        a stray audio burst after the daemon exits.
+        The suspension shutdown kills any live player (or one caught mid-spawn),
+        so no orphan lingers after the daemon exits. A paused source has already
+        torn its player down, so there is usually nothing left to kill.
         """
         self._filler.cancel()
         self._suspension.shutdown()

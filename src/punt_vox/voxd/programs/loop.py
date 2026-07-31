@@ -32,9 +32,10 @@ if TYPE_CHECKING:
     from punt_vox.voxd.programs.control_channel import ControlChannel
     from punt_vox.voxd.programs.part import Part
     from punt_vox.voxd.programs.playback_health import PlaybackHealth
-    from punt_vox.voxd.programs.player import Player
+    from punt_vox.voxd.programs.player import Player, PlayerProcess
     from punt_vox.voxd.programs.sleeper import Sleeper
     from punt_vox.voxd.programs.suspension import PlaybackSuspension
+    from punt_vox.voxd.programs.track_end import TrackEnd
 
 __all__ = ["ProgramLoop"]
 
@@ -99,7 +100,15 @@ class ProgramLoop:
                 logger.exception("playback loop: unexpected error in a step")
 
     async def _step(self) -> None:
-        """Play the current Part, or wait until one becomes playable."""
+        """Park while paused, then play the current Part or wait for a playable one.
+
+        The suspension gate is consulted *first*, before the cursor is read: while
+        paused there is no running player, so the loop parks here and spawns
+        nothing (Z ``T3`` -- a paused album does not auto-advance). On resume the
+        cursor is read fresh, so a ``prev``/``next`` that moved it while paused
+        plays the newly-cursored Part (Z Fork~B).
+        """
+        await self._suspension.wait_resumed()
         target = self._channel.source.playing
         if target is not None:
             await self._play(target)
@@ -114,36 +123,42 @@ class ProgramLoop:
         await self._channel.changed.wait()
 
     async def _play(self, target: Part) -> None:
-        """Play ``target``: settle its end against an interrupt, then advance.
+        """Spawn ``target`` at its resume offset, settle its end, then act (F3).
 
-        The suspension gate is consulted first: while paused, the loop parks here
-        and spawns nothing, so a prev/next that repositioned a paused player does
-        not become audible until resume (Z Fork B). The spawned handle is attached
-        to the suspension so a mid-track ``pause`` can ``SIGSTOP`` it -- a stopped
-        player never exits, so ``settle`` stays pending and the cursor never
-        auto-advances while paused (Z ``T3``).
-
-        A spawn failure is turned into an observable fault plus a bounded backoff
-        (``_back_off_spawn``) rather than a raise into ``run``'s guard, which
-        would re-enter ``_step`` on the same still-unplayable target and spin. A
-        non-zero *exit* (a missing/corrupt track file -- reachable now that replay
-        plays arbitrary saved albums) is likewise made observable on
-        ``PlaybackHealth`` before advancing past the bad track, never a
-        WARNING-only log that leaves status reporting "playing" while it skips.
+        The spawn seeks to the suspension's resume offset -- the frozen offset when
+        this is the paused part being resumed, 0 for a fresh part -- and attaches
+        the handle with that offset so the position accounting stays correct across
+        pause/resume cycles. A spawn failure becomes an observable fault plus a
+        bounded backoff rather than a raise into ``run``'s guard, which would spin
+        on the same unplayable target. The post-settle decision is ``_finish``.
         """
-        await self._suspension.wait_resumed()
         self._channel.interrupt.clear()
+        offset = self._suspension.seek_for(target)
         try:
-            proc = await self._player.play(target)
+            proc = await self._player.play(target, offset)
         except OSError as exc:  # FileNotFoundError (no player) + EMFILE/ENOMEM
             await self._back_off_spawn(target, exc)
             return
-        self._suspension.attach(proc)
+        self._suspension.attach(proc, target, offset)
         self._health.clear()
         try:
             end = await self._race.settle(proc)
         finally:
             self._suspension.detach()
+        await self._finish(target, proc, end)
+
+    async def _finish(self, target: Part, proc: PlayerProcess, end: TrackEnd) -> None:
+        """Act on how the track stopped: park, kill, or advance the cursor.
+
+        The paused check fires first: a ``pause`` gracefully stopped the player, so
+        the cursor is held and the loop returns without advancing (Z ``T3``); the
+        next ``_step`` parks on the gate until resume. A user interrupt kills and
+        does not advance. A clean or faulted end advances -- a fault is recorded
+        observably first (F3), never a WARNING-only log that skips silently.
+        """
+        if self._suspension.is_paused:
+            await proc.kill()  # reap the gracefully-stopped player; do NOT advance
+            return
         if end.interrupted:
             await proc.kill()
             return

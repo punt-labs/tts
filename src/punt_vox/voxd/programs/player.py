@@ -17,7 +17,7 @@ __all__ = ["Player", "PlayerProcess"]
 
 
 class PlayerProcess(Protocol):
-    """A running player whose end the loop waits for, suspends, or cuts short."""
+    """A running player whose end the loop waits for, stops, or cuts short."""
 
     async def wait(self) -> int:
         """Block until the player exits and return its exit code."""
@@ -27,21 +27,21 @@ class PlayerProcess(Protocol):
         """Stop the player now (a skip / off / play-a-part interrupt)."""
         ...
 
-    def suspend(self) -> None:
-        """Pause the player in place (``SIGSTOP``); it stops progressing."""
-        ...
+    def stop_gracefully(self) -> None:
+        """Ask the player to exit cleanly (``SIGTERM``) for a click-free pause.
 
-    def resume(self) -> None:
-        """Continue a suspended player (``SIGCONT``) from where it stopped."""
+        The player closes its audio device on the way out, so the device stops
+        with no underrun -- unlike a ``SIGSTOP`` freeze. The loop reaps the exit
+        through its usual wait; the pause path never advances the cursor.
+        """
         ...
 
     def terminate(self) -> None:
         """Kill the player now, synchronously (daemon shutdown teardown).
 
         A sync ``SIGKILL`` so ``shutdown`` -- which runs outside the event loop --
-        can tear down a still-suspended player without awaiting; ``SIGKILL``
-        terminates even a ``SIGSTOP``-ed process, so no orphan lingers to be
-        ``SIGCONT``-ed after the daemon exits.
+        can tear down a player caught mid-spawn without awaiting; no orphan
+        lingers after the daemon exits.
         """
         ...
 
@@ -49,6 +49,6 @@ class PlayerProcess(Protocol):
 class Player(Protocol):
     """Turn a ready Part into a running :class:`PlayerProcess` (PY-DP-11)."""
 
-    async def play(self, part: Part) -> PlayerProcess:
-        """Start playing ``part`` and return its process handle."""
+    async def play(self, part: Part, offset: float = 0.0) -> PlayerProcess:
+        """Start playing ``part`` seeked to ``offset`` seconds; return the handle."""
         ...

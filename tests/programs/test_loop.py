@@ -25,7 +25,7 @@ from punt_vox.voxd.programs.fill_signal import Produced
 from punt_vox.voxd.programs.lifecycle_signal import TurnOff, TurnOn, VibeStyleChange
 from punt_vox.voxd.programs.loop import ProgramLoop
 from punt_vox.voxd.programs.playback_health import PlaybackHealth
-from punt_vox.voxd.programs.playback_signal import Rotate
+from punt_vox.voxd.programs.playback_signal import Rotate, StepForward
 from punt_vox.voxd.programs.suspension import PlaybackSuspension
 
 from .conftest import AvoidRepeatPolicy, FakeSleeper
@@ -54,13 +54,15 @@ def _turn_off(channel: ControlChannel) -> TurnOff:
 class FakeProcess:
     """A fake player process whose end the test controls."""
 
-    __slots__ = ("_ended", "rc")
+    __slots__ = ("_ended", "rc", "stops")
     rc: int | None
+    stops: int
     _ended: asyncio.Event
 
     def __new__(cls) -> Self:
         self = super().__new__(cls)
         self.rc = None
+        self.stops = 0
         self._ended = asyncio.Event()
         return self
 
@@ -72,11 +74,11 @@ class FakeProcess:
         self.rc = -9
         self._ended.set()
 
-    def suspend(self) -> None:
-        """Satisfy the PlayerProcess protocol; the loop tests never pause."""
-
-    def resume(self) -> None:
-        """Satisfy the PlayerProcess protocol; the loop tests never pause."""
+    def stop_gracefully(self) -> None:
+        """A pause SIGTERMs the player: it exits, so the loop's wait settles."""
+        self.stops += 1
+        self.rc = -15
+        self._ended.set()
 
     def terminate(self) -> None:
         """Satisfy the PlayerProcess protocol; the loop tests never shut down."""
@@ -89,22 +91,25 @@ class FakeProcess:
 
 @final
 class FakePlayer:
-    """Record the Parts played and hand back controllable processes."""
+    """Record the Parts (and seek offsets) played, hand back controllable procs."""
 
-    __slots__ = ("_spawned", "parts", "procs")
+    __slots__ = ("_spawned", "offsets", "parts", "procs")
     parts: list[Part]
+    offsets: list[float]
     procs: list[FakeProcess]
     _spawned: asyncio.Event
 
     def __new__(cls) -> Self:
         self = super().__new__(cls)
         self.parts = []
+        self.offsets = []
         self.procs = []
         self._spawned = asyncio.Event()
         return self
 
-    async def play(self, part: Part) -> FakeProcess:
+    async def play(self, part: Part, offset: float = 0.0) -> FakeProcess:
         self.parts.append(part)
+        self.offsets.append(offset)
         proc = FakeProcess()
         self.procs.append(proc)
         self._spawned.set()
@@ -401,10 +406,7 @@ class _RaisingProcess:
     async def kill(self) -> None:
         self.rc = -9
 
-    def suspend(self) -> None:
-        """Satisfy the PlayerProcess protocol; this fake is never paused."""
-
-    def resume(self) -> None:
+    def stop_gracefully(self) -> None:
         """Satisfy the PlayerProcess protocol; this fake is never paused."""
 
     def terminate(self) -> None:
@@ -425,7 +427,9 @@ class _ErrThenBlockPlayer:
         self.procs = []
         return self
 
-    async def play(self, part: Part) -> _RaisingProcess | FakeProcess:
+    async def play(
+        self, part: Part, offset: float = 0.0
+    ) -> _RaisingProcess | FakeProcess:
         self.parts.append(part)
         proc: _RaisingProcess | FakeProcess = (
             _RaisingProcess() if len(self.parts) == 1 else FakeProcess()
@@ -484,7 +488,7 @@ class _FailFirstPlayer:
         self.procs = []
         return self
 
-    async def play(self, part: Part) -> FakeProcess:
+    async def play(self, part: Part, offset: float = 0.0) -> FakeProcess:
         self._calls += 1
         if self._calls == 1:
             msg = "boom"
@@ -535,8 +539,8 @@ class _AlwaysFailSpawnPlayer:
         self.parts = []
         return self
 
-    async def play(self, part: Part) -> FakeProcess:
-        msg = "afplay: No such file or directory"
+    async def play(self, part: Part, offset: float = 0.0) -> FakeProcess:
+        msg = "ffplay: No such file or directory"
         raise FileNotFoundError(msg)
 
 
@@ -556,7 +560,7 @@ class _FailSpawnOncePlayer:
         self.procs = []
         return self
 
-    async def play(self, part: Part) -> FakeProcess:
+    async def play(self, part: Part, offset: float = 0.0) -> FakeProcess:
         self._calls += 1
         if self._calls == 1:
             msg = "EMFILE: too many open files"
@@ -630,7 +634,7 @@ class _PathLeakSpawnPlayer:
         self.parts = []
         return self
 
-    async def play(self, part: Part) -> FakeProcess:
+    async def play(self, part: Part, offset: float = 0.0) -> FakeProcess:
         raise FileNotFoundError(self._msg)
 
 
@@ -666,3 +670,100 @@ class TestSpawnFaultReasonSanitization:
         assert str(state) not in fault.reason  # no absolute prefix
         assert "/opt/homebrew/bin/ffplay" not in fault.reason  # out-of-jail stripped
         assert "<path>" in fault.reason
+
+
+@final
+class _Clock:
+    """A monotonic clock a test drives by hand, to pin the resume offset."""
+
+    __slots__ = ("_now",)
+    _now: float
+
+    def __new__(cls) -> Self:
+        self = super().__new__(cls)
+        self._now = 0.0
+        return self
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
+
+    def __call__(self) -> float:
+        return self._now
+
+
+async def _stop(*tasks: asyncio.Task[None]) -> None:
+    """Cancel and reap the loop + writer tasks of a manual harness."""
+    for task in tasks:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+class TestPauseResume:
+    """Pause tears the player down and parks (T3); resume re-spawns at the offset.
+
+    These drive the real loop through a clock-injected suspension so the frozen
+    resume offset is deterministic. The click-free pause replaces the old
+    SIGSTOP freeze: the player exits, the loop parks without advancing, and
+    resume re-spawns the part seeked to where pause froze it.
+    """
+
+    @staticmethod
+    def _harness(
+        clock: _Clock, program: Program
+    ) -> tuple[
+        ControlChannel,
+        FakePlayer,
+        PlaybackSuspension,
+        asyncio.Task[None],
+        asyncio.Task[None],
+    ]:
+        channel = ControlChannel(program)
+        player = FakePlayer()
+        suspension = PlaybackSuspension(clock)
+        loop = ProgramLoop(channel, player, FakeSleeper(), PlaybackHealth(), suspension)
+        serve = asyncio.create_task(channel.serve())
+        run = asyncio.create_task(loop.run())
+        return channel, player, suspension, serve, run
+
+    async def test_pause_parks_then_resume_respawns_same_part_at_offset(
+        self, rotating: Program
+    ) -> None:
+        clock = _Clock()
+        _channel, player, suspension, serve, run = self._harness(clock, rotating)
+        await player.wait_for(1)
+        await _settle()  # let the loop attach and reach settle before pausing
+        first = player.parts[0]
+        clock.advance(20.0)
+        suspension.pause()  # SIGTERM the player, freeze the position at 20s
+        await _settle()
+        assert player.procs[0].stops == 1  # gracefully stopped, not frozen
+        assert suspension.is_paused
+        assert len(player.parts) == 1  # parked: NO auto-advance (T3)
+
+        suspension.resume()
+        await player.wait_for(2)
+        assert player.parts[1] == first  # resumed the SAME part, not advanced
+        assert player.offsets[1] == 20.0  # re-spawned seeked to the frozen offset
+        await _stop(run, serve)
+
+    async def test_next_while_paused_plays_new_part_from_start(
+        self, rotating: Program
+    ) -> None:
+        clock = _Clock()
+        channel, player, suspension, serve, run = self._harness(clock, rotating)
+        await player.wait_for(1)
+        await _settle()
+        first = player.parts[0]
+        clock.advance(10.0)
+        suspension.pause()
+        await _settle()
+        channel.post(StepForward())  # move the cursor within the album while paused
+        await _settle()
+        assert len(player.parts) == 1  # still parked, cursor moved but nothing plays
+
+        suspension.resume()
+        await player.wait_for(2)
+        assert player.parts[1] != first  # played the newly-cursored part (Fork B)
+        assert player.offsets[1] == 0.0  # from its start, not the frozen offset
+        await _stop(run, serve)
