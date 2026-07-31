@@ -1,7 +1,9 @@
 """``LuxSubscription`` -- voxd's receive leg: one hub connection, menu, dispatch.
 
 The subscription holds a *single* live connection to luxd at a time (Z model
-invariant I). It subscribes to ``music.play`` and ``music.stop`` and holds the
+invariant I). It subscribes to every :class:`MusicTopic` -- the album-list
+``music.play`` / ``music.stop`` and the transport bar's ``music.prev`` /
+``music.pause`` / ``music.resume`` / ``music.next`` -- and holds the
 connection open; the ``LuxHubClient`` reconnects and re-subscribes internally across
 transient drops, firing the subscription's ``on_connect`` hook after *every*
 successful handshake -- first connect and every internal reconnect. That hook
@@ -127,9 +129,14 @@ class LuxSubscription:
         ``listen`` has returned or raised (invariant I).
         """
         listener = self._connect_hub(self.on_event, self.on_callback, self.on_connect)
-        listener.subscribe(MusicTopic.PLAY, MusicTopic.STOP)
+        # Subscribe to every topic the scene can publish -- the album-list play/stop
+        # AND the transport bar's prev/pause/resume/next -- so a new topic added to
+        # MusicTopic is delivered without a second edit here (the bug this replaced:
+        # only play/stop were subscribed, so the transport buttons reached no one).
+        listener.subscribe(*MusicTopic)
         _trace.info(
-            "subscribed to topics %s, %s; listening", MusicTopic.PLAY, MusicTopic.STOP
+            "subscribed to topics %s; listening",
+            ", ".join(topic.value for topic in MusicTopic),
         )
         await listener.listen()
 

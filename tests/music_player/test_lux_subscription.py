@@ -19,7 +19,12 @@ from typing import TYPE_CHECKING, final
 from punt_lux import HubUnavailableError
 
 from punt_vox.voxd.music_player.lux_subscription import LuxSubscription
+from punt_vox.voxd.music_player.wire import MusicTopic
 from punt_vox.voxd.programs.album_id import AlbumId
+
+# Every topic the scene can publish: the album-list play/stop plus the transport
+# bar's prev/pause/resume/next. The receive leg must subscribe to all of them.
+_ALL_TOPICS = tuple(topic.value for topic in MusicTopic)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -234,7 +239,7 @@ async def test_run_registers_the_menu_and_subscribes_once() -> None:
     await sub.run()
 
     assert menu.registered == [("music", "Music")]
-    assert listener.subscribed == ("music.play", "music.stop")
+    assert listener.subscribed == _ALL_TOPICS  # all six topics, not just play/stop
     assert len(calls) == 1  # exactly one connection built
     assert listener.listens == 1
 
@@ -266,7 +271,7 @@ async def test_run_retries_until_luxd_is_up_then_registers_fresh(
     await sub.run()
 
     assert len(attempts) == 2  # retried once, then one connection
-    assert listener.subscribed == ("music.play", "music.stop")
+    assert listener.subscribed == _ALL_TOPICS  # all six topics, not just play/stop
 
 
 async def test_run_restarts_and_recovers_after_a_listen_fault(
@@ -431,6 +436,60 @@ async def test_on_event_dispatches_each_event_exactly_once() -> None:
 
     assert service.played == [AlbumId("aa11bb")]
     assert service.stops == 1
+
+
+async def test_run_subscribes_to_all_six_topics_including_the_transport() -> None:
+    # The regression this guards: the leg once subscribed to only play/stop, so the
+    # transport buttons (prev/pause/resume/next) published into a void and did
+    # nothing in the live display. Assert every MusicTopic is subscribed.
+    listener = _RecordingListener()
+    sub = LuxSubscription(
+        _FakeCommands(), _FakeOpener(), _FakeMenu(), _connect(listener, [])
+    )
+
+    await sub.run()
+
+    assert set(listener.subscribed) == set(MusicTopic)  # all six, order-independent
+    for transport in (
+        MusicTopic.PREV,
+        MusicTopic.PAUSE,
+        MusicTopic.RESUME,
+        MusicTopic.NEXT,
+    ):
+        assert transport in listener.subscribed  # the transport bar reaches voxd
+
+
+async def test_on_event_prev_dispatches_end_to_end_to_service_prev() -> None:
+    # A delivered music.prev must reach service.prev() through the real decode+apply
+    # path (not the event object directly) -- the gap the unit tests missed, since a
+    # button that publishes an unsubscribed topic is never delivered here at all.
+    service = _FakeCommands()
+    sub = _subscription(service=service)
+
+    await sub.on_event("music.prev", {})
+
+    assert service.prevs == 1  # decode(music.prev) -> Prev().apply -> service.prev()
+    assert service.nexts == 0
+    assert service.pauses == 0
+    assert service.resumes == 0
+
+
+async def test_on_event_transport_topics_each_dispatch_to_their_command() -> None:
+    # The full transport quartet, end to end through decode+apply.
+    service = _FakeCommands()
+    sub = _subscription(service=service)
+
+    await sub.on_event("music.prev", {})
+    await sub.on_event("music.next", {})
+    await sub.on_event("music.pause", {})
+    await sub.on_event("music.resume", {})
+
+    assert (service.prevs, service.nexts, service.pauses, service.resumes) == (
+        1,
+        1,
+        1,
+        1,
+    )
 
 
 async def test_on_event_drops_a_malformed_frame_without_raising(
