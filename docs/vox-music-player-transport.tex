@@ -19,10 +19,11 @@
 %
 % It supersedes the two-mode PlayerView of phase 2 by forward integration: the
 % same object, one extra mode. It does not contradict phase 2 --- every phase-2
-% behaviour survives with `paused' added --- with a SINGLE exception the design
-% brief introduces deliberately and which this model records as a fork for the
-% leader: T4 restricts play to the idle mode, whereas the phase-2 PlayerPlay was
-% a start-or-switch verb with no mode guard. See Section~\ref{sec:forks}.
+% behaviour survives with `paused' added. The brief once proposed a single
+% departure (T4 restricting play to the idle mode, against the phase-2
+% start-or-switch PlayerPlay), which this model surfaced as Fork A; the leader
+% resolved it to SWITCH, keeping the phase-2 semantics with no regression, so
+% PlayAlbum carries no mode guard. See Section~\ref{sec:forks}.
 %
 
 \documentclass[a4paper,10pt,fleqn]{article}
@@ -180,10 +181,15 @@ The conjuncts discharge the invariants as follows.
   \item[\texttt{T4} --- transition guards.] Not a state invariant but a family
     of preconditions, one per operation; it is discharged in
     Sections~\ref{sec:play}--\ref{sec:autoadvance}, where each transition names
-    the mode it is enabled from. It cannot live in the state predicate, because
-    it constrains \emph{steps}, not \emph{states}; recording it as prose here
-    would be exactly the mistake the brief warns against, so it is recorded
-    instead as the precondition line of every operation schema.
+    the mode it is enabled from. \texttt{PlayAlbum} is the one transition
+    enabled from \emph{every} mode --- it starts from \texttt{idle} and switches
+    from \texttt{playing} or \texttt{paused} (Section~\ref{sec:forks},
+    Fork~A) --- while \texttt{pause}, \texttt{resume}, \texttt{stop},
+    \texttt{prev}, and \texttt{next} each carry the mode guard named in their
+    schema. It cannot live in the state predicate, because it constrains
+    \emph{steps}, not \emph{states}; recording it as prose here would be
+    exactly the mistake the brief warns against, so it is recorded instead as
+    the precondition line of every operation schema.
   \item[\texttt{T5} --- cursor bounds.] The active-mode conjunct fixes
     $1 \leq index \leq of$. The no-op boundary cases --- \texttt{prev} at part~1,
     \texttt{next} at part~$of$ --- are properties of those two operations
@@ -237,17 +243,21 @@ of \texttt{PlayerView'}: each is a total function of \texttt{mode'}, so the
 after-state fixes them, and writing them out in every schema would only repeat
 the invariant.
 
-\subsection{PlayAlbum --- start a saved album from idle}
+\subsection{PlayAlbum --- start or switch to a saved album}
 \label{sec:play}
 
 A client plays the album \texttt{target?}, whose ready-part count is
-\texttt{count?}. \texttt{T4} restricts this to the \texttt{idle} mode: the
-transport starts a source only when none is active, and the album-list Play
-buttons drive it. The album must be catalogued and non-empty ($count? \geq 1$).
-The after-state is one album playing, cursor at part~1.
+\texttt{count?}. It fires from \emph{any} mode: from \texttt{idle} it
+\emph{starts} a source; from \texttt{playing} or \texttt{paused} it
+\emph{switches}, the newly chosen album displacing the active one and starting
+at part~1. The only guard is that the album be catalogued and non-empty
+($count? \geq 1$); there is no mode precondition, which is why the album-list
+Play buttons stay enabled in every mode. The after-state is one album playing,
+cursor at part~1, regardless of the before-mode.
 
-This is the phase-2 \texttt{PlayerPlay} with a mode guard added --- and that
-added guard is the one deliberate departure from phase~2, flagged in
+This is the phase-2 \texttt{PlayerPlay} start-or-switch verb, carried into
+phase~3 unchanged --- there is no mode guard, and no regression from phase~2.
+The resolution of the fork this once raised is recorded in
 Section~\ref{sec:forks}.
 
 \begin{schema}{PlayAlbum}
@@ -255,7 +265,6 @@ Section~\ref{sec:forks}.
   target? : ALBUM \\
   count? : 1 \upto maxPart
   \where
-  mode = idle \\
   target? \in catalogued \\
   catalogued' = catalogued \\
   mode' = playing \\
@@ -435,27 +444,29 @@ than papering over it.
 
 \begin{description}
   \item[Fork~A --- play only from idle (\texttt{T4}) versus phase-2's
-    start-or-switch.] The phase-2 \texttt{PlayerPlay}
+    start-or-switch. \emph{Resolved: SWITCH.}] The phase-2 \texttt{PlayerPlay}
     (\texttt{docs/vox-music-player.tex}, \S5) had \emph{no} mode precondition: from
     \texttt{idle} it started, while \texttt{playing} it \emph{switched},
     displacing the current album --- the model image of
-    \texttt{SwitchSelection}. The phase-3 \texttt{T4} restricts \texttt{play} to
-    the \texttt{idle} mode, so \texttt{PlayAlbum} here carries $mode = idle$. The
-    two cannot both hold. The concrete question is: \emph{what happens when a
-    user clicks an album-list Play button while another album is playing or
-    paused?} Three coherent answers: (i) it switches --- keep phase-2's
-    semantics and drop the $mode = idle$ guard, making \texttt{T4}'s
-    play-only-from-idle clause wrong; (ii) it is refused --- the album-list Play
-    buttons render \texttt{disabled} whenever the transport is active, matching
-    the $mode = idle$ guard exactly, so a switch requires an explicit
-    \texttt{stop} first; (iii) it is an implicit stop-then-play --- the daemon
-    treats it as \texttt{Stop} composed with \texttt{PlayAlbum}. This model
-    encodes (ii), the literal reading of \texttt{T4}. \textbf{Recommendation:}
-    (ii) --- it is the simplest and the only one consistent with \texttt{T4} as
-    written, and it makes the transport the single locus of source changes; but
-    it is a behaviour change from phase~2 and the leader should confirm it before
-    implementation, because the album-list projection must then disable Play
-    while active.
+    \texttt{SwitchSelection}. The phase-3 brief's \texttt{T4} would have
+    restricted \texttt{play} to the \texttt{idle} mode. The two cannot both
+    hold. The concrete question was: \emph{what happens when a user clicks an
+    album-list Play button while another album is playing or paused?} Three
+    coherent answers presented themselves: (i) it \emph{switches} --- keep
+    phase-2's semantics and drop the $mode = idle$ guard; (ii) it is
+    \emph{refused} --- the album-list Play buttons render \texttt{disabled}
+    whenever the transport is active, so a switch requires an explicit
+    \texttt{stop} first; (iii) it is an implicit \texttt{stop}-then-\texttt{play}.
+    \textbf{The leader resolved this to (i), SWITCH.} A normal media player
+    switches to a newly clicked album while one is playing, with no stop-first
+    required; taking (i) preserves the phase-2 start-or-switch behaviour with no
+    regression, and is the simpler design, since the album-list Play buttons
+    stay enabled in every mode rather than needing a disabled state. The brief's
+    \texttt{T4} ``play only from idle'' clause was too strict and is dropped.
+    Accordingly \texttt{PlayAlbum} (Section~\ref{sec:play}) carries \emph{no}
+    mode guard: from \texttt{idle} it starts, from \texttt{playing} or
+    \texttt{paused} it switches, and in every case the after-state is
+    \texttt{target?} playing from part~1.
   \item[Fork~B --- prev/next while paused hold the mode.] The brief says
     prev/next ``move the part cursor within the now-playing album'' and does not
     say they resume. This model holds the mode ($mode' = mode$), so \texttt{prev}
@@ -484,17 +495,30 @@ model-checked with ProB (\texttt{probcli}, $maxPart = 3$, the given set
 \texttt{ALBUM} at cardinality~2, integers bounded to $0 \upto 3$).
 
 Over the faithful state space --- the boot catalog ranging over every subset of
-\texttt{ALBUM}, empty included --- ProB visits every reachable state and finds
-\emph{no invariant violation}: the \texttt{PlayerView} predicate, and with it
-\texttt{T1}, \texttt{T2}, \texttt{T3} (through \texttt{advancing}), \texttt{T5}
-(the cursor bounds), \texttt{T6}, and \texttt{T7}, holds on every reachable
-state. All seven transitions are covered, so each is reachable and exercised;
-\texttt{T4} is enforced by construction, since a transition's first predicate
-line is its mode guard and no reachable state fires an operation from a mode the
-guard forbids. In particular \texttt{AutoAdvance} is guarded by $advancing =
-ztrue$, which the invariant equates with $mode = playing$, so no reachable
-\texttt{paused} state enables it --- this is \texttt{T3}, confirmed by
-exhaustion.
+\texttt{ALBUM}, empty included --- ProB visits every reachable state (53 states,
+461 transitions) and finds \emph{no invariant violation}: the \texttt{PlayerView}
+predicate, and with it \texttt{T1}, \texttt{T2}, \texttt{T3} (through
+\texttt{advancing}), \texttt{T5} (the cursor bounds), \texttt{T6}, and
+\texttt{T7}, holds on every reachable state. All seven transitions are covered,
+so each is reachable and exercised. \texttt{T4} is enforced by construction: the
+five mode-guarded transitions --- \texttt{pause}, \texttt{resume}, \texttt{stop},
+\texttt{prev}, \texttt{next} --- each name their enabling mode on the first
+predicate line, and no reachable state fires one from a mode the guard forbids;
+\texttt{PlayAlbum}, by the Fork~A resolution (Section~\ref{sec:forks}), carries
+\emph{no} mode guard and is deliberately enabled from all three modes. ProB
+exercises \texttt{PlayAlbum} as a switch from both non-idle modes with no
+invariant violation: from a \texttt{playing} state (e.g. \texttt{album} $=
+\{$ALBUM2$\}$, replaying or resizing the same source) and from a \texttt{paused}
+state (\texttt{glyph} $= playGlyph$), and across albums --- a \texttt{playing}
+\texttt{album} $= \{$ALBUM1$\}$ under a two-album catalog steps to
+\texttt{album} $= \{$ALBUM2$\}$, \texttt{index} $= 1$, \texttt{mode} $=
+playing$, the newly chosen album displacing the active one and restarting at
+part~1. The switch adds edges, not states: the after-state of a switch is one a
+\texttt{stop}-then-\texttt{play} could already reach, so the state count is
+unchanged and only the transition count grows. In particular \texttt{AutoAdvance}
+is guarded by $advancing = ztrue$, which the invariant equates with $mode =
+playing$, so no reachable \texttt{paused} state enables it --- this is
+\texttt{T3}, confirmed by exhaustion.
 
 ProB reports exactly one deadlock, and it is not a defect: the empty-catalog
 idle state (\texttt{catalogued} $= \emptyset$, \texttt{mode} $=$ \texttt{idle})
@@ -505,7 +529,7 @@ album and this model does not re-state the catalog-mutation operations
 scope boundary of a transport model, not a wedged transport. Restricting the
 boot catalog to be non-empty --- so \texttt{PlayAlbum} is always available from
 \texttt{idle} --- the machine is \emph{deadlock-free}: ProB visits all~52 states,
-fires all~244 transitions, covers all seven operations, and finds no
+fires all~460 transitions, covers all seven operations, and finds no
 counterexample of any kind. The transport transitions themselves never wedge;
 the only dead end is ``no album has ever been catalogued'', which the phase-2
 catalog operations resolve.
