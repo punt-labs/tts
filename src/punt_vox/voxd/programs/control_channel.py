@@ -132,8 +132,9 @@ class ControlChannel:
         captures every transition uniformly, at INFO, without scattering loggers.
         """
         signal = await self._queue.get()
+        applied = False
         try:
-            self._apply_one(signal)
+            applied = self._apply_one(signal)
         finally:
             self._queue.task_done()
             try:
@@ -141,7 +142,7 @@ class ControlChannel:
             finally:
                 # The wake is unconditional: even a raising reconcile must not
                 # leave the playback loop blocked on ``changed``.
-                self._mark_applied(signal)
+                self._mark_applied(signal, applied=applied)
                 # The re-push rides the same finally so a raising apply still
                 # re-projects the settled state; ``emit`` is fail-soft.
                 self._emit_change()
@@ -152,8 +153,8 @@ class ControlChannel:
         if self._changes is not None:
             self._changes.emit()
 
-    def _apply_one(self, signal: ControlSignal) -> None:
-        """Apply one command, swallowing only a benign lost-race guard."""
+    def _apply_one(self, signal: ControlSignal) -> bool:
+        """Apply one command; return whether it took effect (False on lost race)."""
         try:
             signal.apply(self._source)
         except GuardViolationError:
@@ -163,10 +164,19 @@ class ControlChannel:
                 type(self._source).__name__,
                 signal,
             )
+            return False
+        return True
 
-    def _mark_applied(self, signal: ControlSignal) -> None:
-        """Wake the loop, interrupting the current track if the command demands it."""
-        if signal.interrupts:
+    def _mark_applied(self, signal: ControlSignal, *, applied: bool) -> None:
+        """Wake the loop, interrupting only when a command that demands it applied.
+
+        A rejected command (lost race) that declares ``interrupts`` must NOT fire
+        the interrupt: it changed no state, so killing the current track would
+        restart it from zero while the cursor stayed put -- a silent no-op that
+        sounds like a stutter. ``changed`` still fires unconditionally so the loop
+        never blocks on a settled command.
+        """
+        if applied and signal.interrupts:
             self._interrupt.set()
         self._changed.set()
 

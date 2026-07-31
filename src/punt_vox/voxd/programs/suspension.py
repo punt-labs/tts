@@ -95,6 +95,19 @@ class PlaybackSuspension:
         """Forget the handle once its track has settled (killed or ended)."""
         self._handle = None
 
+    def shutdown(self) -> None:
+        """Kill the held player on daemon stop so no suspended orphan lingers.
+
+        A ``SIGSTOP``-ed player, left behind when the daemon exits, could be
+        ``SIGCONT``-ed by the OS into a stray audio burst. ``terminate`` is a
+        synchronous ``SIGKILL`` -- it stops even a stopped process -- so ``shutdown``
+        (which runs outside the event loop) tears the player down without awaiting.
+        """
+        handle = self._handle
+        self.reset()
+        if handle is not None:
+            handle.terminate()
+
     async def wait_resumed(self) -> None:
         """Block the playback loop while paused; return at once when playing."""
         await self._gate.wait()

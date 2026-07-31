@@ -39,11 +39,6 @@ class PublishButton:
             album_id=album_id,
         )
 
-    @classmethod
-    def stop(cls) -> Self:
-        """Return the Stop button (publishes a bare ``music.stop``)."""
-        return cls(element_id="stop", label="Stop", topic=MusicTopic.STOP)
-
     def to_dict(self) -> dict[str, object]:
         """Return the button's wire dict, carrying its ``publish`` attribute."""
         publish: dict[str, object] = {"topic": self.topic.value}

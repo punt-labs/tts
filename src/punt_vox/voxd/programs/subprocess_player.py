@@ -78,6 +78,15 @@ class SubprocessHandle:
         """Continue a ``SIGSTOP``-ed player with ``SIGCONT`` (transport resume)."""
         self._send(signal.SIGCONT)
 
+    def terminate(self) -> None:
+        """Kill the player now with ``SIGKILL`` (synchronous shutdown teardown).
+
+        ``SIGKILL`` terminates even a ``SIGSTOP``-ed process, so a paused player is
+        torn down on daemon stop with no orphan the OS could later ``SIGCONT`` into
+        a stray burst. Fire-and-forget: no reap, since the daemon is exiting.
+        """
+        self._send(signal.SIGKILL)
+
     def _send(self, sig: signal.Signals) -> None:
         """Send ``sig`` to the player, suppressing an already-exited process."""
         with contextlib.suppress(ProcessLookupError):

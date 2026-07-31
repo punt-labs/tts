@@ -35,6 +35,16 @@ class PlayerProcess(Protocol):
         """Continue a suspended player (``SIGCONT``) from where it stopped."""
         ...
 
+    def terminate(self) -> None:
+        """Kill the player now, synchronously (daemon shutdown teardown).
+
+        A sync ``SIGKILL`` so ``shutdown`` -- which runs outside the event loop --
+        can tear down a still-suspended player without awaiting; ``SIGKILL``
+        terminates even a ``SIGSTOP``-ed process, so no orphan lingers to be
+        ``SIGCONT``-ed after the daemon exits.
+        """
+        ...
+
 
 class Player(Protocol):
     """Turn a ready Part into a running :class:`PlayerProcess` (PY-DP-11)."""

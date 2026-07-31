@@ -21,6 +21,7 @@ class _FakeProcess:
     def __init__(self) -> None:
         self.suspends = 0
         self.resumes = 0
+        self.terminates = 0
 
     async def wait(self) -> int:  # pragma: no cover - unused here
         raise NotImplementedError
@@ -33,6 +34,9 @@ class _FakeProcess:
 
     def resume(self) -> None:
         self.resumes += 1
+
+    def terminate(self) -> None:
+        self.terminates += 1
 
 
 def test_new_suspension_is_not_paused_and_open() -> None:
@@ -123,3 +127,23 @@ async def test_gate_blocks_while_paused_and_opens_on_resume() -> None:
 async def test_gate_is_open_when_not_paused() -> None:
     suspension = PlaybackSuspension()
     await asyncio.wait_for(suspension.wait_resumed(), timeout=1.0)  # returns at once
+
+
+def test_shutdown_terminates_a_suspended_player() -> None:
+    # A paused (SIGSTOP-ed) player must be killed on daemon stop, not orphaned to
+    # be SIGCONT-ed into a stray burst after the daemon exits.
+    suspension = PlaybackSuspension()
+    proc = _FakeProcess()
+    suspension.attach(proc)
+    suspension.pause()
+
+    suspension.shutdown()
+
+    assert proc.terminates == 1  # the held player was SIGKILL-ed
+    assert suspension.is_paused is False  # and the state is reset
+
+
+def test_shutdown_with_no_player_is_a_no_op() -> None:
+    suspension = PlaybackSuspension()
+    suspension.shutdown()  # nothing attached -> nothing to terminate
+    assert suspension.is_paused is False

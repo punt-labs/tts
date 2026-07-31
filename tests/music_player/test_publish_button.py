@@ -16,12 +16,3 @@ def test_play_button_carries_its_topic_and_album_payload() -> None:
         "label": "Play",
         "publish": {"topic": "music.play", "payload": {"album_id": "aa11bb"}},
     }
-
-
-def test_stop_button_carries_a_bare_stop_topic() -> None:
-    assert PublishButton.stop().to_dict() == {
-        "kind": "button",
-        "id": "stop",
-        "label": "Stop",
-        "publish": {"topic": "music.stop"},
-    }

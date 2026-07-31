@@ -151,8 +151,14 @@ class ProgramService:
         await self._channel.apply_next()
 
     def shutdown(self) -> None:
-        """Cancel any in-flight fill on daemon stop (no orphaned generation)."""
+        """Tear down live work on daemon stop: cancel the fill, kill the player.
+
+        The suspension shutdown kills any live or suspended player, so a paused
+        (``SIGSTOP``-ed) track leaves no orphan the OS could later ``SIGCONT`` into
+        a stray audio burst after the daemon exits.
+        """
         self._filler.cancel()
+        self._suspension.shutdown()
 
     # -- observation (authoritative, read per call, never cached) ----------
 

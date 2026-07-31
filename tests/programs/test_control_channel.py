@@ -28,7 +28,7 @@ from punt_vox.voxd.programs.filler import Filler, FillPlan
 from punt_vox.voxd.programs.guard import GuardViolationError
 from punt_vox.voxd.programs.lifecycle_signal import TurnOff, TurnOn, VibeStyleChange
 from punt_vox.voxd.programs.manifest import ManifestDraft
-from punt_vox.voxd.programs.playback_signal import Rotate
+from punt_vox.voxd.programs.playback_signal import Rotate, StepBack
 from punt_vox.voxd.programs.producer import PartSpec
 from punt_vox.voxd.programs.sleeper import Sleeper
 
@@ -138,6 +138,38 @@ class TestSingleWriter:
         await _drain(channel)
         # Vibe applied last -> the pool is the retuned one.
         assert {p.index for p in _prog(channel).pool} == {20, 21}
+
+
+class TestRejectedInterruptDoesNotFire:
+    """A rejected interrupting command must NOT fire the interrupt.
+
+    ``StepBack`` (transport prev) declares ``interrupts`` but rejects on a generate
+    Program as a lost race. If the interrupt fired anyway, the loop would kill and
+    re-spawn the current track from zero while the cursor stayed put -- a silent
+    stutter whose only log says "nothing happened". ``changed`` still fires so the
+    loop is never left blocked.
+    """
+
+    async def test_prev_on_a_program_is_rejected_without_interrupting(
+        self, policy: PlaybackPolicy
+    ) -> None:
+        channel = ControlChannel(Program(ProgramState.initial(), policy))
+        channel.interrupt.clear()
+        channel.post(StepBack())  # prev has no meaning on a generate Program
+        await channel.apply_next()
+        assert not channel.interrupt.is_set()  # the current track is NOT re-spawned
+        assert channel.changed.is_set()  # but the loop is still woken
+
+    async def test_an_applied_interrupt_still_fires(
+        self, make_rotating: RotatingFactory, policy: PlaybackPolicy
+    ) -> None:
+        # The positive control: a Rotate that APPLIES (a rotating pool) still fires
+        # the interrupt, so the gate suppresses only the rejected case.
+        channel = ControlChannel(make_rotating(policy))
+        channel.interrupt.clear()
+        channel.post(Rotate())
+        await channel.apply_next()
+        assert channel.interrupt.is_set()  # an applied user skip interrupts as before
 
 
 class TestModeTransitionLogging:

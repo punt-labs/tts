@@ -48,6 +48,9 @@ class _CleanProcess:
     def resume(self) -> None:
         """Satisfy the PlayerProcess protocol; the race tests never pause."""
 
+    def terminate(self) -> None:
+        """Satisfy the PlayerProcess protocol; the race tests never shut down."""
+
     def end(self, rc: int = 0) -> None:
         self.rc = rc
         self._ended.set()
@@ -71,6 +74,9 @@ class _RaisingProcess:
 
     def resume(self) -> None:
         """Satisfy the PlayerProcess protocol; the race tests never pause."""
+
+    def terminate(self) -> None:
+        """Satisfy the PlayerProcess protocol; the race tests never shut down."""
 
 
 class TestExitCode:

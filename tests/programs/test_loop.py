@@ -78,6 +78,9 @@ class FakeProcess:
     def resume(self) -> None:
         """Satisfy the PlayerProcess protocol; the loop tests never pause."""
 
+    def terminate(self) -> None:
+        """Satisfy the PlayerProcess protocol; the loop tests never shut down."""
+
     def end(self, rc: int = 0) -> None:
         """Signal a natural end (test control)."""
         self.rc = rc
@@ -403,6 +406,9 @@ class _RaisingProcess:
 
     def resume(self) -> None:
         """Satisfy the PlayerProcess protocol; this fake is never paused."""
+
+    def terminate(self) -> None:
+        """Satisfy the PlayerProcess protocol; this fake is never shut down."""
 
 
 @final
