@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 from typing import TYPE_CHECKING
 
 import pytest
@@ -85,6 +86,36 @@ class TestTurnOn:
         service.turn_on(style=None, vibe=None, name=None, prompts=None)
         service.shutdown()
         assert service.catalog_albums()[0].manifest.tags.style == "ambient"
+
+    def test_authored_title_becomes_the_album_name(self, tmp_path: Path) -> None:
+        # The human title authored at generation is the minted album's name,
+        # verbatim -- what rides the ID3 TALB frame, not a timestamp slug.
+        service = _service(tmp_path)
+        service.turn_on(
+            style="synthwave", vibe="calm", name="Midnight Drive", prompts=_ONE
+        )
+        service.shutdown()
+        assert service.catalog_albums()[0].manifest.tags.name == "Midnight Drive"
+
+    def test_absent_title_mints_a_timestamp_name(self, tmp_path: Path) -> None:
+        # No authored title -> the daemon mints the {vibe}-{style}-{stamp}
+        # fallback, so a generated pool is never persisted nameless.
+        service = _service(tmp_path)
+        service.turn_on(style="synthwave", vibe="calm", name=None, prompts=_ONE)
+        service.shutdown()
+        name = service.catalog_albums()[0].manifest.tags.name
+        assert name is not None
+        assert re.fullmatch(r"calm-synthwave-\d{8}-\d{4}", name) is not None
+
+    def test_colliding_title_is_auto_suffixed(self, tmp_path: Path) -> None:
+        # Two authored albums sharing a title but differing prompts must get
+        # distinct names, preserving the by_name ("0 or 1") invariant.
+        service = _service(tmp_path)
+        service.turn_on(style="synthwave", vibe="calm", name="Mix", prompts=_ONE)
+        service.turn_on(style="synthwave", vibe="calm", name="Mix", prompts=_TWO)
+        service.shutdown()
+        names = {a.manifest.tags.name for a in service.catalog_albums()}
+        assert names == {"Mix", "Mix1"}
 
 
 class TestResumeVsMint:

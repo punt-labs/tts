@@ -141,6 +141,18 @@ def test_new_passes_prompt_verbatim_and_prints_bare_id() -> None:
     assert payload == {"album_id": text}  # human text is exactly the bare id
 
 
+def test_new_forwards_the_title_as_the_album_name() -> None:
+    """``vox music new --title`` hands the title to the catalog as the name."""
+    catalog = InMemoryCatalogGateway()
+    cli, formatter = _cli_catalog(catalog)
+
+    cli.new("warm pads", title="Warm Pads")
+
+    payload, _ = _emitted(formatter)
+    # The fake keys the album on the name it was handed; the CLI prints that id.
+    assert payload == {"album_id": "Warm Pads"}
+
+
 def test_new_does_not_touch_the_active_program() -> None:
     """music new parks a track in the catalog; the Program is untouched (D-5)."""
     program = FakeProgramGateway()
@@ -572,17 +584,31 @@ def test_on_incomplete_object_pool_is_a_clean_error(
     assert fake.calls == []  # rejected before the gateway start
 
 
-def test_on_blank_style_and_name_reach_the_daemon_as_none(
+def test_on_blank_style_and_title_reach_the_daemon_as_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A blank/whitespace style or name is canonicalised to None in the request,
+    """A blank/whitespace style or title is canonicalised to None in the request,
     matching the MCP tool so the two surfaces build one StartRequest."""
     monkeypatch.setattr("sys.stdin", io.StringIO(""))
     fake = FakeProgramGateway()
 
-    _on_cli(fake).on(style="   ", name="  ")
+    _on_cli(fake).on(style="   ", title="  ")
 
     request = fake.calls[0].request
     assert request is not None
     assert request.style is None
     assert request.name is None
+
+
+def test_on_title_becomes_the_request_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The authored ``--title`` becomes the album ``name`` on the StartRequest."""
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    fake = FakeProgramGateway()
+
+    _on_cli(fake).on(title="  Midnight Drive  ")
+
+    request = fake.calls[0].request
+    assert request is not None
+    assert request.name == "Midnight Drive"

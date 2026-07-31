@@ -130,8 +130,8 @@ class MusicCli:
         style: Annotated[
             str | None, typer.Option("--style", help="Style tag, e.g. 'trance'.")
         ] = None,
-        name: Annotated[
-            str | None, typer.Option("--name", help="Curated album handle to save.")
+        title: Annotated[
+            str | None, typer.Option("--title", help="Human album title.")
         ] = None,
         *,
         json_output: _JsonOutput = False,
@@ -153,7 +153,7 @@ class MusicCli:
         request = StartRequest(
             style=StartRequest.canonical_tag(style),
             vibe=self._vibe_source(),
-            name=StartRequest.canonical_tag(name),
+            name=StartRequest.canonical_tag(title),
             prompts=prompts,
         )
         outcome = self._guard(lambda: self._gateway_factory().start(request))
@@ -273,8 +273,8 @@ class MusicCli:
         prompt: Annotated[
             str, typer.Argument(help="Verbatim ElevenLabs descriptive prompt.")
         ],
-        name: Annotated[
-            str | None, typer.Option("--name", help="Curated album handle.")
+        title: Annotated[
+            str | None, typer.Option("--title", help="Human album title.")
         ] = None,
         *,
         json_output: _JsonOutput = False,
@@ -291,7 +291,7 @@ class MusicCli:
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         prompts = self._guard(lambda: PromptSet.single(prompt))
-        album_id = self._guard(lambda: self._catalog_factory().new(prompts, name))
+        album_id = self._guard(lambda: self._catalog_factory().new(prompts, title))
         self._formatter.emit({"album_id": album_id}, album_id)
 
     def get(

@@ -17,12 +17,12 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, Self, final
 
 from websockets.exceptions import WebSocketException
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.music_args import MusicArgs
 from punt_vox.music_phrases import MusicMarquee
 from punt_vox.types_programs.control import SelectionRequest, StartRequest
 from punt_vox.types_programs.prompts import PromptSet
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from punt_vox.program_gateway import ProgramGateway
     from punt_vox.vibe_command import MusicPreference
 
-__all__ = ["MusicArgs", "MusicSubcommand", "MusicTool"]
+__all__ = ["MusicSubcommand", "MusicTool"]
 
 logger = logging.getLogger(__name__)
 
@@ -64,50 +64,6 @@ class MusicSession(Protocol):
 
     def refresh_from_config(self) -> None:
         """Re-read the config files so the yielded mood is current."""
-
-
-@final
-@dataclass(frozen=True, slots=True)
-class MusicArgs:
-    """The raw ``music`` tool arguments bundled for a subcommand handler.
-
-    One frozen value object per call (PY-OO-3) instead of a fan of loose
-    parameters threaded through eight handlers; each handler reads only the
-    fields it needs. The tag fields carry their own canonicalisation so a
-    blank/whitespace tag is absent (``None``), never an explicit ``""`` the
-    daemon would store while the panel reads it as no tag.
-    """
-
-    subcommand: str
-    style: str | None = None
-    vibe: str | None = None
-    name: str | None = None
-    album_id: str | None = None
-    base_prompt: str | None = None
-    # Wire-shaped optional list: the agent's 12-entry pool for ``on``, or absent
-    # (PY-TS-14 -- the tool schema needs the list shape FastMCP builds).
-    variations: list[str] | None = None
-    dest: str | None = None
-
-    @property
-    def canonical_style(self) -> str | None:
-        """Return the style tag trimmed, or None when blank/absent."""
-        return StartRequest.canonical_tag(self.style)
-
-    @property
-    def canonical_vibe(self) -> str | None:
-        """Return the vibe tag trimmed, or None when blank/absent."""
-        return StartRequest.canonical_tag(self.vibe)
-
-    @property
-    def canonical_name(self) -> str | None:
-        """Return the name tag trimmed, or None when blank/absent."""
-        return StartRequest.canonical_tag(self.name)
-
-    @property
-    def authored(self) -> bool:
-        """Return whether the agent supplied an authored variation pool."""
-        return bool(self.variations)
 
 
 @final
@@ -155,6 +111,7 @@ class MusicTool:
         style: str | None = None,
         vibe: str | None = None,
         name: str | None = None,
+        title: str | None = None,
         album_id: str | None = None,
         base_prompt: str | None = None,
         variations: list[str] | None = None,
@@ -175,7 +132,10 @@ class MusicTool:
                 catalog; ``list`` shows it.
             style: Style tag; persists across calls for ``on``/``play``.
             vibe: Vibe tag radio for ``play``.
-            name: Curated album handle -- replays or saves.
+            name: Existing album handle ``play`` replays by name.
+            title: Human album title the authoring verbs (``on``/``new``)
+                give the album they create; it becomes the album's unique
+                ``name`` and rides the ID3 ``TALB``/``TIT2`` frames.
             album_id: Bare album id for ``play``/``get``/``remove``.
             base_prompt: Authored base for ``on`` (with the 12 ``variations``)
                 and the verbatim single prompt for ``new``.
@@ -191,7 +151,15 @@ class MusicTool:
         """
         self._session_provider().refresh_from_config()
         args = MusicArgs(
-            subcommand, style, vibe, name, album_id, base_prompt, variations, dest
+            subcommand=subcommand,
+            style=style,
+            vibe=vibe,
+            name=name,
+            title=title,
+            album_id=album_id,
+            base_prompt=base_prompt,
+            variations=variations,
+            dest=dest,
         )
         handler = self._HANDLERS.get(subcommand)
         if handler is None:
@@ -208,7 +176,7 @@ class MusicTool:
                 StartRequest(
                     style=style,
                     vibe=session.vibe,
-                    name=args.canonical_name,
+                    name=args.canonical_title,
                     prompts=prompts,
                 )
             )
@@ -300,7 +268,7 @@ class MusicTool:
             return _error("music new requires base_prompt")
         try:
             prompts = PromptSet.single(args.base_prompt)
-            album_id = self._catalog_factory().new(prompts, args.canonical_name)
+            album_id = self._catalog_factory().new(prompts, args.canonical_title)
         except (ValueError, *_DAEMON_ERRORS) as exc:
             return _error(str(exc))
         return json.dumps({"album_id": album_id})

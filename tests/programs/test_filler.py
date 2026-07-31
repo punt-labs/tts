@@ -95,6 +95,40 @@ async def _drain(filler: Filler) -> None:
     await task
 
 
+def _titled_store(tmp_path: Path, name: str | None) -> PartStore:
+    """Build an empty store whose manifest carries ``name`` (the authored title)."""
+    draft = ManifestDraft(
+        album_id=AlbumId("a3f1c9"),
+        tags=AlbumTags(style="synthwave", vibe="calm", name=name),
+        fingerprint=PromptFingerprint("deadbeef"),
+    )
+    return FilesystemProgramStore(tmp_path).create(draft)
+
+
+class TestSpecTagsCarryTheTitle:
+    """The pool fill tags each Part's ID3 album with the authored album title."""
+
+    def test_titled_album_tags_the_part_with_the_title(self, tmp_path: Path) -> None:
+        store = _titled_store(tmp_path, "Midnight Drive")
+        plan = FillPlan(
+            store, store.manifest().tags, PromptSet(base="pad", variations=("p1",))
+        )
+        assert plan.spec_for(1).tags.album == "Midnight Drive"
+
+    def test_untitled_album_tags_the_part_with_the_minted_name(
+        self, tmp_path: Path
+    ) -> None:
+        # With no authored title the manifest mints a timestamp name at creation,
+        # so the Part's ID3 album carries that minted name, never a bare filename.
+        store = _titled_store(tmp_path, None)
+        minted = store.manifest().tags.name
+        assert minted is not None
+        plan = FillPlan(
+            store, store.manifest().tags, PromptSet(base="pad", variations=("p1",))
+        )
+        assert plan.spec_for(1).tags.album == minted
+
+
 class TestFillToPoolSize:
     async def test_fills_to_full_then_stops(
         self, tmp_path: Path, policy: PlaybackPolicy, sleeper: Sleeper
