@@ -1,0 +1,513 @@
+%
+% vox-music-player-transport.tex
+%
+% Z Specification for the voxd Music Player's phase-3 transport controls.
+%
+% Phase 1/2 (docs/vox-music-player.tex) modelled a two-mode PlayerView --- idle
+% and playing --- projecting voxd's single active source onto a lux scene, with
+% three invariants:
+%
+%   I1  at most one album playing
+%   I2  now-playing present iff playing
+%   I3  a played album is catalogued
+%
+% Phase 3 adds a transport bar (prev / play-pause / next / stop) and a real
+% pause/resume capability. The player becomes a THREE-mode machine --- idle,
+% playing, paused --- and the phase-2 invariants generalise. This model pins the
+% phase-3 PlayerView and the seven invariants T1--T7 of
+% docs/vox-music-player-transport.md across the transport transitions.
+%
+% It supersedes the two-mode PlayerView of phase 2 by forward integration: the
+% same object, one extra mode. It does not contradict phase 2 --- every phase-2
+% behaviour survives with `paused' added --- with a SINGLE exception the design
+% brief introduces deliberately and which this model records as a fork for the
+% leader: T4 restricts play to the idle mode, whereas the phase-2 PlayerPlay was
+% a start-or-switch verb with no mode guard. See Section~\ref{sec:forks}.
+%
+
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fuzz}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+
+\begin{document}
+
+\title{The voxd Music Player, Phase 3: A Z Specification of the Transport}
+\author{Formal model of the transport state machine}
+\date{July 2026}
+\hypersetup{
+  pdftitle={The voxd Music Player, Phase 3: A Z Specification of the Transport},
+  pdfauthor={Punt Labs},
+  pdfsubject={Z Specification},
+  pdfcreator={fuzz/probcli}
+}
+\maketitle
+
+\section{Introduction}
+
+The transport bar adds four buttons to the \texttt{vox.music} scene --- prev,
+play/pause, next, stop --- and, with them, a genuine \emph{pause/resume}
+capability the earlier player lacked. The phase-1/2 player
+(\texttt{docs/vox-music-player.tex}) was a two-mode machine: \texttt{idle} or
+\texttt{playing}. Phase~3 inserts a third mode, \texttt{paused}, between them: a
+held source that is neither torn down (as \texttt{stop} would) nor progressing
+(as \texttt{playing} does).
+
+This specification pins the phase-3 \emph{PlayerView} --- the projection of
+\texttt{voxd}'s single active source onto the scene --- and the seven invariants
+\texttt{T1}--\texttt{T7} the transport must preserve across every transition. It
+reuses the style, the naming, and the opaque \texttt{ALBUM} type of
+\texttt{docs/vox-music-player.tex}, and it supersedes that document's two-mode
+\texttt{PlayerView} by forward integration: the same object with one more mode,
+not a parallel one. The transport carries no new playback machinery of its own;
+\texttt{pause}/\texttt{resume}/\texttt{prev} name new \texttt{ProgramService}
+capabilities whose mechanism (a \texttt{SIGSTOP}/\texttt{SIGCONT} of the playback
+subprocess, or a playback-loop suspend) is the daemon specialist's decision. The
+model fixes the behaviour and the invariants, not the mechanism.
+
+The relationship to the phase-2 invariants is exact: \texttt{T1} is \texttt{I1}
+widened to count \texttt{paused} as active; \texttt{T2} is \texttt{I2} widened so
+the cursor is present in both active modes; \texttt{T7} is \texttt{I3},
+unchanged. \texttt{T3}, \texttt{T4}, \texttt{T5}, and \texttt{T6} are new with the
+transport.
+
+\section{Basic Types, Modes, and Constants}
+\label{sec:types}
+
+An \texttt{ALBUM} is the opaque catalog identifier of
+\texttt{docs/vox-music-player.tex} --- the id \texttt{vox music list} prints and
+the scene's Play button carries. It is a catalog key, never a filesystem path;
+the model treats it as opaque.
+
+\begin{zed}
+  [ALBUM]
+\end{zed}
+
+The player is now a three-mode machine: nothing playing, one album playing, or
+one album held.
+
+\begin{zed}
+  PlayerMode ::= idle | playing | paused
+\end{zed}
+
+The play/pause button carries one of three glyphs. \texttt{pauseGlyph} is
+\texttt{U+23F8} ($\Box\Box$, shown while \emph{playing} --- press it to pause);
+\texttt{playGlyph} is \texttt{U+23F5} ($\triangleright$, shown while
+\emph{paused} --- press it to resume); \texttt{inertGlyph} stands for the
+disabled, greyed transport when \texttt{idle}. The glyph is a derived
+observation of the mode, never an independent variable
+(Section~\ref{sec:state}); \texttt{T6} pins the two live cases as
+biconditionals.
+
+\begin{zed}
+  GLYPH ::= pauseGlyph | playGlyph | inertGlyph
+\end{zed}
+
+A \texttt{ZBOOL} is a Z boolean, named to avoid the ProB/B clash with
+\texttt{BOOL}. It flags the derived \texttt{advancing} observation --- whether the
+cursor is auto-progressing --- which is how \texttt{T3} enters the state
+predicate as a fact rather than as prose.
+
+\begin{zed}
+  ZBOOL ::= ztrue | zfalse
+\end{zed}
+
+The part cursor and the album's part count are bounded so that ProB can explore
+the reachable state space; \texttt{maxPart} is a model bound, not a product
+limit. The phase-2 model wrote the cursor over \texttt{\nat}; here it is refined
+to $0 \upto maxPart$ precisely so the exploration terminates. Three parts is
+enough to exercise every boundary: \texttt{prev} at part~1, \texttt{next} at
+part~$M$, and the interior.
+
+\begin{axdef}
+  maxPart : \nat_1
+  \where
+  maxPart = 3
+\end{axdef}
+
+\section{State}
+\label{sec:state}
+
+The \texttt{PlayerView} carries the catalog of saved albums; the mode; the
+optional active album (a set of at most one, the album that is playing
+\emph{or} paused); the now-playing cursor \texttt{(index, of)} --- the 1-based
+part position and the album's part count, both zero when idle; and two derived
+observations, \texttt{advancing} and \texttt{glyph}, that lift \texttt{T3} and
+\texttt{T6} into the state predicate.
+
+The predicate carries every invariant. Read the conjuncts in the order of the
+brief's \texttt{T1}--\texttt{T7}.
+
+\begin{schema}{PlayerView}
+  catalogued : \power ALBUM \\
+  mode : PlayerMode \\
+  album : \power ALBUM \\
+  index : 0 \upto maxPart \\
+  of : 0 \upto maxPart \\
+  advancing : ZBOOL \\
+  glyph : GLYPH
+  \where
+  \# album \leq 1 \\
+  (mode \in \{ playing, paused \} \iff \# album = 1) \\
+  (mode = idle \iff album = \emptyset) \\
+  (mode \in \{ playing, paused \} \implies (1 \leq index \land index \leq of \land of \geq 1)) \\
+  (mode = idle \implies (index = 0 \land of = 0)) \\
+  (advancing = ztrue \iff mode = playing) \\
+  (glyph = pauseGlyph \iff mode = playing) \\
+  (glyph = playGlyph \iff mode = paused) \\
+  (glyph = inertGlyph \iff mode = idle) \\
+  album \subseteq catalogued
+\end{schema}
+
+The conjuncts discharge the invariants as follows.
+
+\begin{description}
+  \item[\texttt{T1} --- single active source.] $\# album \leq 1$ with
+    $(mode \in \{ playing, paused \} \iff \# album = 1)$: at most one album is
+    active, and it is active in exactly the two non-idle modes. A \texttt{paused}
+    album still occupies the one active slot, so a \texttt{play} cannot start a
+    second alongside it.
+  \item[\texttt{T2} --- now-playing iff active.] The cursor is live
+    ($1 \leq index \leq of$, $of \geq 1$) exactly in the active modes, and is
+    pinned to $(0,0)$ when \texttt{idle}. Widened from \texttt{I2} to admit
+    \texttt{paused}: a paused album keeps its cursor, unlike a stopped one.
+  \item[\texttt{T3} --- paused is suspended.] $advancing = ztrue \iff mode =
+    playing$. Hence $mode = paused \implies advancing = zfalse$: the cursor
+    auto-advances only while playing. \texttt{AutoAdvance}
+    (Section~\ref{sec:autoadvance}) is guarded by $advancing = ztrue$, so it can
+    never fire in the paused mode --- the state face of ``paused does not
+    progress''.
+  \item[\texttt{T4} --- transition guards.] Not a state invariant but a family
+    of preconditions, one per operation; it is discharged in
+    Sections~\ref{sec:play}--\ref{sec:autoadvance}, where each transition names
+    the mode it is enabled from. It cannot live in the state predicate, because
+    it constrains \emph{steps}, not \emph{states}; recording it as prose here
+    would be exactly the mistake the brief warns against, so it is recorded
+    instead as the precondition line of every operation schema.
+  \item[\texttt{T5} --- cursor bounds.] The active-mode conjunct fixes
+    $1 \leq index \leq of$. The no-op boundary cases --- \texttt{prev} at part~1,
+    \texttt{next} at part~$of$ --- are properties of those two operations
+    (Sections~\ref{sec:prev}--\ref{sec:next}), stated there as total
+    definitions.
+  \item[\texttt{T6} --- glyph reflects state.] The three glyph biconditionals.
+    The two the brief names --- $pauseGlyph \iff playing$, $playGlyph \iff
+    paused$ --- plus the idle case that makes \texttt{glyph} total.
+  \item[\texttt{T7} --- catalogued.] $album \subseteq catalogued$: the active
+    album, playing or paused, is one the catalog holds. This is \texttt{I3}
+    unchanged.
+\end{description}
+
+Because \texttt{PlayerMode} partitions into three disjoint inhabitants, the two
+membership biconditionals are consistent: $mode = idle \iff album = \emptyset
+\iff \# album = 0$, and $mode \neq idle \iff \# album = 1$. The derived
+\texttt{advancing} and \texttt{glyph} are total functions of \texttt{mode}, so
+every state fixes them uniquely; they add no freedom, only a name for what the
+scene reads off the mode.
+
+\section{Initialisation}
+
+The daemon starts with some catalog and nothing playing: the idle shape, an
+inert transport, a cursor at zero. The boot catalog is left unconstrained --- any
+subset of \texttt{ALBUM} --- so that the animator explores every catalog shape,
+from empty to full; an initialisation establishes a state, it does not consume an
+input, which is why the phase-2 \texttt{cat0?} input is dropped here in favour of
+a nondeterministic \texttt{catalogued'}.
+
+\begin{schema}{PlayerInit}
+  PlayerView'
+  \where
+  mode' = idle \\
+  album' = \emptyset \\
+  index' = 0 \\
+  of' = 0 \\
+  advancing' = zfalse \\
+  glyph' = inertGlyph
+\end{schema}
+
+The \texttt{advancing'} and \texttt{glyph'} lines are forced by the state
+invariant from $mode' = idle$; they are written out so the idle projection is
+manifestly unique for the animator. Only \texttt{catalogued'} is free.
+
+\section{Transport Transitions}
+
+Each operation names, on its first predicate line, the mode it is enabled from
+--- that line is \texttt{T4}. The framing lines then say what is held. The
+derived \texttt{advancing'} and \texttt{glyph'} are left to the state invariant
+of \texttt{PlayerView'}: each is a total function of \texttt{mode'}, so the
+after-state fixes them, and writing them out in every schema would only repeat
+the invariant.
+
+\subsection{PlayAlbum --- start a saved album from idle}
+\label{sec:play}
+
+A client plays the album \texttt{target?}, whose ready-part count is
+\texttt{count?}. \texttt{T4} restricts this to the \texttt{idle} mode: the
+transport starts a source only when none is active, and the album-list Play
+buttons drive it. The album must be catalogued and non-empty ($count? \geq 1$).
+The after-state is one album playing, cursor at part~1.
+
+This is the phase-2 \texttt{PlayerPlay} with a mode guard added --- and that
+added guard is the one deliberate departure from phase~2, flagged in
+Section~\ref{sec:forks}.
+
+\begin{schema}{PlayAlbum}
+  \Delta PlayerView \\
+  target? : ALBUM \\
+  count? : 1 \upto maxPart
+  \where
+  mode = idle \\
+  target? \in catalogued \\
+  catalogued' = catalogued \\
+  mode' = playing \\
+  album' = \{ target? \} \\
+  index' = 1 \\
+  of' = count?
+\end{schema}
+
+Because $count? \geq 1$, the after-state satisfies the cursor-validity invariant
+($1 \leq 1 \leq of'$, $of' \geq 1$); because $target? \in catalogued$,
+\texttt{T7} holds. The after-mode is \texttt{playing}, so $advancing' = ztrue$
+and $glyph' = pauseGlyph$ by the invariant.
+
+\subsection{Pause --- suspend in place}
+\label{sec:pause}
+
+From \texttt{playing}, \texttt{pause} holds the source where it is: the mode
+becomes \texttt{paused}, and the album and cursor are untouched. \texttt{T4}:
+enabled only from \texttt{playing}.
+
+\begin{schema}{Pause}
+  \Delta PlayerView
+  \where
+  mode = playing \\
+  catalogued' = catalogued \\
+  mode' = paused \\
+  album' = album \\
+  index' = index \\
+  of' = of
+\end{schema}
+
+The cursor is held exactly, so \texttt{T2} and \texttt{T5} carry over. The
+after-mode is \texttt{paused}, so $advancing' = zfalse$ (\texttt{T3}: no further
+auto-advance) and $glyph' = playGlyph$ (\texttt{T6}: the button now offers
+resume).
+
+\subsection{Resume --- continue a suspended album}
+\label{sec:resume}
+
+From \texttt{paused}, \texttt{resume} continues from where playback stopped: the
+mode returns to \texttt{playing}, the cursor unchanged. \texttt{T4}: enabled only
+from \texttt{paused}. \texttt{Resume} is the exact inverse of \texttt{Pause} on
+the mode, the identity on everything else.
+
+\begin{schema}{Resume}
+  \Delta PlayerView
+  \where
+  mode = paused \\
+  catalogued' = catalogued \\
+  mode' = playing \\
+  album' = album \\
+  index' = index \\
+  of' = of
+\end{schema}
+
+The after-mode is \texttt{playing}, so $advancing' = ztrue$ and $glyph' =
+pauseGlyph$ again.
+
+\subsection{Stop --- tear down, return to idle}
+\label{sec:stop}
+
+From either active mode --- \texttt{playing} or \texttt{paused} ---
+\texttt{stop} tears the source down and returns the view to \texttt{idle}: no
+album, no cursor, an inert transport. \texttt{T4}: enabled from
+$\{ playing, paused \}$. The brief settles stop-while-paused explicitly: a
+paused album, stopped, goes to \texttt{idle} exactly as a playing one does; there
+is no ``paused-then-stopped'' residue.
+
+\begin{schema}{Stop}
+  \Delta PlayerView
+  \where
+  mode \in \{ playing, paused \} \\
+  catalogued' = catalogued \\
+  mode' = idle \\
+  album' = \emptyset \\
+  index' = 0 \\
+  of' = 0
+\end{schema}
+
+Emptying the album empties the cursor, so \texttt{T2} is restored to its idle
+shape; $advancing' = zfalse$ and $glyph' = inertGlyph$ follow from $mode' =
+idle$.
+
+\subsection{Prev --- previous part, floored at 1}
+\label{sec:prev}
+
+From either active mode, \texttt{prev} steps the cursor back one part. At part~1
+it is a no-op --- the total definition the brief asks for: \texttt{prev} is
+enabled in every active state, and its effect at the floor is the identity.
+\texttt{T4}: enabled from $\{ playing, paused \}$. The mode is held: a paused
+player stays paused, a playing player stays playing; \texttt{prev} moves the
+cursor, it does not resume.
+
+\begin{schema}{Prev}
+  \Delta PlayerView
+  \where
+  mode \in \{ playing, paused \} \\
+  catalogued' = catalogued \\
+  mode' = mode \\
+  album' = album \\
+  of' = of \\
+  (index > 1 \implies index' = index - 1) \\
+  (index = 1 \implies index' = index)
+\end{schema}
+
+Since $index \geq 1$ in every active state, the two cases are exhaustive. When
+$index > 1$, $index' = index - 1 \geq 1$; when $index = 1$, $index' = 1$; either
+way $1 \leq index' \leq of$, so \texttt{T5} holds and the no-op at part~1 is
+exactly the $index = 1$ case.
+
+\subsection{Next --- next part, capped at M}
+\label{sec:next}
+
+From either active mode, \texttt{next} steps the cursor forward one part. At the
+last part ($index = of$) it is a no-op. \texttt{T4}: enabled from
+$\{ playing, paused \}$. The mode is held, as for \texttt{prev}. This is the
+\emph{user-driven} skip; the automatic end-of-part advance is
+\texttt{AutoAdvance} below, and unlike it, \texttt{next} at $M$ does not wrap ---
+it stalls at the last part.
+
+\begin{schema}{Next}
+  \Delta PlayerView
+  \where
+  mode \in \{ playing, paused \} \\
+  catalogued' = catalogued \\
+  mode' = mode \\
+  album' = album \\
+  of' = of \\
+  (index < of \implies index' = index + 1) \\
+  (index = of \implies index' = index)
+\end{schema}
+
+Since $index \leq of$ in every active state, the two cases are exhaustive. When
+$index < of$, $index' = index + 1 \leq of$; when $index = of$, $index' = of$;
+either way $1 \leq index' \leq of$, so \texttt{T5} holds and the no-op at part
+$M$ is the $index = of$ case.
+
+\subsection{AutoAdvance --- the end-of-part advance}
+\label{sec:autoadvance}
+
+When the current part ends, the playback loop advances the cursor to another
+part of the same album, avoiding an immediate repeat when the album holds more
+than one part and replaying when it holds exactly one. This is the phase-2
+\texttt{PlayerTrackEnd}, and it is guarded by $advancing = ztrue$ --- equivalently
+$mode = playing$ --- so it \emph{cannot} fire while paused. That guard is
+\texttt{T3}: a suspended album does not auto-advance.
+
+\begin{schema}{AutoAdvance}
+  \Delta PlayerView
+  \where
+  advancing = ztrue \\
+  catalogued' = catalogued \\
+  mode' = playing \\
+  album' = album \\
+  of' = of \\
+  1 \leq index' \land index' \leq of \\
+  (of \geq 2 \implies index' \neq index) \\
+  (of = 1 \implies index' = index)
+\end{schema}
+
+The precondition is written $advancing = ztrue$ rather than $mode = playing$ to
+make the \texttt{T3} reading literal: the auto-advance fires exactly when the
+cursor is progressing, and the state invariant equates that with the playing
+mode. The album and its part count are held, so \texttt{T1}, \texttt{T2}, and
+\texttt{T7} are preserved; only the cursor moves, and it stays in $1 \upto of$.
+Unlike \texttt{Next}, \texttt{AutoAdvance} at the last part does not stall --- it
+rotates to another part (or replays the sole part), the existing radio-style
+end-of-album behaviour, which is why the two are separate operations and not one.
+
+\section{Design forks surfaced by the formalisation}
+\label{sec:forks}
+
+Formalising the transport exposes three points where the brief either departs
+from phase~2 or leaves a reading open. They are recorded here for the leader; the
+model takes the brief's stated position in each case and flags the tension rather
+than papering over it.
+
+\begin{description}
+  \item[Fork~A --- play only from idle (\texttt{T4}) versus phase-2's
+    start-or-switch.] The phase-2 \texttt{PlayerPlay}
+    (\texttt{docs/vox-music-player.tex}, \S5) had \emph{no} mode precondition: from
+    \texttt{idle} it started, while \texttt{playing} it \emph{switched},
+    displacing the current album --- the model image of
+    \texttt{SwitchSelection}. The phase-3 \texttt{T4} restricts \texttt{play} to
+    the \texttt{idle} mode, so \texttt{PlayAlbum} here carries $mode = idle$. The
+    two cannot both hold. The concrete question is: \emph{what happens when a
+    user clicks an album-list Play button while another album is playing or
+    paused?} Three coherent answers: (i) it switches --- keep phase-2's
+    semantics and drop the $mode = idle$ guard, making \texttt{T4}'s
+    play-only-from-idle clause wrong; (ii) it is refused --- the album-list Play
+    buttons render \texttt{disabled} whenever the transport is active, matching
+    the $mode = idle$ guard exactly, so a switch requires an explicit
+    \texttt{stop} first; (iii) it is an implicit stop-then-play --- the daemon
+    treats it as \texttt{Stop} composed with \texttt{PlayAlbum}. This model
+    encodes (ii), the literal reading of \texttt{T4}. \textbf{Recommendation:}
+    (ii) --- it is the simplest and the only one consistent with \texttt{T4} as
+    written, and it makes the transport the single locus of source changes; but
+    it is a behaviour change from phase~2 and the leader should confirm it before
+    implementation, because the album-list projection must then disable Play
+    while active.
+  \item[Fork~B --- prev/next while paused hold the mode.] The brief says
+    prev/next ``move the part cursor within the now-playing album'' and does not
+    say they resume. This model holds the mode ($mode' = mode$), so \texttt{prev}
+    or \texttt{next} while paused moves the cursor and leaves the player paused.
+    The alternative --- prev/next implicitly resume --- would be surprising and is
+    not what the brief describes. \textbf{Recommendation:} hold the mode, as
+    modelled. Flagged only because ``move the cursor while suspended'' is a state
+    the phase-2 player could not reach, and the daemon's \texttt{prev} against a
+    \texttt{SIGSTOP}ed subprocess must be well-defined (it must reposition the
+    held playback without un-suspending it).
+  \item[Fork~C --- next at $M$ stalls; auto-advance at $M$ wraps.] \texttt{Next}
+    at the last part is a no-op (it stalls), whereas \texttt{AutoAdvance} at the
+    last part rotates to another part or replays the sole part. The brief is
+    explicit that these differ (``next at part $M$ is a no-op; auto-advance past
+    $M$ is the existing end-of-album behavior''), so this is not a genuine fork,
+    only a place the two operations must not be conflated in code: the user's
+    \texttt{next} and the loop's end-of-part advance are distinct transitions.
+    Recorded so the implementation keeps them apart.
+\end{description}
+
+\section{Type-checking and model-checking}
+\label{sec:results}
+
+The specification is \texttt{fuzz}-clean: \texttt{fuzz -t} exits~0. It was then
+model-checked with ProB (\texttt{probcli}, $maxPart = 3$, the given set
+\texttt{ALBUM} at cardinality~2, integers bounded to $0 \upto 3$).
+
+Over the faithful state space --- the boot catalog ranging over every subset of
+\texttt{ALBUM}, empty included --- ProB visits every reachable state and finds
+\emph{no invariant violation}: the \texttt{PlayerView} predicate, and with it
+\texttt{T1}, \texttt{T2}, \texttt{T3} (through \texttt{advancing}), \texttt{T5}
+(the cursor bounds), \texttt{T6}, and \texttt{T7}, holds on every reachable
+state. All seven transitions are covered, so each is reachable and exercised;
+\texttt{T4} is enforced by construction, since a transition's first predicate
+line is its mode guard and no reachable state fires an operation from a mode the
+guard forbids. In particular \texttt{AutoAdvance} is guarded by $advancing =
+ztrue$, which the invariant equates with $mode = playing$, so no reachable
+\texttt{paused} state enables it --- this is \texttt{T3}, confirmed by
+exhaustion.
+
+ProB reports exactly one deadlock, and it is not a defect: the empty-catalog
+idle state (\texttt{catalogued} $= \emptyset$, \texttt{mode} $=$ \texttt{idle})
+has no enabled transition, because \texttt{PlayAlbum} requires a catalogued
+album and this model does not re-state the catalog-mutation operations
+(\texttt{music new} / \texttt{CatalogAdd}), which live in phase~2
+(\texttt{docs/vox-music-player.tex}) and are unchanged. It is the deliberate
+scope boundary of a transport model, not a wedged transport. Restricting the
+boot catalog to be non-empty --- so \texttt{PlayAlbum} is always available from
+\texttt{idle} --- the machine is \emph{deadlock-free}: ProB visits all~52 states,
+fires all~244 transitions, covers all seven operations, and finds no
+counterexample of any kind. The transport transitions themselves never wedge;
+the only dead end is ``no album has ever been catalogued'', which the phase-2
+catalog operations resolve.
+
+\end{document}
