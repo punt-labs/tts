@@ -10,7 +10,7 @@ carry the ``publish`` attribute the phase-2 receive leg decodes -- a Play publis
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, final
 
 from punt_lux import (
@@ -21,6 +21,7 @@ from punt_lux import (
 )
 
 from punt_vox.voxd.music_player.album_row import AlbumRow
+from punt_vox.voxd.music_player.playback_notice import PlaybackNotice
 from punt_vox.voxd.music_player.publish_button import PublishButton
 
 if TYPE_CHECKING:
@@ -50,16 +51,26 @@ _TITLE = "Music"
 @final
 @dataclass(frozen=True, slots=True)
 class AlbumListScene:
-    """Project the catalog and the player view onto the ``vox.music`` scene."""
+    """Project the catalog and the player view onto the ``vox.music`` scene.
+
+    The :class:`PlaybackNotice` is a transient status the scene renders as a one-line
+    warning between the now-playing line and the controls; when silent (the default)
+    the ``music.status`` slot renders empty, so the scene shape is the same whether or
+    not a click failed. It is a value the projection carries, never a flag on the
+    view, so :class:`PlayerView`'s invariants stay untouched -- and the projection
+    stays a pure function of ``(albums, view, notice)``.
+    """
 
     albums: tuple[Album, ...]
     view: PlayerView
+    notice: PlaybackNotice = field(default_factory=PlaybackNotice.silent)
 
     def render_request(self) -> RenderRequest:
-        """Return the whole scene to install: the header, controls, and album rows."""
+        """Return the whole scene to install: header, status, controls, album rows."""
         elements: list[_WireElement] = [
             MarkdownElement(id="music.header", content=f"## {_TITLE}"),
             TextElement(id="music.now", content=self._now_playing_text()),
+            TextElement(id="music.status", content=self.notice.message),
             PublishButton.stop(),
             SeparatorElement(id="music.sep"),
         ]

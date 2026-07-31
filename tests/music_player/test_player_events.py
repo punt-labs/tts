@@ -93,3 +93,33 @@ def test_a_decoded_event_dispatches_to_a_single_transition() -> None:
         event.apply(service)
     assert service.played == [AlbumId("aa11bb")]
     assert service.stops == 1
+
+
+@final
+class _FakePresenter:
+    """A FailurePresenter double recording which failure each event surfaces."""
+
+    def __init__(self) -> None:
+        self.play_failures: list[AlbumId] = []
+        self.stop_failures = 0
+
+    def present_play_failure(self, album: AlbumId) -> None:
+        self.play_failures.append(album)
+
+    def present_stop_failure(self) -> None:
+        self.stop_failures += 1
+
+
+def test_play_album_surfaces_its_own_play_failure() -> None:
+    # Double dispatch: the event names its failure, no topic branch in the caller.
+    presenter = _FakePresenter()
+    PlayAlbum(AlbumId("aa11bb")).surface_failure(presenter)
+    assert presenter.play_failures == [AlbumId("aa11bb")]
+    assert presenter.stop_failures == 0
+
+
+def test_stop_music_surfaces_its_own_stop_failure() -> None:
+    presenter = _FakePresenter()
+    StopMusic().surface_failure(presenter)
+    assert presenter.stop_failures == 1
+    assert presenter.play_failures == []

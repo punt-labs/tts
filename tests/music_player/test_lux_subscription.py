@@ -59,10 +59,12 @@ class _FakeCommands:
 
 @final
 class _FakeOpener:
-    """A ChangeListener double counting the scene re-pushes a menu click drives."""
+    """A ScenePresenter double: counts re-pushes and records surfaced failures."""
 
     def __init__(self, *, boom: bool = False) -> None:
         self.opens = 0
+        self.play_failures: list[AlbumId] = []
+        self.stop_failures = 0
         self._boom = boom
 
     def notify_changed(self) -> None:
@@ -70,6 +72,15 @@ class _FakeOpener:
         if self._boom:
             msg = "projection blew up"
             raise RuntimeError(msg)
+
+    def present_play_failure(self, album: AlbumId) -> None:
+        self.play_failures.append(album)
+        if self._boom:
+            msg = "surface blew up"
+            raise RuntimeError(msg)
+
+    def present_stop_failure(self) -> None:
+        self.stop_failures += 1
 
 
 @final
@@ -413,8 +424,53 @@ async def test_on_event_drops_a_malformed_frame_without_raising(
     assert any("dropping music event" in r.getMessage() for r in caplog.records)
 
 
-async def test_on_event_drops_a_playback_refusal_without_raising() -> None:
-    # A play whose album is unknown/empty raises in replay_album; the leg survives.
+async def test_on_event_surfaces_a_playback_refusal_to_the_scene() -> None:
+    # A play whose album is unknown/empty raises in replay_album; the leg survives AND
+    # the failure is surfaced to the scene (client-observable), not only logged.
+    @final
+    class _Refusing:
+        def replay_album(self, album_id: AlbumId) -> None:
+            msg = "no album with that id"
+            raise ValueError(msg)
+
+        def off(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+    opener = _FakeOpener()
+    sub = LuxSubscription(
+        _Refusing(), opener, _FakeMenu(), _connect(_RecordingListener(), [])
+    )
+
+    await sub.on_event("music.play", {"album_id": "aa11bb"})  # must not raise
+
+    assert opener.play_failures == [AlbumId("aa11bb")]  # surfaced to the scene
+
+
+async def test_on_event_surfaces_a_stop_refusal_to_the_scene() -> None:
+    @final
+    class _RefusingStop:
+        def replay_album(self, album_id: AlbumId) -> None:  # pragma: no cover
+            raise NotImplementedError
+
+        def off(self) -> None:
+            msg = "cannot stop right now"
+            raise ValueError(msg)
+
+    opener = _FakeOpener()
+    sub = LuxSubscription(
+        _RefusingStop(), opener, _FakeMenu(), _connect(_RecordingListener(), [])
+    )
+
+    await sub.on_event("music.stop", {})  # must not raise
+
+    assert opener.stop_failures == 1  # the failed stop is surfaced too
+
+
+async def test_on_event_survives_a_presenter_that_fails_to_surface(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Even the surface path is a boundary: a presenter that itself raises is logged
+    # and dropped, so the connection never falls over a click that could not surface.
     @final
     class _Refusing:
         def replay_album(self, album_id: AlbumId) -> None:
@@ -425,10 +481,16 @@ async def test_on_event_drops_a_playback_refusal_without_raising() -> None:
             raise NotImplementedError
 
     sub = LuxSubscription(
-        _Refusing(), _FakeOpener(), _FakeMenu(), _connect(_RecordingListener(), [])
+        _Refusing(),
+        _FakeOpener(boom=True),
+        _FakeMenu(),
+        _connect(_RecordingListener(), []),
     )
 
-    await sub.on_event("music.play", {"album_id": "aa11bb"})  # must not raise
+    with caplog.at_level(logging.ERROR):
+        await sub.on_event("music.play", {"album_id": "aa11bb"})  # must not raise
+
+    assert any("could not surface" in r.getMessage() for r in caplog.records)
 
 
 async def test_on_callback_opens_the_scene_for_the_music_menu() -> None:

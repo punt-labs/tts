@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from punt_vox.voxd.music_player.command_ports import PlayerCommands
+    from punt_vox.voxd.music_player.presenter_ports import FailurePresenter
 
 __all__ = ["PlayAlbum", "PlayerEvent", "PlayerEventCodec", "StopMusic"]
 
@@ -40,6 +41,16 @@ class PlayAlbum:
         """Replay this album, displacing whatever was playing (Z model StartRadio)."""
         service.replay_album(self.album)
 
+    def surface_failure(self, presenter: FailurePresenter) -> None:
+        """Ask the scene to warn that this album could not play (double dispatch).
+
+        A play the user clicked can fail in :meth:`apply` -- the album vanished from
+        the crate, or has no ready tracks -- without changing daemon state, so nothing
+        else re-pushes the scene. The event names its own failure here rather than the
+        subscription branching on the topic (PY-OO-6).
+        """
+        presenter.present_play_failure(self.album)
+
 
 @final
 @dataclass(frozen=True, slots=True)
@@ -49,6 +60,10 @@ class StopMusic:
     def apply(self, service: PlayerCommands) -> None:
         """Turn the active source off, returning to idle (Z model RadioOff)."""
         service.off()
+
+    def surface_failure(self, presenter: FailurePresenter) -> None:
+        """Ask the scene to warn that the stop could not apply (double dispatch)."""
+        presenter.present_stop_failure()
 
 
 type PlayerEvent = PlayAlbum | StopMusic

@@ -37,7 +37,8 @@ if TYPE_CHECKING:
 
     from punt_vox.voxd.music_player.command_ports import PlayerCommands
     from punt_vox.voxd.music_player.hub_ports import HubListener, MenuRegistrar
-    from punt_vox.voxd.programs.change_listener import ChangeListener
+    from punt_vox.voxd.music_player.player_events import PlayerEvent
+    from punt_vox.voxd.music_player.presenter_ports import ScenePresenter
 
 __all__ = ["LuxSubscription"]
 
@@ -53,9 +54,9 @@ _RETRY_SECONDS = 5.0
 class LuxSubscription:
     """Own voxd's one hub connection, the ``Music`` menu, and event dispatch."""
 
-    __slots__ = ("_codec", "_connect_hub", "_menu", "_opener", "_service")
+    __slots__ = ("_codec", "_connect_hub", "_menu", "_presenter", "_service")
     _service: PlayerCommands
-    _opener: ChangeListener
+    _presenter: ScenePresenter
     _menu: MenuRegistrar
     _connect_hub: Callable[[EventHandler, CallbackHandler, ConnectHandler], HubListener]
     _codec: PlayerEventCodec
@@ -63,7 +64,7 @@ class LuxSubscription:
     def __new__(
         cls,
         service: PlayerCommands,
-        opener: ChangeListener,
+        presenter: ScenePresenter,
         menu: MenuRegistrar,
         connect_hub: Callable[
             [EventHandler, CallbackHandler, ConnectHandler], HubListener
@@ -71,7 +72,7 @@ class LuxSubscription:
     ) -> Self:
         self = super().__new__(cls)
         self._service = service
-        self._opener = opener
+        self._presenter = presenter
         self._menu = menu
         self._connect_hub = connect_hub
         self._codec = PlayerEventCodec()
@@ -135,16 +136,40 @@ class LuxSubscription:
     async def on_event(self, topic: str, payload: Mapping[str, object]) -> None:
         """Decode and apply one inbound event exactly once; never drop the leg.
 
-        The receive boundary: a malformed frame or a playback refusal (unknown or
-        empty album) is logged and dropped, so one bad event can never tear down the
-        single hub connection (invariants I, II, V). A play applies ``replay_album``
-        and a stop applies ``off``; the change signal then re-pushes the scene.
+        The receive boundary splits two failure modes. A malformed frame the codec
+        cannot decode is logged and dropped -- there is no album to name, so nothing
+        surfaces. A well-formed play or stop whose ``apply`` is *refused* (the album
+        vanished or has no ready tracks) is logged AND surfaced: the click changed no
+        daemon state, so the scene is re-pushed with a transient warning rather than
+        looking silently ignored. Either way one bad event can never tear down the
+        single hub connection (invariants I, II, V).
         """
         _trace.info("received %s %r; applying", topic, dict(payload))
         try:
-            self._codec.decode(topic, payload).apply(self._service)
+            event = self._codec.decode(topic, payload)
         except Exception:
             logger.exception("[lux] dropping music event on %s: %r", topic, payload)
+            return
+        self._apply(event)
+
+    def _apply(self, event: PlayerEvent) -> None:
+        """Apply the decoded event; on a refusal, log AND surface a scene warning."""
+        try:
+            event.apply(self._service)
+        except Exception:
+            logger.exception("[lux] %r could not play; showing it in the scene", event)
+            self._surface_failure(event)
+
+    def _surface_failure(self, event: PlayerEvent) -> None:
+        """Re-push the scene with the event's own warning; never raise (boundary).
+
+        A refused play/stop left daemon state unchanged, so no change signal fires;
+        surfacing the warning is what keeps the failure client-observable.
+        """
+        try:
+            event.surface_failure(self._presenter)
+        except Exception:
+            logger.exception("[lux] could not surface the playback failure")
 
     async def on_callback(self, callback_id: str) -> None:
         """Open (re-push) the music scene when the ``Music`` menu entry is clicked."""
@@ -152,7 +177,7 @@ class LuxSubscription:
             return
         _trace.info("Music menu clicked; re-pushing the scene")
         try:
-            self._opener.notify_changed()
+            self._presenter.notify_changed()
         except Exception:
             logger.exception("[lux] music menu open failed for %r", callback_id)
 
@@ -171,6 +196,6 @@ class LuxSubscription:
         _trace.info("hub handshake complete; re-registering menu and re-pushing scene")
         await self._menu.register(_MENU_CALLBACK_ID, _MENU_LABEL)
         try:
-            self._opener.notify_changed()
+            self._presenter.notify_changed()
         except Exception:
             logger.exception("[lux] music scene projection on connect failed")

@@ -12,18 +12,26 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.voxd.music_player.playback_notice import PlaybackNotice
 from punt_vox.voxd.music_player.player_view import PlayerView
 from punt_vox.voxd.music_player.scene import AlbumListScene
 
 if TYPE_CHECKING:
     from punt_vox.voxd.music_player.ports import PlayerService, ScenePublisher
+    from punt_vox.voxd.programs.album_id import AlbumId
+    from punt_vox.voxd.programs.catalog import Album
 
 __all__ = ["MusicPlayer"]
 
 
 @final
 class MusicPlayer:
-    """Re-project the ``vox.music`` scene on every playback or catalog change."""
+    """Re-project the ``vox.music`` scene on every playback or catalog change.
+
+    As the daemon's :class:`ChangeListener` it repaints silently on every state
+    change; as the receive leg's :class:`ScenePresenter` it also repaints with a
+    transient warning when a clicked Play or Stop could not be applied.
+    """
 
     __slots__ = ("_publisher", "_service")
     _service: PlayerService
@@ -36,11 +44,29 @@ class MusicPlayer:
         return self
 
     def notify_changed(self) -> None:
-        """Re-project the scene from fresh status + catalog and submit it.
+        """Re-project the scene from fresh status + catalog and submit it (silent).
 
         Non-blocking: builds the scene synchronously and hands it to the mailbox;
-        the blocking push runs on the publisher's task.
+        the blocking push runs on the publisher's task. Carrying the silent notice
+        clears any warning a prior failed click had raised.
+        """
+        self._submit(self._service.catalog_albums(), PlaybackNotice.silent())
+
+    def present_play_failure(self, album: AlbumId) -> None:
+        """Re-project the scene warning that ``album`` could not play (transient).
+
+        A play that raised changed no daemon state, so the view is rebuilt from the
+        unchanged status -- an idle play stays idle, preserving I2 -- and the warning
+        rides beside it as the notice. The next legitimate change clears it.
         """
         albums = self._service.catalog_albums()
+        self._submit(albums, PlaybackNotice.play_failed(album, albums))
+
+    def present_stop_failure(self) -> None:
+        """Re-project the scene warning that the stop could not apply (transient)."""
+        self._submit(self._service.catalog_albums(), PlaybackNotice.stop_failed())
+
+    def _submit(self, albums: tuple[Album, ...], notice: PlaybackNotice) -> None:
+        """Project the scene from fresh status, ``albums`` and ``notice``; submit it."""
         view = PlayerView.from_status(self._service.status(), albums)
-        self._publisher.submit(AlbumListScene(albums, view).render_request())
+        self._publisher.submit(AlbumListScene(albums, view, notice).render_request())
