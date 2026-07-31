@@ -27,6 +27,11 @@ from punt_vox.voxd.programs.select_handler import SelectHandler
 from punt_vox.voxd.programs.service import ProgramService
 from punt_vox.voxd.programs.sleeper import RealSleeper
 from punt_vox.voxd.programs.status_handler import StatusHandler
+from punt_vox.voxd.programs.transport_handlers import (
+    PauseHandler,
+    PrevHandler,
+    ResumeHandler,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -74,6 +79,9 @@ class ProgramSubsystem:
             "program_on": OnHandler(service),
             "program_off": OffHandler(service),
             "program_next": NextHandler(service),
+            "program_prev": PrevHandler(service),
+            "program_pause": PauseHandler(service),
+            "program_resume": ResumeHandler(service),
             "program_select": SelectHandler(service),
             "program_list": ListHandler(service),
             "program_status": StatusHandler(service),

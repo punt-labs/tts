@@ -45,7 +45,19 @@ class ProgramGateway(Protocol):
         ...
 
     def advance(self) -> CommandOutcome:
-        """Advance to another Part -- the one ungated skip/next/loop transition."""
+        """User transport next: step the replay cursor forward, or skip a Program."""
+        ...
+
+    def prev(self) -> CommandOutcome:
+        """User transport prev: step the replay cursor back one part."""
+        ...
+
+    def pause(self) -> CommandOutcome:
+        """Suspend the active source in place (transport pause)."""
+        ...
+
+    def resume(self) -> CommandOutcome:
+        """Continue a suspended source (transport resume)."""
         ...
 
     def select(self, request: SelectionRequest) -> CommandOutcome:

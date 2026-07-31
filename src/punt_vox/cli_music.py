@@ -349,12 +349,57 @@ class MusicCli:
         verbose: _Verbose = False,
         quiet: _Quiet = False,
     ) -> None:
-        """Advance the active source to another Part."""
+        """Step the active source forward one part (transport next)."""
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         outcome = self._guard(lambda: self._gateway_factory().advance())
         self._formatter.emit(
             {"music": "next", "applied": outcome.applied},
             outcome.display("Advancing to another part."),
+        )
+
+    def prev(
+        self,
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
+    ) -> None:
+        """Step the active source back one part (transport prev)."""
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+        outcome = self._guard(lambda: self._gateway_factory().prev())
+        self._formatter.emit(
+            {"music": "prev", "applied": outcome.applied},
+            outcome.display("Stepping to the previous part."),
+        )
+
+    def pause(
+        self,
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
+    ) -> None:
+        """Suspend the active source in place (transport pause)."""
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+        outcome = self._guard(lambda: self._gateway_factory().pause())
+        self._formatter.emit(
+            {"music": "pause", "applied": outcome.applied},
+            outcome.display("Paused."),
+        )
+
+    def resume(
+        self,
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
+    ) -> None:
+        """Continue a suspended source (transport resume)."""
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+        outcome = self._guard(lambda: self._gateway_factory().resume())
+        self._formatter.emit(
+            {"music": "resume", "applied": outcome.applied},
+            outcome.display("Resumed."),
         )
 
     def status(
@@ -399,5 +444,8 @@ def build_music_app(formatter: OutputFormatter, flags: OutputFlags) -> typer.Typ
     app.command("get")(cli.get)
     app.command("remove")(cli.remove)
     app.command("next")(cli.advance)
+    app.command("prev")(cli.prev)
+    app.command("pause")(cli.pause)
+    app.command("resume")(cli.resume)
     app.command("status")(cli.status)
     return app

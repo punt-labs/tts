@@ -22,7 +22,7 @@ from punt_lux import (
 
 from punt_vox.voxd.music_player.album_row import AlbumRow
 from punt_vox.voxd.music_player.playback_notice import PlaybackNotice
-from punt_vox.voxd.music_player.publish_button import PublishButton
+from punt_vox.voxd.music_player.transport_row import TransportRow
 
 if TYPE_CHECKING:
     from punt_vox.voxd.music_player.player_view import PlayerView
@@ -71,7 +71,7 @@ class AlbumListScene:
             MarkdownElement(id="music.header", content=f"## {_TITLE}"),
             TextElement(id="music.now", content=self._now_playing_text()),
             TextElement(id="music.status", content=self.notice.message),
-            PublishButton.stop(),
+            TransportRow(self.view),
             SeparatorElement(id="music.sep"),
         ]
         elements.extend(self._album_row(album) for album in self.albums)

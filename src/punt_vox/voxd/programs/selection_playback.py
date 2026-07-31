@@ -88,6 +88,36 @@ class SelectionPlayback:
         # the status read O(1).
         self._position = pool.index(result.part)
 
+    def step_forward(self) -> None:
+        """Move the cursor to the next part, capped at the last (Z ``Next``).
+
+        Deterministic, unlike :meth:`rotate`: the user's transport ``next`` walks
+        the ordered pool by one and *stalls* at the last part (a no-op), rather than
+        wrapping the way the loop's end-of-part :meth:`rotate` does (Z Fork C). An
+        empty pool holds no cursor, so it is a no-op.
+        """
+        self._step(+1)
+
+    def step_back(self) -> None:
+        """Move the cursor to the previous part, floored at the first (Z ``Prev``).
+
+        Deterministic: walks the ordered pool back by one and stalls at the first
+        part (a no-op). An empty pool holds no cursor, so it is a no-op.
+        """
+        self._step(-1)
+
+    def _step(self, delta: int) -> None:
+        """Move the cursor by ``delta`` within ``[0, len-1]``; a boundary is a no-op."""
+        pool = self._selection.playable_pool()
+        if self._position is None or not pool:
+            return
+        target = self._position + delta
+        if not (0 <= target < len(pool)):
+            return  # a boundary step (Prev at 1, Next at M) is the modelled no-op
+        self._last_played = self._playing
+        self._position = target
+        self._playing = pool[target]
+
     @property
     def wants_generation(self) -> bool:
         """A Selection never generates -- structurally ``False``."""

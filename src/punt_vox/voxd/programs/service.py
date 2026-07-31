@@ -12,6 +12,7 @@ service owns only the mint side-effect (a domain object must not call
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.types_programs.prompts import PromptSet
@@ -32,7 +33,7 @@ from punt_vox.voxd.programs.filler import Filler
 from punt_vox.voxd.programs.lifecycle_signal import TurnOff
 from punt_vox.voxd.programs.loop import ProgramLoop
 from punt_vox.voxd.programs.playback_health import PlaybackHealth
-from punt_vox.voxd.programs.playback_signal import Rotate
+from punt_vox.voxd.programs.playback_signal import StepBack, StepForward
 from punt_vox.voxd.programs.program import Program
 from punt_vox.voxd.programs.rotate_policy import RotatePolicy
 from punt_vox.voxd.programs.select_signal import SwitchSelection
@@ -40,6 +41,7 @@ from punt_vox.voxd.programs.selection import Selection
 from punt_vox.voxd.programs.selection_playback import SelectionPlayback
 from punt_vox.voxd.programs.state import ProgramState
 from punt_vox.voxd.programs.subprocess_player import SubprocessPlayer
+from punt_vox.voxd.programs.suspension import PlaybackSuspension
 from punt_vox.voxd.programs.switch_signal import SwitchProgram
 
 if TYPE_CHECKING:
@@ -75,6 +77,7 @@ class ProgramService:
         "_loop",
         "_root",
         "_store",
+        "_suspension",
     )
     _store: ProgramStore
     _root: Path
@@ -86,6 +89,7 @@ class ProgramService:
     _health: PlaybackHealth
     _loop: ProgramLoop
     _changes: ChangeSignal
+    _suspension: PlaybackSuspension
 
     def __new__(
         cls, producer: Producer, store: ProgramStore, root: Path, sleeper: Sleeper
@@ -100,8 +104,15 @@ class ProgramService:
         self._filler = Filler(producer, self._channel, sleeper)
         self._channel.attach_reconciler(FillReconciler(self._filler, self))
         self._health = PlaybackHealth()
+        # The suspension is shared by the loop (which suspends the live player on
+        # pause) and this service (which drives pause/resume and reports paused).
+        self._suspension = PlaybackSuspension()
         self._loop = ProgramLoop(
-            self._channel, SubprocessPlayer(self), sleeper, self._health
+            self._channel,
+            SubprocessPlayer(self),
+            sleeper,
+            self._health,
+            self._suspension,
         )
         # One change signal drives the scene re-push: the single-writer fires it
         # after each applied command, the catalog after each new/remove.
@@ -149,11 +160,18 @@ class ProgramService:
         """Return the daemon's authoritative status, read fresh per call.
 
         A generate Program reports the full Program status; a replay Selection
-        reports the consume-only radio status; an idle daemon reports idle.
+        reports the consume-only radio status; an idle daemon reports idle. The
+        transport ``paused`` flag rides every active status (never idle), read
+        authoritatively from the one suspension, so a client's PlayerView can tell
+        a held source from a progressing one.
         """
         active = self._context.current
         if active is None:
             return ProgramStatus.idle()
+        return replace(self._active_status(active), paused=self._suspension.is_paused)
+
+    def _active_status(self, active: ActiveSource) -> ProgramStatus:
+        """Return the active source's base status (before the paused overlay)."""
         source = self._channel.source
         if isinstance(source, Program):
             return source.to_status(active.name, self._health.fault)
@@ -250,6 +268,8 @@ class ProgramService:
             ),
             RotatePolicy(),
         )
+        # A turn-on displaces whatever was active, so any held pause is dropped.
+        self._suspension.reset()
         self._channel.post(
             SwitchProgram(self._channel, self._context, program, active, target=None)
         )
@@ -276,20 +296,70 @@ class ProgramService:
         self._start_replay(selection, album.locator)
 
     def advance(self) -> None:
-        """Advance to another Part -- the one ungated skip/next/loop transition."""
-        self._channel.post(Rotate())
+        """User transport next: step a replay forward, or skip a generate Program.
+
+        The user's next (Z ``Next``) is distinct from the loop's end-of-part
+        auto-advance (Z ``AutoAdvance``, which the loop posts as its own ``Rotate``):
+        on a single-album replay it walks the ordered pool by one and stalls at the
+        last part, rather than wrapping.
+        """
+        self._channel.post(StepForward())
+
+    def prev(self) -> None:
+        """User transport prev: step a replay cursor back, floored at the first part.
+
+        Only a replay Selection has an ordered position; a generate Program has no
+        previous, so the signal is rejected as a lost race there (Z ``Prev``).
+        """
+        self._channel.post(StepBack())
+
+    def pause(self) -> None:
+        """Suspend the active source in place (Z ``Pause``): only while active.
+
+        Pause holds the player where it is -- the cursor stays put and never
+        auto-advances -- so it is meaningful only when a source is active; against
+        an idle daemon it is a no-op. Idempotent while already paused. The scene
+        re-push rides the change signal directly, since pause mutates no source
+        cursor and so posts no control command.
+        """
+        if self._context.current is None:
+            return
+        self._suspension.pause()
+        self._changes.emit()
+
+    def resume(self) -> None:
+        """Continue a suspended source (Z ``Resume``): only from paused.
+
+        Idempotent while already playing; the change signal re-pushes the scene.
+        """
+        self._suspension.resume()
+        self._changes.emit()
 
     def off(self) -> None:
-        """Stop the active source (a Program keeps its pool; a replay goes idle)."""
+        """Stop the active source (a Program keeps its pool; a replay goes idle).
+
+        Resetting the suspension first returns the player to the not-paused, unheld
+        state, so ``off`` from a paused source lands idle exactly as from a playing
+        one (Z ``Stop`` from either active mode), leaving no paused residue.
+        """
+        self._suspension.reset()
         self._channel.post(TurnOff(self._channel, self._context, self._idle_program()))
 
     # -- internals ---------------------------------------------------------
 
     def _start_replay(self, selection: Selection, label: str) -> None:
-        """Seed a replay over ``selection`` and post the switch, rejecting empty."""
+        """Seed a replay over ``selection`` and post the switch, rejecting empty.
+
+        A switch is start-or-switch (Z Fork A, SWITCH): from idle it starts, and
+        from a playing *or* paused source it displaces the active album and begins
+        the new one at part 1, mode playing. Resetting the suspension first drops
+        any held/paused state so the newly chosen album plays rather than inheriting
+        the displaced one's pause.
+        """
         if not selection:
             msg = "no albums match the selection"
             raise ValueError(msg)
+        self._suspension.reset()
         playback = SelectionPlayback(selection, RotatePolicy())
         active = ActiveSelection(self._root, selection, label)
         self._channel.post(

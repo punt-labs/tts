@@ -1,9 +1,13 @@
-"""Consume-path control signals: advance, play a named Part, cold-start from disk.
+"""Consume-path control signals: advance, step, play a named Part, cold-start.
 
 ``Rotate`` is source-agnostic (Z ``Rotate`` / ``RadioRotate``): it advances
 whichever source is active, so it drives a generate Program and a replay Selection
-alike. ``PlayPart`` and ``StartFromDisk`` are generate-only: they narrow
-``isinstance(source, Program)`` and reject as a lost race against a Selection.
+alike -- it is the loop's *end-of-part* auto-advance (Z ``AutoAdvance``, wraps at the
+end). ``StepForward``/``StepBack`` are the *user's* transport next/prev (Z ``Next``/
+``Prev``): on a replay Selection they walk the ordered pool by one and stall at the
+boundary, distinct from the wrapping ``Rotate`` (Z Fork C). ``PlayPart`` and
+``StartFromDisk`` are generate-only: they narrow ``isinstance(source, Program)`` and
+reject as a lost race against a Selection.
 """
 
 from __future__ import annotations
@@ -13,12 +17,13 @@ from typing import TYPE_CHECKING, final
 
 from punt_vox.voxd.programs.guard import GuardViolationError
 from punt_vox.voxd.programs.program import Program
+from punt_vox.voxd.programs.selection_playback import SelectionPlayback
 
 if TYPE_CHECKING:
     from punt_vox.voxd.programs.part import Part
     from punt_vox.voxd.programs.playback_source import PlaybackSource
 
-__all__ = ["PlayPart", "Rotate", "StartFromDisk"]
+__all__ = ["PlayPart", "Rotate", "StartFromDisk", "StepBack", "StepForward"]
 
 
 @final
@@ -34,6 +39,52 @@ class Rotate:
     def apply(self, source: PlaybackSource, /) -> None:
         """Advance whichever source is active (generate Program or replay Selection)."""
         source.rotate()
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class StepForward:
+    """User transport next: step a replay cursor forward, or skip a Program.
+
+    On a replay Selection it walks the ordered pool by one and stalls at the last
+    part (Z ``Next``); on a generate Program there is no ordered position, so it
+    falls back to the Program's shuffle skip (``rotate``), preserving the existing
+    ``next`` behaviour for a running radio.
+    """
+
+    @property
+    def interrupts(self) -> bool:
+        """A user next acts now: the loop kills the current track and plays anew."""
+        return True
+
+    def apply(self, source: PlaybackSource, /) -> None:
+        """Step a replay Selection forward; skip a generate Program."""
+        if isinstance(source, SelectionPlayback):
+            source.step_forward()
+            return
+        source.rotate()
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class StepBack:
+    """User transport prev: step a replay cursor back (Selection-only, Z ``Prev``).
+
+    Prev is an ordered-pool notion, so it is defined only for a replay Selection; a
+    generate Program has no previous position, so a prev against one is rejected as
+    a lost race (swallowed by the single writer), never a shuffle.
+    """
+
+    @property
+    def interrupts(self) -> bool:
+        """A user prev acts now: the loop kills the current track and plays anew."""
+        return True
+
+    def apply(self, source: PlaybackSource, /) -> None:
+        """Step a replay Selection back, rejecting a generate Program."""
+        if not isinstance(source, SelectionPlayback):
+            GuardViolationError.reject("prev requires a replay selection")
+        source.step_back()
 
 
 @final

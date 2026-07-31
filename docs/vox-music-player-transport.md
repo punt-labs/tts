@@ -13,7 +13,7 @@ navigation), so it carries a Z model (`docs/vox-music-player-transport.tex`),
 
 Three modes (the phase-1/2 player had two — `idle`, `playing`):
 
-```
+```text
         play(album)              pause
  idle ─────────────▶ playing ──────────▶ paused
    ▲                  │  ▲                  │

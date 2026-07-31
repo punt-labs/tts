@@ -94,8 +94,8 @@
     "efferent_coupling": 13.0,
     "public_names": 2.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.182,
-    "avg_lcom": 0.182
+    "max_lcom": 0.143,
+    "avg_lcom": 0.143
   },
   "src/punt_vox/cli_rec.py": {
     "efferent_coupling": 6.0,
@@ -109,7 +109,7 @@
     "public_names": 8.0,
     "circular_imports": 0.0,
     "max_lcom": 0.703,
-    "avg_lcom": 0.636
+    "avg_lcom": 0.631
   },
   "src/punt_vox/client_catalog_gateway.py": {
     "efferent_coupling": 1.0,
@@ -143,8 +143,8 @@
     "efferent_coupling": 4.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.159,
-    "avg_lcom": 0.159
+    "max_lcom": 0.142,
+    "avg_lcom": 0.142
   },
   "src/punt_vox/config.py": {
     "efferent_coupling": 3.0,
@@ -271,6 +271,13 @@
     "circular_imports": 0.0,
     "max_lcom": 0.533,
     "avg_lcom": 0.533
+  },
+  "src/punt_vox/music_args.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 1.0,
+    "avg_lcom": 1.0
   },
   "src/punt_vox/music_hint.py": {
     "efferent_coupling": 1.0,
@@ -451,8 +458,8 @@
     "efferent_coupling": 5.0,
     "public_names": 2.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.489,
-    "avg_lcom": 0.489
+    "max_lcom": 0.516,
+    "avg_lcom": 0.516
   },
   "src/punt_vox/service/__init__.py": {
     "efferent_coupling": 5.0,
@@ -986,6 +993,13 @@
     "max_lcom": 0.0,
     "avg_lcom": 0.0
   },
+  "src/punt_vox/voxd/music_player/playback_notice.py": {
+    "efferent_coupling": 0.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
   "src/punt_vox/voxd/music_player/player.py": {
     "efferent_coupling": 3.0,
     "public_names": 1.0,
@@ -995,7 +1009,7 @@
   },
   "src/punt_vox/voxd/music_player/player_events.py": {
     "efferent_coupling": 2.0,
-    "public_names": 4.0,
+    "public_names": 8.0,
     "circular_imports": 0.0,
     "max_lcom": 1.0,
     "avg_lcom": 1.0
@@ -1010,6 +1024,13 @@
   "src/punt_vox/voxd/music_player/ports.py": {
     "efferent_coupling": 0.0,
     "public_names": 3.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
+  "src/punt_vox/voxd/music_player/presenter_ports.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 2.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
     "avg_lcom": 0.0
@@ -1337,8 +1358,8 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/voxd/programs/playback_signal.py": {
-    "efferent_coupling": 2.0,
-    "public_names": 3.0,
+    "efferent_coupling": 3.0,
+    "public_names": 5.0,
     "circular_imports": 0.0,
     "max_lcom": 1.0,
     "avg_lcom": 1.0
@@ -1417,15 +1438,15 @@
     "efferent_coupling": 3.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.571,
-    "avg_lcom": 0.571
+    "max_lcom": 0.636,
+    "avg_lcom": 0.636
   },
   "src/punt_vox/voxd/programs/service.py": {
-    "efferent_coupling": 23.0,
+    "efferent_coupling": 24.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.637,
-    "avg_lcom": 0.637
+    "max_lcom": 0.636,
+    "avg_lcom": 0.636
   },
   "src/punt_vox/voxd/programs/sleeper.py": {
     "efferent_coupling": 0.0,
@@ -1459,8 +1480,8 @@
     "efferent_coupling": 1.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.0,
-    "avg_lcom": 0.0
+    "max_lcom": 0.476,
+    "avg_lcom": 0.238
   },
   "src/punt_vox/voxd/programs/switch_signal.py": {
     "efferent_coupling": 0.0,
@@ -1477,7 +1498,7 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/voxd/programs/wiring.py": {
-    "efferent_coupling": 11.0,
+    "efferent_coupling": 12.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.167,

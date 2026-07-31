@@ -29,6 +29,7 @@ from .conftest import QuietProducer, make_service, seed_album
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from punt_vox.types_programs.status_views import NowPlaying
     from punt_vox.voxd.programs.service import ProgramService
 
 _ONE = PromptSet(base="one", variations=())
@@ -38,6 +39,13 @@ _POOL_SIZE = Format.PLAYLIST.pool_size
 
 def _service(tmp_path: Path) -> ProgramService:
     return make_service(tmp_path / "programs")
+
+
+def _now(service: ProgramService) -> NowPlaying:
+    """Return the active cursor, asserting it is present (narrows for mypy)."""
+    now = service.status().now_playing
+    assert now is not None
+    return now
 
 
 async def _drive_fill_to_full(service: ProgramService) -> None:
@@ -335,6 +343,93 @@ class TestConsumeControls:
         await service.run_once()
         service.shutdown()
         assert service.status().mode is Mode.OFF
+
+
+class TestTransport:
+    """The phase-3 transport verbs on the service, asserting the model by name.
+
+    ``prev``/``advance`` (Z ``Prev``/``Next``) step a single-album replay cursor
+    deterministically; ``pause``/``resume`` (Z ``Pause``/``Resume``) flip the
+    ``paused`` status without a source cursor move; ``replay_album`` is start-or-
+    switch (Fork A) and displaces an active album; and the guards are ``T4``.
+    """
+
+    async def _play_three(self, tmp_path: Path) -> ProgramService:
+        """Replay a single 3-track album and return the running service."""
+        seed_album(tmp_path / "programs", 1, 2, 3, style="trance", vibe="calm")
+        service = _service(tmp_path)
+        service.replay(TagQuery(style="trance"))
+        await service.run_once()
+        return service
+
+    async def test_next_and_prev_step_the_cursor_deterministically(
+        self, tmp_path: Path
+    ) -> None:
+        service = await self._play_three(tmp_path)
+        assert service.status().now_playing is not None
+        assert _now(service).index == 1
+        service.advance()  # Next
+        await service.run_once()
+        assert _now(service).index == 2
+        service.prev()  # Prev
+        await service.run_once()
+        assert _now(service).index == 1
+
+    async def test_t5_next_at_last_part_stalls(self, tmp_path: Path) -> None:
+        service = await self._play_three(tmp_path)
+        for _ in range(2):
+            service.advance()
+            await service.run_once()
+        assert _now(service).index == 3  # last part
+        service.advance()  # next at M is a no-op (stalls, does not wrap)
+        await service.run_once()
+        assert _now(service).index == 3
+
+    async def test_t4_pause_only_from_active_then_resume(self, tmp_path: Path) -> None:
+        service = await self._play_three(tmp_path)
+        assert service.status().paused is False
+        service.pause()  # T4: pause from playing
+        assert service.status().paused is True
+        service.resume()  # T4: resume from paused
+        assert service.status().paused is False
+
+    def test_t4_pause_when_idle_is_a_no_op(self, tmp_path: Path) -> None:
+        service = _service(tmp_path)  # nothing playing
+        service.pause()
+        assert service.status().is_idle
+        assert service.status().paused is False  # pause only from an active source
+
+    async def test_t1_switch_displaces_a_playing_album(self, tmp_path: Path) -> None:
+        # Fork A (SWITCH): playing album A, a replay of album B displaces it and
+        # starts B at part 1 -- at most one album active (T1), no stop-first needed.
+        root = tmp_path / "programs"
+        seed_album(root, 1, 2, style="trance", vibe="calm", album_id="a1a1a1")
+        seed_album(root, 1, 2, 3, style="techno", vibe="calm", album_id="b2b2b2")
+        service = _service(tmp_path)
+        service.replay_album(AlbumId("a1a1a1"))
+        await service.run_once()
+        assert _now(service).of == 2  # album A active
+        service.replay_album(AlbumId("b2b2b2"))  # switch, no stop first
+        await service.run_once()
+        assert _now(service).of == 3  # album B now active
+        assert _now(service).index == 1  # restarted at part 1
+
+    async def test_switch_from_paused_starts_playing(self, tmp_path: Path) -> None:
+        # A switch while paused resets the suspension: the new album plays, not
+        # paused (the displaced album's pause does not carry over). Both albums are
+        # seeded before the service scans its catalog.
+        root = tmp_path / "programs"
+        seed_album(root, 1, 2, 3, style="trance", vibe="calm", album_id="a1a1a1")
+        seed_album(root, 1, 2, style="ambient", vibe="calm", album_id="b2b2b2")
+        service = _service(tmp_path)
+        service.replay(TagQuery(style="trance"))
+        await service.run_once()
+        service.pause()
+        assert service.status().paused is True
+        service.replay(TagQuery(style="ambient"))
+        await service.run_once()
+        assert service.status().paused is False
+        assert service.status().now_playing is not None
 
 
 class TestGeneratingFirstBacking:

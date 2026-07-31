@@ -26,6 +26,7 @@ from punt_vox.voxd.programs.lifecycle_signal import TurnOff, TurnOn, VibeStyleCh
 from punt_vox.voxd.programs.loop import ProgramLoop
 from punt_vox.voxd.programs.playback_health import PlaybackHealth
 from punt_vox.voxd.programs.playback_signal import Rotate
+from punt_vox.voxd.programs.suspension import PlaybackSuspension
 
 from .conftest import AvoidRepeatPolicy, FakeSleeper
 
@@ -70,6 +71,12 @@ class FakeProcess:
     async def kill(self) -> None:
         self.rc = -9
         self._ended.set()
+
+    def suspend(self) -> None:
+        """Satisfy the PlayerProcess protocol; the loop tests never pause."""
+
+    def resume(self) -> None:
+        """Satisfy the PlayerProcess protocol; the loop tests never pause."""
 
     def end(self, rc: int = 0) -> None:
         """Signal a natural end (test control)."""
@@ -130,7 +137,9 @@ class _Harness:
         self.player = FakePlayer()
         self.health = PlaybackHealth()
         self.sleeper = FakeSleeper()
-        loop = ProgramLoop(self.channel, self.player, self.sleeper, self.health)
+        loop = ProgramLoop(
+            self.channel, self.player, self.sleeper, self.health, PlaybackSuspension()
+        )
         self._serve = asyncio.create_task(self.channel.serve())
         self._loop = asyncio.create_task(loop.run())
         return self
@@ -254,7 +263,7 @@ class TestExitFault:
         sleeper = _GateSleeper()
         player = FakePlayer()
         channel = ControlChannel(rotating)
-        loop = ProgramLoop(channel, player, sleeper, health)
+        loop = ProgramLoop(channel, player, sleeper, health, PlaybackSuspension())
         serve = asyncio.create_task(channel.serve())
         run = asyncio.create_task(loop.run())
 
@@ -389,6 +398,12 @@ class _RaisingProcess:
     async def kill(self) -> None:
         self.rc = -9
 
+    def suspend(self) -> None:
+        """Satisfy the PlayerProcess protocol; this fake is never paused."""
+
+    def resume(self) -> None:
+        """Satisfy the PlayerProcess protocol; this fake is never paused."""
+
 
 @final
 class _ErrThenBlockPlayer:
@@ -426,7 +441,9 @@ class TestPlayerWaitError:
     ) -> None:
         player = _ErrThenBlockPlayer()
         channel = ControlChannel(rotating)
-        loop = ProgramLoop(channel, player, FakeSleeper(), PlaybackHealth())
+        loop = ProgramLoop(
+            channel, player, FakeSleeper(), PlaybackHealth(), PlaybackSuspension()
+        )
         serve = asyncio.create_task(channel.serve())
         run = asyncio.create_task(loop.run())
         with caplog.at_level(logging.ERROR):
@@ -480,7 +497,9 @@ class TestLoopSurvivesAFailingStep:
     ) -> None:
         player = _FailFirstPlayer()
         channel = ControlChannel(rotating)
-        loop = ProgramLoop(channel, player, FakeSleeper(), PlaybackHealth())
+        loop = ProgramLoop(
+            channel, player, FakeSleeper(), PlaybackHealth(), PlaybackSuspension()
+        )
         serve = asyncio.create_task(channel.serve())
         run = asyncio.create_task(loop.run())
         with caplog.at_level(logging.ERROR):
@@ -552,7 +571,7 @@ class TestSpawnFailure:
         sleeper = FakeSleeper()
         player = _AlwaysFailSpawnPlayer()
         channel = ControlChannel(rotating)
-        loop = ProgramLoop(channel, player, sleeper, health)
+        loop = ProgramLoop(channel, player, sleeper, health, PlaybackSuspension())
         with caplog.at_level(logging.ERROR):
             run = asyncio.create_task(loop.run())
             for _ in range(200):
@@ -577,7 +596,7 @@ class TestSpawnFailure:
         sleeper = FakeSleeper()
         player = _FailSpawnOncePlayer()
         channel = ControlChannel(rotating)
-        loop = ProgramLoop(channel, player, sleeper, health)
+        loop = ProgramLoop(channel, player, sleeper, health, PlaybackSuspension())
         run = asyncio.create_task(loop.run())
         for _ in range(500):
             if player.parts:  # a spawn finally succeeded
@@ -625,7 +644,7 @@ class TestSpawnFaultReasonSanitization:
         health = PlaybackHealth()
         sleeper = FakeSleeper()
         channel = ControlChannel(rotating)
-        loop = ProgramLoop(channel, player, sleeper, health)
+        loop = ProgramLoop(channel, player, sleeper, health, PlaybackSuspension())
         run = asyncio.create_task(loop.run())
         for _ in range(500):
             if health.fault is not None and sleeper.sleeps:

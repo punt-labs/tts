@@ -17,7 +17,7 @@ __all__ = ["Player", "PlayerProcess"]
 
 
 class PlayerProcess(Protocol):
-    """A running player whose end the loop waits for and can cut short."""
+    """A running player whose end the loop waits for, suspends, or cuts short."""
 
     async def wait(self) -> int:
         """Block until the player exits and return its exit code."""
@@ -25,6 +25,14 @@ class PlayerProcess(Protocol):
 
     async def kill(self) -> None:
         """Stop the player now (a skip / off / play-a-part interrupt)."""
+        ...
+
+    def suspend(self) -> None:
+        """Pause the player in place (``SIGSTOP``); it stops progressing."""
+        ...
+
+    def resume(self) -> None:
+        """Continue a suspended player (``SIGCONT``) from where it stopped."""
         ...
 
 

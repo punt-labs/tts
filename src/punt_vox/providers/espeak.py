@@ -286,27 +286,7 @@ class EspeakProvider(TTSProvider):
     def _fetch_voices(self) -> dict[str, EspeakVoiceConfig]:
         """Parse ``espeak-ng --voices`` output and return the voice dict."""
         fresh: dict[str, EspeakVoiceConfig] = {}
-
-        binary = _find_espeak_binary()
-        if binary is None:
-            return fresh
-
-        try:
-            result = subprocess.run(
-                [binary, "--voices"],
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=10,
-            )
-        except (
-            subprocess.CalledProcessError,
-            FileNotFoundError,
-            subprocess.TimeoutExpired,
-        ):
-            return fresh
-
-        lines = result.stdout.splitlines()
+        lines = self._voices_lines()
         if not lines:
             return fresh
 
@@ -320,24 +300,52 @@ class EspeakProvider(TTSProvider):
 
         for line in lines[1:]:
             parsed = _parse_voice_line(line, lang_col, voice_col)
-            if parsed is None:
-                continue
-            key, iso, cfg = parsed
-
-            if key not in fresh:
-                fresh[key] = cfg
-
-            # Also register by language code for convenience
-            lang_key = cfg.name.lower()
-            if lang_key not in fresh:
-                fresh[lang_key] = cfg
-
-            # Register bare ISO 639-1 prefix for fallback
-            # (e.g. "en" from "en-us"). A truly bare entry
-            # (lang == iso, e.g. "en") always wins over a
-            # qualified variant parsed first (e.g. "en-us").
-            if cfg.name == iso or iso not in fresh:
-                fresh[iso] = cfg
+            if parsed is not None:
+                self._register_voice(fresh, parsed)
 
         logger.debug("Fetched %d voices from espeak-ng", len(fresh))
         return fresh
+
+    @staticmethod
+    def _voices_lines() -> list[str]:
+        """Return the ``espeak-ng --voices`` output lines, or empty when absent.
+
+        The one place the subprocess boundary lives: a missing binary, a spawn or
+        run failure, or a timeout all degrade to no lines, so the caller only ever
+        parses well-formed output.
+        """
+        binary = _find_espeak_binary()
+        if binary is None:
+            return []
+        try:
+            result = subprocess.run(
+                [binary, "--voices"],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10,
+            )
+        except (
+            subprocess.CalledProcessError,
+            FileNotFoundError,
+            subprocess.TimeoutExpired,
+        ):
+            return []
+        return result.stdout.splitlines()
+
+    @staticmethod
+    def _register_voice(
+        fresh: dict[str, EspeakVoiceConfig],
+        parsed: tuple[str, str, EspeakVoiceConfig],
+    ) -> None:
+        """Register one parsed voice under its key, language name, and ISO prefix.
+
+        A bare ISO entry (``lang == iso``, e.g. ``en``) always wins over a
+        qualified variant parsed earlier (e.g. ``en-us``); every other key is
+        first-write-wins.
+        """
+        key, iso, cfg = parsed
+        fresh.setdefault(key, cfg)
+        fresh.setdefault(cfg.name.lower(), cfg)  # by-language-code convenience
+        if cfg.name == iso or iso not in fresh:
+            fresh[iso] = cfg

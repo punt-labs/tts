@@ -32,13 +32,26 @@ if TYPE_CHECKING:
 
     from punt_vox.catalog_gateway import CatalogGateway
     from punt_vox.program_gateway import ProgramGateway
+    from punt_vox.types_programs.control import CommandOutcome
     from punt_vox.vibe_command import MusicPreference
 
 __all__ = ["MusicSubcommand", "MusicTool"]
 
 logger = logging.getLogger(__name__)
 
-MusicSubcommand = Literal["on", "off", "play", "next", "new", "list", "get", "remove"]
+MusicSubcommand = Literal[
+    "on",
+    "off",
+    "play",
+    "next",
+    "prev",
+    "pause",
+    "resume",
+    "new",
+    "list",
+    "get",
+    "remove",
+]
 
 # The daemon-transport faults every subcommand funnels to a JSON _error; named
 # once so the whole tool shares one contract, mirroring server.py/server_audio_tools.
@@ -228,13 +241,35 @@ class MusicTool:
         return json.dumps({"message": message, "applied": outcome.applied})
 
     def _advance(self, _args: MusicArgs) -> str:
-        """Advance to another Part -- the one ungated skip/next transition."""
+        """User transport next -- step the replay cursor forward, or skip a Program."""
+        return self._transport(self._program_factory().advance, self._marquee.skip())
+
+    def _prev(self, _args: MusicArgs) -> str:
+        """User transport prev -- step the replay cursor back one part."""
+        return self._transport(self._program_factory().prev, "Previous part.")
+
+    def _pause(self, _args: MusicArgs) -> str:
+        """Suspend the active source in place (transport pause)."""
+        return self._transport(self._program_factory().pause, "Paused.")
+
+    def _resume(self, _args: MusicArgs) -> str:
+        """Continue a suspended source (transport resume)."""
+        return self._transport(self._program_factory().resume, "Resumed.")
+
+    def _transport(self, op: Callable[[], CommandOutcome], phrase: str) -> str:
+        """Run a transport command ``op`` and render its outcome (one shared path).
+
+        The four transport verbs (next/prev/pause/resume) differ only in the daemon
+        call and the marquee phrase, so they share this render-and-error path -- a
+        daemon fault funnels to the same JSON ``_error`` envelope as every verb.
+        """
         try:
-            outcome = self._program_factory().advance()
+            outcome = op()
         except _DAEMON_ERRORS as exc:
             return _error(str(exc))
-        message = f"♪ {outcome.display(self._marquee.skip())}"
-        return json.dumps({"message": message, "applied": outcome.applied})
+        return json.dumps(
+            {"message": f"♪ {outcome.display(phrase)}", "applied": outcome.applied}
+        )
 
     def _list(self, _args: MusicArgs) -> str:
         """List saved albums with their tags and ready/total part counts."""
@@ -300,6 +335,9 @@ class MusicTool:
         "off": _off,
         "play": _play,
         "next": _advance,
+        "prev": _prev,
+        "pause": _pause,
+        "resume": _resume,
         "list": _list,
         "new": _new,
         "get": _get,

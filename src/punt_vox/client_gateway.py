@@ -57,8 +57,20 @@ class ClientProgramGateway:
         return self._client.program_off()
 
     def advance(self) -> CommandOutcome:
-        """Advance to another Part."""
+        """User transport next: step the replay cursor forward, or skip a Program."""
         return self._client.program_next()
+
+    def prev(self) -> CommandOutcome:
+        """User transport prev: step the replay cursor back one part."""
+        return self._client.program_prev()
+
+    def pause(self) -> CommandOutcome:
+        """Suspend the active source in place (transport pause)."""
+        return self._client.program_pause()
+
+    def resume(self) -> CommandOutcome:
+        """Continue a suspended source (transport resume)."""
+        return self._client.program_resume()
 
     def select(self, request: SelectionRequest) -> CommandOutcome:
         """Replay a Selection resolved by id (direct) or by tags."""

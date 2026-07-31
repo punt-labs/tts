@@ -13,8 +13,12 @@ from typing import TYPE_CHECKING, final
 import pytest
 
 from punt_vox.voxd.music_player.player_events import (
+    Next,
+    Pause,
     PlayAlbum,
     PlayerEventCodec,
+    Prev,
+    Resume,
     StopMusic,
 )
 from punt_vox.voxd.programs.album_id import AlbumId
@@ -30,12 +34,28 @@ class _FakeCommands:
     def __init__(self) -> None:
         self.played: list[AlbumId] = []
         self.stops = 0
+        self.nexts = 0
+        self.prevs = 0
+        self.pauses = 0
+        self.resumes = 0
 
     def replay_album(self, album_id: AlbumId) -> None:
         self.played.append(album_id)
 
     def off(self) -> None:
         self.stops += 1
+
+    def advance(self) -> None:
+        self.nexts += 1
+
+    def prev(self) -> None:
+        self.prevs += 1
+
+    def pause(self) -> None:
+        self.pauses += 1
+
+    def resume(self) -> None:
+        self.resumes += 1
 
 
 def test_decode_play_builds_a_play_album_with_the_album_id() -> None:
@@ -49,7 +69,7 @@ def test_decode_stop_builds_a_stop_music() -> None:
 
 def test_decode_rejects_an_unknown_topic() -> None:
     with pytest.raises(ValueError, match="unknown music topic"):
-        PlayerEventCodec().decode("music.pause", {})
+        PlayerEventCodec().decode("music.bogus", {})
 
 
 def test_decode_rejects_a_play_missing_its_album_id() -> None:
@@ -95,6 +115,31 @@ def test_a_decoded_event_dispatches_to_a_single_transition() -> None:
     assert service.stops == 1
 
 
+def test_decode_transport_topics_build_their_events() -> None:
+    codec = PlayerEventCodec()
+    assert codec.decode("music.prev", {}) == Prev()
+    assert codec.decode("music.next", {}) == Next()
+    assert codec.decode("music.pause", {}) == Pause()
+    assert codec.decode("music.resume", {}) == Resume()
+
+
+def test_transport_events_each_apply_to_one_daemon_call() -> None:
+    # Invariant V: each transport event maps to exactly one daemon transition.
+    service = _FakeCommands()
+    Prev().apply(service)
+    Next().apply(service)
+    Pause().apply(service)
+    Resume().apply(service)
+    assert (service.prevs, service.nexts, service.pauses, service.resumes) == (
+        1,
+        1,
+        1,
+        1,
+    )
+    assert service.played == []  # transport never replays or stops
+    assert service.stops == 0
+
+
 @final
 class _FakePresenter:
     """A FailurePresenter double recording which failure each event surfaces."""
@@ -102,12 +147,16 @@ class _FakePresenter:
     def __init__(self) -> None:
         self.play_failures: list[AlbumId] = []
         self.stop_failures = 0
+        self.transport_failures = 0
 
     def present_play_failure(self, album: AlbumId) -> None:
         self.play_failures.append(album)
 
     def present_stop_failure(self) -> None:
         self.stop_failures += 1
+
+    def present_transport_failure(self) -> None:
+        self.transport_failures += 1
 
 
 def test_play_album_surfaces_its_own_play_failure() -> None:

@@ -977,8 +977,20 @@ class VoxClient:
         return self._outcome(await self._command("program_off"))
 
     async def program_next(self) -> CommandOutcome:
-        """Advance to another Part (the one ungated skip/next/loop transition)."""
+        """User transport next: step the replay cursor forward, or skip a Program."""
         return self._outcome(await self._command("program_next"))
+
+    async def program_prev(self) -> CommandOutcome:
+        """User transport prev: step the replay cursor back one part."""
+        return self._outcome(await self._command("program_prev"))
+
+    async def program_pause(self) -> CommandOutcome:
+        """Suspend the active source in place (transport pause)."""
+        return self._outcome(await self._command("program_pause"))
+
+    async def program_resume(self) -> CommandOutcome:
+        """Continue a suspended source (transport resume)."""
+        return self._outcome(await self._command("program_resume"))
 
     async def program_select(
         self,

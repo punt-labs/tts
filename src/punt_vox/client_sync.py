@@ -197,8 +197,20 @@ class VoxClientSync:
         return self._runner.run(self._call("program_off"))  # type: ignore[no-any-return]
 
     def program_next(self) -> CommandOutcome:
-        """Advance to another Part."""
+        """User transport next: step the replay cursor forward, or skip a Program."""
         return self._runner.run(self._call("program_next"))  # type: ignore[no-any-return]
+
+    def program_prev(self) -> CommandOutcome:
+        """User transport prev: step the replay cursor back one part."""
+        return self._runner.run(self._call("program_prev"))  # type: ignore[no-any-return]
+
+    def program_pause(self) -> CommandOutcome:
+        """Suspend the active source in place (transport pause)."""
+        return self._runner.run(self._call("program_pause"))  # type: ignore[no-any-return]
+
+    def program_resume(self) -> CommandOutcome:
+        """Continue a suspended source (transport resume)."""
+        return self._runner.run(self._call("program_resume"))  # type: ignore[no-any-return]
 
     def program_select(
         self,

@@ -27,7 +27,16 @@ if TYPE_CHECKING:
     from punt_vox.voxd.music_player.command_ports import PlayerCommands
     from punt_vox.voxd.music_player.presenter_ports import FailurePresenter
 
-__all__ = ["PlayAlbum", "PlayerEvent", "PlayerEventCodec", "StopMusic"]
+__all__ = [
+    "Next",
+    "Pause",
+    "PlayAlbum",
+    "PlayerEvent",
+    "PlayerEventCodec",
+    "Prev",
+    "Resume",
+    "StopMusic",
+]
 
 
 @final
@@ -66,7 +75,63 @@ class StopMusic:
         presenter.present_stop_failure()
 
 
-type PlayerEvent = PlayAlbum | StopMusic
+@final
+@dataclass(frozen=True, slots=True)
+class Prev:
+    """Transport prev -- ``music.prev`` projected onto the deterministic step-back."""
+
+    def apply(self, service: PlayerCommands) -> None:
+        """Step the replay cursor back one part (Z ``Prev``)."""
+        service.prev()
+
+    def surface_failure(self, presenter: FailurePresenter) -> None:
+        """Re-push the scene after a refused prev (names no album; double dispatch)."""
+        presenter.present_transport_failure()
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class Next:
+    """Transport next -- ``music.next`` projected onto the deterministic step."""
+
+    def apply(self, service: PlayerCommands) -> None:
+        """Step the replay cursor forward one part (Z ``Next``)."""
+        service.advance()
+
+    def surface_failure(self, presenter: FailurePresenter) -> None:
+        """Re-push the scene after a refused next (names no album; double dispatch)."""
+        presenter.present_transport_failure()
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class Pause:
+    """Transport pause -- ``music.pause`` projected onto the suspend transition."""
+
+    def apply(self, service: PlayerCommands) -> None:
+        """Suspend the active source in place (Z ``Pause``)."""
+        service.pause()
+
+    def surface_failure(self, presenter: FailurePresenter) -> None:
+        """Re-push the scene after a refused pause (names no album; double dispatch)."""
+        presenter.present_transport_failure()
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class Resume:
+    """Transport resume -- ``music.resume`` projected onto the resume transition."""
+
+    def apply(self, service: PlayerCommands) -> None:
+        """Continue the suspended source (Z ``Resume``)."""
+        service.resume()
+
+    def surface_failure(self, presenter: FailurePresenter) -> None:
+        """Re-push the scene after a refused resume (names no album; dispatch)."""
+        presenter.present_transport_failure()
+
+
+type PlayerEvent = PlayAlbum | StopMusic | Prev | Next | Pause | Resume
 
 
 @final
@@ -88,6 +153,14 @@ class PlayerEventCodec:
                 return PlayAlbum(self._album_id(payload))
             case MusicTopic.STOP:
                 return StopMusic()
+            case MusicTopic.PREV:
+                return Prev()
+            case MusicTopic.NEXT:
+                return Next()
+            case MusicTopic.PAUSE:
+                return Pause()
+            case MusicTopic.RESUME:
+                return Resume()
             case _:
                 msg = f"unknown music topic: {topic!r}"
                 raise ValueError(msg)

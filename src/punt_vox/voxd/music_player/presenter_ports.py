@@ -39,6 +39,15 @@ class FailurePresenter(Protocol):
         """Re-project the scene with a warning that the stop could not apply."""
         ...
 
+    def present_transport_failure(self) -> None:
+        """Re-project the scene after a transport control (prev/next/pause/resume).
+
+        The transport commands mutate no album, so a refusal names no album to warn
+        about; a plain re-push keeps the scene truthful to the settled daemon state
+        rather than leaving a click looking silently ignored (client-observable).
+        """
+        ...
+
 
 @runtime_checkable
 class ScenePresenter(ChangeListener, FailurePresenter, Protocol):

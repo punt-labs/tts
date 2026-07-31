@@ -47,12 +47,18 @@ def test_scene_header_controls_and_one_row_per_album(
     assert "1 of 3" in str(elements[1]["content"])
     # The status slot is always present -- empty here, so it renders nothing.
     assert elements[2] == {"kind": "text", "id": "music.status", "content": ""}
-    assert elements[3] == {
-        "kind": "button",
-        "id": "stop",
-        "label": "Stop",
-        "publish": {"topic": "music.stop"},
-    }
+    # The transport row replaces the old standalone Stop: a columns group of four.
+    transport = elements[3]
+    assert transport["kind"] == "group"
+    assert transport["id"] == "music.transport"
+    children = transport["children"]
+    assert isinstance(children, list)
+    assert [child["id"] for child in children] == [
+        "music.transport.prev",
+        "music.transport.playpause",
+        "music.transport.next",
+        "music.transport.stop",
+    ]
     assert elements[4]["kind"] == "separator"
 
     rows = elements[5:]
@@ -82,20 +88,21 @@ def test_playing_row_is_marked_and_carries_its_play_button(
     assert idle_children[0]["content"] == "Ambient Drift"  # unmarked, not playing
 
 
-def test_stop_button_always_publishes_even_when_idle(album_of: AlbumFactory) -> None:
+def test_transport_is_inert_when_idle(album_of: AlbumFactory) -> None:
+    # T6/scene: nothing plays -> every transport button renders disabled. Playback
+    # starts from the album-list Play buttons, which stay enabled in every mode.
     album = album_of("aa11bb", name="Techno Mix")
     request = AlbumListScene((album,), PlayerView.idle()).render_request()
 
     assert request.elements[1]["content"] == "Nothing playing"
     assert request.elements[2] == {"kind": "text", "id": "music.status", "content": ""}
-    # Stop always carries its publish and is never disabled: a stop-while-idle is a
-    # harmless no-op (Z model PlayerStop), so no mode-dependent button state is needed.
-    assert request.elements[3] == {
-        "kind": "button",
-        "id": "stop",
-        "label": "Stop",
-        "publish": {"topic": "music.stop"},
-    }
+    children = request.elements[3]["children"]
+    assert isinstance(children, list)
+    assert all(child["disabled"] is True for child in children)
+    play_pause = children[1]
+    # Idle wears the play glyph, ready to resume nothing.
+    assert play_pause["label"] == "⏵"
+    assert play_pause["publish"] == {"topic": "music.resume"}
 
 
 def test_unnamed_album_falls_back_to_its_id(album_of: AlbumFactory) -> None:

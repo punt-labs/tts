@@ -15,10 +15,19 @@ __all__ = ["ALBUM_ID_KEY", "MusicTopic"]
 
 
 class MusicTopic(StrEnum):
-    """The two lux pub-sub topics the scene publishes and voxd subscribes to."""
+    """The lux pub-sub topics the scene publishes and voxd subscribes to.
+
+    ``PLAY``/``STOP`` are the phase-2 album-list controls; ``PREV``/``PAUSE``/
+    ``RESUME``/``NEXT`` are the phase-3 transport row. Every in-scene button
+    publishes one of these, and the receive leg subscribes to and decodes them all.
+    """
 
     PLAY = "music.play"
     STOP = "music.stop"
+    PREV = "music.prev"
+    PAUSE = "music.pause"
+    RESUME = "music.resume"
+    NEXT = "music.next"
 
 
 ALBUM_ID_KEY: Final = "album_id"

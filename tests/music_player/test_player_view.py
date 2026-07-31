@@ -9,6 +9,7 @@ The model lives in ``docs/vox-music-player.tex``:
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -84,3 +85,34 @@ def test_from_status_idle_when_nothing_plays(album_of: AlbumFactory) -> None:
     album = album_of("aa11bb")
     view = PlayerView.from_status(ProgramStatus.idle(), (album,))
     assert view == PlayerView.idle()
+
+
+def test_t2_paused_keeps_the_cursor(
+    album_of: AlbumFactory, playing_of: PlayingFactory
+) -> None:
+    # T2 widened: a paused album is active, so the cursor is present (unlike idle).
+    album = album_of("aa11bb", name="held")
+    status = replace(playing_of(album, 2, 3), paused=True)
+    view = PlayerView.from_status(status, (album,))
+    assert view.mode is PlayerMode.PAUSED
+    assert view.mode.is_active is True
+    assert view.now_playing == NowPlaying(index=2, of=3)
+    assert view.album == album.id
+
+
+def test_status_paused_picks_the_paused_mode(
+    album_of: AlbumFactory, playing_of: PlayingFactory
+) -> None:
+    # The paused flag on the status is what distinguishes the two active modes.
+    album = album_of("aa11bb")
+    playing = PlayerView.from_status(playing_of(album, 1, 3), (album,))
+    paused_status = replace(playing_of(album, 1, 3), paused=True)
+    paused = PlayerView.from_status(paused_status, (album,))
+    assert playing.mode is PlayerMode.PLAYING
+    assert paused.mode is PlayerMode.PAUSED
+
+
+def test_t2_rejects_a_paused_view_without_a_cursor(album_of: AlbumFactory) -> None:
+    album = album_of("aa11bb")
+    with pytest.raises(ValueError, match="inconsistent PlayerView"):
+        PlayerView(mode=PlayerMode.PAUSED, album=album.id, now_playing=None)

@@ -251,6 +251,9 @@ def test_music_group_exposes_the_unified_verb_set() -> None:
         "get",
         "remove",
         "next",
+        "prev",
+        "pause",
+        "resume",
         "status",
     }
 

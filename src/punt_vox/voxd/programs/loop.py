@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from punt_vox.voxd.programs.playback_health import PlaybackHealth
     from punt_vox.voxd.programs.player import Player
     from punt_vox.voxd.programs.sleeper import Sleeper
+    from punt_vox.voxd.programs.suspension import PlaybackSuspension
 
 __all__ = ["ProgramLoop"]
 
@@ -47,12 +48,20 @@ _SPAWN_BACKOFF_SECONDS = 2.0
 class ProgramLoop:
     """Play ``program.playing`` and advance when the track ends."""
 
-    __slots__ = ("_channel", "_health", "_player", "_race", "_sleeper")
+    __slots__ = (
+        "_channel",
+        "_health",
+        "_player",
+        "_race",
+        "_sleeper",
+        "_suspension",
+    )
     _channel: ControlChannel
     _player: Player
     _race: InterruptRace
     _sleeper: Sleeper
     _health: PlaybackHealth
+    _suspension: PlaybackSuspension
 
     def __new__(
         cls,
@@ -60,6 +69,7 @@ class ProgramLoop:
         player: Player,
         sleeper: Sleeper,
         health: PlaybackHealth,
+        suspension: PlaybackSuspension,
     ) -> Self:
         self = super().__new__(cls)
         self._channel = channel
@@ -67,6 +77,7 @@ class ProgramLoop:
         self._race = InterruptRace(channel.interrupt)
         self._sleeper = sleeper
         self._health = health
+        self._suspension = suspension
         return self
 
     @property
@@ -105,6 +116,13 @@ class ProgramLoop:
     async def _play(self, target: Part) -> None:
         """Play ``target``: settle its end against an interrupt, then advance.
 
+        The suspension gate is consulted first: while paused, the loop parks here
+        and spawns nothing, so a prev/next that repositioned a paused player does
+        not become audible until resume (Z Fork B). The spawned handle is attached
+        to the suspension so a mid-track ``pause`` can ``SIGSTOP`` it -- a stopped
+        player never exits, so ``settle`` stays pending and the cursor never
+        auto-advances while paused (Z ``T3``).
+
         A spawn failure is turned into an observable fault plus a bounded backoff
         (``_back_off_spawn``) rather than a raise into ``run``'s guard, which
         would re-enter ``_step`` on the same still-unplayable target and spin. A
@@ -113,14 +131,19 @@ class ProgramLoop:
         ``PlaybackHealth`` before advancing past the bad track, never a
         WARNING-only log that leaves status reporting "playing" while it skips.
         """
+        await self._suspension.wait_resumed()
         self._channel.interrupt.clear()
         try:
             proc = await self._player.play(target)
         except OSError as exc:  # FileNotFoundError (no player) + EMFILE/ENOMEM
             await self._back_off_spawn(target, exc)
             return
+        self._suspension.attach(proc)
         self._health.clear()
-        end = await self._race.settle(proc)
+        try:
+            end = await self._race.settle(proc)
+        finally:
+            self._suspension.detach()
         if end.interrupted:
             await proc.kill()
             return

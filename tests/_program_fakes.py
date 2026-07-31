@@ -93,6 +93,18 @@ class FakeProgramGateway:
         self.calls.append(GatewayCall("advance"))
         return self._outcome("advanced")
 
+    def prev(self) -> CommandOutcome:
+        self.calls.append(GatewayCall("prev"))
+        return self._outcome("stepped back")
+
+    def pause(self) -> CommandOutcome:
+        self.calls.append(GatewayCall("pause"))
+        return self._outcome("paused")
+
+    def resume(self) -> CommandOutcome:
+        self.calls.append(GatewayCall("resume"))
+        return self._outcome("resumed")
+
     def select(self, request: SelectionRequest) -> CommandOutcome:
         self.calls.append(GatewayCall("select", selection=request))
         return self._outcome("playing selection")

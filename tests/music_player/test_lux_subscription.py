@@ -49,12 +49,28 @@ class _FakeCommands:
     def __init__(self) -> None:
         self.played: list[AlbumId] = []
         self.stops = 0
+        self.nexts = 0
+        self.prevs = 0
+        self.pauses = 0
+        self.resumes = 0
 
     def replay_album(self, album_id: AlbumId) -> None:
         self.played.append(album_id)
 
     def off(self) -> None:
         self.stops += 1
+
+    def advance(self) -> None:
+        self.nexts += 1
+
+    def prev(self) -> None:
+        self.prevs += 1
+
+    def pause(self) -> None:
+        self.pauses += 1
+
+    def resume(self) -> None:
+        self.resumes += 1
 
 
 @final
@@ -65,6 +81,7 @@ class _FakeOpener:
         self.opens = 0
         self.play_failures: list[AlbumId] = []
         self.stop_failures = 0
+        self.transport_failures = 0
         self._boom = boom
 
     def notify_changed(self) -> None:
@@ -81,6 +98,12 @@ class _FakeOpener:
 
     def present_stop_failure(self) -> None:
         self.stop_failures += 1
+
+    def present_transport_failure(self) -> None:
+        self.transport_failures += 1
+        if self._boom:
+            msg = "surface blew up"
+            raise RuntimeError(msg)
 
 
 @final
@@ -436,6 +459,18 @@ async def test_on_event_surfaces_a_playback_refusal_to_the_scene() -> None:
         def off(self) -> None:  # pragma: no cover - unused here
             raise NotImplementedError
 
+        def advance(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def prev(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def pause(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def resume(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
     opener = _FakeOpener()
     sub = LuxSubscription(
         _Refusing(), opener, _FakeMenu(), _connect(_RecordingListener(), [])
@@ -455,6 +490,18 @@ async def test_on_event_surfaces_a_stop_refusal_to_the_scene() -> None:
         def off(self) -> None:
             msg = "cannot stop right now"
             raise ValueError(msg)
+
+        def advance(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def prev(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def pause(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def resume(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
 
     opener = _FakeOpener()
     sub = LuxSubscription(
@@ -478,6 +525,18 @@ async def test_on_event_survives_a_presenter_that_fails_to_surface(
             raise ValueError(msg)
 
         def off(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def advance(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def prev(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def pause(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def resume(self) -> None:  # pragma: no cover - unused here
             raise NotImplementedError
 
     sub = LuxSubscription(

@@ -66,6 +66,15 @@ class MusicPlayer:
         """Re-project the scene warning that the stop could not apply (transient)."""
         self._submit(self._service.catalog_albums(), PlaybackNotice.stop_failed())
 
+    def present_transport_failure(self) -> None:
+        """Re-project the scene silently after a refused transport control.
+
+        A transport command (prev/next/pause/resume) names no album, so there is no
+        per-album warning to raise; a plain re-push from the unchanged status keeps
+        the scene truthful without a spurious notice.
+        """
+        self._submit(self._service.catalog_albums(), PlaybackNotice.silent())
+
     def _submit(self, albums: tuple[Album, ...], notice: PlaybackNotice) -> None:
         """Project the scene from fresh status, ``albums`` and ``notice``; submit it."""
         view = PlayerView.from_status(self._service.status(), albums)

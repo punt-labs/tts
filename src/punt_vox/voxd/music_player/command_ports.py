@@ -22,14 +22,30 @@ __all__ = ["PlayerCommands", "ProgramSeam"]
 
 @runtime_checkable
 class PlayerCommands(Protocol):
-    """The write seam an inbound event applies: play a saved album, or stop."""
+    """The write seam an inbound event applies: play, stop, and the transport."""
 
     def replay_album(self, album_id: AlbumId) -> None:
-        """Replay the single saved album named by ``album_id`` (StartRadio)."""
+        """Replay the single saved album named by ``album_id`` (start or switch)."""
         ...
 
     def off(self) -> None:
-        """Turn the active source off, returning the player to idle (RadioOff)."""
+        """Turn the active source off, returning the player to idle (Stop)."""
+        ...
+
+    def advance(self) -> None:
+        """User transport next: step the replay cursor forward (Next)."""
+        ...
+
+    def prev(self) -> None:
+        """User transport prev: step the replay cursor back (Prev)."""
+        ...
+
+    def pause(self) -> None:
+        """Suspend the active source in place (Pause)."""
+        ...
+
+    def resume(self) -> None:
+        """Continue a suspended source (Resume)."""
         ...
 
 

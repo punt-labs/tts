@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import logging
 import platform
+import signal
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.log_sanitize import SANITIZER
@@ -62,6 +63,26 @@ class SubprocessHandle:
                 self._proc.kill()
         with contextlib.suppress(ProcessLookupError):
             await self._proc.wait()
+
+    def suspend(self) -> None:
+        """Pause the player in place with ``SIGSTOP`` (transport pause).
+
+        A stopped process never exits, so the loop's ``wait`` stays pending and
+        the cursor never auto-advances while paused. A player that exited between
+        spawn and pause is gone (``ProcessLookupError``): suppressed, since there
+        is nothing to suspend.
+        """
+        self._send(signal.SIGSTOP)
+
+    def resume(self) -> None:
+        """Continue a ``SIGSTOP``-ed player with ``SIGCONT`` (transport resume)."""
+        self._send(signal.SIGCONT)
+
+    def _send(self, sig: signal.Signals) -> None:
+        """Send ``sig`` to the player, suppressing an already-exited process."""
+        with contextlib.suppress(ProcessLookupError):
+            if self._proc.returncode is None:
+                self._proc.send_signal(sig)
 
     async def _log_exit(self, rc: int) -> None:
         stderr_text = ""
