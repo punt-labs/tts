@@ -35,7 +35,7 @@ This file is the authoritative record of design decisions, prior approaches, and
 │    → stop_hook_active=true on second fire → let stop         │
 │                                                              │
 │  Notification hook (notify-permission.sh):                   │
-│    if notify=y: async call `vox synthesize` CLI directly     │
+│    if notify=y: async call `vox say` CLI directly            │
 │    → audio plays immediately, no model involvement           │
 │                                                              │
 │  PostToolUse hook (suppress-output.sh):                      │
@@ -50,7 +50,7 @@ This file is the authoritative record of design decisions, prior approaches, and
 │                                                              │
 │  vox mcp (stdio, thin client) ──► voxd :8421/ws (WebSocket) │
 │  vox hook <event> (Python)   ──► voxd :8421/ws (WebSocket) │
-│  vox unmute (CLI)            ──► voxd :8421/ws (WebSocket) │
+│  vox say (CLI)               ──► voxd :8421/ws (WebSocket) │
 │                                                              │
 │  voxd: synthesis, playback queue, dedup, cache (DES-028)    │
 │  Providers: ElevenLabs > OpenAI > Polly > say > espeak      │
@@ -98,7 +98,7 @@ The Stop hook uses `decision: "block"` to make Claude generate one more turn wit
 **Flow:**
 
 ```text
-Claude finishes → Stop hook fires → reads tts.local.md
+Claude finishes → Stop hook fires → reads .punt-labs/vox/vox.local.md
   ├── notify=n → exit 0 (let stop, no notification)
   ├── stop_hook_active=true → exit 0 (prevent infinite loop)
   └── notify=y|c → return { decision: "block", reason: "..." }
@@ -125,7 +125,7 @@ Claude finishes → Stop hook fires → reads tts.local.md
 
 | Alternative | Rejected Because |
 |-------------|-----------------|
-| Shell-only: extract + truncate `last_assistant_message`, call `tts synthesize` CLI | No intelligent summarization; shell truncation produces poor summaries |
+| Shell-only: extract + truncate `last_assistant_message`, call `vox say` CLI | No intelligent summarization; shell truncation produces poor summaries |
 | Async hook with CLI call | Cannot block the stop to get a summary; would only produce "task complete" with no context |
 | `additionalContext` in Stop hook | Not supported — Stop hook only has `decision`/`reason` for control |
 
@@ -137,7 +137,7 @@ The user sees Claude generate one more message (the summary). This is acceptable
 2. The audio plays while the user reads, not instead of reading
 3. The skill prompt instructs minimal output
 
-If this proves annoying, the fallback is Approach B: async shell-only with `tts synthesize "Task complete"` (no summary, just a notification).
+If this proves annoying, the fallback is Approach B: async shell-only with `vox say "Task complete"` (no summary, just a notification).
 
 ---
 
@@ -241,36 +241,20 @@ Played via `afplay` (macOS) directly from the hook script.
 
 ### Design
 
-Hooks are declared in `hooks/hooks.json` and registered by the plugin system. The notification hooks are:
+Hooks are declared in `hooks/hooks.json` and registered by the plugin system. Each Claude Code event maps to a focused script under `hooks/` (current registration):
 
-```json
-{
-  "Stop": [{
-    "hooks": [{
-      "type": "command",
-      "command": "${CLAUDE_PLUGIN_ROOT}/hooks/notify.sh"
-    }]
-  }],
-  "Notification": [
-    {
-      "matcher": "permission_prompt",
-      "hooks": [{
-        "type": "command",
-        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/notify-permission.sh",
-        "async": true
-      }]
-    },
-    {
-      "matcher": "idle_prompt",
-      "hooks": [{
-        "type": "command",
-        "command": "${CLAUDE_PLUGIN_ROOT}/hooks/notify-permission.sh",
-        "async": true
-      }]
-    }
-  ]
-}
-```
+| Event | Script(s) | Notes |
+|-------|-----------|-------|
+| `SessionStart` | `session-start.sh` | Deploys commands, cleans retired ones, auto-allows `mic` tools |
+| `PostToolUse` | `suppress-output.sh` | Matcher `mcp__…mic__.*` — formats MCP tool output for the panel (DES-008) |
+| `Stop` | `notify.sh` | Task-completion notification (DES-001) |
+| `PreCompact` | `pre-compact.sh` | async |
+| `Notification` | `notify-permission.sh` | Matchers `permission_prompt`, `idle_prompt`; async (DES-002) |
+| `UserPromptSubmit` | `acknowledge.sh` (async), `vibe-nudge.sh` | Vibe nudge fires only when `vibe_mode == auto` (DES-043) |
+| `SubagentStart` / `SubagentStop` | `subagent.sh` | async |
+| `SessionEnd` | `farewell.sh` | async |
+
+Each entry is a `{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/<script>"}` object under its event key, some carrying a `matcher` and/or `"async": true` as shown.
 
 ### Why Separate Scripts
 
@@ -283,8 +267,10 @@ Hooks are declared in `hooks/hooks.json` and registered by the plugin system. Th
 ## DES-007: MCP Tool Naming — Voice Domain Vocabulary
 
 **Date:** 2026-02-25
-**Status:** SETTLED
+**Status:** SUPERSEDED by DES-051 (tools consolidated to `unmute` + one tool per audio group)
 **Topic:** MCP tool names visible in the UI panel
+
+> **Superseded (2026-07-29):** `chorus`/`duet`/`ensemble` no longer exist — multi-voice is now the `segments` argument of the `unmute` tool (DES-042); DES-050/DES-051 consolidated the MCP surface to `unmute` plus one subcommand-dispatched tool per audio group (`music`, `rec`); confirmed absent from `server.py`. The voice-vocabulary instinct survives in `unmute`/`mute`/`who`/`♪` (DES-042); these four names do not.
 
 ### Design
 
@@ -458,8 +444,10 @@ No migration needed from global to per-project. The `.vox/` → `.punt-labs/vox/
 ## DES-013: Serialized Audio Playback via flock
 
 **Date:** 2026-02-26
-**Status:** SETTLED
+**Status:** SUPERSEDED by DES-028 (the daemon's single serialized `PlaybackQueue`)
 **Topic:** How concurrent audio playback from MCP tools, Stop hook, and Notification hook is coordinated
+
+> **Superseded (DES-028):** cross-process `flock` serialization of playback gave way to the single-daemon `PlaybackQueue` once `voxd` became the sole audio host. DES-048 later reused this ADR's size-check-then-rename `flock` *rotation pattern* for the unified `vox.log` — the pattern lives on, the playback use does not.
 
 ### Problem
 
@@ -794,8 +782,10 @@ directly — use the CLI or MCP layer.**
 ## DES-018: Clean Stop Hook Reason — No Internal Data in User-Visible Output
 
 **Date:** 2026-03-06
-**Status:** SETTLED
+**Status:** PARTIALLY SUPERSEDED by DES-043 (the signal→tag machinery is gone; the reason-field rule stands)
 **Topic:** What the Stop hook's `reason` field contains
+
+> **Partially superseded (DES-043):** the deterministic `resolve_tags_from_signals()` / `vibe_signals` accumulator described here is deleted — auto-vibe is now agent-judged (DES-043). The core rule is unchanged: the Stop-hook `reason` field carries only a user-friendly `♪` phrase, never internal state.
 
 ### Problem
 
@@ -1392,7 +1382,9 @@ Music plays via its own ffplay subprocess at `-volume 30` (Linux) / `--volume 0.
 
 ## DES-031: Music Session Ownership Model
 
-**Status:** SETTLED
+**Status:** SUPERSEDED by DES-041 (ownership removed)
+
+> **Superseded (DES-041):** the Audio Programs Program model removed session ownership entirely — Program state is machine-universal and any client drives any command; the `owner_id` / reject-non-owner gate described here (source of the vox-73m5 stale-vibe bug) is gone.
 
 ### Problem
 
@@ -1426,7 +1418,9 @@ Probe the file duration via `ffprobe -v quiet -show_entries format=duration` bef
 
 ## DES-033: Gapless Music Handoff on Vibe Change
 
-**Status:** SETTLED
+**Status:** SUPERSEDED by DES-039
+
+> **Superseded (DES-039):** the mid-generation concurrent-handoff (`music_changed` race + generation `asyncio.Task`) is replaced by the self-driving playlist's eager background fill — a vibe change finishes the current track while the pre-filled next pool is already on disk, so there is nothing to wait for at the handoff.
 
 ### Problem
 
@@ -1586,8 +1580,10 @@ Closes vox-zt3r. Shipped in v4.9.0.
 ## DES-039: Self-Driving Playlist — Eager Background Fill, Auto-Advance, Prefetch
 
 **Date:** 2026-07-04
-**Status:** SETTLED
+**Status:** PARTIALLY SUPERSEDED by DES-041 (rebuilt on the Program model; the eager-fill/auto-advance UX carried forward)
 **Ticket:** vox-1rxb (rebuild of bas7 / #291)
+
+> **Partially superseded (DES-041):** the filename-pattern pool, `PoolFiller`, and 29-method `MusicScheduler` are replaced by the persisted, ownership-free Program model. The *UX* this ADR locked — eager background fill to a full pool, auto-advance on track-end, zero-credit rotation — carried forward intact.
 
 ### Problem
 
@@ -2357,3 +2353,280 @@ first argument — mirroring the CLI's `vox <group> <subcommand>` exactly.
 | Leave `music new` on a bare string | The daemon never receives the authored-input object, so "one object both surfaces build and send" fails and the spoken formats would inherit the split. |
 
 Extends DES-050; part of the Audio Programs epic (vox-ys1p).
+
+## DES-052: Music Player Phase 1 — voxd as a Lux Client via the Public `LuxRestClient`
+
+**Date:** 2026-07-29
+**Status:** SETTLED
+**Topic:** Giving `voxd` a lux display surface for its saved-album catalog
+
+### Context
+
+`voxd` owns the audio device and the saved-album catalog (DES-041, DES-049). The
+Music Player is a new headless app **inside `voxd`** — per WORKFLOW invariant 9,
+work touching audio and daemon-owned state routes through the daemon, so the
+player and its lux connection live in `voxd`, not a client. Phase 1 ships the
+push-only leg: an `AlbumListScene` projection of `(catalog albums, now-playing)`
+`PUT` to `/scenes/vox.music`, re-pushed whenever voxd's state changes. The player
+owns no playback state — it is a pure projection of voxd's one active source, plus
+a command translator back.
+
+### Decision
+
+`voxd` holds lux's public **`LuxRestClient`**, never the Hub-internal
+**`DisplayClient`**. `DisplayClient` renders but its clicks dispatch into a void
+(guard-enforced, being deprecated for apps, already flagged by the lux z-spec);
+`LuxRestClient` is the public, typed, validated surface, and raw REST to `luxd` is
+forbidden (Jim's ruling — validation and typing). Identity is `kind=app`,
+automatic via the client.
+
+A voxd-internal `ChangeListener` PubSub seam on `ProgramService` fires after every
+applied command, every auto-advance, and every catalog edit. The listener builds
+the scene and hands it to a **latest-wins mailbox** drained by an async publish
+task, so the `ControlChannel` single-writer never blocks on `luxd`: a slow or
+unreachable display is logged and dropped, never propagated into audio control. A
+dead display can never freeze audio.
+
+### Consequences
+
+- New package `src/punt_vox/voxd/music_player/`; the change signal is
+  voxd-internal, not gated on lux's PRs — a read-only scene that lies is worthless.
+- The player re-implements no playback: play/stop/now-playing map to the existing
+  `replay_album` / `off` / `status` / `catalog_albums` primitives.
+- Cross-references DES-028 (voxd is the audio host), DES-041 (Program/catalog
+  model), DES-049 (daemon owns audio + files), and the `PlayerView` model
+  (DES-053). Architecture settled cross-repo with the lux agent.
+
+Design of record: `docs/vox-music-player.md`. Commits 27bbe34, 19574c0 (vox-efa6).
+
+## DES-053: PlayerView State Model — idle/playing Projection with Invariants I1–I3
+
+**Date:** 2026-07-29
+**Status:** SETTLED
+**Topic:** The formal model for the Music Player's now-playing state
+
+### Context
+
+The z-spec gate requires a `fuzz`-clean model for a stateful audio subsystem
+before implementation. The player's playback transitions (play / stop / track-end)
+are already `StartRadio` / `RadioOff` / `RadioRotate` on a single-album selection,
+proven in `docs/audio-programs.tex`; re-modeling them would duplicate a proven
+model.
+
+### Decision
+
+Model only the genuinely new content: **`PlayerView`**, a frozen value derived
+from `ProgramStatus` with `mode ∈ {idle, playing}`, the playing `album` (≤ 1), and
+the `NowPlaying` cursor. Three invariants live in the schema predicate:
+
+- **I1** at most one album playing (`#album ≤ 1`).
+- **I2** now-playing present iff playing (`mode = playing ⟺ #album = 1 ⟺ #nowPlaying = 1`).
+- **I3** a played album is catalogued (`album ⊆ catalogued ids`).
+
+`docs/vox-music-player.tex` states these as a small self-contained machine,
+`fuzz -t`-clean, and proves each player transition preserves them. They are
+consequences of voxd's single-active-source model, not new runtime checks.
+
+### Consequences
+
+- The connection / subscribe / lease lifecycle is a named, pending addition,
+  deferred until lux pins its subscribe API.
+- Extended to the `paused` mode by the Phase-3 transport model (DES-055).
+- Cross-references DES-052 (Phase 1) and DES-041 (the reused Radio machine).
+
+Ships with commit 19574c0 (vox-efa6).
+
+## DES-054: Music Player Phase 2 — Interactive Receive Leg (Hub-Publish / voxd-Subscribe)
+
+**Date:** 2026-07-29
+**Status:** SETTLED
+**Topic:** Making the `vox.music` scene interactive
+
+### Context
+
+Phase 1 (DES-052) can render Play/Stop buttons, but a click is inert until `voxd`
+subscribes to their events.
+
+### Decision
+
+In-scene `ButtonElement`s carry a `publish` attribute; their Hub-side handlers
+publish `music.play {album_id}` / `music.stop`. `voxd` subscribes over the
+persistent `LuxRestClient` WebSocket extension (`LuxSubscription`), decodes each
+message into a `PlayerEvent` — a `PlayAlbum` / `StopMusic` discriminated union,
+each with a polymorphic `apply(service)` (no `if`-ladder, per oo.md) — and calls
+the existing `replay_album` / `off` primitive. The Phase-1 change signal then
+re-pushes the scene, so it reflects the change. A "Music" menu callback (a ~30s
+lease renewed by contact) opens the scene.
+
+### Consequences
+
+- All new logic stays in `voxd/music_player/` (`player_events.py`,
+  `lux_subscription.py`); `client.py` is untouched — the daemon/client boundary
+  holds.
+- Cross-references DES-052 (the push leg) and DES-053 (the state model).
+
+Commit 325a4f6 (vox-efa6).
+
+## DES-055: Music Player Phase 3 — Transport State Machine (idle/playing/paused)
+
+**Date:** 2026-07-30
+**Status:** SETTLED
+**Topic:** Pause/resume/prev/next transport controls on the `vox.music` scene
+
+### Context
+
+Phases 1–2 had two modes (`idle`, `playing`). A transport bar adds a real
+pause/resume and part navigation — a stateful-audio change, so it carries its own
+`fuzz`-clean, ProB-checked Z model *before* implementation
+(`docs/vox-music-player-transport.tex`).
+
+### Decision
+
+Three modes — `idle` / `playing` / `paused`.
+
+- **pause/resume** suspends and continues the playback subprocess via
+  **`SIGSTOP` / `SIGCONT`** (the DES-030 mechanism). A suspended player process
+  never exits, so no auto-advance fires while paused (invariant T3).
+- **prev/next** move the part cursor within the now-playing album (floored at 1,
+  capped at M) without un-suspending.
+- **play is start-or-SWITCH** — the resolved "Fork A": `play(album)` from `idle`
+  starts it; a `play` while another album is active is a `SwitchSelection`, never
+  a second source (T1).
+- One play/pause **button** whose glyph and `publish` the projection sets from the
+  current mode (`⏸` + `music.pause` when playing, `⏵` + `music.resume` when
+  paused), so the daemon always receives one unambiguous transition.
+
+The daemon gains `pause()` / `resume()` / `prev()` alongside `advance()` / `off` /
+`replay_album`, each with a non-UI CLI/MCP caller mirroring `next`.
+
+### Consequences
+
+- Seven modeled invariants T1–T7 (single active source; now-playing iff active;
+  paused-is-suspended; transition guards; cursor bounds; glyph-reflects-state;
+  catalogued). Extends DES-053's I1–I3 to the `paused` mode; reuses DES-030's
+  subprocess mechanism.
+
+Design: `docs/vox-music-player-transport.md`; Fork A resolved to SWITCH in commit
+2c5cf57. Commits 860edb4, 925782a, 190f37c (vox-tqo1).
+
+## DES-056: A Failed Play/Stop Is Surfaced in the `vox.music` Scene
+
+**Date:** 2026-07-30
+**Status:** SETTLED
+**Topic:** Making a failed lux click observable where the user clicked
+
+### Context
+
+DES-040 established that a daemon failure a client cares about must be observable
+through the client interface, not only a log. The lux scene is such a client
+interface: a Play/Stop click that fails silently is the lux analogue of the
+invisible music-generation failure DES-040 fixed.
+
+### Decision
+
+A failed Play/Stop surfaces in the `vox.music` scene itself, through a
+`PlaybackNotice` status slot the projection renders, so the person looking at the
+panel sees the failure where they clicked — never only in `vox.log`. This is
+DES-040's client-observable-failure principle applied to the lux surface.
+
+### Consequences
+
+- The `AlbumListScene` / transport projection carries the notice; the phase-1
+  change signal re-pushes it like any other state change.
+- Cross-references DES-040 (the daemon-API analogue) and DES-052 (the scene).
+
+Commit 38e0a91 (vox-xvaw).
+
+## DES-057: Album Title Authored at Music Generation
+
+**Date:** 2026-07-30
+**Status:** SETTLED
+**Topic:** Giving a saved album a human title that rides its ID3 tags
+
+### Context
+
+Albums were identifiable only by the style/name derived from the pool. The catalog
+scene (DES-052) and the CLI listings read better with a human title, and the title
+belongs on the audio itself so it survives replay and export without the manifest.
+
+### Decision
+
+The agent supplies a human album title at generation time — on `music on` /
+`music new`. It becomes the album's name and is written into every part's ID3
+tags: the Program name rides the `TALB` frame and the part/variation rides `TIT2`
+(`voxd/programs/part_tags.py`), so the title travels with the file.
+
+### Consequences
+
+- The catalog projection (DES-052) and `music list` / `get` show the authored
+  title.
+- Cross-references DES-041 (Program manifest + ID3 tags) and DES-035 (track
+  naming).
+
+Commit e6950ca (vox-cdvk).
+
+## DES-058: `[lux]`-Prefixed Lifecycle Observability Across the Music-Player Lux Legs
+
+**Date:** 2026-07-30
+**Status:** SETTLED
+**Topic:** Proving the cross-process lux legs actually connect, subscribe, and push
+
+### Context
+
+DES-046 established that a soft, cross-boundary mechanism must emit a stable,
+greppable trace so a human can prove the chain fired. The music-player lux legs
+(connect, register menu, subscribe, push a scene, reconnect) span `voxd` ↔ `luxd`
+and fail silently when `luxd` is down.
+
+### Decision
+
+A single `LuxTrace` logger emits one `[lux]`-prefixed line per lifecycle
+transition — connect / register / subscribe / push / reconnect at INFO, a
+recoverable down/retrying `luxd` at WARNING, a refused operation at ERROR — so
+`grep '[lux]'` reconstructs the whole leg. This is in the DES-046 lineage (a
+greppable proof-trace for a mechanism invisible until you can grep it),
+specialized to the lux transport rather than the vibe/music chain.
+
+### Consequences
+
+- `voxd/music_player/lux_trace.py` centralizes the prefix; the scene publisher,
+  the subscription, and the menu emit through it.
+- Cross-references DES-046 (the `[vibe-trace]` lineage) and DES-048 (one
+  `vox.log` — the persistent sink).
+
+Commit 52b041c.
+
+## DES-059: Per-Repo Enablement Marker and Plugin-less (`--no-plugin`) Install
+
+**Date:** 2026-07-28
+**Status:** SETTLED
+**Topic:** Standards conformance — explicit per-repo enablement and a CLI-only install path
+
+### Context
+
+The org tool standard is per-repo enablement via a committed marker (the
+biff/beadle/lux pattern) plus a surface that works without the Claude Code plugin.
+vox instead chimed and narrated wherever it was installed, and shipped only as a
+plugin. Both gaps close in one PR/rollback unit (#375).
+
+### Decision
+
+- **Per-repo enable/disable.** `mic:enablement action="enable"` (or `vox enable`,
+  `/enable`) deposits the guide, writes the committed `.punt-labs/vox/enabled`
+  marker, adds the `@`-import, and registers settings; `disable` reverses it
+  (`--purge` also removes the subtree). Enable is idempotent — re-running upgrades
+  the deposited guide. Both surfaces write the *same* marker so CLI and MCP agree;
+  neither runs git — the marker is committed via a PR. vox chimes and narrates
+  only where the marker is present.
+- **`install.sh --no-plugin` / CLI-only install.** A plugin-less install path for
+  non-Claude harnesses or plugin-restricted environments: `vox` on `PATH`, the
+  same engine, driven through the `vox` CLI with no MCP surface.
+
+### Consequences
+
+- The MCP `enablement` tool and the CLI `enable` / `disable` are thin doors to one
+  marker (one engine, thin clients).
+- Cross-references DES-036 (the `.punt-labs/vox/` config layout) and DES-042
+  (CLI/MCP surface parity).
+
+Commit 25ec048 (#375, vox-ck3w).
