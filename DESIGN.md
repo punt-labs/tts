@@ -2484,9 +2484,17 @@ pause/resume and part navigation — a stateful-audio change, so it carries its 
 
 Three modes — `idle` / `playing` / `paused`.
 
-- **pause/resume** suspends and continues the playback subprocess via
-  **`SIGSTOP` / `SIGCONT`** (the DES-030 mechanism). A suspended player process
-  never exits, so no auto-advance fires while paused (invariant T3).
+- **pause/resume** stops the playback subprocess **gracefully** — a `SIGTERM`
+  that lets `ffplay` close the audio device cleanly — while recording the elapsed
+  position, and resumes by re-spawning the player seeked to that offset (`ffplay
+  -ss`). A paused source has **no running player at all**, so no auto-advance
+  fires while paused (invariant T3). `SIGSTOP` / `SIGCONT` (freezing the process,
+  the first mechanism) was rejected: it underruns the audio device on pause and
+  re-primes it glitchily on resume — audible pops that worsen across cycles.
+  Because a resume must seek, the music player unifies on `ffplay` across macOS
+  and Linux, retiring macOS `afplay` (which cannot seek) for music playback —
+  `ffplay`/`ffmpeg` are already music dependencies, and chime/speech playback keep
+  `afplay`. This retires the macOS-`afplay`-for-music path of DES-030.
 - **prev/next** move the part cursor within the now-playing album (floored at 1,
   capped at M) without un-suspending.
 - **play is start-or-SWITCH** — the resolved "Fork A": `play(album)` from `idle`
