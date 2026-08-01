@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_vox.types_programs.mpv_event import MpvCommand
 from punt_vox.types_programs.playback_fault import PlaybackFault, PlaybackFaultKind
 from punt_vox.voxd.programs.mpv.mpv_client import MpvClient
+from punt_vox.voxd.programs.mpv.orphan_reaper import OrphanReaper
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -74,6 +75,7 @@ class MpvSupervisor:
         "_fault",
         "_proc",
         "_ready",
+        "_reaper",
         "_restarts",
         "_sleeper",
         "_socket",
@@ -89,6 +91,7 @@ class MpvSupervisor:
     _state: MpvState
     _restarts: int
     _ever_ready: bool
+    _reaper: OrphanReaper
 
     def __new__(cls, socket: Path, sleeper: Sleeper) -> Self:
         self = super().__new__(cls)
@@ -102,6 +105,7 @@ class MpvSupervisor:
         self._state = MpvState.DOWN
         self._restarts = 0
         self._ever_ready = False
+        self._reaper = OrphanReaper(socket)
         return self
 
     @property
@@ -143,14 +147,27 @@ class MpvSupervisor:
             await self._teardown()
 
     async def _supervise(self) -> None:
-        """Bring mpv up, park until it crashes, restart within the cap (I2/I4)."""
-        while True:
-            if await self._bring_up():
-                await self._crashed.wait()
-                await self._note_crash()
-            if not await self._restart_or_fail():
-                await self._park_failed()
-                return
+        """Reap any orphan, supervise mpv, and stand a fault on an unexpected error.
+
+        The restart loop handles a modeled crash. An UNEXPECTED error -- a
+        supervisor bug -- is logged and stood as a hard ``PLAYER_FAILED`` fault,
+        then parked, so ``status`` reports it rather than the daemon hanging on
+        ``wait_ready`` with the task dead and no fault set.
+        """
+        self._reaper.reap()
+        try:
+            while True:
+                if await self._bring_up():
+                    await self._crashed.wait()
+                    await self._note_crash()
+                if not await self._restart_or_fail():
+                    await self._park_failed()  # blocks until shutdown cancels run
+        except Exception:
+            logger.exception("mpv supervisor: unexpected error; standing failed")
+            self._stand_failed(
+                "mpv supervisor failed unexpectedly", PlaybackFaultKind.PLAYER_FAILED
+            )
+            await self._park_failed()
 
     async def _park_failed(self) -> None:
         """Hold the standing ``failed`` fault until the daemon cancels the task.
@@ -171,6 +188,7 @@ class MpvSupervisor:
             self._record_bring_up_failure()
             return False
         self._proc = proc
+        self._reaper.record(proc.pid)
         client = await self._connect()
         if client is None:
             self._discard_proc()
@@ -205,6 +223,7 @@ class MpvSupervisor:
             client = MpvClient(reader, writer, self._on_reader_eof)
             client.start()
             return client
+        logger.error("mpv connect failed after %d attempts", _CONNECT_ATTEMPTS)
         return None
 
     def _flags(self) -> list[str]:
@@ -275,14 +294,18 @@ class MpvSupervisor:
 
     def _enter_failed(self) -> None:
         """Terminate at ``failed`` -- the cap is exceeded; the program tier is dead."""
-        self._ready.clear()
-        self._state = MpvState.FAILED
         kind = (
             PlaybackFaultKind.PLAYER_FAILED
             if self._ever_ready
             else PlaybackFaultKind.PLAYER_UNAVAILABLE
         )
-        self._fault = PlaybackFault.process_level("mpv could not be kept running", kind)
+        self._stand_failed("mpv could not be kept running", kind)
+
+    def _stand_failed(self, reason: str, kind: PlaybackFaultKind) -> None:
+        """Clear readiness and stand a hard process-level fault at ``failed``."""
+        self._ready.clear()
+        self._state = MpvState.FAILED
+        self._fault = PlaybackFault.process_level(reason, kind)
 
     def _on_reader_eof(self) -> None:
         """Wake the supervise loop on socket EOF (the client's crash callback)."""
@@ -300,6 +323,7 @@ class MpvSupervisor:
         self._fault = None
         await self._quit_and_close()
         self._discard_proc()
+        self._reaper.clear()
 
     async def _quit_and_close(self) -> None:
         """Ask mpv to quit and close the socket, ignoring a dead connection."""

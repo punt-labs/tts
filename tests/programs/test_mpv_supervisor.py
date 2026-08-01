@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 
@@ -30,13 +31,15 @@ _SOCK = Path("/nonexistent/mpv.sock")
 
 @final
 class _FakeProc:
-    """A spawned-process double: alive, killable."""
+    """A spawned-process double: alive, killable, with a stable pid."""
 
-    __slots__ = ("returncode",)
+    __slots__ = ("pid", "returncode")
+    pid: int
     returncode: int | None
 
     def __new__(cls) -> Self:
         self = super().__new__(cls)
+        self.pid = 424242
         self.returncode = None
         return self
 
@@ -123,6 +126,51 @@ async def test_cold_start_that_never_connects_reaches_failed_unavailable(
     assert fault.kind is PlaybackFaultKind.PLAYER_UNAVAILABLE
     assert fault.part_index == 0  # a process-level fault names no part
     assert len(spawns) == sup_mod._MAX_RESTARTS + 1
+    await _cancel(run)
+
+
+async def test_connect_exhaustion_logs_an_error(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A connect that never succeeds must leave a durable trace, symmetric with the
+    # spawn-failure error log, so both bring-up failure modes are greppable.
+    _patch_spawn(monkeypatch, [])
+
+    async def _connect_fail(*_args: object, **_kwargs: object) -> object:
+        msg = "no socket"
+        raise OSError(msg)
+
+    monkeypatch.setattr(asyncio, "open_unix_connection", _connect_fail)
+
+    supervisor = MpvSupervisor(_SOCK, FakeSleeper())
+    with caplog.at_level(logging.ERROR):
+        run = asyncio.create_task(supervisor.run())
+        await _wait_until(lambda: supervisor.state is MpvState.FAILED)
+    assert any("connect failed after" in r.getMessage() for r in caplog.records)
+    await _cancel(run)
+
+
+async def test_unexpected_error_stands_a_fault_and_does_not_hang(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An unexpected error in the supervise loop (a supervisor bug, not a modeled
+    # crash) must be caught: stand a hard PLAYER_FAILED fault so status reports it,
+    # never leave the task dead with wait_ready hanging and no fault set.
+    async def _spawn_boom(*_args: object, **_kwargs: object) -> object:
+        msg = "supervisor bug"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _spawn_boom)
+
+    supervisor = MpvSupervisor(_SOCK, FakeSleeper())
+    run = asyncio.create_task(supervisor.run())
+    await _wait_until(lambda: supervisor.state is MpvState.FAILED)
+
+    fault = supervisor.fault
+    assert fault is not None  # observable via status, not a silent hang
+    assert fault.kind is PlaybackFaultKind.PLAYER_FAILED
+    assert supervisor.is_ready is False
+    assert not run.done()  # parked on the standing fault, not crashed out
     await _cancel(run)
 
 
