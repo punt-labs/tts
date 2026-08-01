@@ -2484,17 +2484,16 @@ pause/resume and part navigation — a stateful-audio change, so it carries its 
 
 Three modes — `idle` / `playing` / `paused`.
 
-- **pause/resume** stops the playback subprocess **gracefully** — a `SIGTERM`
-  that lets `ffplay` close the audio device cleanly — while recording the elapsed
-  position, and resumes by re-spawning the player seeked to that offset (`ffplay
-  -ss`). A paused source has **no running player at all**, so no auto-advance
-  fires while paused (invariant T3). `SIGSTOP` / `SIGCONT` (freezing the process,
-  the first mechanism) was rejected: it underruns the audio device on pause and
-  re-primes it glitchily on resume — audible pops that worsen across cycles.
-  Because a resume must seek, the music player unifies on `ffplay` across macOS
-  and Linux, retiring macOS `afplay` (which cannot seek) for music playback —
-  `ffplay`/`ffmpeg` are already music dependencies, and chime/speech playback keep
-  `afplay`. This retires the macOS-`afplay`-for-music path of DES-030.
+- **pause/resume** — the state machine is mechanism-independent: `paused` holds
+  the cursor and does not auto-advance (invariant T3). The pause *mechanism* took
+  three attempts. `SIGSTOP`/`SIGCONT` (freezing the process) underran the audio
+  device and popped; a graceful `SIGTERM` stop with an `ffplay -ss` reseek on
+  resume still popped on the kill and stuttered on resume (the wall-clock seek
+  overlapped already-buffered audio). Both failed the by-ear gate and were
+  rejected. The **settled mechanism is a persistent `mpv` over JSON IPC
+  (DES-061)** — `set_property pause` freezes the decoder in place, click-free and
+  gapless — which also supersedes the per-part `ffplay`/`afplay` music subprocess
+  of DES-030.
 - **prev/next** move the part cursor within the now-playing album (floored at 1,
   capped at M) without un-suspending.
 - **play is start-or-SWITCH** — the resolved "Fork A": `play(album)` from `idle`
@@ -2511,8 +2510,9 @@ The daemon gains `pause()` / `resume()` / `prev()` alongside `advance()` / `off`
 
 - Seven modeled invariants T1–T7 (single active source; now-playing iff active;
   paused-is-suspended; transition guards; cursor bounds; glyph-reflects-state;
-  catalogued). Extends DES-053's I1–I3 to the `paused` mode; reuses DES-030's
-  subprocess mechanism.
+  catalogued). Extends DES-053's I1–I3 to the `paused` mode; the playback
+  *mechanism* is the persistent mpv player of DES-061 (which retired DES-030's
+  subprocess model).
 
 Design: `docs/vox-music-player-transport.md`; Fork A resolved to SWITCH in commit
 2c5cf57. Commits 860edb4, 925782a, 190f37c (vox-tqo1).
@@ -2672,3 +2672,59 @@ plugin's shared slash-command namespace, which the CLI does not touch.
 |-------------|------------------|
 | Keep `/enable` and `/disable` as top-level commands | Two generic verbs squat the global slash namespace; conflicts with any other plugin and reads as un-namespaced. |
 | Alias the old commands to `/vox` (compat shim) | No installed base to migrate; a shim is complexity for zero reason (forward integration). The retired-command cleanup removes the old files instead. |
+
+## DES-061: Persistent mpv Program Player over JSON IPC — Two-Tier Audio
+
+**Date:** 2026-08-01
+**Status:** SETTLED
+**Topic:** The program audio tier (music now; audiobooks/podcasts later) runs on
+one persistent `mpv` controlled over IPC; mpv is a hard dependency.
+
+### Context
+
+The Phase-3 transport (DES-055) needed a real, click-free pause/resume. Two
+mechanisms failed the by-ear gate: `SIGSTOP`/`SIGCONT` froze the playback process
+(device underrun → pops), and a graceful `SIGTERM` stop with an `ffplay -ss`
+reseek on resume still popped on the kill and stuttered on resume (the wall-clock
+seek overlapped already-buffered audio). Kill-and-respawn fundamentally cannot do
+gapless, click-free pause.
+
+### Decision
+
+Two audio tiers, deliberately:
+
+- **Notifications** (chimes, spoken quips) keep the built-in per-shot players —
+  `afplay` on macOS, `say`/`espeak` on Linux — zero-install, no pause needed.
+- **Programs** (music; audiobooks and podcasts to come) run on ONE persistent
+  `mpv` process, opened once and driven over its `--input-ipc-server` JSON IPC
+  socket: `loadfile` to play a part, `set_property pause` to pause/resume (the
+  decoder freezes in place — gapless, click-free), `stop`, and the `end-file`
+  event to drive auto-advance.
+
+`mpv` is a HARD dependency — no fallback, no `if mpv … else …`. A missing or
+too-old mpv (< 0.35) runs a bounded retry-to-`failed` path and surfaces
+`PLAYER_UNAVAILABLE` on `ProgramStatus.playback_error`; the daemon stays up and
+the independent notification tier keeps working. `install.sh` installs mpv beside
+ffmpeg and `vox doctor` errors on a missing or too-old mpv or ffmpeg. The per-part
+spawn-and-kill ffplay path (DES-030's subprocess mechanism, DES-055's
+graceful-kill+seek) is deleted (forward integration, no shim).
+
+### Consequences
+
+- The mpv process/connection lifecycle (`down`/`starting`/`ready`/`crashed`/
+  `restarting`/`failed`) is a stateful subsystem, so it carries its own
+  `fuzz`-clean, ProB-checked model (`docs/mpv-program-player.tex`), distinct from
+  the unchanged source state machine (DES-055's T1–T7): invariants I1–I7 plus
+  single-`loadfile`-ownership (the loop owns `loadfile`; the supervisor only
+  spawns/restarts). A crash resolves the loop's await and every pending command
+  (no orphaned await); a startup that never connects and a crash loop both
+  terminate at the same `failed`/`PLAYER_UNAVAILABLE` state. An unclean daemon
+  exit's orphaned mpv is reaped by pid on the next start (I2 across restarts).
+- Overlay (a chime over ducked music) is two concurrent OS-level streams —
+  inherent to the two tiers, not debt.
+- Supersedes the pause *mechanism* of DES-055 and the music-subprocess mechanism
+  of DES-030; the DES-055 idle/playing/paused state machine and T1–T7 stand
+  unchanged (mpv is a mechanism swap under the same model).
+
+Design: `docs/mpv-program-player.md`; model: `docs/mpv-program-player.tex`.
+Commits 558ae3f, 9549906 (hardening), 0ecfd6f (install/doctor gate).
