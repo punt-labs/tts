@@ -137,7 +137,7 @@ class ProgramLoop:
         await self._player.await_ready()
         try:
             handle = await self._player.play(target, paused=self._suspension.is_paused)
-        except (ConnectionError, TimeoutError) as exc:
+        except OSError as exc:  # ConnectionError/TimeoutError are OSError subclasses
             await self._back_off_load(target, exc)
             return
         self._health.clear()
