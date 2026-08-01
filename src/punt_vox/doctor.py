@@ -17,6 +17,7 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.dirs import default_output_dir
 from punt_vox.paths import installed_version
+from punt_vox.voxd.programs.mpv import MPV_MIN_VERSION
 
 __all__ = [
     "CheckResult",
@@ -43,15 +44,12 @@ _STATUS_KIND: dict[str, str] = {
 # Required host binaries
 # ---------------------------------------------------------------------------
 
-# PLACEHOLDER pending reconciliation. The authoritative minimum mpv version
-# belongs with the mpv program player (gvr, src/punt_vox/voxd/programs/mpv/),
-# which is not committed yet. Until that constant lands, doctor pins a
-# conservative floor: 0.35.0 is a widely packaged mpv whose JSON IPC command
-# set, ``end-file`` ``reason`` values, and per-file ``pause`` load option match
-# the player's contract (docs/mpv-program-player.md §1). RECONCILE: import
-# gvr's constant once programs/mpv/ exists, and delete this literal.
-_MPV_MIN_VERSION: tuple[int, int, int] = (0, 35, 0)
-_MPV_MIN_STR: str = ".".join(str(part) for part in _MPV_MIN_VERSION)
+# The authoritative minimum mpv version lives with the mpv program player
+# (``MPV_MIN_VERSION`` in ``punt_vox.voxd.programs.mpv``): the IPC command set,
+# the ``end-file`` reason values, and the per-file ``pause`` load option hold
+# only at or above it. ``doctor`` imports that one source of truth and derives
+# the display string from it.
+_MPV_MIN_STR: str = ".".join(str(part) for part in MPV_MIN_VERSION)
 
 # Per-platform remediation hints. ``default`` covers any host not named.
 _FFMPEG_HINTS: dict[str, str] = {
@@ -154,7 +152,7 @@ class DoctorCheck:
         fallback -- notifications keep the built-in ``afplay``/``say``/
         ``espeak``, but program audio needs ``mpv``, and the IPC contract (the
         command set, the ``end-file`` reasons, the per-file ``pause`` option)
-        holds only at or above ``_MPV_MIN_VERSION`` (docs/mpv-program-player.md
+        holds only at or above ``MPV_MIN_VERSION`` (docs/mpv-program-player.md
         §1). A missing OR too-old binary is a hard error that fails
         ``vox doctor``.
         """
@@ -176,7 +174,7 @@ class DoctorCheck:
         return _fail(f"{name}: not found — {hint}")
 
     def _check_mpv_version(self) -> CheckResult:
-        """Gate an installed mpv against ``_MPV_MIN_VERSION``.
+        """Gate an installed mpv against ``MPV_MIN_VERSION``.
 
         A present mpv whose ``--version`` cannot be read, or that is older than
         the pinned minimum the program player's IPC contract needs, is a hard
@@ -190,7 +188,7 @@ class DoctorCheck:
                 f" verify 'mpv --version' is >= {_MPV_MIN_STR}"
             )
         detected = ".".join(str(part) for part in version)
-        if version < _MPV_MIN_VERSION:
+        if version < MPV_MIN_VERSION:
             hint = _MPV_HINTS.get(platform.system(), _MPV_HINTS["default"])
             return _fail(f"mpv {detected}: too old (needs >= {_MPV_MIN_STR}) — {hint}")
         return _pass(f"mpv: present ({detected})")
