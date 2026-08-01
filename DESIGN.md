@@ -2638,3 +2638,37 @@ plugin. Both gaps close in one PR/rollback unit (#375).
   (CLI/MCP surface parity).
 
 Commit 25ec048 (#375, vox-ck3w).
+
+## DES-060: Enablement Lives Under `/vox`, Not as Top-Level Slash Commands
+
+**Status:** accepted. Supersedes the `commands/enable.md` + `commands/disable.md`
+split-out from the enablement design (`docs/vox-enable-disable.md`).
+
+### Context
+
+The enablement feature (DES-051-era, vox-ck3w) shipped `enable` and `disable` as
+their own top-level slash commands, `/enable` and `/disable`. Claude Code
+installs a plugin's commands into a single global namespace, so those two bare
+verbs claimed `/enable` and `/disable` for every session — generic names no
+plugin should own. Every other vox slash verb is already namespaced under
+`/vox` (`/vox model`, `/vox provider`), dispatched by parsing `$ARGUMENTS` in
+`commands/vox.md`.
+
+### Decision
+
+Fold enablement into `/vox` as two more `$ARGUMENTS` subcommands beside `model`
+and `provider`: **`/vox enable`** and **`/vox disable`**. Both call the same
+`mic:enablement` tool (`action="enable"|"disable"`) with the same confirmation
+text the split-out commands used. `commands/enable.md` and `commands/disable.md`
+are deleted (forward integration, no shim), and `hooks/session-start.sh` lists
+them among the retired commands it cleans, so an already-installed plugin drops
+the stale top-level `/enable` / `/disable` on the next session start. The CLI
+verbs `vox enable` / `vox disable` are unchanged — the collision was only on the
+plugin's shared slash-command namespace, which the CLI does not touch.
+
+### Alternatives Considered
+
+| Alternative | Rejected Because |
+|-------------|------------------|
+| Keep `/enable` and `/disable` as top-level commands | Two generic verbs squat the global slash namespace; conflicts with any other plugin and reads as un-namespaced. |
+| Alias the old commands to `/vox` (compat shim) | No installed base to migrate; a shim is complexity for zero reason (forward integration). The retired-command cleanup removes the old files instead. |

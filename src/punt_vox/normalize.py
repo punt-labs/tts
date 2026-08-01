@@ -585,7 +585,7 @@ def normalize_for_speech(text: str) -> str:
 def _normalize_token(token: str) -> str:
     """Normalize a single whitespace-delimited token."""
     # Strip non-speech symbols; only prosody punctuation survives in suffix
-    _prefix, core, suffix = _strip_punctuation(token)
+    core, suffix = _strip_punctuation(token)
 
     if not core:
         # Token was only non-speech symbols — drop it
@@ -670,11 +670,11 @@ def _expand_abbreviation(word: str) -> str:
     return _ABBREVIATIONS.get(word.lower(), word)
 
 
-def _strip_punctuation(token: str) -> tuple[str, str, str]:
-    """Strip leading/trailing punctuation, returning (prefix, core, suffix).
+def _strip_punctuation(token: str) -> tuple[str, str]:
+    """Strip leading/trailing punctuation, returning (core, suffix).
 
-    Leading punctuation is always discarded (prefix is always empty).
-    Leading ``~/._`` are kept in core (file path / identifier prefixes).
+    Leading punctuation is always discarded; leading ``~/._`` are kept in
+    core (file path / identifier prefixes).
     Only prosody-affecting punctuation (``.``, ``,``, ``?``, ``!``, ``:``,
     ``;``, em-dash, en-dash) is preserved in suffix -- all other trailing
     symbols (parentheses, brackets, slashes, etc.) are discarded since
@@ -698,9 +698,9 @@ def _strip_punctuation(token: str) -> tuple[str, str, str]:
         core_end -= 1
     # Only keep prosody-affecting suffix characters; drop the rest
     raw_suffix = token[suffix_start:]
-    suffix = "".join(ch for ch in raw_suffix if ch in _PROSODY_PUNCTUATION)
-    # Leading punctuation is never speech — always discard
-    return "", token[start:core_end], suffix
+    suffix = "".join(filter(_PROSODY_PUNCTUATION.__contains__, raw_suffix))
+    # Leading punctuation is never speech — always discarded above
+    return token[start:core_end], suffix
 
 
 # Punctuation that affects TTS prosody (pauses, intonation) — keep these.

@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **`punt-lux` pinned to the PyPI release `>=0.22.0`** (vox-hnfr), retiring the interim git pin now that lux ships the Hub-side publish handler and the reconnect port re-resolution the Music Player needs.
+- **Enable/disable moved under `/vox` (`/vox enable` | `/vox disable`) to fix a slash-command namespace collision.** Enablement was exposed as top-level `/enable` and `/disable`, which claimed those generic verbs in Claude Code's shared slash-command namespace. They are now two more `$ARGUMENTS` subcommands of `/vox`, beside `/vox model` and `/vox provider`, calling the same `mic:enablement` tool with identical confirmation text. The old `commands/enable.md` / `commands/disable.md` are deleted (no shim), and `hooks/session-start.sh` retires them so an already-installed plugin drops the stale top-level commands on the next session start. The `vox enable` / `vox disable` CLI verbs are unchanged (DES-060).
 
 ## [4.16.0] - 2026-07-28
 
