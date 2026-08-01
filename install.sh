@@ -143,6 +143,20 @@ fi
 # tool -- Homebrew on macOS, the system package manager on Linux -- and fail
 # the install if it cannot be made present, so a box always satisfies
 # `vox doctor`.
+#
+# Presence alone is not enough: the IPC contract (the command set, the
+# `end-file` reasons, the per-file `pause` load option) holds only at or above
+# MPV_MIN_VERSION, and `vox doctor` (doctor.py `_check_mpv_version`) fails an
+# older mpv. An older distro (e.g. Ubuntu/Debian LTS) can ship mpv < 0.35, so
+# checking `command -v mpv` alone would report install success on a box that
+# then FAILS `vox doctor` with "too old" and cannot play program audio. Gate
+# the version here at the same hard tier as presence.
+#
+# CANONICAL MINIMUM: the single source of truth is MPV_MIN_VERSION in
+# src/punt_vox/voxd/programs/mpv/mpv_supervisor.py. This gate runs BEFORE the
+# punt-vox package is installed (Step 4), so it cannot import that tuple; the
+# value is mirrored here by hand -- bump both together.
+MPV_MIN_VERSION="0.35.0"
 
 # Runs inside an `if` condition, so `set -e` is suspended: a failed package
 # manager returns non-zero to the caller instead of aborting the script.
@@ -166,6 +180,43 @@ _install_mpv() {
   esac
 }
 
+# Echo the "<major>.<minor>.<patch>" token from `mpv --version` (patch
+# defaulting to 0), or nothing when no version token is present. Mirrors
+# doctor.py `_parse_mpv_version`: mpv prints `mpv <major>.<minor>.<patch>
+# Copyright ...` on line one, with some builds prefixing `v` or appending
+# `-git-<hash>` (regex there: \bmpv\s+v?(\d+)\.(\d+)(?:\.(\d+))?).
+_mpv_detected_version() {
+  mpv --version 2>/dev/null | awk '
+    match($0, /(^|[^A-Za-z0-9])mpv[ \t]+v?[0-9]+\.[0-9]+(\.[0-9]+)?/) {
+      token = substr($0, RSTART, RLENGTH)
+      sub(/^.*mpv[ \t]+v?/, "", token)
+      n = split(token, part, ".")
+      printf "%d.%d.%d\n", part[1], part[2], (n >= 3 ? part[3] : 0)
+      exit
+    }'
+}
+
+# Encode a dotted "major.minor.patch" (always three parts here) as a single
+# comparable integer so a plain `-lt` orders versions correctly.
+_mpv_version_key() {
+  _vk="$1"
+  _vk_major="${_vk%%.*}"
+  _vk_rest="${_vk#*.}"
+  _vk_minor="${_vk_rest%%.*}"
+  _vk_patch="${_vk_rest#*.}"
+  printf '%d\n' "$(( _vk_major * 1000000 + _vk_minor * 1000 + _vk_patch ))"
+}
+
+# Per-platform upgrade hint for a too-old mpv, naming the same channels
+# doctor.py `_MPV_HINTS` uses, phrased as an upgrade.
+_mpv_upgrade_hint() {
+  case "$(uname -s)" in
+    Darwin) printf 'brew upgrade mpv' ;;
+    Linux)  printf 'upgrade via your package manager (apt/dnf/pacman); an older LTS may need a backports/PPA build' ;;
+    *)      printf 'see https://mpv.io/installation/' ;;
+  esac
+}
+
 info "Checking mpv (program audio player)..."
 if command -v mpv >/dev/null 2>&1; then
   ok "mpv found"
@@ -176,6 +227,17 @@ else
   else
     fail "Could not install mpv. Install it manually (macOS: brew install mpv; Linux: apt/dnf/pacman install mpv), then re-run. mpv is required for program audio."
   fi
+fi
+
+# Version gate -- runs for both an already-present and a just-installed mpv, so
+# neither path can pass the installer while failing `vox doctor`.
+_mpv_detected="$(_mpv_detected_version)"
+if [ -z "$_mpv_detected" ]; then
+  fail "mpv is present but 'mpv --version' is unreadable. Verify it reports a version >= $MPV_MIN_VERSION, then re-run. mpv is required for program audio."
+elif [ "$(_mpv_version_key "$_mpv_detected")" -lt "$(_mpv_version_key "$MPV_MIN_VERSION")" ]; then
+  fail "mpv $_mpv_detected is too old — program audio needs >= $MPV_MIN_VERSION. Upgrade it ($(_mpv_upgrade_hint)), then re-run. mpv is required for program audio."
+else
+  ok "mpv $_mpv_detected (>= $MPV_MIN_VERSION)"
 fi
 
 # --- Step 4: Install vox CLI ---

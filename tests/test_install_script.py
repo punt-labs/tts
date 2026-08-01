@@ -39,7 +39,24 @@ _STUBS: dict[str, str] = {
         "exit 0\n"
     ),
     "git": '#!/bin/sh\nprintf "git %s\\n" "$*" >> "$VOX_TEST_LOG"\nexit 0\n',
-    "mpv": '#!/bin/sh\nprintf "mpv %s\\n" "$*" >> "$VOX_TEST_LOG"\nexit 0\n',
+    # `mpv --version` must echo a parseable version line so install.sh's version
+    # gate (mirroring doctor.py `_check_mpv_version`) can read it. The reported
+    # version comes from MPV_FAKE_VERSION (set by the sandbox); an empty value
+    # simulates a build whose `--version` carries no version token (unreadable).
+    "mpv": (
+        "#!/bin/sh\n"
+        'printf "mpv %s\\n" "$*" >> "$VOX_TEST_LOG"\n'
+        'case "$*" in\n'
+        "  *--version*)\n"
+        '    if [ -n "${MPV_FAKE_VERSION-}" ]; then\n'
+        '      echo "mpv ${MPV_FAKE_VERSION} Copyright (c) test build"\n'
+        "    else\n"
+        '      echo "mpv (unknown build)"\n'
+        "    fi\n"
+        "    ;;\n"
+        "esac\n"
+        "exit 0\n"
+    ),
     "ssh": (
         "#!/bin/sh\n"
         'printf "ssh %s\\n" "$*" >> "$VOX_TEST_LOG"\n'
@@ -89,12 +106,21 @@ class InstallSandbox:
             path.write_text(body, encoding="utf-8")
             path.chmod(0o755)
 
-    def run(self, *args: str, no_plugin_env: str | None = None) -> InstallRun:
+    def run(
+        self,
+        *args: str,
+        no_plugin_env: str | None = None,
+        mpv_version: str = "0.38.0",
+    ) -> InstallRun:
         """Run ``install.sh`` with ``args`` under the sandbox, return the result.
 
         ``no_plugin_env`` sets ``VOX_NO_PLUGIN`` to the given value; ``None``
-        leaves it unset. Only the stub ``bin`` is on ``PATH`` besides the base
-        system dirs, and ``XDG_DATA_HOME`` points at an empty temp tree so the
+        leaves it unset. ``mpv_version`` is the version the stub ``mpv``
+        reports from ``--version`` (default a value well above the pinned
+        minimum so the version gate passes); an empty string makes the stub
+        emit a build line with no version token, exercising the unreadable
+        path. Only the stub ``bin`` is on ``PATH`` besides the base system
+        dirs, and ``XDG_DATA_HOME`` points at an empty temp tree so the
         root-owned-``__pycache__`` cleanup (which would ``sudo``) never fires.
         """
         if self._log.exists():
@@ -104,6 +130,7 @@ class InstallSandbox:
             "HOME": str(self._work),
             "XDG_DATA_HOME": str(self._xdg),
             "VOX_TEST_LOG": str(self._log),
+            "MPV_FAKE_VERSION": mpv_version,
             "TERM": "dumb",
         }
         if no_plugin_env is not None:
@@ -183,6 +210,49 @@ class TestNoPluginEnv:
         result = sandbox.run(no_plugin_env="true")
         assert result.returncode == 0, result.stderr
         assert result.ran("claude plugin install vox@punt-labs")
+
+
+class TestMpvVersionGate:
+    """The mpv gate enforces MPV_MIN_VERSION, not mere presence.
+
+    ``vox doctor`` (doctor.py ``_check_mpv_version``) fails an mpv older than
+    the pinned ``MPV_MIN_VERSION`` (0.35.0). The installer must fail at the
+    same tier so a box that passes install also passes doctor -- otherwise a
+    distro shipping an older mpv installs "successfully" then cannot play
+    program audio. The gate runs BEFORE the package install (Step 4), so a
+    too-old or unreadable mpv stops the install before ``uv tool install``.
+    """
+
+    def test_new_enough_mpv_passes_and_installs(self, sandbox: InstallSandbox) -> None:
+        result = sandbox.run(mpv_version="0.38.0")
+        assert result.returncode == 0, result.stderr
+        assert result.ran("uv tool install")
+
+    def test_exact_minimum_mpv_passes(self, sandbox: InstallSandbox) -> None:
+        # 0.35.0 is the pinned floor; equal must pass (>=, not >).
+        result = sandbox.run(mpv_version="0.35.0")
+        assert result.returncode == 0, result.stderr
+        assert result.ran("uv tool install")
+
+    def test_too_old_mpv_fails_loudly_before_install(
+        self, sandbox: InstallSandbox
+    ) -> None:
+        result = sandbox.run(mpv_version="0.34.0")
+        assert result.returncode == 1
+        assert "too old" in result.stdout
+        assert "0.35.0" in result.stdout
+        # Hard-tier failure: it stops before the package install (Step 4).
+        assert not result.ran("uv tool install")
+
+    def test_unreadable_mpv_version_fails_before_install(
+        self, sandbox: InstallSandbox
+    ) -> None:
+        # An mpv whose --version carries no version token is a hard failure,
+        # not a silent pass.
+        result = sandbox.run(mpv_version="")
+        assert result.returncode == 1
+        assert "unreadable" in result.stdout
+        assert not result.ran("uv tool install")
 
 
 class TestArgumentErrors:
