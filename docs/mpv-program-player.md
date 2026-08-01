@@ -64,11 +64,13 @@ no fallback" ruling realised without taking down notifications.
 
 ### Who owns it
 
-A new `MpvSupervisor` owns the process-and-connection lifecycle across restarts;
-a new `MpvClient` owns one live connection (process handle + socket + reader
-task + request correlation). `ProgramService` composes the supervisor (wired in
-`ProgramSubsystem`, `programs/wiring.py`) and hands the derived
-`MpvProgramPlayer` to the `ProgramLoop`, replacing the injected
+A new `MpvSupervisor` owns the process-and-connection lifecycle across restarts —
+spawn, connect, crash-detect, restart — and **nothing about what plays**. It
+never issues `loadfile`; that is the loop's alone (the single-loadfile-ownership
+invariant, §6). A new `MpvClient` owns one live connection (process handle +
+socket + reader task + request correlation). `ProgramService` composes the
+supervisor (wired in `ProgramSubsystem`, `programs/wiring.py`) and hands the
+derived `MpvProgramPlayer` to the `ProgramLoop`, replacing the injected
 `SubprocessPlayer`.
 
 ### Teardown on daemon shutdown
@@ -80,27 +82,48 @@ today's `SubprocessHandle.terminate`), close the socket, and cancel the reader
 task. Shutdown runs outside the event loop's normal flow, so the fallback kill is
 synchronous, exactly as `PlaybackSuspension.shutdown` is today.
 
-### If mpv CRASHES mid-playback — restart, reload current part from start
+### If mpv CRASHES mid-playback — the supervisor restarts the process; the loop replays the current part
 
 Detection: the reader task sees socket EOF (`readline()` returns `b""`), or the
 process `returncode` is set. Either is a crash signal to the supervisor.
 
-Recommendation: **restart-and-reload-current-part-from-start**, not
-surface-an-error-only.
+**The supervisor restarts the *process*; the loop owns every `loadfile`.** This
+is a settled division of labour (peer-reviewed, gvr + kpz). The supervisor's job
+is spawn / connect / crash-detect / restart of the mpv process — nothing more. It
+never issues `loadfile`. Restoring playback after a crash belongs to the loop,
+which already owns the play-a-part decision and holds the cursor. Splitting it
+the other way — the supervisor reloading — is what the earlier draft did, and it
+allowed a crash→recover transition nothing listened to: a double-load (the
+supervisor's reload racing the loop's next `loadfile`) and a loop wedged forever
+on an ended-future that a crash never resolves.
 
-- The supervisor records a standing `PLAYER_CRASH` fault (client-observable),
-  respawns mpv, reconnects the socket, and reloads the daemon's *current* part —
-  from **offset 0**, not mid-track.
-- Reloading from the start is deliberate. mpv's crash loses its internal
-  position, and recovering it would require continuously polling
-  `get_property time-pos` — which reintroduces exactly the wall-clock
-  position-tracking this design deletes (§3). A crash is rare and exceptional;
-  restarting the current part from the top is acceptable and observable.
-- A **bounded backoff** between restarts (reuse the existing
-  `_SPAWN_BACKOFF_SECONDS = 2.0` idiom) and a **restart cap** within a window:
-  if mpv crashes repeatedly, stop restarting, enter a `PLAYER_FAILED` standing
-  fault, and surface it. This prevents a hot respawn loop, mirroring the loop's
-  existing spawn-backoff + `PlaybackHealth` pattern.
+The sequence:
+
+1. **Reader detects the crash and unblocks everyone.** On socket EOF the reader
+   resolves the loop's in-flight ended-future with a **non-advancing reason,
+   `crashed`**, and fails every other pending command future (§2). A crash emits
+   no `end-file`, so without this the loop's `await` would never return. The
+   reader also signals the supervisor.
+2. **The supervisor restarts the process.** It records a standing `PLAYER_CRASH`
+   fault (client-observable), respawns mpv, and reconnects the socket — reaching
+   `ready` again — with a **bounded backoff** (reuse the existing
+   `_SPAWN_BACKOFF_SECONDS = 2.0` idiom) and a **restart cap** within a window. If
+   mpv crashes repeatedly, it stops restarting, enters a `PLAYER_FAILED` standing
+   fault, and surfaces it. This prevents a hot respawn loop, mirroring the loop's
+   existing spawn-backoff + `PlaybackHealth` pattern.
+3. **The loop replays the current part.** Seeing the `crashed` reason (a
+   non-advancing outcome — the cursor does not move), the loop waits for mpv to
+   reach `ready` again (§3, the `WaitReady` step) and re-plays the **current**
+   part — cursor unmoved — from **offset 0**. The reload honours the paused flag:
+   if `is_paused`, the loop reloads with `pause=yes`, so a crash while paused does
+   not silently start playing while status still reports paused.
+
+Reloading from offset 0, not the exact pre-crash position, is deliberate and
+settled. mpv's crash loses its internal position, and recovering it would require
+continuously polling `get_property time-pos` — which reintroduces exactly the
+wall-clock position-tracking this design deletes (§3). A crash is rare and
+exceptional; restarting the current part from the top is acceptable and
+observable.
 
 ### Startup flags
 
@@ -125,6 +148,14 @@ mpv --idle=yes \
 - `--gapless-audio=yes` — mpv default; stated for intent.
 - `--terminal=no --msg-level=all=warn` — quiet, non-interactive.
 
+**Pin the mpv version.** The IPC command names, the `end-file` `reason` values,
+and the per-file `pause` load option are the contract this design rests on. Record
+a minimum-supported mpv version, verify it in `doctor`, and treat the hard
+dependency (fixed rulings) as a *versioned* one — a too-old mpv is a
+client-observable `PLAYER_UNAVAILABLE`-class fault, not a silent behavioural
+drift. The exact minimum is an implementation-mission detail; the requirement to
+pin one is settled here.
+
 ---
 
 ## 2. The IPC protocol layer
@@ -139,7 +170,7 @@ and events are newline-delimited JSON.
 
 | Command | JSON | Purpose |
 |---------|------|---------|
-| loadfile | `{"command": ["loadfile", <path>, "replace"], "request_id": N}` | Play a part (§3). A per-file `{"pause": "yes"}` option loads it paused for prev/next-while-paused (Fork B). |
+| loadfile | `{"command": ["loadfile", <path>, "replace"], "request_id": N}` | Play a part (§3), issued **only by the loop**. A per-file `{"pause": "yes"}` option loads it paused for prev/next-while-paused and for a post-crash reload while paused (Fork B). The response confirms the file was *queued*, not that it is *playable* — a bad or corrupt file is accepted here and surfaces later as an `end-file` reason `error`. |
 | pause | `{"command": ["set_property", "pause", true], "request_id": N}` | Click-free suspend — the whole point. |
 | resume | `{"command": ["set_property", "pause", false], "request_id": N}` | Click-free continue. |
 | stop | `{"command": ["stop"], "request_id": N}` | Unload the current file, return mpv to idle (off / interrupt teardown). Emits `end-file` reason `stop`. |
@@ -155,9 +186,24 @@ A monotonic `request_id` counter and a `dict[int, asyncio.Future]`. The command
 coroutine registers a future, writes the framed command, and awaits the future
 **with a timeout** (a wedged-but-alive mpv must surface as a fault, never hang
 the loop). The reader task resolves the future when a response bearing that
-`request_id` arrives. `MpvClient` serialises its own writes (one send lock or an
-internal send queue), because three callers write concurrently: the loop
-(`loadfile`), the suspension (`pause`/`resume`), and shutdown (`quit`).
+`request_id` arrives.
+
+**On socket EOF the reader fails *every* pending command future**, not only the
+loop's ended-future. Without this, an in-flight `pause`/`resume`/`quit` sent just
+before the crash would hang for its full timeout before surfacing — dead time for
+no reason. The reader drains the pending-future map, resolving each with a
+crash/connection-lost error, then signals the supervisor. This and resolving the
+ended-future with reason `crashed` (§1) are the two halves of one guarantee: a
+crash leaves no await orphaned (the I7 loop-liveness invariant, §6).
+
+`MpvClient` serialises its own writes (one send lock or an internal send queue),
+because three callers write concurrently: the loop (`loadfile`), the suspension
+(`pause`/`resume`), and shutdown (`quit`). This runs on **one asyncio event loop
+in one thread** — the send lock is about *explicitness of interleaving at `await`
+points*, not a defence against parallel OS threads. There are no data races here;
+there are only interleavings, and the lock makes a framed command an
+uninterruptible unit so two callers cannot splice half-written JSON onto the
+wire.
 
 ### The async event stream
 
@@ -171,13 +217,21 @@ its `reason`:
 
 | `reason` | Meaning | Loop action |
 |----------|---------|-------------|
-| `eof` | natural end of the loaded part | advance (post `Rotate`) — this is Z `AutoAdvance` |
+| `eof` | natural end of the loaded part | advance (post `Rotate`) — this is Z `AutoAdvance`, still guarded by the explicit `is_paused` check (§3) |
 | `stop` / `redirect` / `quit` | deliberate teardown or replace | do NOT advance |
 | `error` | bad/corrupt file | record a per-part fault (F3), advance past it |
+| `crashed` (synthetic) | process died; **not** an mpv event | do NOT advance; wait for `ready`, re-play the current part (§1) |
 
-This is the exact analog of today's `TrackEnd`: `eof` ↔ clean exit code 0,
-`error` ↔ non-zero exit, `stop`/`redirect` ↔ user-interrupt. `TrackEnd` is
-re-expressed over an `EndFileReason` enum instead of a process exit code.
+The first four are mpv's own `end-file` reasons. `crashed` is **not** an mpv
+event — there is no `end-file` on a crash. It is a synthetic reason the reader
+injects into the loop's ended-future on socket EOF (§1, §2), so the one channel
+the loop awaits carries every way a part can end, including a crash. `EndFileReason`
+is the enum; the reader is the only producer of the synthetic member.
+
+The four real reasons are the exact analog of today's `TrackEnd`: `eof` ↔ clean
+exit code 0, `error` ↔ non-zero exit, `stop`/`redirect` ↔ user-interrupt.
+`TrackEnd` is re-expressed over an `EndFileReason` enum instead of a process exit
+code.
 
 ### Connect and reconnect
 
@@ -198,12 +252,28 @@ lux receive leg are all unchanged.
 ### The loop: `spawn → proc.wait()` becomes `loadfile → await end-file`
 
 `ProgramLoop._play(target)` today spawns a process and awaits `proc.wait()`.
-It becomes: `loadfile target` (paused per the suspension flag — see prev/next),
-then await the load's **ended-future**, which the reader resolves when an
-`end-file` event arrives for the current load. `InterruptRace` is reused almost
+It becomes: **wait for mpv `ready`**, then `loadfile target` (paused per the
+suspension flag — see prev/next), then await the load's **ended-future**, which
+the reader resolves when an `end-file` event arrives for the current load — or,
+on a crash, with the synthetic `crashed` reason. `InterruptRace` is reused almost
 verbatim: it still races an ended-future against the `interrupt` Event; only the
 future's source changes (an mpv event, not `proc.wait()`). `_finish` reads the
 `EndFileReason` instead of an exit code.
+
+**The `WaitReady` step is a real wait, not a busy-retry.** Deleting the
+suspension gate (below) removes the loop's only blocking point; the mpv-`ready`
+gate replaces it. Before any `loadfile` — at startup, and after each crash — the
+loop *awaits* mpv reaching `ready` (an event the supervisor sets on connect),
+rather than issuing `loadfile` into a not-ready client and getting refused into a
+fault, then spinning to retry. A refuse-into-fault busy-retry would be a
+throughput sink and would clutter status with transient faults for the normal
+startup and post-crash windows. `WaitReady` is a single explicit `await`; the
+loop parks there exactly as long as mpv takes to come up, and no longer.
+
+**On the `crashed` reason** the loop does not advance the cursor. It returns to
+`WaitReady`, then replays the **current** part — honouring `is_paused` (reload
+with `pause=yes` when paused) — as §1 describes. This is the loop half of
+crash recovery; the supervisor half is process restart only.
 
 `_wait_for_playable` (pool empty in `generating-first`) is unchanged: mpv sits
 idle with no file; the loop blocks on `channel.changed` until a part is
@@ -214,7 +284,7 @@ playable.
 | Operation | Today | With mpv |
 |-----------|-------|----------|
 | **play / switch** (`PlayAlbum`, `SwitchProgram`, `SwitchSelection`) | control signal moves source, interrupts loop, loop spawns part 1 | same signal + interrupt; loop `loadfile` part 1 (playing); suspension reset drops any pause. **T1** holds — one mpv, one loaded file. |
-| **auto-advance** (`AutoAdvance` → `Rotate`) | `proc.wait()` returns 0, loop posts `Rotate`, spawns next | `end-file` reason `eof`, loop posts `Rotate`, `loadfile` next. **T3** holds: a paused mpv emits no `eof`, so `Rotate` cannot fire while paused. |
+| **auto-advance** (`AutoAdvance` → `Rotate`) | `proc.wait()` returns 0, loop posts `Rotate`, spawns next | `end-file` reason `eof`, loop checks `is_paused`, then posts `Rotate`, `loadfile` next. **T3** holds *with* the explicit `is_paused` guard (§3, kept from loop.py:159): an `eof` mpv buffered just before the user paused must not advance-then-load under "paused." |
 | **pause** (`Pause`) | tear player down (SIGTERM), record wall-clock `ResumePoint` | `set_property pause true`; set paused flag; emit change. mpv freezes gapless. Loop is unaffected — still awaiting an `eof` that will not come. |
 | **resume** (`Resume`) | re-spawn player seeked to the frozen offset | `set_property pause false`; clear paused flag; emit change. mpv continues from the exact decoder position — click-free, no reload, no seek. |
 | **prev / next** (`Prev`, `Next`) | move cursor, interrupt loop, loop re-spawns seeked-or-fresh | move cursor, interrupt loop; loop `loadfile` the new part, **with `pause=yes` when the suspension flag is set** (Fork B — stays paused, new part from offset 0). |
@@ -227,9 +297,15 @@ not touch:
 
 - **T1** (single active source): one mpv, at most one loaded file.
 - **T2** (now-playing iff active): the cursor lives in `Program`/`SelectionPlayback`, unchanged.
-- **T3** (paused is suspended): guaranteed *for free* — a paused mpv reaches no
-  `eof`, so `AutoAdvance`/`Rotate` cannot fire. Today this needs an explicit loop
-  gate; mpv makes it intrinsic.
+- **T3** (paused is suspended): *cheaper* under mpv but **not fully intrinsic**,
+  and the explicit `is_paused` guard at the advance decision stays (as loop.py:159
+  does today). A paused mpv reaches no *new* `eof`, so the steady state costs no
+  gate-parking — but mpv can buffer and emit an `eof` for the current part in the
+  instant just before the user pauses; that in-flight `eof` must not
+  advance-then-load while the mode reads `paused`. The guard, not the absence of
+  events, is what makes T3 hold. What mpv *does* let us delete is the **wall-clock
+  gate mechanism** — the `wait_resumed` park that used to hold the loop for the
+  whole pause. We delete that gate; we keep the one-line T3 check.
 - **T4** (transition guards): unchanged — the guards are on the control signals,
   not the player.
 - **T5** (cursor bounds): source-level, unchanged.
@@ -250,9 +326,15 @@ wall-clock machinery goes:
   (switch/off) clears the flag; the loop's `stop`/new `loadfile` handles the mpv
   side.
 
-The loop reads `suspension.is_paused` at `loadfile` time only, to decide whether
-a prev/next reload loads paused (Fork B). The gate that parked the loop is gone —
-mpv's internal pause *is* the suspension.
+The loop reads `suspension.is_paused` at two points: at the **advance decision**,
+as the T3 guard against an in-flight `eof` advancing under "paused" (§3); and at
+**`loadfile` time**, to decide whether a reload loads paused (Fork B) — for a
+prev/next while paused, and for a post-crash reload while paused (reload with
+`pause=yes` so a crash while paused does not silently resume playing). The
+wall-clock gate that parked the loop for the whole pause is gone — mpv's internal
+pause holds the audio; the loop no longer blocks on a resume gate. What replaces
+that gate as the loop's blocking point is the mpv-`ready` gate (`WaitReady`),
+not a pause gate.
 
 ### Composition with the single-writer and the lux receive leg
 
@@ -266,14 +348,23 @@ mpv's internal pause *is* the suspension.
   client (started on connect, cancelled on crash/shutdown), not one of the
   lifespan's explicit tasks — keeping the daemon's task list stable.
 
-### One concurrency question (open — see §8)
+### Concurrency: pause/resume stay direct (settled)
 
 `service.pause()`/`resume()` are today *direct* calls, not routed through the
-`ControlChannel`. With mpv they become IPC calls that can race an `eof`-driven
-`Rotate`. The race is benign (pause lands on part N or, if `eof` won first, on
-the freshly-loaded N+1), and `MpvClient` serialises its own sends regardless.
-The recommendation is to keep pause/resume as direct calls; routing them through
-the channel is the alternative. Flagged for a ruling in §8.
+`ControlChannel`, and they **stay direct** (peer-reviewed, gvr + kpz — §8). With
+mpv they become IPC calls that can interleave with an `eof`-driven `Rotate`. The
+outcome is benign — pause lands on part N or, if the `eof` was processed first,
+on the freshly-loaded N+1 — and pause/resume mutate **no source state** (they
+flip mpv's internal pause and the one `is_paused` flag; they do not move the
+cursor), so there is nothing for the single-writer to serialise. Routing them
+through the channel would be model-literal but would make pause touch the player
+from the writer path as well as the loop, for no invariant gained.
+
+This is safe because the daemon runs on **one asyncio event loop in one thread**.
+"Race" here means an interleaving at `await` points, not two OS threads touching
+shared memory — there are no data races to guard. `MpvClient`'s send lock keeps
+each framed command an uninterruptible unit on the wire (§2); it is explicitness
+about interleaving, not a thread mutex.
 
 ---
 
@@ -291,8 +382,8 @@ Extend `PlaybackFaultKind` (`types_programs/playback_fault.py`) with mpv kinds:
 |-----------|-----------|-------------|
 | mpv missing at startup | spawn raises `FileNotFoundError` | standing `PLAYER_UNAVAILABLE` fault; daemon stays up (notifications unaffected); every program command reflects it |
 | mpv missing at first program | (does not occur — eager spawn) collapses to the startup case | `PLAYER_UNAVAILABLE` |
-| mpv crash mid-playback | socket EOF / process exit | `PLAYER_CRASH`; restart + reload from start (§1); `PLAYER_FAILED` if the restart cap is hit |
-| IPC write failure (`BrokenPipeError` on send) | send raises | treated as a crash signal → restart path |
+| mpv crash mid-playback | socket EOF / process exit | `PLAYER_CRASH`; reader resolves the loop's ended-future with `crashed` and fails every pending future (§2); supervisor restarts the process; loop replays the current part from start honouring `is_paused` (§1); `PLAYER_FAILED` if the restart cap is hit |
+| IPC write failure (`BrokenPipeError` on send) | send raises | treated as a crash signal → the same restart path (reader will also see EOF) |
 | IPC read failure / wedged mpv | command future times out | fault + backoff; the loop treats a timed-out `loadfile` like today's spawn failure (record fault, back off), never a silent hang |
 | bad/corrupt part file | `end-file` reason `error` | per-part fault (F3), advance past it — the existing `failed_parts` surface |
 
@@ -353,7 +444,9 @@ MpvState ::= down | starting | ready | crashed | restarting | failed
 - `down` — no process (before spawn, after shutdown).
 - `starting` — process spawned, socket not yet connected.
 - `ready` — process alive, socket connected, commands accepted.
-- `crashed` — process/socket died, a restart is owed.
+- `crashed` — process/socket died; on entry the reader resolves every pending
+  command future and the loop's ended-future (reason `crashed`), then a restart is
+  owed.
 - `restarting` — respawning within the cap.
 - `failed` — restart cap exceeded; given up; standing hard fault.
 
@@ -361,26 +454,39 @@ MpvState ::= down | starting | ready | crashed | restarting | failed
 
 ```
 MpvLifecycle
-  state     : MpvState
-  processes : 0 .. 1          -- live mpv processes
-  readers   : 0 .. 1          -- live reader tasks
-  restarts  : 0 .. maxRestarts
-  fault     : ZBOOL           -- a standing client-observable fault
+  state       : MpvState
+  processes   : 0 .. 1          -- live mpv processes
+  readers     : 0 .. 1          -- live reader tasks
+  restarts    : 0 .. maxRestarts
+  fault       : ZBOOL           -- a standing client-observable fault
+  pendingCmds : 0 .. maxInFlight  -- unresolved command futures (request_id map)
+  loopAwait   : ZBOOL           -- the loop is awaiting an ended-future
+  loadfileBy  : ℙ ACTOR         -- actors that have issued loadfile
   ----------------------------------------------------------------
-  (state = ready  ⟺ processes = 1 ∧ readers = 1)   -- I1: ready ⟺ connected
+  (state = ready  ⟺ processes = 1 ∧ readers = 1)   -- I1a: ready ⟺ connected
   (state ∈ {down, failed} ⟹ processes = 0 ∧ readers = 0)
   processes ≤ 1                                     -- I2: never double-spawn
   readers   ≤ 1                                     -- I5: one reader
   (fault = ztrue ⟺ state ∈ {crashed, restarting, failed})  -- I3
   restarts ≤ maxRestarts                            -- I4
   (state = failed ⟹ restarts = maxRestarts)
+  (state ∈ {crashed, down, failed} ⟹ pendingCmds = 0)  -- I7: no orphaned futures
+  loadfileBy ⊆ {loop}                              -- single-loadfile-ownership
 ```
 
 ### Invariants to prove
 
-- **I1 — commands only when ready.** A `loadfile`/`pause`/`stop` is enabled only
-  in `ready`; issued in any other state it is refused into a fault, never
-  silently dropped.
+These are the invariants **jms will formalize** in `docs/mpv-program-player.tex`.
+The first six were in the earlier draft; I7 and single-loadfile-ownership are
+kpz's additions, and I1 and I6 are tightened per the peer review.
+
+- **I1 — the loop waits for ready, it does not send into not-ready.** A
+  `loadfile` is issued only in `ready`, and the loop reaches that point by
+  *awaiting* the `ready` transition (`WaitReady`), never by issuing into a
+  not-ready client and being refused into a fault, then busy-retrying. The model
+  proves no `loadfile` is enabled outside `ready` **and** that the loop's path to
+  a `loadfile` is a wait on `ready`, not a refuse-and-retry cycle. (`pause`/`stop`
+  likewise require `ready`.)
 - **I2 — at most one process.** No restart race spawns a second mpv.
 - **I3 — fault ⟺ not ready.** A client sees a standing fault in exactly the
   non-ready states.
@@ -388,23 +494,48 @@ MpvLifecycle
   reaching the cap ⟹ `failed` with no further spawn (no hot loop).
 - **I5 — one reader.** The reader is alive iff `ready`; started on connect,
   cancelled on crash/shutdown.
-- **I6 — the process lifecycle does not corrupt source state.** A crash/restart
-  leaves the daemon cursor untouched; reload targets the same current part.
+- **I6 — the process lifecycle does not corrupt source state, and recovery
+  honours pause.** A crash/restart leaves the daemon cursor untouched; the reload
+  targets the same current part from offset 0; and the reload **honours the
+  paused flag** — reloaded with `pause=yes` when `is_paused`, so recovery never
+  silently resumes playing. Recovery reaches `loadfile` through the explicit
+  `WaitReady` transition, never a busy-retry.
+- **I7 — loop-liveness-across-crash (no orphaned await).** A crash resolves
+  *every* pending command future **and** the loop's in-flight ended-future (the
+  latter with the synthetic `crashed` reason). No `await` in the loop or in any
+  command coroutine is left hanging by a crash; `pendingCmds` returns to 0 and
+  `loopAwait` is resolved on the `CrashDetected` transition. This is the
+  invariant that the earlier draft's supervisor-reloads split violated — a crash
+  left the loop awaiting an ended-future no `end-file` would ever resolve.
+- **single-loadfile-ownership.** Only the loop issues `loadfile`
+  (`loadfileBy ⊆ {loop}`). The supervisor spawns, connects, detects crashes, and
+  restarts the *process*; it never loads a file. This forecloses the double-load
+  the supervisor-reloads split allowed (supervisor reload racing the loop's next
+  `loadfile`).
 
 ### Transitions to model
 
-`Spawn` (down→starting), `Connect` (starting→ready), `SendWhenReady`,
-`CrashDetected` (ready→crashed), `Restart` (crashed→starting if
-`restarts < maxRestarts` else crashed→failed), `Shutdown` (any→down via quit).
+`Spawn` (down→starting), `Connect` (starting→ready), `WaitReady` (the loop's
+await-then-`loadfile` step, enabled on entry to `ready`), `SendWhenReady`,
+`CrashDetected` (ready→crashed — resolves every pending future and the loop's
+ended-future with `crashed`, per I7), `Restart` (crashed→starting if
+`restarts < maxRestarts` else crashed→failed), `ReplayCurrent` (the loop's
+post-crash reload of the current part, honouring `is_paused`, per I6),
+`Shutdown` (any→down via quit).
 
 ### What ProB should exhaust
 
-No reachable state sends a command while not `ready` (I1); the restart cap
-terminates (no infinite respawn, I4); `crashed` always leads to `ready` again or
-`failed` (no wedge); at most one process and one reader throughout (I2, I5).
+No reachable state issues a `loadfile`/`pause`/`stop` while not `ready`, and the
+loop reaches `loadfile` by waiting on `ready` rather than refuse-and-retry (I1);
+the restart cap terminates (no infinite respawn, I4); `crashed` always leads to
+`ready` again or `failed` (no wedge); no crash leaves a pending future or the
+loop's ended-future unresolved (I7); only the loop issues `loadfile`
+(single-loadfile-ownership); at most one process and one reader throughout (I2,
+I5); a post-crash reload honours the paused flag (I6).
 
-The `.tex` is a design-mission deliverable; implementation does not dispatch
-until it is `fuzz`-clean and its findings are resolved.
+The `.tex` is a design-mission deliverable, authored by jms; implementation does
+not dispatch until it is `fuzz`-clean, ProB-model-checked, and its findings are
+resolved.
 
 ---
 
@@ -414,10 +545,10 @@ until it is `fuzz`-clean and its findings are resolved.
 
 | Module | Responsibility |
 |--------|---------------|
-| `programs/mpv/mpv_client.py` | `MpvClient` — one live connection: process handle, socket, reader task, request/response correlation, self-serialised sends. `send(command) -> response`, an event subscription, `is_ready`. |
-| `programs/mpv/mpv_supervisor.py` | `MpvSupervisor` — spawn / connect / crash-detect / restart-with-backoff-and-cap across connections; owns the standing mpv fault surface. |
-| `programs/mpv/mpv_program_player.py` | `MpvProgramPlayer` — the loop-facing player: `play(part) -> handle` (`loadfile` + an ended-future resolved by `end-file`), `stop()`, `pause()`, `resume()`. |
-| `types_programs/mpv_event.py` | `MpvEvent`, `EndFileReason` enum (`eof`/`stop`/`redirect`/`quit`/`error`), `MpvCommand`/`MpvResponse` value types (PY-IC-9: types in their own module). |
+| `programs/mpv/mpv_client.py` | `MpvClient` — one live connection: process handle, socket, reader task, request/response correlation, self-serialised sends. `send(command) -> response`, an event subscription, `is_ready`. On socket EOF the reader **fails every pending command future** and **resolves the loop's ended-future with `crashed`** (I7). |
+| `programs/mpv/mpv_supervisor.py` | `MpvSupervisor` — spawn / connect / crash-detect / restart-with-backoff-and-cap across connections; owns the standing mpv fault surface and the `ready` signal the loop awaits. **Never issues `loadfile`** (single-loadfile-ownership). |
+| `programs/mpv/mpv_program_player.py` | `MpvProgramPlayer` — the loop-facing player: `play(part) -> handle` (`loadfile` + an ended-future resolved by `end-file` or `crashed`), `stop()`, `pause()`, `resume()`, and an `await_ready()` the loop uses for `WaitReady`. |
+| `types_programs/mpv_event.py` | `MpvEvent`, `EndFileReason` enum (`eof`/`stop`/`redirect`/`quit`/`error` plus the synthetic `crashed` the reader injects), `MpvCommand`/`MpvResponse` value types (PY-IC-9: types in their own module). |
 
 The design mission decides the final split (one `mpv/` package vs. flatter),
 per the "design mission's output IS the write-set" rule. The above is the shape,
@@ -431,8 +562,11 @@ not a mandate.
 
 ### Modify
 
-- `programs/loop.py` — `_play`: `loadfile` (paused per flag) + await ended-future;
-  `_finish`: read `EndFileReason` not an exit code; drop the offset/seek path.
+- `programs/loop.py` — `_play`: `WaitReady` (await mpv `ready`) then `loadfile`
+  (paused per flag) + await ended-future; `_finish`: read `EndFileReason` not an
+  exit code, keep the explicit `is_paused` advance guard (loop.py:159), and on the
+  `crashed` reason replay the current part (via `WaitReady`, honouring
+  `is_paused`, cursor unmoved) rather than advancing; drop the offset/seek path.
 - `programs/suspension.py` — slim to the paused flag + `pause`/`resume`/`reset`
   delegating to the player; drop the gate, the live handle, and the resume point.
 - `programs/player.py` — rework the protocol: `play(part) -> PlayHandle` (handle
@@ -450,6 +584,9 @@ not a mandate.
 - `types_programs/playback_fault.py` — extend `PlaybackFaultKind`
   (`PLAYER_UNAVAILABLE`, `PLAYER_CRASH`, `PLAYER_FAILED`); retire `SPAWN`, fold
   `TRACK_EXIT` into the `end-file` `error` case.
+- `doctor` — check mpv is present **and at or above the pinned minimum version**;
+  a missing or too-old mpv is a client-observable `PLAYER_UNAVAILABLE`-class
+  finding, not a silent pass (§1 version pin).
 
 ### Testing seam
 
@@ -457,34 +594,55 @@ Unit tests cannot spawn real mpv in CI. The injection seam is the
 `Player`/`MpvClient` boundary (as `SubprocessPlayer` is injected today): a
 `FakeMpvClient` records commands and lets a test inject `end-file` events and
 crashes. Per-event dispatch, the malformed-line path, the timeout path, and the
-crash/restart path are all tested against the fake.
+crash/restart path are all tested against the fake. The crash tests assert the
+modeled invariants by name: I7 (a simulated EOF resolves every pending command
+future and the loop's ended-future — no test hangs), single-loadfile-ownership
+(the fake sees `loadfile` only from the loop, never the supervisor), and I6's
+paused-honoured-on-reload (a crash while paused replays with `pause=yes`).
 
 ---
 
-## 8. Open questions for the leader
+## 8. Resolved decisions
 
-1. **mpv crash recovery: reload from start vs. surface-and-stop.**
-   Recommendation: restart + reload the current part from **offset 0**, with a
-   bounded backoff and a restart cap (§1). Rejected alternative: recover the
-   exact position, which requires continuous `time-pos` polling and reintroduces
-   the wall-clock machinery this design deletes. Confirm or rule otherwise.
+The four questions the earlier draft raised are **settled** — peer-reviewed
+consensus, gvr + kpz agree. They are recorded here as rulings, not open items.
 
-2. **Do pause/resume route through the `ControlChannel` single-writer?**
-   Recommendation: keep them as **direct** IPC calls (as today), relying on
-   `MpvClient`'s own send-serialisation; the pause-vs-`eof` race is benign.
-   Alternative: route them through the channel as control signals so every
-   mpv-affecting operation serialises on one writer (model-literal, but pause
-   then touches the player from the writer thread as well as the loop). A real
-   concurrency-model decision.
+1. **mpv crash recovery: reload the current part from offset 0.** Not exact
+   position. Recover-exact requires continuous `time-pos` polling and reintroduces
+   the wall-clock machinery this design deletes; a crash is rare, and replaying
+   the current part from the top is acceptable and observable. The reload honours
+   `is_paused` (§1). **Resolved: reload from offset 0.**
 
-3. **`--volume=30` static duck vs. a config knob.** The current design hard-codes
-   the reduced music volume (matching today's `_MUSIC_VOLUME = 30`).
-   Recommendation: keep it a constant for this change; dynamic ducking and a
-   user knob are separate follow-ups (§5). Confirm the constant is acceptable
-   for now.
+2. **pause/resume stay direct.** They are not routed through the `ControlChannel`
+   single-writer. They **mutate no source state** — they flip mpv's internal pause
+   and the one `is_paused` flag, never the cursor — so there is nothing for the
+   writer to serialise; and on one asyncio thread the pause-vs-`eof` interleaving
+   is benign (§3). Routing them through the channel buys no invariant and makes
+   pause touch the player from two paths. **Resolved: direct IPC calls.**
 
-4. **Eager spawn without crashing the daemon.** Recommendation (§1): spawn mpv at
-   bring-up; a spawn failure records a standing `PLAYER_UNAVAILABLE` fault but
-   leaves the daemon (and the notification tier) running. Rejected alternative:
-   fail the whole daemon on missing mpv — it would take down the independent
-   notification tier. Confirm.
+3. **`--volume=30` static duck.** The reduced music volume is a constant for this
+   change (matching today's `_MUSIC_VOLUME = 30`). Dynamic ducking — lowering mpv
+   volume while speech plays, raising it after — is trivial under mpv and a
+   worthwhile **follow-up**, not part of this design (§5). **Resolved: static
+   `--volume=30` now; dynamic ducking later.**
+
+4. **Eager spawn with a client-observable fault; never fail the daemon over mpv.**
+   mpv is spawned at bring-up; a spawn failure records a standing
+   `PLAYER_UNAVAILABLE` fault and surfaces it, but the daemon — and the independent
+   notification tier — stays up. Failing the whole daemon on missing mpv would take
+   down notifications, which do not depend on mpv. **Resolved: keep the daemon up,
+   surface the fault.**
+
+### Framing notes (settled, recorded for jms and the implementer)
+
+- **Single-thread asyncio.** The daemon runs on one event loop in one thread.
+  "Races" are interleavings at `await` points, not parallel-thread data races; the
+  `MpvClient` send lock is explicitness about interleaving (a framed command is an
+  uninterruptible unit on the wire), not a thread mutex (§2, §3).
+- **`loadfile` confirms queued, not playable.** The `loadfile` response means mpv
+  accepted the file into its playlist, not that it decodes. A bad or corrupt file
+  surfaces later as an `end-file` reason `error` (F3), never at the `loadfile`
+  call (§2).
+- **Pin the mpv version.** The IPC command names, the `end-file` `reason` values,
+  and the per-file `pause` option are the contract; record and verify a
+  minimum-supported mpv version in `doctor` (§1).
