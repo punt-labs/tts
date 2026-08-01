@@ -39,6 +39,7 @@ _STUBS: dict[str, str] = {
         "exit 0\n"
     ),
     "git": '#!/bin/sh\nprintf "git %s\\n" "$*" >> "$VOX_TEST_LOG"\nexit 0\n',
+    "mpv": '#!/bin/sh\nprintf "mpv %s\\n" "$*" >> "$VOX_TEST_LOG"\nexit 0\n',
     "ssh": (
         "#!/bin/sh\n"
         'printf "ssh %s\\n" "$*" >> "$VOX_TEST_LOG"\n'
