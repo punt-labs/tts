@@ -29,6 +29,7 @@ from punt_vox.types_programs.mpv_event import (
     MpvResponse,
 )
 from punt_vox.types_programs.wire import JsonObject
+from punt_vox.voxd.wire_text import SafeText
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -175,10 +176,13 @@ class MpvClient:
         supervisor restart). This one boundary now covers the response and
         classification paths, symmetric with the event drop it subsumes.
         """
+        raw = line.decode(errors="replace")
         try:
-            self._classify(JsonObject.parse(line.decode(errors="replace"), "mpv"))
+            self._classify(JsonObject.parse(raw, "mpv"))
         except ValueError:
-            logger.debug("mpv: skipping non-conformant line")
+            logger.warning(
+                "mpv: dropping non-conformant line: %s", SafeText.of(raw).text
+            )
 
     def _classify(self, obj: JsonObject) -> None:
         """Hand a parsed line to the event or response handler, or skip its shape."""

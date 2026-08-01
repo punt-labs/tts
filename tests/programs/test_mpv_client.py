@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import socket
 from typing import TYPE_CHECKING, Self, final
 
@@ -145,6 +146,25 @@ async def test_a_non_conformant_response_does_not_kill_the_reader(link: _Link) -
     await link.mpv_writer.drain()
     assert await asyncio.wait_for(ended, 1.0) is EndFileReason.EOF
     assert link.crashes.count == 0  # no _on_eof fired -- reader stayed alive
+
+
+async def test_a_dropped_malformed_end_file_warns_with_the_payload(
+    link: _Link, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A real end-file dropped for a malformed payload (missing ``reason``) hangs the
+    # part; it must be greppable in vox.log at WARNING with the offending line, not
+    # hidden at DEBUG. A well-formed end-file still resolves afterwards.
+    with caplog.at_level(logging.WARNING):
+        link.send({"event": "end-file"})  # missing ``reason`` -> dropped
+        await link.mpv_writer.drain()
+        ended = link.client.arm_ended()
+        link.send({"event": "end-file", "reason": "eof"})
+        await link.mpv_writer.drain()
+        assert await asyncio.wait_for(ended, 1.0) is EndFileReason.EOF
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(
+        "dropping non-conformant line" in msg and "end-file" in msg for msg in warnings
+    )
 
 
 async def test_an_unknown_end_file_reason_resolves_and_advances(link: _Link) -> None:
