@@ -127,7 +127,7 @@ observable.
 
 ### Startup flags
 
-```
+```bash
 mpv --idle=yes \
     --no-video --vo=null \
     --input-ipc-server=<run_dir>/mpv.sock \
