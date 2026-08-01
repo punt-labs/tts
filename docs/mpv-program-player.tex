@@ -92,14 +92,20 @@ The mpv process is in one of six modes over its lifecycle.
   \item[\texttt{ready}] the process is alive, the socket is connected and its
     reader is running, and commands are accepted. This is the \emph{only} mode
     in which any IPC command may be issued.
-  \item[\texttt{crashed}] the process or socket has died; on entry the reader
-    resolves every pending command future and the loop's in-flight ended-future
-    (with the synthetic reason \texttt{crashed}), and a restart is owed.
+  \item[\texttt{crashed}] the process or socket has died, \emph{or} a spawn or a
+    connect never succeeded at bring-up; on entry the reader resolves every
+    pending command future and the loop's in-flight ended-future (with the
+    synthetic reason \texttt{crashed}), and a restart is owed. A failed bring-up
+    reaches \texttt{crashed} by the same door a crash does.
   \item[\texttt{restarting}] the process is being respawned after a crash,
     within the cap; like \texttt{starting} but carrying the standing fault the
     crash raised.
   \item[\texttt{failed}] the restart cap is exceeded; the supervisor has given
-    up, and a standing hard fault stands until the daemon is shut down.
+    up after \texttt{maxRestarts} consecutive attempts that never reached
+    \texttt{ready} --- whether from a cold start that never connected or from a
+    crash loop --- and a standing hard fault stands until the daemon is shut
+    down. This is the client-observable \texttt{PLAYER\_UNAVAILABLE} fault: the
+    program tier is dead. There is no distinct \texttt{unavailable} mode.
 \end{description}
 
 The playback loop is in one of three phases with respect to the mpv connection.
@@ -223,21 +229,27 @@ The conjuncts discharge the invariants as follows.
     proven by the wait, not discharged vacuously.
   \item[\texttt{I2} --- at most one process.] $processes \in 0 \upto 1$ by
     type, pinned to $1$ exactly in \texttt{starting}/\texttt{restarting}/%
-    \texttt{ready}. No restart race can spawn a second, because \texttt{Spawn}
-    fires only from \texttt{down} and \texttt{Restart} only from
-    \texttt{crashed}, and neither of those has a live process.
+    \texttt{ready}. No restart race can spawn a second: \texttt{Spawn} fires
+    only from \texttt{down} and \texttt{Restart} only from \texttt{crashed},
+    neither of which has a live process, and the failure edges
+    \texttt{SpawnFail}/\texttt{ConnectFail} spawn nothing --- they tear down
+    toward \texttt{crashed}.
   \item[\texttt{I3} --- fault iff \texttt{crashed}/\texttt{restarting}/%
     \texttt{failed}.] $fault = ztrue \iff state \in \{ crashed, restarting,
-    failed \}$. This is the schema-sketch reading of \texttt{I3}, which is
-    \emph{stricter} than the prose reading ``fault iff not ready'' and,
-    Section~\ref{sec:forks} argues, the correct one: \texttt{down} and
-    \texttt{starting} are non-\texttt{ready} but carry no standing fault, being
-    clean shutdown/pre-spawn and clean first bring-up.
+    failed \}$. This is the strict reading of \texttt{I3} --- \emph{stricter}
+    than the discarded prose reading ``fault iff not ready'' --- and it is the
+    settled one (Section~\ref{sec:forks}): \texttt{down} and \texttt{starting}
+    are non-\texttt{ready} but carry no standing fault, being clean
+    shutdown/pre-spawn and clean first bring-up.
   \item[\texttt{I4} --- the restart cap terminates.] $restarts \in 0 \upto
     maxRestarts$ by type, and $state = failed \implies restarts =
     maxRestarts$. \texttt{Restart} increments \texttt{restarts} and is enabled
     only while $restarts < maxRestarts$; at the cap only \texttt{Fail} is
-    enabled, and \texttt{failed} spawns nothing. There is no hot respawn loop.
+    enabled, and \texttt{failed} spawns nothing. The counter counts consecutive
+    \texttt{Restart}s not yet cleared by a \texttt{Connect} --- that is,
+    consecutive spawn, connect, and crash failures that never reached
+    \texttt{ready} --- so a cold start that never connects and a crash loop feed
+    the one cap. There is no hot respawn loop.
   \item[\texttt{I5} --- one reader.] $readers \in 0 \upto 1$ by type, pinned
     to $1$ exactly in \texttt{ready}: the reader is alive iff the connection is
     up, started on \texttt{Connect} and gone on \texttt{Crash}/\texttt{Shutdown}.
@@ -259,8 +271,8 @@ The conjuncts discharge the invariants as follows.
     hanging.
   \item[\emph{single-loadfile-ownership}.] $loadfileBy \subseteq \{ loopA \}$:
     only the loop ever issues \texttt{loadfile}. \texttt{Spawn},
-    \texttt{Connect}, \texttt{Crash}, \texttt{Restart}, \texttt{Fail},
-    \texttt{CrashDuringRestart}, and \texttt{Shutdown} --- the supervisor's
+    \texttt{SpawnFail}, \texttt{Connect}, \texttt{ConnectFail}, \texttt{Crash},
+    \texttt{Restart}, \texttt{Fail}, and \texttt{Shutdown} --- the supervisor's
     transitions --- never write \texttt{loadfileBy}; only
     \texttt{ReplayCurrent} and \texttt{AutoAdvance} do, and both set it to
     $\{ loopA \}$. The supervisor never enters the set.
@@ -304,11 +316,11 @@ zfalse$; only \texttt{cursor$'$} is free.
 \section{Transitions}
 
 Each operation names its enabling mode on an early predicate line, then frames
-the eight free variables. The supervisor owns \texttt{Spawn}, \texttt{Connect},
-\texttt{Crash}, \texttt{Restart}, \texttt{Fail}, \texttt{CrashDuringRestart},
-and \texttt{Shutdown}; the loop owns \texttt{WaitReady}, \texttt{ReplayCurrent},
-\texttt{AutoAdvance}, and \texttt{EofWhilePaused}; the service owns
-\texttt{SetPause}, \texttt{SetResume}, and \texttt{ResolveCommand}.
+the eight free variables. The supervisor owns \texttt{Spawn}, \texttt{SpawnFail},
+\texttt{Connect}, \texttt{ConnectFail}, \texttt{Crash}, \texttt{Restart},
+\texttt{Fail}, and \texttt{Shutdown}; the loop owns \texttt{WaitReady},
+\texttt{ReplayCurrent}, \texttt{AutoAdvance}, and \texttt{EofWhilePaused}; the
+service owns \texttt{SetPause}, \texttt{SetResume}, and \texttt{ResolveCommand}.
 
 \subsection{Spawn --- bring the process up}
 \label{sec:spawn}
@@ -333,6 +345,35 @@ connected, so the mode is \texttt{starting}, not \texttt{ready}.
 The invariant forces $processes' = 1$, $readers' = 0$, $fault' = zfalse$: one
 process, no reader, no fault --- a clean bring-up.
 
+\subsection{SpawnFail --- the bring-up fails}
+\label{sec:spawnfail}
+
+A \texttt{Spawn} that fails --- mpv missing, too old, or an exec error --- brings
+no process up. It is not a separate mode: it reaches \texttt{crashed} by the same
+door a crash does, and a restart is owed. The restart machinery then climbs the
+counter exactly as after a crash, so a cold start that never comes up terminates
+at \texttt{failed} through the identical retry-with-cap path. The clearing
+effects match \texttt{Crash} so that \texttt{crashed} is entered the same way
+however it is reached.
+
+\begin{schema}{SpawnFail}
+  \Delta MpvLifecycle
+  \where
+  state = down \\
+  state' = crashed \\
+  restarts' = restarts \\
+  pendingCmds' = 0 \\
+  loopPhase' = lwait \\
+  loadfileBy' = \emptyset \\
+  paused' = paused \\
+  loadPause' = loadPause \\
+  cursor' = cursor
+\end{schema}
+
+The invariant forces $processes' = 0$, $readers' = 0$, $fault' = ztrue$: no
+process, and now a standing fault, exactly as a crash leaves. The counter is
+untouched here; it climbs on the \texttt{Restart} that follows.
+
 \subsection{Connect --- the connection comes up}
 \label{sec:connect}
 
@@ -342,7 +383,9 @@ two are one path, as the design intends: ``first connect'' and ``reconnect
 after crash'' run the identical routine. A successful reconnect resets the
 restart counter --- this is how the model renders the design's ``restart cap
 within a window'': the counter measures \emph{consecutive} respawns that never
-reached \texttt{ready}, and reaching \texttt{ready} clears it.
+reached \texttt{ready}, and reaching \texttt{ready} clears it. A \texttt{Connect}
+that fails takes the \texttt{ConnectFail} edge to \texttt{crashed} instead
+(Section~\ref{sec:connectfail}), leaving the counter uncleared.
 
 \begin{schema}{Connect}
   \Delta MpvLifecycle
@@ -363,6 +406,37 @@ $pendingCmds = 0$ held in \texttt{starting}/\texttt{restarting}, $pendingCmds'
 = 0$ still satisfies the ready-side of the state predicate, which permits any
 count. The loop phase is unchanged --- typically \texttt{lwait}, waiting for
 exactly this signal.
+
+\subsection{ConnectFail --- the connection never comes up}
+\label{sec:connectfail}
+
+A \texttt{Connect} that fails --- the socket never attaches, whether at a first
+bring-up (\texttt{starting}) or a post-crash respawn (\texttt{restarting}) ---
+tears the process down and reaches \texttt{crashed}, the same fault hub a crash
+reaches, without resetting the counter. This is the edge that lets a run of
+respawns that never connect drive \texttt{restarts} to the cap. It also subsumes
+the crash of a respawn before it connects: whether the respawn dies or its
+connect never attaches, the model records the one fact that matters --- it never
+reached \texttt{ready}.
+
+\begin{schema}{ConnectFail}
+  \Delta MpvLifecycle
+  \where
+  state \in \{ starting, restarting \} \\
+  state' = crashed \\
+  restarts' = restarts \\
+  pendingCmds' = 0 \\
+  loopPhase' = lwait \\
+  loadfileBy' = \emptyset \\
+  paused' = paused \\
+  loadPause' = loadPause \\
+  cursor' = cursor
+\end{schema}
+
+The invariant forces $processes' = 0$, $readers' = 0$, $fault' = ztrue$. The
+counter is preserved, so the next \texttt{Restart} increments it toward the cap;
+a cold start whose connect never succeeds therefore terminates at
+\texttt{failed} by the same retry-with-cap path a crash loop takes.
 
 \subsection{WaitReady --- the loop waits, it does not retry}
 \label{sec:waitready}
@@ -535,29 +609,11 @@ it.
 \end{schema}
 
 The invariant forces $processes' = 1$ (respawned), $readers' = 0$ (not yet
-connected), $fault' = ztrue$.
-
-\subsection{CrashDuringRestart --- the respawn dies before connecting}
-\label{sec:crashrestart}
-
-A respawn that dies before it reaches \texttt{ready} returns to \texttt{crashed}
-without resetting the counter. This is the path that lets the counter climb to
-the cap: a run of respawns that never connect drives \texttt{restarts} to
-\texttt{maxRestarts}, at which point only \texttt{Fail} is enabled.
-
-\begin{schema}{CrashDuringRestart}
-  \Delta MpvLifecycle
-  \where
-  state = restarting \\
-  state' = crashed \\
-  restarts' = restarts \\
-  pendingCmds' = pendingCmds \\
-  loopPhase' = loopPhase \\
-  loadfileBy' = loadfileBy \\
-  paused' = paused \\
-  loadPause' = loadPause \\
-  cursor' = cursor
-\end{schema}
+connected), $fault' = ztrue$. A respawn that then dies before it connects
+returns to \texttt{crashed} by \texttt{ConnectFail} (Section~\ref{sec:connectfail}),
+which does not reset the counter; a run of such respawns drives
+\texttt{restarts} to \texttt{maxRestarts}, at which point only \texttt{Fail} is
+enabled.
 
 \subsection{Fail --- the cap is reached, give up}
 \label{sec:fail}
@@ -679,44 +735,43 @@ cursor it leaves in place.
 \section{Design forks and observations surfaced by the formalisation}
 \label{sec:forks}
 
-Formalising the lifecycle exposes one genuine fork and three modelling
-decisions worth recording for the leader. The model takes a stated position in
-each and flags the tension rather than papering over it.
+Formalising the lifecycle surfaced one disagreement in the design (the reading
+of \texttt{I3}) and one scoping question (startup failure), both now settled,
+together with two modelling decisions worth recording. The model states its
+position in each rather than papering over the tension.
 
 \begin{description}
-  \item[Fork~1 --- the reading of \texttt{I3}. \emph{Recommend the strict
-    reading.}] The design states \texttt{I3} two ways that do not agree. The
-    prose (\S6, invariant list) says ``fault $\iff$ not ready''; the state-schema
-    sketch (\S6) says $fault = ztrue \iff state \in \{ crashed, restarting,
-    failed \}$. These differ on \texttt{down} and \texttt{starting}, which are
-    non-\texttt{ready} but, under the sketch, fault-free. The two clean
-    non-\texttt{ready} modes --- \texttt{down} (pre-spawn or post-clean-shutdown)
-    and \texttt{starting} (normal first bring-up) --- carry no standing fault:
-    marking them faulted would report a fault during every ordinary startup and
-    after every ordinary shutdown, which is not what a client should see.
-    \textbf{This model takes the strict schema reading}, $fault \iff state \in
-    \{ crashed, restarting, failed \}$, and recommends the design prose be
-    corrected to match. \emph{Decision needed from the leader before
-    implementation:} confirm the strict reading, so \texttt{doctor} and
-    \texttt{ProgramStatus.playback\_error} report a standing fault in
-    \texttt{crashed}/\texttt{restarting}/\texttt{failed} only, and treat the
-    spawn-failure \texttt{PLAYER\_UNAVAILABLE} case as the next item rather than
-    as ``\texttt{starting} with a fault''.
-  \item[Observation~A --- \texttt{PLAYER\_UNAVAILABLE} is outside this model.]
-    The design's spawn-failure fault (mpv missing or too old at bring-up) is a
-    \emph{startup} edge, not part of the crash/recovery lifecycle the brief's
-    transitions cover; there is no \texttt{SpawnFailure} transition in the set.
-    It surfaces as a standing \texttt{PLAYER\_UNAVAILABLE} fault with the daemon
-    still up, and it does \emph{not} fit the six-mode/\texttt{I3} shape cleanly
-    (a failed spawn has $restarts = 0$, so it is not \texttt{failed}, and it
-    carries a fault, so it is not \texttt{down}/\texttt{starting} under the
-    strict \texttt{I3}). \textbf{Recommendation:} model it, if at all, as a
-    seventh mode \texttt{unavailable} distinct from \texttt{failed}, or accept
-    that the startup-availability fault lives outside this lifecycle's
-    invariant. It is bracketed here as scope, exactly as the transport model
-    bracketed the catalogue operations. Flagged because it is the one place the
-    strict \texttt{I3} and the design's fault surface must be reconciled in
-    code.
+  \item[\texttt{I3} --- the strict reading, settled.] The design stated
+    \texttt{I3} two ways that did not agree. The prose (\S6, invariant list)
+    said ``fault $\iff$ not ready''; the state-schema sketch (\S6) said $fault =
+    ztrue \iff state \in \{ crashed, restarting, failed \}$. These differ on
+    \texttt{down} and \texttt{starting}, which are non-\texttt{ready} but, under
+    the sketch, fault-free. The strict schema reading is the settled one. The
+    two clean non-\texttt{ready} modes --- \texttt{down} (pre-spawn or
+    post-clean-shutdown) and \texttt{starting} (normal first bring-up) --- carry
+    no standing fault: marking them faulted would report a fault during every
+    ordinary startup and after every ordinary shutdown, which is not what a
+    client should see. This model takes $fault \iff state \in \{ crashed,
+    restarting, failed \}$, and the design prose is corrected in full to match:
+    a standing fault holds \emph{exactly} in \texttt{crashed}, \texttt{restarting},
+    and \texttt{failed}. In code, \texttt{doctor} and
+    \texttt{ProgramStatus.playback\_error} report a standing fault in those three
+    modes only.
+  \item[Startup failure folds into the cap path, settled.] A failed
+    \texttt{Spawn} or \texttt{Connect} at bring-up is \emph{not} a seventh mode.
+    It is handled by the same machinery as a crash: \texttt{SpawnFail}
+    (Section~\ref{sec:spawnfail}) and \texttt{ConnectFail}
+    (Section~\ref{sec:connectfail}) reach \texttt{crashed}; the restart counter
+    climbs on each \texttt{Restart}; and at the cap the machine reaches
+    \texttt{failed}. So \texttt{failed} means ``mpv could not be brought up or
+    kept up after \texttt{maxRestarts} attempts,'' reached identically from a
+    cold start that never connects and from a crash loop. The client-observable
+    \texttt{PLAYER\_UNAVAILABLE} fault is exactly the \texttt{failed} state ---
+    there is no distinct \texttt{unavailable} mode. The earlier bracketing of
+    this case as ``outside the lifecycle'' is withdrawn: I2 forbids a failed
+    spawn from carrying a live process, so the failure edges route through
+    \texttt{crashed} (where $processes = 0$), never through \texttt{starting} or
+    \texttt{restarting}.
   \item[Observation~B --- \texttt{restarting} versus reusing \texttt{starting}.]
     The design sketch's \texttt{Restart} reads ``\texttt{crashed} $\to$
     \texttt{starting}''. This model routes the post-crash respawn through the
@@ -727,12 +782,13 @@ each and flags the tension rather than papering over it.
     --- and \texttt{Connect} serves both. This is a refinement, not a
     contradiction; recorded so the implementation keeps the standing fault up
     across a respawn until \texttt{ready} is re-reached.
-  \item[Observation~C --- the restart window is modelled as consecutive failed
-    respawns.] The design specifies a ``restart cap within a window''. Modelling
-    wall-clock windows is out of a Z model's reach; this model renders the
-    window as \emph{consecutive respawns that never reached \texttt{ready}}:
-    \texttt{restarts} climbs on each \texttt{Restart} and \texttt{Connect}
-    resets it to $0$. A single successful reconnect clears the count. This is a
+  \item[Observation~C --- the restart window is modelled as consecutive
+    non-ready attempts.] The design specifies a ``restart cap within a window''.
+    Modelling wall-clock windows is out of a Z model's reach; this model renders
+    the window as \emph{consecutive spawn, connect, and crash failures that never
+    reached \texttt{ready}}: \texttt{restarts} climbs on each \texttt{Restart}
+    and \texttt{Connect} resets it to $0$. A single successful reconnect clears
+    the count. This is a
     faithful and checkable abstraction of the intent --- ``do not hot-loop'' ---
     and the implementation is free to add a time bound on top; the invariant it
     must preserve, \texttt{I4}, is unaffected.
@@ -746,15 +802,19 @@ The specification is \texttt{fuzz}-clean: \texttt{fuzz -t} exits~0.
 It was then model-checked with ProB (\texttt{probcli}, $maxRestarts = 2$,
 $maxCmds = 2$, $maxPart = 2$, integers bounded to $0 \upto 3$). Over the boot
 cursor ranging across every part, ProB visits every reachable state
-(125~states, 485~transitions) and finds \emph{no invariant violation and no
+(125~states, 489~transitions) and finds \emph{no invariant violation and no
 deadlock}: the \texttt{MpvLifecycle} predicate --- and with it \texttt{I1}
 (the state face), \texttt{I2}, \texttt{I3}, \texttt{I4}, \texttt{I5}, the await
 side of \texttt{I7}, and single-loadfile-ownership --- holds on every reachable
-state, and every state has an enabled successor. All fourteen operations are
-covered, so each is reachable and exercised. The absence of a deadlock is the
-key liveness result: a \texttt{crashed} state is never a wedge, because
-\texttt{Restart}/\texttt{Fail} always leave it and \texttt{Shutdown} leaves any
-live mode.
+state, and every state has an enabled successor. All fifteen operations are
+covered, so each is reachable and exercised. That \texttt{I3} holds strictly is
+witnessed directly: $\mathrm{AG}((state = down \lor state = starting) \implies
+fault = zfalse)$ holds, so the two clean non-\texttt{ready} modes carry no
+standing fault. The absence of a deadlock is the key liveness result: a
+\texttt{crashed} state is never a wedge, because \texttt{Restart}/\texttt{Fail}
+always leave it and \texttt{Shutdown} leaves any live mode --- and, in
+particular, a cold start whose connect never succeeds terminates at
+\texttt{failed} rather than wedging.
 
 The invariants that are properties of the crash/recovery \emph{operations}
 rather than standing conjuncts were confirmed by temporal checks over the full
@@ -772,11 +832,20 @@ reachable space:
     = ready \lor state = failed))$ holds: from any crashed state the machine can
     always reach \texttt{ready} again or terminate at \texttt{failed} --- it
     never wedges.
-  \item[\texttt{I4} --- the cap terminates.] $\mathrm{EF}(state = failed)$ is
-    reachable, and $\mathrm{EF}(state = failed \land restarts = maxRestarts)$
-    confirms \texttt{failed} is entered only at the cap; the state invariant
-    $state = failed \implies restarts = maxRestarts$ holds throughout. No
-    reachable state respawns from \texttt{failed}.
+  \item[\texttt{I4} --- the cap terminates, reached by both routes.]
+    $\mathrm{EF}(state = failed)$ is reachable, and $\mathrm{EF}(state = failed
+    \land restarts = maxRestarts)$ confirms \texttt{failed} is entered only at
+    the cap; the state invariant $state = failed \implies restarts =
+    maxRestarts$ holds throughout. No reachable state respawns from
+    \texttt{failed}. Crucially, \texttt{failed} is reached along \emph{both}
+    routes the settled design demands. The shortest witness ProB returns ---
+    \texttt{SpawnFail}; \texttt{Restart}; \texttt{ConnectFail}; \texttt{Restart};
+    \texttt{ConnectFail}; \texttt{Fail} --- reaches \texttt{failed} from a cold
+    start that never once enters \texttt{ready}, and $\mathrm{EF}(state = ready
+    \land \mathrm{EF}(state = failed))$ holds, so \texttt{failed} is equally
+    reachable from a crash loop after the process had been up. The one
+    \texttt{failed} state is thus ``could not be brought up or kept up'' from
+    either origin.
   \item[\texttt{I6} --- recovery honours pause.] $\mathrm{EF}(loopPhase = lplay
     \land loadPause = ztrue \land paused = ztrue)$ is reachable: a witness of
     length~12 drives the machine to pause a playing part, crash, restart,
