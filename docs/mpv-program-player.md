@@ -380,8 +380,8 @@ Extend `PlaybackFaultKind` (`types_programs/playback_fault.py`) with mpv kinds:
 
 | Situation | Detection | Surfaced as |
 |-----------|-----------|-------------|
-| mpv missing at startup | spawn raises `FileNotFoundError` | standing `PLAYER_UNAVAILABLE` fault; daemon stays up (notifications unaffected); every program command reflects it |
-| mpv missing at first program | (does not occur — eager spawn) collapses to the startup case | `PLAYER_UNAVAILABLE` |
+| mpv missing/too-old at startup | spawn or connect fails | routed through the same restart-with-cap path as a crash (`SpawnFail`/`ConnectFail` → `crashed` → retry); after the cap, the terminal `failed` state *is* `PLAYER_UNAVAILABLE`. Daemon stays up (notifications unaffected); every program command reflects the fault |
+| mpv missing at first program | (does not occur — eager spawn) collapses to the startup case | terminal `failed` = `PLAYER_UNAVAILABLE` |
 | mpv crash mid-playback | socket EOF / process exit | `PLAYER_CRASH`; reader resolves the loop's ended-future with `crashed` and fails every pending future (§2); supervisor restarts the process; loop replays the current part from start honouring `is_paused` (§1); `PLAYER_FAILED` if the restart cap is hit |
 | IPC write failure (`BrokenPipeError` on send) | send raises | treated as a crash signal → the same restart path (reader will also see EOF) |
 | IPC read failure / wedged mpv | command future times out | fault + backoff; the loop treats a timed-out `loadfile` like today's spawn failure (record fault, back off), never a silent hang |
@@ -488,8 +488,9 @@ kpz's additions, and I1 and I6 are tightened per the peer review.
   a `loadfile` is a wait on `ready`, not a refuse-and-retry cycle. (`pause`/`stop`
   likewise require `ready`.)
 - **I2 — at most one process.** No restart race spawns a second mpv.
-- **I3 — fault ⟺ not ready.** A client sees a standing fault in exactly the
-  non-ready states.
+- **I3 — fault ⟺ a fault mode (strict).** A client sees a standing fault in
+  exactly the three fault states (`crashed`, `restarting`, `failed`); `down` and
+  `starting` are clean, so normal bring-up and post-shutdown never report a fault.
 - **I4 — the restart cap terminates.** `restarts` is monotone and bounded;
   reaching the cap ⟹ `failed` with no further spawn (no hot loop).
 - **I5 — one reader.** The reader is alive iff `ready`; started on connect,
