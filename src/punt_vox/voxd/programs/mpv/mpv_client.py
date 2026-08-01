@@ -165,12 +165,23 @@ class MpvClient:
             self._on_eof()
 
     def _dispatch(self, line: bytes) -> None:
-        """Classify one line: a command response, an event, or noise to skip."""
+        """Route one line to its handler, dropping any line mpv should not have sent.
+
+        A non-conformant line raises ``ValueError`` from the wire accessors --
+        unparseable JSON, a present-but-wrong-typed ``event``/``request_id``
+        discriminant, an end-file missing its reason, or a response missing
+        ``error``. It is logged and dropped here so a single bad line never exits
+        the reader loop and fires a spurious ``_on_eof`` crash (a needless
+        supervisor restart). This one boundary now covers the response and
+        classification paths, symmetric with the event drop it subsumes.
+        """
         try:
-            obj = JsonObject.parse(line.decode(errors="replace"), "mpv")
+            self._classify(JsonObject.parse(line.decode(errors="replace"), "mpv"))
         except ValueError:
-            logger.debug("mpv: skipping unparseable line")
-            return
+            logger.debug("mpv: skipping non-conformant line")
+
+    def _classify(self, obj: JsonObject) -> None:
+        """Hand a parsed line to the event or response handler, or skip its shape."""
         if obj.opt_str("event") is not None:
             self._on_event(obj)
         elif obj.opt_int("request_id") is not None:
@@ -186,19 +197,17 @@ class MpvClient:
             future.set_result(response)
 
     def _on_event(self, obj: JsonObject) -> None:
-        """Resolve the loop's ended-future on a natural end; drop teardown noise.
+        """Resolve the loop's ended-future on an advancing end; drop teardown noise.
 
-        Only ``eof`` and ``error`` (natural ends) drive the loop, so only they
-        resolve the ended-future. ``stop``/``redirect``/``quit`` are our own
-        teardown -- a ``stop`` command or a ``loadfile`` replace -- and resolving
-        them would spuriously reload the current part, so they are dropped. A
-        malformed event (unknown reason) never resolves a bogus outcome.
+        Only an advancing end-file drives the loop, so only such an event resolves
+        the ended-future. ``stop``/``redirect``/``quit`` are our own teardown -- a
+        ``stop`` command or a ``loadfile`` replace -- and resolving them would
+        spuriously reload the current part, so they are dropped. An unrecognized
+        reason folds to the advancing ``eof`` class in :meth:`MpvEvent.from_object`,
+        so a newer mpv's ``unknown`` advances rather than hanging the part; a
+        genuinely malformed event raises out to ``_dispatch``, which drops it.
         """
-        try:
-            event = MpvEvent.from_object(obj)
-        except ValueError:
-            logger.debug("mpv: skipping malformed event")
-            return
+        event = MpvEvent.from_object(obj)
         if event.name != _END_FILE or event.reason is None or not event.reason.advances:
             return
         self._resolve_ended(event.reason)

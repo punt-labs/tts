@@ -29,6 +29,23 @@ class EndFileReason(StrEnum):
     ERROR = "error"  # a bad/corrupt file -- record a per-part fault, advance past it
     CRASHED = "crashed"  # SYNTHETIC: the process died (socket EOF), never an mpv event
 
+    @classmethod
+    def from_wire(cls, value: str) -> EndFileReason:
+        """Return the reason for a wire ``end-file`` value, folding unknown to ``eof``.
+
+        mpv 0.35+ can emit reasons this enum does not name -- notably ``unknown``.
+        Rather than hang the current part on an ``end-file`` we cannot classify, an
+        unrecognized reason folds to ``eof``: the advancing natural-end class, so
+        the loop treats the part as over and advances (still subject to the paused
+        guard, Z ``T3``). This keeps the reader a robust superset of the model at
+        the wire boundary, where coercing untyped input is exactly the place a
+        fallback belongs (PY-EH-1). A known reason maps to itself.
+        """
+        try:
+            return cls(value)
+        except ValueError:
+            return cls.EOF
+
     @property
     def advances(self) -> bool:
         """Return whether this reason drives the loop to the next part.

@@ -25,6 +25,18 @@ class TestEndFileReason:
         assert EndFileReason.QUIT.advances is False
         assert EndFileReason.CRASHED.advances is False
 
+    def test_from_wire_keeps_a_known_reason(self) -> None:
+        assert EndFileReason.from_wire("error") is EndFileReason.ERROR
+        assert EndFileReason.from_wire("stop") is EndFileReason.STOP
+        assert EndFileReason.from_wire("eof") is EndFileReason.EOF
+
+    def test_from_wire_folds_an_unrecognized_reason_to_advancing_eof(self) -> None:
+        # A newer mpv can emit ``unknown``; folding it to the advancing eof class
+        # lets the loop advance rather than hang on an end-file it cannot classify.
+        assert EndFileReason.from_wire("unknown") is EndFileReason.EOF
+        assert EndFileReason.from_wire("nonsense") is EndFileReason.EOF
+        assert EndFileReason.from_wire("unknown").advances is True
+
 
 class TestMpvCommand:
     def test_loadfile_is_the_three_element_replace_form(self) -> None:
@@ -83,7 +95,18 @@ class TestMpvEvent:
         assert event.name == "start-file"
         assert event.reason is None
 
-    def test_an_unknown_end_file_reason_raises(self) -> None:
+    def test_an_unrecognized_end_file_reason_folds_to_advancing_eof(self) -> None:
+        # A newer mpv can emit a reason this enum does not name (``unknown``);
+        # from_object folds it to the advancing eof class so the loop advances
+        # rather than hanging on an end-file it cannot classify.
         obj = JsonObject.coerce({"event": "end-file", "reason": "bogus"}, "e")
-        with pytest.raises(ValueError, match="bogus"):
+        event = MpvEvent.from_object(obj)
+        assert event.reason is EndFileReason.EOF
+        assert event.reason.advances is True
+
+    def test_an_end_file_missing_its_reason_raises(self) -> None:
+        # A genuinely malformed end-file (no reason field) still raises -- the
+        # reader drops the line rather than resolving a bogus outcome.
+        obj = JsonObject.coerce({"event": "end-file"}, "e")
+        with pytest.raises(ValueError, match="reason"):
             MpvEvent.from_object(obj)

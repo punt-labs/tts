@@ -117,10 +117,13 @@ class MpvEvent:
         """Build an event from a parsed event object, raising if malformed.
 
         An ``end-file`` carries a ``reason``; every other event has none. An
-        unknown reason value raises (the reader logs and skips), so a malformed
-        event never resolves the loop's ended-future with a bogus outcome.
+        unrecognized reason folds to ``eof`` (the advancing class) via
+        :meth:`EndFileReason.from_wire`, so a newer mpv's ``unknown`` reason
+        advances the loop rather than hanging the current part. A genuinely
+        malformed event -- an end-file missing its ``reason`` field -- still
+        raises, and the reader drops the line without resolving a bogus outcome.
         """
         name = obj.require_str("event")
         if name != "end-file":
             return cls(name=name, reason=None)
-        return cls(name=name, reason=EndFileReason(obj.require_str("reason")))
+        return cls(name=name, reason=EndFileReason.from_wire(obj.require_str("reason")))

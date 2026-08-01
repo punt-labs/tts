@@ -147,7 +147,7 @@ class MpvSupervisor:
         while True:
             if await self._bring_up():
                 await self._crashed.wait()
-                self._note_crash()
+                await self._note_crash()
             if not await self._restart_or_fail():
                 await self._park_failed()
                 return
@@ -239,20 +239,30 @@ class MpvSupervisor:
             PlaybackFaultKind.PLAYER_UNAVAILABLE,
         )
 
-    def _note_crash(self) -> None:
-        """Handle a detected crash: clear ready, discard the process, raise a fault.
+    async def _note_crash(self) -> None:
+        """Handle a detected crash: close the dead client, discard the process, fault.
 
         The client's reader has already failed every pending command future and
         resolved the loop's ended-future with ``crashed`` (I7); the supervisor
-        only tears the dead process down and records the standing fault.
+        closes the dead connection so its ``StreamWriter`` is not leaked to GC,
+        tears the dead process down, and records the standing crash fault.
         """
         self._ready.clear()
+        await self._close_dead_client()
         self._discard_proc()
-        self._client = None
         self._state = MpvState.CRASHED
         self._fault = PlaybackFault.process_level(
             "mpv crashed; restarting", PlaybackFaultKind.PLAYER_CRASH
         )
+
+    async def _close_dead_client(self) -> None:
+        """Close the crashed connection, ignoring errors from its broken transport."""
+        client = self._client
+        self._client = None
+        if client is None:
+            return
+        with contextlib.suppress(Exception):
+            await client.close()
 
     async def _restart_or_fail(self) -> bool:
         """Restart within the cap (return ``True``), else give up (``False``, I4)."""
@@ -279,9 +289,15 @@ class MpvSupervisor:
         self._crashed.set()
 
     async def _teardown(self) -> None:
-        """Quit mpv gracefully then hard-kill the process (graceful, then fallback)."""
+        """Quit mpv gracefully then hard-kill the process (graceful, then fallback).
+
+        The standing fault is cleared as the process enters ``down`` so I3
+        (strict) holds through shutdown: a ``status`` during teardown reports
+        ``down`` with no fault, never ``down`` alongside a crash/failed fault.
+        """
         self._ready.clear()
         self._state = MpvState.DOWN
+        self._fault = None
         await self._quit_and_close()
         self._discard_proc()
 

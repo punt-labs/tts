@@ -134,6 +134,29 @@ async def test_a_malformed_line_does_not_kill_the_reader(link: _Link) -> None:
     assert await asyncio.wait_for(ended, 1.0) is EndFileReason.EOF
 
 
+async def test_a_non_conformant_response_does_not_kill_the_reader(link: _Link) -> None:
+    # A: a response-shaped line missing ``error`` raises out of the wire accessors;
+    # the reader logs and drops it rather than exiting and firing a spurious crash
+    # (a needless supervisor restart). A real end still resolves afterwards.
+    link.send({"request_id": 5})  # no ``error`` -> MpvResponse.from_object raises
+    await link.mpv_writer.drain()
+    ended = link.client.arm_ended()
+    link.send({"event": "end-file", "reason": "eof"})
+    await link.mpv_writer.drain()
+    assert await asyncio.wait_for(ended, 1.0) is EndFileReason.EOF
+    assert link.crashes.count == 0  # no _on_eof fired -- reader stayed alive
+
+
+async def test_an_unknown_end_file_reason_resolves_and_advances(link: _Link) -> None:
+    # B: a newer mpv can emit an ``end-file`` reason this enum does not name
+    # (``unknown``). It must resolve the ended-future -- folded to the advancing
+    # ``eof`` class -- never leave the loop hung on the current part.
+    ended = link.client.arm_ended()
+    link.send({"event": "end-file", "reason": "unknown"})
+    await link.mpv_writer.drain()
+    assert await asyncio.wait_for(ended, 1.0) is EndFileReason.EOF
+
+
 async def test_socket_eof_fails_pending_and_crashes_the_ended_future(
     link: _Link,
 ) -> None:

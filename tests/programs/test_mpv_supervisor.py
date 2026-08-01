@@ -48,7 +48,13 @@ class _FakeProc:
 class _FakeWriter:
     """A StreamWriter double the connection writes control frames to."""
 
-    __slots__ = ()
+    __slots__ = ("closed",)
+    closed: bool
+
+    def __new__(cls) -> Self:
+        self = super().__new__(cls)
+        self.closed = False
+        return self
 
     def write(self, _data: bytes) -> None:
         return None
@@ -57,7 +63,7 @@ class _FakeWriter:
         return None
 
     def close(self) -> None:
-        return None
+        self.closed = True
 
     async def wait_closed(self) -> None:
         return None
@@ -121,14 +127,18 @@ async def test_cold_start_that_never_connects_reaches_failed_unavailable(
 
 
 def _patch_connect_ok(
-    monkeypatch: pytest.MonkeyPatch, readers: list[asyncio.StreamReader]
+    monkeypatch: pytest.MonkeyPatch,
+    readers: list[asyncio.StreamReader],
+    writers: list[_FakeWriter],
 ) -> None:
     async def _connect(
         *_args: object, **_kwargs: object
     ) -> tuple[asyncio.StreamReader, _FakeWriter]:
         reader = asyncio.StreamReader()
+        writer = _FakeWriter()
         readers.append(reader)
-        return reader, _FakeWriter()
+        writers.append(writer)
+        return reader, writer
 
     monkeypatch.setattr(asyncio, "open_unix_connection", _connect)
 
@@ -137,7 +147,7 @@ async def test_successful_bring_up_reaches_ready(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_spawn(monkeypatch, [])
-    _patch_connect_ok(monkeypatch, [])
+    _patch_connect_ok(monkeypatch, [], [])
 
     supervisor = MpvSupervisor(_SOCK, FakeSleeper())
     run = asyncio.create_task(supervisor.run())
@@ -156,7 +166,7 @@ async def test_crash_then_reconnect_recovers(
     # connection reaches ready again (I5: one reader per connection).
     _patch_spawn(monkeypatch, [])
     readers: list[asyncio.StreamReader] = []
-    _patch_connect_ok(monkeypatch, readers)
+    _patch_connect_ok(monkeypatch, readers, [])
 
     supervisor = MpvSupervisor(_SOCK, FakeSleeper())
     run = asyncio.create_task(supervisor.run())
@@ -168,3 +178,48 @@ async def test_crash_then_reconnect_recovers(
     assert supervisor.is_ready  # reconnected after the crash
     assert supervisor.fault is None  # a recovered crash clears the fault
     await _cancel(run)
+
+
+async def test_crash_closes_the_dead_clients_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # D: a crash closes the dead client's connection rather than leaking the
+    # StreamWriter to GC; the reconnect then opens a fresh one.
+    _patch_spawn(monkeypatch, [])
+    readers: list[asyncio.StreamReader] = []
+    writers: list[_FakeWriter] = []
+    _patch_connect_ok(monkeypatch, readers, writers)
+
+    supervisor = MpvSupervisor(_SOCK, FakeSleeper())
+    run = asyncio.create_task(supervisor.run())
+    await _wait_until(lambda: supervisor.is_ready)
+
+    readers[0].feed_eof()  # the process died -- socket EOF
+    await _wait_until(lambda: writers[0].closed)  # the dead client's socket closed
+
+    assert writers[0].closed
+    await _cancel(run)
+
+
+async def test_shutdown_teardown_clears_the_standing_fault(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # C / I3 (strict): a fault holds only in the fault modes. Shutdown drives the
+    # process to ``down`` and must clear the standing fault, never surface
+    # ``down`` alongside a fault.
+    _patch_spawn(monkeypatch, [])
+
+    async def _connect_fail(*_args: object, **_kwargs: object) -> object:
+        msg = "no socket"
+        raise OSError(msg)
+
+    monkeypatch.setattr(asyncio, "open_unix_connection", _connect_fail)
+
+    supervisor = MpvSupervisor(_SOCK, FakeSleeper())
+    run = asyncio.create_task(supervisor.run())
+    await _wait_until(lambda: supervisor.state is MpvState.FAILED)
+    assert supervisor.fault is not None  # a standing fault in the failed mode
+
+    await _cancel(run)  # shutdown cancels run -> teardown to ``down``
+    assert supervisor.state is MpvState.DOWN
+    assert supervisor.fault is None  # I3: ``down`` carries no fault
