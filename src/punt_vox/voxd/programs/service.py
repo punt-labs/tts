@@ -32,6 +32,8 @@ from punt_vox.voxd.programs.fill_reconciler import FillReconciler
 from punt_vox.voxd.programs.filler import Filler
 from punt_vox.voxd.programs.lifecycle_signal import TurnOff
 from punt_vox.voxd.programs.loop import ProgramLoop
+from punt_vox.voxd.programs.mpv.mpv_program_player import MpvProgramPlayer
+from punt_vox.voxd.programs.mpv.mpv_supervisor import MpvSupervisor
 from punt_vox.voxd.programs.playback_health import PlaybackHealth
 from punt_vox.voxd.programs.playback_signal import StepBack, StepForward
 from punt_vox.voxd.programs.program import Program
@@ -40,13 +42,13 @@ from punt_vox.voxd.programs.select_signal import SwitchSelection
 from punt_vox.voxd.programs.selection import Selection
 from punt_vox.voxd.programs.selection_playback import SelectionPlayback
 from punt_vox.voxd.programs.state import ProgramState
-from punt_vox.voxd.programs.subprocess_player import SubprocessPlayer
 from punt_vox.voxd.programs.suspension import PlaybackSuspension
 from punt_vox.voxd.programs.switch_signal import SwitchProgram
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from punt_vox.types_programs.playback_fault import PlaybackFault
     from punt_vox.voxd.programs.active_context import ActiveSource
     from punt_vox.voxd.programs.album_id import AlbumId
     from punt_vox.voxd.programs.filler import FillPlan
@@ -77,6 +79,7 @@ class ProgramService:
         "_loop",
         "_root",
         "_store",
+        "_supervisor",
         "_suspension",
     )
     _store: ProgramStore
@@ -90,9 +93,15 @@ class ProgramService:
     _loop: ProgramLoop
     _changes: ChangeSignal
     _suspension: PlaybackSuspension
+    _supervisor: MpvSupervisor
 
     def __new__(
-        cls, producer: Producer, store: ProgramStore, root: Path, sleeper: Sleeper
+        cls,
+        producer: Producer,
+        store: ProgramStore,
+        root: Path,
+        sleeper: Sleeper,
+        mpv_socket: Path,
     ) -> Self:
         self = super().__new__(cls)
         self._store = store
@@ -104,16 +113,16 @@ class ProgramService:
         self._filler = Filler(producer, self._channel, sleeper)
         self._channel.attach_reconciler(FillReconciler(self._filler, self))
         self._health = PlaybackHealth()
-        # The suspension is shared by the loop (which tears the live player down on
-        # pause and re-spawns it seeked on resume) and this service (which drives
-        # pause/resume and reports paused).
-        self._suspension = PlaybackSuspension()
+        # The one persistent mpv process: the supervisor owns its lifecycle, the
+        # derived player drives it, and the loop owns every loadfile. The service
+        # resolves each Part's path via ``locate`` (it is the PlayerDirectory).
+        self._supervisor = MpvSupervisor(mpv_socket, sleeper)
+        player = MpvProgramPlayer(self._supervisor, self)
+        # The suspension holds the one paused flag and delegates click-free
+        # pause/resume to the player; the service drives it and reports paused.
+        self._suspension = PlaybackSuspension(player)
         self._loop = ProgramLoop(
-            self._channel,
-            SubprocessPlayer(self),
-            sleeper,
-            self._health,
-            self._suspension,
+            self._channel, player, sleeper, self._health, self._suspension
         )
         # One change signal drives the scene re-push: the single-writer fires it
         # after each applied command, the catalog after each new/remove.
@@ -147,19 +156,25 @@ class ProgramService:
         """Run the playback loop for the daemon's lifetime."""
         await self._loop.run()
 
+    async def run_player_supervisor(self) -> None:
+        """Run the mpv supervisor for the daemon's lifetime (spawn/connect/restart).
+
+        Cancelling this task on shutdown drives the supervisor's graceful teardown
+        (quit then hard-kill), so the one mpv process leaves no orphan.
+        """
+        await self._supervisor.run()
+
     async def run_once(self) -> None:
         """Apply exactly one queued command -- the test seam for the writer."""
         await self._channel.apply_next()
 
     def shutdown(self) -> None:
-        """Tear down live work on daemon stop: cancel the fill, kill the player.
+        """Tear down live work on daemon stop: cancel the background fill.
 
-        The suspension shutdown kills any live player (or one caught mid-spawn),
-        so no orphan lingers after the daemon exits. A paused source has already
-        torn its player down, so there is usually nothing left to kill.
+        The one mpv process is torn down by cancelling the supervisor task (its
+        ``run`` finally quits then kills mpv), so this only stops the fill.
         """
         self._filler.cancel()
-        self._suspension.shutdown()
 
     # -- observation (authoritative, read per call, never cached) ----------
 
@@ -180,13 +195,24 @@ class ProgramService:
     def _active_status(self, active: ActiveSource) -> ProgramStatus:
         """Return the active source's base status (before the paused overlay)."""
         source = self._channel.source
+        fault = self._playback_fault()
         if isinstance(source, Program):
-            return source.to_status(active.name, self._health.fault)
+            return source.to_status(active.name, fault)
         if isinstance(source, SelectionPlayback):
             return ProgramStatus.radio(
-                active.name, self._radio_now_playing(source), self._health.fault
+                active.name, self._radio_now_playing(source), fault
             )
         return ProgramStatus.idle()
+
+    def _playback_fault(self) -> PlaybackFault | None:
+        """Return the standing fault a client sees, process-level first.
+
+        The one persistent mpv process is the more serious failure -- missing,
+        crashed, or given up -- so a supervisor fault outranks a per-part track
+        error. Either way the fault is surfaced through ``playback_error``, never
+        a log-only signal.
+        """
+        return self._supervisor.fault or self._health.fault
 
     def catalog_albums(self) -> tuple[Album, ...]:
         """Return every catalog album, newest first (the ``list`` view)."""

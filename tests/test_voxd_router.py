@@ -56,7 +56,11 @@ def _make_router(
     pb = PlaybackQueue()
     hl = DaemonHealth(pb, lambda: 0, 0)
     syn = SynthesisPipeline(playback_mutex=pb.mutex)
-    programs = ProgramSubsystem(default_output_dir() / "programs", _UnusedProducer())
+    programs = ProgramSubsystem(
+        default_output_dir() / "programs",
+        _UnusedProducer(),
+        default_output_dir() / "mpv.sock",
+    )
 
     handlers: dict[str, MessageHandler] = {
         "synthesize": SynthesizeHandler(

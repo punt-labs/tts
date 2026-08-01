@@ -310,9 +310,17 @@ class QuietProducer:
 
 
 def make_service(root: Path) -> ProgramService:
-    """Build a ProgramService over a real filesystem store rooted at ``root``."""
+    """Build a ProgramService over a real filesystem store rooted at ``root``.
+
+    The mpv supervisor is built but never run in these tests (its ``run`` is not
+    started), so no real mpv is spawned; the socket path is a scratch locator.
+    """
     return ProgramService(
-        QuietProducer(), FilesystemProgramStore(root), root, FakeSleeper()
+        QuietProducer(),
+        FilesystemProgramStore(root),
+        root,
+        FakeSleeper(),
+        root / "mpv.sock",
     )
 
 

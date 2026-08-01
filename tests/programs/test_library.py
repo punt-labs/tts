@@ -106,7 +106,9 @@ class _Fx(NamedTuple):
 def _fx(tmp_path: Path, producer: Producer | None = None) -> _Fx:
     root = tmp_path / "programs"
     store = FilesystemProgramStore(root)
-    service = ProgramService(QuietProducer(), store, root, FakeSleeper())
+    service = ProgramService(
+        QuietProducer(), store, root, FakeSleeper(), root / "mpv.sock"
+    )
     library = MusicLibrary(service.catalog, store, root, producer or QuietProducer())
     return _Fx(library, service, root)
 

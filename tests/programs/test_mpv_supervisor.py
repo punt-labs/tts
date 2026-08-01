@@ -1,0 +1,170 @@
+"""Tests for :class:`MpvSupervisor` -- the mpv process/connection lifecycle.
+
+The real ``run`` loop is driven with spawn and connect patched, so no real mpv is
+spawned. The modeled invariants are asserted by name: I4 (the restart cap
+terminates at ``failed``), I3 (a standing fault holds only in the fault modes),
+ready-on-connect, and crash recovery through a fresh connection (I5). The pinned
+minimum mpv version -- the contract ``doctor`` imports -- is checked too.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+from pathlib import Path
+from typing import TYPE_CHECKING, Self, final
+
+from punt_vox.types_programs.playback_fault import PlaybackFaultKind
+from punt_vox.voxd.programs.mpv import MPV_MIN_VERSION, mpv_supervisor as sup_mod
+from punt_vox.voxd.programs.mpv.mpv_supervisor import MpvState, MpvSupervisor
+
+from .conftest import FakeSleeper
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    import pytest
+
+_SOCK = Path("/nonexistent/mpv.sock")
+
+
+@final
+class _FakeProc:
+    """A spawned-process double: alive, killable."""
+
+    __slots__ = ("returncode",)
+    returncode: int | None
+
+    def __new__(cls) -> Self:
+        self = super().__new__(cls)
+        self.returncode = None
+        return self
+
+    def kill(self) -> None:
+        self.returncode = -9
+
+
+@final
+class _FakeWriter:
+    """A StreamWriter double the connection writes control frames to."""
+
+    __slots__ = ()
+
+    def write(self, _data: bytes) -> None:
+        return None
+
+    async def drain(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+    async def wait_closed(self) -> None:
+        return None
+
+
+async def _wait_until(predicate: Callable[[], bool]) -> None:
+    for _ in range(5000):
+        if predicate():
+            return
+        await asyncio.sleep(0)
+    msg = "condition never held"
+    raise AssertionError(msg)
+
+
+async def _cancel(task: asyncio.Task[None]) -> None:
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError, Exception):
+        await task
+
+
+def _patch_spawn(monkeypatch: pytest.MonkeyPatch, spawns: list[int]) -> None:
+    async def _spawn(*_args: object, **_kwargs: object) -> _FakeProc:
+        spawns.append(1)
+        return _FakeProc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _spawn)
+
+
+def test_min_version_is_a_pinned_three_tuple() -> None:
+    # doctor imports this to gate an installed mpv; it must be a version triple.
+    assert len(MPV_MIN_VERSION) == 3
+    assert all(isinstance(part, int) for part in MPV_MIN_VERSION)
+
+
+async def test_cold_start_that_never_connects_reaches_failed_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # I4: consecutive attempts that never reach ready climb the cap and terminate
+    # at ``failed``; I3: the standing fault is PLAYER_UNAVAILABLE (never was ready);
+    # I2: one spawn per attempt (cap+1), never two live processes at once.
+    spawns: list[int] = []
+    _patch_spawn(monkeypatch, spawns)
+
+    async def _connect_fail(*_args: object, **_kwargs: object) -> object:
+        msg = "no socket"
+        raise OSError(msg)
+
+    monkeypatch.setattr(asyncio, "open_unix_connection", _connect_fail)
+
+    supervisor = MpvSupervisor(_SOCK, FakeSleeper())
+    run = asyncio.create_task(supervisor.run())
+    await _wait_until(lambda: supervisor.state is MpvState.FAILED)
+
+    assert supervisor.is_ready is False
+    fault = supervisor.fault
+    assert fault is not None
+    assert fault.kind is PlaybackFaultKind.PLAYER_UNAVAILABLE
+    assert fault.part_index == 0  # a process-level fault names no part
+    assert len(spawns) == sup_mod._MAX_RESTARTS + 1
+    await _cancel(run)
+
+
+def _patch_connect_ok(
+    monkeypatch: pytest.MonkeyPatch, readers: list[asyncio.StreamReader]
+) -> None:
+    async def _connect(
+        *_args: object, **_kwargs: object
+    ) -> tuple[asyncio.StreamReader, _FakeWriter]:
+        reader = asyncio.StreamReader()
+        readers.append(reader)
+        return reader, _FakeWriter()
+
+    monkeypatch.setattr(asyncio, "open_unix_connection", _connect)
+
+
+async def test_successful_bring_up_reaches_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_spawn(monkeypatch, [])
+    _patch_connect_ok(monkeypatch, [])
+
+    supervisor = MpvSupervisor(_SOCK, FakeSleeper())
+    run = asyncio.create_task(supervisor.run())
+    await _wait_until(lambda: supervisor.is_ready)
+
+    assert supervisor.state is MpvState.READY
+    assert supervisor.fault is None  # I3: ready carries no standing fault
+    assert supervisor.current_client() is not None
+    await _cancel(run)
+
+
+async def test_crash_then_reconnect_recovers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A crash (socket EOF) clears ready and routes through a restart; a fresh
+    # connection reaches ready again (I5: one reader per connection).
+    _patch_spawn(monkeypatch, [])
+    readers: list[asyncio.StreamReader] = []
+    _patch_connect_ok(monkeypatch, readers)
+
+    supervisor = MpvSupervisor(_SOCK, FakeSleeper())
+    run = asyncio.create_task(supervisor.run())
+    await _wait_until(lambda: supervisor.is_ready)
+
+    readers[0].feed_eof()  # the process died -- the reader sees socket EOF
+    await _wait_until(lambda: len(readers) >= 2 and supervisor.is_ready)
+
+    assert supervisor.is_ready  # reconnected after the crash
+    assert supervisor.fault is None  # a recovered crash clears the fault
+    await _cancel(run)

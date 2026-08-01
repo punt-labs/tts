@@ -55,7 +55,9 @@ def _daemon(tmp_path: Path) -> VoxDaemon:
     config = DaemonConfig(run_dir=run_dir, config_dir=tmp_path, log_dir=tmp_path)
     playback = PlaybackQueue()
     synthesis = SynthesisPipeline(playback_mutex=playback.mutex)
-    programs = ProgramSubsystem(tmp_path / "programs", _BlockingProducer())
+    programs = ProgramSubsystem(
+        tmp_path / "programs", _BlockingProducer(), tmp_path / "mpv.sock"
+    )
     health = DaemonHealth(playback, lambda: 0, 0)
     router = WebSocketRouter(handlers=programs.handlers(), auth_token=None)
     return VoxDaemon(
@@ -87,9 +89,12 @@ async def test_lifespan_starts_tasks_and_applies_a_command(
 
     with caplog.at_level(logging.INFO, logger="punt_vox.voxd.daemon"):
         async with daemon._lifespan(app):  # pyright: ignore[reportPrivateUsage]
-            # (a) the background tasks (incl. the scene publisher) were announced.
+            # (a) the background tasks (incl. the mpv supervisor and the scene
+            # publisher) were announced. mpv is absent in the test sandbox, so its
+            # spawn fails -- but the daemon stays up and applies commands anyway,
+            # proving the program tier's absence never takes the daemon down.
             assert any(
-                "control writer, loop, and scene publisher up" in r.getMessage()
+                "control writer, loop, mpv, and scene up" in r.getMessage()
                 for r in caplog.records
             )
             # (b) a posted command is applied end-to-end by the running writer.

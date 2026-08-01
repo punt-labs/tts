@@ -51,11 +51,11 @@ class ProgramSubsystem:
     _service: ProgramService
     _library: MusicLibrary
 
-    def __new__(cls, root: Path, producer: Producer) -> Self:
+    def __new__(cls, root: Path, producer: Producer, mpv_socket: Path) -> Self:
         self = super().__new__(cls)
         store = FilesystemProgramStore(root)
         self._root = root
-        self._service = ProgramService(producer, store, root, RealSleeper())
+        self._service = ProgramService(producer, store, root, RealSleeper(), mpv_socket)
         # The library shares the service's one catalog and store, so an authored
         # album is instantly listable/playable and a removed one vanishes.
         self._library = MusicLibrary(self._service.catalog, store, root, producer)
