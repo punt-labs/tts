@@ -134,6 +134,50 @@ if [ "$(uname -s)" = "Linux" ]; then
   fi
 fi
 
+# --- Step 3c: Program audio player (mpv) ---
+#
+# mpv drives the daemon's PROGRAM audio tier (music, and later audiobooks and
+# podcasts) over its JSON IPC socket. It is a HARD dependency with no fallback:
+# the notification tier keeps afplay/say/espeak, but program audio needs mpv
+# (docs/mpv-program-player.md). Install it the same tier as any other required
+# tool -- Homebrew on macOS, the system package manager on Linux -- and fail
+# the install if it cannot be made present, so a box always satisfies
+# `vox doctor`.
+
+# Runs inside an `if` condition, so `set -e` is suspended: a failed package
+# manager returns non-zero to the caller instead of aborting the script.
+_install_mpv() {
+  case "$(uname -s)" in
+    Darwin)
+      command -v brew >/dev/null 2>&1 || return 1
+      brew install mpv
+      ;;
+    *)
+      if command -v apt-get >/dev/null 2>&1; then
+        sudo apt-get install -y mpv
+      elif command -v dnf >/dev/null 2>&1; then
+        sudo dnf install -y mpv
+      elif command -v pacman >/dev/null 2>&1; then
+        sudo pacman -S --noconfirm mpv
+      else
+        return 1
+      fi
+      ;;
+  esac
+}
+
+info "Checking mpv (program audio player)..."
+if command -v mpv >/dev/null 2>&1; then
+  ok "mpv found"
+else
+  info "Installing mpv..."
+  if _install_mpv && command -v mpv >/dev/null 2>&1; then
+    ok "mpv installed"
+  else
+    fail "Could not install mpv. Install it manually (macOS: brew install mpv; Linux: apt/dnf/pacman install mpv), then re-run. mpv is required for program audio."
+  fi
+fi
+
 # --- Step 4: Install vox CLI ---
 
 info "Installing $PACKAGE..."

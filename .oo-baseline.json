@@ -351,12 +351,12 @@
     "future_annotations": 1.0
   },
   "src/punt_vox/doctor.py": {
-    "method_ratio": 0.647,
+    "method_ratio": 0.727,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.47,
+    "avg_params": 0.45,
     "max_complexity": 7.0,
-    "avg_complexity": 2.65,
-    "module_size": 334.0,
+    "avg_complexity": 2.64,
+    "module_size": 434.0,
     "classes_per_module": 2.0,
     "class_to_func_ratio": 0.25,
     "init_violations": 0.0,

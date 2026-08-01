@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +37,38 @@ _STATUS_KIND: dict[str, str] = {
     _FAIL: "fail",
     _OPTIONAL: "skip",
     _WARN: "warn",
+}
+
+# ---------------------------------------------------------------------------
+# Required host binaries
+# ---------------------------------------------------------------------------
+
+# PLACEHOLDER pending reconciliation. The authoritative minimum mpv version
+# belongs with the mpv program player (gvr, src/punt_vox/voxd/programs/mpv/),
+# which is not committed yet. Until that constant lands, doctor pins a
+# conservative floor: 0.35.0 is a widely packaged mpv whose JSON IPC command
+# set, ``end-file`` ``reason`` values, and per-file ``pause`` load option match
+# the player's contract (docs/mpv-program-player.md §1). RECONCILE: import
+# gvr's constant once programs/mpv/ exists, and delete this literal.
+_MPV_MIN_VERSION: tuple[int, int, int] = (0, 35, 0)
+_MPV_MIN_STR: str = ".".join(str(part) for part in _MPV_MIN_VERSION)
+
+# Per-platform remediation hints. ``default`` covers any host not named.
+_FFMPEG_HINTS: dict[str, str] = {
+    "Darwin": "brew install ffmpeg",
+    "Windows": "winget install --id Gyan.FFmpeg",
+    "default": "see https://ffmpeg.org/download.html",
+}
+_MPV_HINTS: dict[str, str] = {
+    "Darwin": "brew install mpv",
+    "Linux": "sudo apt-get install mpv (or dnf/pacman)",
+    "Windows": "see https://mpv.io/installation/",
+    "default": "see https://mpv.io/installation/",
+}
+# Absence hints keyed by binary, so the absence verdict needs only the name.
+_REQUIRED_HINTS: dict[str, dict[str, str]] = {
+    "ffmpeg": _FFMPEG_HINTS,
+    "mpv": _MPV_HINTS,
 }
 
 
@@ -79,6 +113,7 @@ class DoctorCheck:
         results: list[CheckResult] = []
         results.append(self.check_python_version())
         results.append(self.check_ffmpeg())
+        results.append(self.check_mpv())
         results.extend(self.check_espeak_fallback())
         results.extend(self.check_daemon_health())
         results.extend(self.check_env_overrides())
@@ -104,17 +139,93 @@ class DoctorCheck:
     def check_ffmpeg(self) -> CheckResult:
         """Check ffmpeg is installed -- present/absent verdict, no install path.
 
-        ``ffmpeg`` is out of jail (a host binary location), so the reply is a
-        verdict: its ``which`` path never crosses to a remote-daemon client.
+        ``ffmpeg`` decodes and transcodes audio; a missing binary is a hard
+        error that fails ``vox doctor``.
         """
-        if shutil.which("ffmpeg"):
-            return _pass("ffmpeg: present")
-        hint = {
-            "Darwin": "brew install ffmpeg",
-            "Linux": "see https://ffmpeg.org/download.html",
-            "Windows": "winget install --id Gyan.FFmpeg",
-        }.get(platform.system(), "see https://ffmpeg.org/download.html")
-        return _fail(f"ffmpeg: not found — {hint}")
+        if shutil.which("ffmpeg") is None:
+            return self._missing_binary("ffmpeg")
+        return _pass("ffmpeg: present")
+
+    def check_mpv(self) -> CheckResult:
+        """Check mpv is installed AND at or above the pinned minimum version.
+
+        ``mpv`` plays the program audio tier (music, and later audiobooks and
+        podcasts) over its JSON IPC socket. It is a hard dependency with no
+        fallback -- notifications keep the built-in ``afplay``/``say``/
+        ``espeak``, but program audio needs ``mpv``, and the IPC contract (the
+        command set, the ``end-file`` reasons, the per-file ``pause`` option)
+        holds only at or above ``_MPV_MIN_VERSION`` (docs/mpv-program-player.md
+        §1). A missing OR too-old binary is a hard error that fails
+        ``vox doctor``.
+        """
+        if shutil.which("mpv") is None:
+            return self._missing_binary("mpv")
+        return self._check_mpv_version()
+
+    def _missing_binary(self, name: str) -> CheckResult:
+        """Verdict for an absent required host binary -- no host path leaks.
+
+        ``ffmpeg`` and ``mpv`` are both out of jail (host binary locations), so
+        the reply is a verdict, never the ``which`` path. Absence is a hard
+        error (a red ``✗``): both are required with no fallback. The remediation
+        hint is resolved from ``_REQUIRED_HINTS`` by name, so the verdict needs
+        only the binary name.
+        """
+        hints = _REQUIRED_HINTS[name]
+        hint = hints.get(platform.system(), hints["default"])
+        return _fail(f"{name}: not found — {hint}")
+
+    def _check_mpv_version(self) -> CheckResult:
+        """Gate an installed mpv against ``_MPV_MIN_VERSION``.
+
+        A present mpv whose ``--version`` cannot be read, or that is older than
+        the pinned minimum the program player's IPC contract needs, is a hard
+        error carrying a per-platform upgrade hint -- the versioned form of the
+        hard dependency (docs/mpv-program-player.md §1).
+        """
+        version = self._mpv_version()
+        if version is None:
+            return _fail(
+                "mpv: present but version unreadable —"
+                f" verify 'mpv --version' is >= {_MPV_MIN_STR}"
+            )
+        detected = ".".join(str(part) for part in version)
+        if version < _MPV_MIN_VERSION:
+            hint = _MPV_HINTS.get(platform.system(), _MPV_HINTS["default"])
+            return _fail(f"mpv {detected}: too old (needs >= {_MPV_MIN_STR}) — {hint}")
+        return _pass(f"mpv: present ({detected})")
+
+    def _mpv_version(self) -> tuple[int, int, int] | None:
+        # ``None`` is the documented "cannot determine" outcome at this
+        # subprocess boundary (mpv vanished from PATH mid-check, a broken
+        # binary, a timeout, or unparseable output). The caller surfaces it as
+        # a failing check, so this is absence-as-contract, not a value a caller
+        # must defensively treat as success (PY-TS-14). The binary is resolved
+        # to an absolute path first, mirroring the provider subprocess callers.
+        mpv_path = shutil.which("mpv")
+        if mpv_path is None:
+            return None
+        try:
+            proc = subprocess.run(
+                [mpv_path, "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return self._parse_mpv_version(proc.stdout)
+
+    @staticmethod
+    def _parse_mpv_version(output: str) -> tuple[int, int, int] | None:
+        # mpv prints ``mpv <major>.<minor>.<patch> Copyright ...`` on line one;
+        # some builds prefix a ``v`` or append ``-git-<hash>``. ``None`` when no
+        # version token is present (absence-as-contract, see ``_mpv_version``).
+        match = re.search(r"\bmpv\s+v?(\d+)\.(\d+)(?:\.(\d+))?", output)
+        if match is None:
+            return None
+        return (int(match.group(1)), int(match.group(2)), int(match.group(3) or 0))
 
     def check_espeak_fallback(self) -> list[CheckResult]:
         """Check espeak on Linux when no cloud API keys are set."""
