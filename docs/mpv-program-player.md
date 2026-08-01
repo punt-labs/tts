@@ -62,6 +62,30 @@ independent and must keep working. A spawn failure records a standing
 and that every program command reflects. This is the "loud, client-observable,
 no fallback" ruling realised without taking down notifications.
 
+### Reaping an orphan left by an unclean prior exit — by socket, not by pid
+
+mpv is spawned `start_new_session=True` with `--idle=yes`, so a SIGKILL, OOM, or
+crash of the daemon *before* teardown runs leaves an idle-forever mpv holding our
+IPC socket. Without cleanup the next bring-up would spawn a *second* mpv, breaking
+I2 across restarts. `OrphanReaper` (`programs/mpv/orphan_reaper.py`) closes that
+gap once, before the first spawn.
+
+The identity it reaps by is the **socket**, not a recorded pid. Only our mpv can
+own our `--input-ipc-server` socket path, so a listening socket is a safe target:
+the reaper connects and sends mpv's `quit` command — a clean shutdown of exactly
+the process that owns *our* socket — then unlinks the stale path so the fresh mpv
+binds a new inode. A path that exists but no longer listens (a stale inode) is
+simply unlinked; there is nothing to quit.
+
+There is deliberately **no kill-by-pid fallback**. The IPC socket lives under a
+persistent run dir that survives a reboot, and a recorded pid can be recycled onto
+an unrelated process; SIGKILLing it would kill the wrong target on the ordinary
+give-up path, not just a rare race. A wedged mpv that ignores `quit` is rare — it
+is logged and left, which is safer than ever risking the wrong process. Every
+socket operation (probe, send, unlink) is robust to `OSError`, and the reap runs
+inside the supervisor's fault guard, so a probe error stands a fault rather than
+escaping into a silent bring-up hang.
+
 ### Who owns it
 
 A new `MpvSupervisor` owns the process-and-connection lifecycle across restarts —
@@ -549,6 +573,7 @@ resolved.
 | `programs/mpv/mpv_client.py` | `MpvClient` — one live connection: process handle, socket, reader task, request/response correlation, self-serialised sends. `send(command) -> response`, an event subscription, `is_ready`. On socket EOF the reader **fails every pending command future** and **resolves the loop's ended-future with `crashed`** (I7). |
 | `programs/mpv/mpv_supervisor.py` | `MpvSupervisor` — spawn / connect / crash-detect / restart-with-backoff-and-cap across connections; owns the standing mpv fault surface and the `ready` signal the loop awaits. **Never issues `loadfile`** (single-loadfile-ownership). |
 | `programs/mpv/mpv_program_player.py` | `MpvProgramPlayer` — the loop-facing player: `play(part) -> handle` (`loadfile` + an ended-future resolved by `end-file` or `crashed`), `stop()`, `pause()`, `resume()`, and an `await_ready()` the loop uses for `WaitReady`. |
+| `programs/mpv/orphan_reaper.py` | `OrphanReaper` — cross-restart startup hygiene enforcing I2. Before the first spawn, `reap()` quits an mpv left on our IPC socket by an unclean prior exit — by *socket identity* (connect + `quit`, then unlink the stale path), never by a recorded pid. No kill-by-pid fallback (§1). |
 | `types_programs/mpv_event.py` | `MpvEvent`, `EndFileReason` enum (`eof`/`stop`/`redirect`/`quit`/`error` plus the synthetic `crashed` the reader injects), `MpvCommand`/`MpvResponse` value types (PY-IC-9: types in their own module). |
 
 The design mission decides the final split (one `mpv/` package vs. flatter),

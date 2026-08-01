@@ -154,8 +154,8 @@ class MpvSupervisor:
         then parked, so ``status`` reports it rather than the daemon hanging on
         ``wait_ready`` with the task dead and no fault set.
         """
-        self._reaper.reap()
         try:
+            self._reaper.reap()
             while True:
                 if await self._bring_up():
                     await self._crashed.wait()
@@ -188,7 +188,6 @@ class MpvSupervisor:
             self._record_bring_up_failure()
             return False
         self._proc = proc
-        self._reaper.record(proc.pid)
         client = await self._connect()
         if client is None:
             self._discard_proc()
@@ -323,7 +322,6 @@ class MpvSupervisor:
         self._fault = None
         await self._quit_and_close()
         self._discard_proc()
-        self._reaper.clear()
 
     async def _quit_and_close(self) -> None:
         """Ask mpv to quit and close the socket, ignoring a dead connection."""

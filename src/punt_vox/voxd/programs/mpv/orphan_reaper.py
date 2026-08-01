@@ -5,22 +5,28 @@ OOM, or crash of the daemon *before* :meth:`MpvSupervisor._teardown` runs leaves
 an idle-forever mpv holding our IPC socket. The next daemon start would then
 spawn a *second* mpv, breaking the single-player invariant (I2) across restarts.
 
-:class:`OrphanReaper` closes that gap. On spawn the supervisor records the live
-pid via :meth:`record`; on a clean teardown it drops the record via :meth:`clear`.
-At the next startup :meth:`reap` runs before the first spawn: if the recorded pid
-still names a live process it is killed, and the stale socket is removed so the
-fresh mpv binds cleanly. This is startup hygiene -- no new modeled state, just an
-enforcement of I2 that survives an unclean exit.
+:class:`OrphanReaper` closes that gap by the *socket*, not by a recorded pid.
+Our mpv is the only process that can own our ``--input-ipc-server`` socket path,
+so the socket is a safe identity: at the next startup :meth:`reap` runs before
+the first spawn and, if the path is still listening, connects and sends mpv's
+``quit`` command -- a clean shutdown of exactly the process that owns *our*
+socket, with no pid guessing and no risk to any unrelated process. The stale
+socket path is then unlinked so the fresh mpv binds a new inode.
+
+There is deliberately no kill-by-pid fallback. A recorded pid survives a reboot
+and can be recycled by an unrelated process; SIGKILLing it would kill the wrong
+target. A wedged mpv that ignores ``quit`` is rare; it is logged and left, which
+is safer than ever risking the wrong process. This is startup hygiene enforcing
+I2 -- no new modeled state, just a clean bring-up after an unclean exit.
 """
 
 from __future__ import annotations
 
-import contextlib
 import logging
-import os
-import signal
 import socket
 from typing import TYPE_CHECKING, Self, final
+
+from punt_vox.types_programs.mpv_event import MpvCommand
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -29,99 +35,77 @@ __all__ = ["OrphanReaper"]
 
 logger = logging.getLogger(__name__)
 
+_PROBE_TIMEOUT_SECONDS = 2.0
+"""Bound the connect/send probe so a wedged socket cannot stall bring-up."""
+
+_REAP_REQUEST_ID = 0
+"""The ``request_id`` on the fire-and-forget ``quit`` -- no reply is awaited."""
+
 
 @final
 class OrphanReaper:
-    """Enforce single-mpv (I2) across daemon restarts via a pidfile + socket probe."""
+    """Enforce single-mpv (I2) across daemon restarts via a socket-identity quit."""
 
-    __slots__ = ("_pidfile", "_socket")
+    __slots__ = ("_socket",)
     _socket: Path
-    _pidfile: Path
 
     def __new__(cls, socket_path: Path) -> Self:
         self = super().__new__(cls)
         self._socket = socket_path
-        self._pidfile = socket_path.with_name(socket_path.name + ".pid")
         return self
 
     def reap(self) -> None:
-        """Kill a still-live orphan on our socket, then clear the stale socket/pidfile.
+        """Quit a responsive orphan on our socket, then unlink the stale path.
 
-        The recorded pid is authoritative -- if it names a live process, it is the
-        orphan and is killed. A socket that is still *listening* with no pid to
-        name it is logged (we cannot safely identify the owner to kill), then its
-        path is unlinked so the fresh mpv can bind a new inode there.
+        The socket is the identity: only our mpv can own our IPC socket, so a
+        listening path is quit cleanly over IPC -- never killed by pid. A path
+        that exists but no longer listens (a stale inode) is simply unlinked so
+        the fresh mpv can bind there. Every socket operation is robust to
+        ``OSError``, so a probe or unlink failure is logged, not raised into the
+        supervisor.
         """
-        pid = self._recorded_pid()
-        if pid is not None and self._is_live(pid):
-            logger.warning("reaping orphaned mpv pid %d left by an unclean exit", pid)
-            self._kill(pid)
-        elif self._socket_is_listening():
+        if self._quit_listening_owner():
             logger.warning(
-                "mpv socket %s is live but unidentified; clearing the stale path",
+                "quit an orphaned mpv holding %s left by an unclean exit",
                 self._socket,
             )
-        self._clear_socket()
-        self._clear_pidfile()
+        self._unlink_socket()
 
-    def record(self, pid: int) -> None:
-        """Record the live mpv pid so a later startup can reap it if orphaned."""
-        with contextlib.suppress(OSError):
-            self._pidfile.write_text(str(pid))
+    def _quit_listening_owner(self) -> bool:
+        """Connect to a listening socket and send ``quit``; return whether one answered.
 
-    def clear(self) -> None:
-        """Drop the pid record on a clean teardown -- there is no orphan to reap."""
-        self._clear_pidfile()
-
-    def _recorded_pid(self) -> int | None:
-        # None is the documented "no pid recorded" contract (absence), not a
-        # failure to produce one: an absent or unreadable pidfile means nothing
-        # to reap, and a garbled record is ignored rather than trusted.
-        try:
-            text = self._pidfile.read_text()
-        except OSError:
-            return None
-        try:
-            return int(text.strip())
-        except ValueError:
-            return None
-
-    @staticmethod
-    def _is_live(pid: int) -> bool:
-        """Return whether ``pid`` names a live process (signal 0 is a probe)."""
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True  # exists but is not ours to signal
-        return True
-
-    @staticmethod
-    def _kill(pid: int) -> None:
-        """SIGKILL ``pid``, ignoring a race where it already exited."""
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.kill(pid, signal.SIGKILL)
-
-    def _socket_is_listening(self) -> bool:
-        """Return whether a process is accepting on our IPC socket path."""
-        if not self._socket.exists():
-            return False
+        Returns ``True`` only when the socket was listening and the ``quit`` frame
+        was sent -- an orphan owned our socket and was asked to exit cleanly. A
+        missing socket, a stale inode with no listener, or any probe error means
+        there is nothing to quit and returns ``False``.
+        """
         probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        probe.settimeout(_PROBE_TIMEOUT_SECONDS)
+        try:
+            return self._connect_and_quit(probe)
+        finally:
+            probe.close()
+
+    def _connect_and_quit(self, probe: socket.socket) -> bool:
+        """Connect ``probe`` to our socket and send ``quit``; report success."""
         try:
             probe.connect(str(self._socket))
         except OSError:
+            return False  # no socket, a stale inode, or unreachable -- nothing to quit
+        try:
+            probe.sendall(MpvCommand.quit().framed(_REAP_REQUEST_ID))
+        except OSError as exc:
+            logger.warning(
+                "quitting the orphan mpv on %s failed: %s", self._socket, exc
+            )
             return False
-        finally:
-            probe.close()
         return True
 
-    def _clear_socket(self) -> None:
-        """Remove the stale socket path, ignoring an already-absent one."""
-        with contextlib.suppress(FileNotFoundError):
-            self._socket.unlink()
-
-    def _clear_pidfile(self) -> None:
-        """Remove the pid record, ignoring an already-absent one."""
-        with contextlib.suppress(FileNotFoundError):
-            self._pidfile.unlink()
+    def _unlink_socket(self) -> None:
+        """Remove the stale socket path, robust to any ``OSError``, not just absence."""
+        try:
+            self._socket.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning(
+                "could not unlink the stale mpv socket %s: %s", self._socket, exc
+            )
