@@ -437,7 +437,7 @@ dispatches.** Sketch:
 
 ### States
 
-```
+```text
 MpvState ::= down | starting | ready | crashed | restarting | failed
 ```
 
@@ -452,7 +452,7 @@ MpvState ::= down | starting | ready | crashed | restarting | failed
 
 ### State schema (sketch)
 
-```
+```text
 MpvLifecycle
   state       : MpvState
   processes   : 0 .. 1          -- live mpv processes
