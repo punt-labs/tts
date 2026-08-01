@@ -76,15 +76,23 @@ class MpvProgramPlayer:
 
         The ``pause`` property is set before the load so a reload while paused --
         after a crash or a prev/next -- stays paused (I6). ``loadfile`` is
-        awaited: the reply confirms mpv queued the file (a wedged mpv surfaces as
-        a timeout the loop backs off on), never that it decodes -- a bad file
-        surfaces later as an ``end-file`` reason ``error``.
+        awaited and its reply is checked: a command-level rejection (``error !=
+        "success"``) emits no ``end-file``, so discarding the reply would wedge
+        the loop on an ended-future that never resolves while ``status`` reports
+        healthy. A rejection is raised as :class:`ConnectionError`, routing into
+        the loop's ``_back_off_load`` (``PLAYER_UNAVAILABLE``) symmetric with a
+        wedged (timeout) or crashed (lost) connection. A reply of ``success``
+        confirms only that mpv queued the file, never that it decodes -- a bad
+        file surfaces later as an ``end-file`` reason ``error``.
         """
         client = self._require_client()
         path = str(self._directory.locate(part))
         client.write_command(MpvCommand.set_pause(paused=paused))
         ended = client.arm_ended()
-        await client.request(MpvCommand.loadfile(path))
+        response = await client.request(MpvCommand.loadfile(path))
+        if not response.ok:
+            msg = f"mpv rejected loadfile: {response.error}"
+            raise ConnectionError(msg)
         return MpvPlayHandle(ended)
 
     def pause(self) -> None:

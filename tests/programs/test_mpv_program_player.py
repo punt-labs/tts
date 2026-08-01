@@ -32,26 +32,26 @@ _PATH = Path("/m/1.mp3")
 class _RecordingClient:
     """A live-client double recording every command the player issues."""
 
-    __slots__ = ("_ready", "commands")
+    __slots__ = ("_reply_error", "commands")
     commands: list[tuple[MpvArg, ...]]
-    _ready: bool
+    _reply_error: str
 
-    def __new__(cls) -> Self:
+    def __new__(cls, reply_error: str = "success") -> Self:
         self = super().__new__(cls)
         self.commands = []
-        self._ready = True
+        self._reply_error = reply_error
         return self
 
     @property
     def is_ready(self) -> bool:
-        return self._ready
+        return True
 
     def write_command(self, command: MpvCommand) -> None:
         self.commands.append(command.args)
 
     async def request(self, command: MpvCommand) -> MpvResponse:
         self.commands.append(command.args)
-        return MpvResponse(request_id=1, error="success")
+        return MpvResponse(request_id=1, error=self._reply_error)
 
     def arm_ended(self) -> asyncio.Future[EndFileReason]:
         return asyncio.get_running_loop().create_future()
@@ -139,3 +139,12 @@ async def test_controls_are_dropped_when_not_ready() -> None:
 async def test_play_when_not_ready_raises_so_the_loop_backs_off() -> None:
     with pytest.raises(ConnectionError):
         await _player(None).play(_part(), paused=False)
+
+
+async def test_rejected_loadfile_raises_so_the_loop_backs_off() -> None:
+    # A command-level rejection (error != "success") emits no end-file; discarding
+    # the reply would wedge the loop forever while status reports healthy. The
+    # player raises ConnectionError so the loop routes into _back_off_load.
+    client = _RecordingClient(reply_error="unknown command")
+    with pytest.raises(ConnectionError, match="mpv rejected loadfile: unknown command"):
+        await _player(client).play(_part(), paused=False)

@@ -421,6 +421,31 @@ class TestLoadFailure:
             assert player.parts  # recovered and loaded after the failed load
         await _stop(run, serve)
 
+    async def test_rejected_loadfile_surfaces_player_unavailable(
+        self, rotating: Program
+    ) -> None:
+        # A command-level loadfile rejection reaches the loop as ConnectionError
+        # (raised by MpvProgramPlayer.play); the loop must surface it on the
+        # health fault, not park silently on a never-resolving ended-future.
+        channel = ControlChannel(rotating)
+        player = FakePlayer()
+        player.fail_next_load(ConnectionError("mpv rejected loadfile: unknown command"))
+        health = PlaybackHealth()
+        sleeper = _GateSleeper()
+        loop = ProgramLoop(channel, player, sleeper, health, PlaybackSuspension(player))
+        serve = asyncio.create_task(channel.serve())
+        run = asyncio.create_task(loop.run())
+        for _ in range(500):
+            if health.fault is not None and sleeper.sleeps:
+                break
+            await asyncio.sleep(0)
+
+        fault = health.fault
+        assert fault is not None  # observable via status, not a silent wedge
+        assert fault.kind is PlaybackFaultKind.PLAYER_UNAVAILABLE
+        assert "mpv rejected loadfile" in fault.reason
+        await _stop(run, serve)
+
 
 class TestErrorReasonAdvances:
     """A bad-file ``error`` reason records a per-part fault, then advances past it."""
