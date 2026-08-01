@@ -1,0 +1,803 @@
+%
+% mpv-program-player.tex
+%
+% Z Specification for the voxd program tier's mpv PROCESS/CONNECTION lifecycle.
+%
+% This model is the stateful-audio gate for docs/mpv-program-player.md. It
+% models the lifecycle of the ONE persistent mpv process and its JSON-IPC
+% connection --- spawn, connect, crash-detect, restart, give-up, shutdown ---
+% and the loop's interaction with it (wait-for-ready, loadfile, receive
+% end-file, replay-after-crash).
+%
+% It is DISTINCT from, and does not restate, the domain source state machine of
+% docs/vox-music-player-transport.tex. That model (T1--T7: idle/playing/paused,
+% the cursor, the catalogue) is UNCHANGED by the mpv mechanism swap; the design
+% doc's Section 3 argues T1--T7 hold because they are properties of the source
+% state, which mpv does not touch. This model pins the new stateful behaviour
+% the swap introduces: the process/connection lifecycle and its eight
+% invariants I1--I7 and single-loadfile-ownership.
+%
+% It reuses the style, naming, and the ZBOOL convention of the transport model,
+% and the same bounded-integer discipline so ProB can exhaust the reachable
+% space.
+%
+
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fuzz}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+
+\begin{document}
+
+\title{The voxd Program Player: A Z Specification of the mpv Process and
+Connection Lifecycle}
+\author{Formal model of the mpv process/connection state machine}
+\date{August 2026}
+\hypersetup{
+  pdftitle={The voxd Program Player: A Z Specification of the mpv Process and Connection Lifecycle},
+  pdfauthor={Punt Labs},
+  pdfsubject={Z Specification},
+  pdfcreator={fuzz/probcli}
+}
+\maketitle
+
+\section{Introduction}
+
+The program tier abandons a fresh \texttt{ffplay} process per part in favour of
+\emph{one} persistent \texttt{mpv} process driven over a JSON IPC socket
+(\texttt{docs/mpv-program-player.md}). Playing a part becomes \texttt{loadfile};
+a part ending becomes an \texttt{end-file} event; pause becomes an internal
+property flip, click-free because nothing is torn down. The change swaps the
+\emph{mechanism} of playback and leaves the \emph{domain} state machine ---
+the source cursor and the transport modes \texttt{idle}/\texttt{playing}/%
+\texttt{paused} of \texttt{docs/vox-music-player-transport.tex}, with its
+invariants \texttt{T1}--\texttt{T7} --- untouched. That model is not restated
+here, exactly as the transport model did not restate the phase-2 catalogue
+operations it depended on.
+
+What the swap \emph{introduces} is a new, genuinely stateful subsystem: the
+lifecycle of the one mpv process and its socket connection, and the discipline
+by which the playback loop drives it without ever issuing a command into a dead
+or not-yet-ready connection, without losing its place across a crash, and
+without racing a second loader against the supervisor. This specification pins
+that lifecycle. It fixes the process modes, the terms the design names
+(the pending-command count, the loop's in-flight await, the loadfile-issuer,
+the restart counter, the paused flag, and the current-part cursor), and the
+eight invariants \texttt{I1}--\texttt{I7} and \emph{single-loadfile-ownership}
+that must hold across every transition.
+
+The division of labour is the settled one (\texttt{md}~\S1, peer-reviewed
+\texttt{gvr}+\texttt{kpz}): a \emph{supervisor} owns the process and the
+connection --- spawn, connect, crash-detect, restart --- and \emph{nothing}
+about what plays; the \emph{loop} owns every \texttt{loadfile} and holds the
+cursor. This model makes that split a theorem: \texttt{loadfileBy} never
+contains the supervisor, and no \texttt{loadfile} is enabled outside
+\texttt{ready}, reached only by \emph{waiting} for \texttt{ready}
+(\texttt{WaitReady}), never by issuing-and-retrying.
+
+\section{Basic Types, Modes, and Constants}
+\label{sec:types}
+
+The mpv process is in one of six modes over its lifecycle.
+
+\begin{zed}
+  MpvState ::= down | starting | ready | crashed | restarting | failed
+\end{zed}
+
+\begin{description}
+  \item[\texttt{down}] no process --- before the first spawn, and after a
+    clean shutdown.
+  \item[\texttt{starting}] the process is spawned but the socket is not yet
+    connected --- the first-time bring-up.
+  \item[\texttt{ready}] the process is alive, the socket is connected and its
+    reader is running, and commands are accepted. This is the \emph{only} mode
+    in which any IPC command may be issued.
+  \item[\texttt{crashed}] the process or socket has died; on entry the reader
+    resolves every pending command future and the loop's in-flight ended-future
+    (with the synthetic reason \texttt{crashed}), and a restart is owed.
+  \item[\texttt{restarting}] the process is being respawned after a crash,
+    within the cap; like \texttt{starting} but carrying the standing fault the
+    crash raised.
+  \item[\texttt{failed}] the restart cap is exceeded; the supervisor has given
+    up, and a standing hard fault stands until the daemon is shut down.
+\end{description}
+
+The playback loop is in one of three phases with respect to the mpv connection.
+The phase is what makes \texttt{WaitReady} an explicit, reachable step rather
+than an implicit precondition.
+
+\begin{zed}
+  LoopPhase ::= lwait | lready | lplay
+\end{zed}
+
+\begin{description}
+  \item[\texttt{lwait}] the loop is parked in \texttt{WaitReady}, awaiting the
+    \texttt{ready} signal before it will issue any \texttt{loadfile} --- the
+    startup wait, and the post-crash recovery wait.
+  \item[\texttt{lready}] the loop has observed \texttt{ready} (via
+    \texttt{WaitReady}) and is cleared to issue its \texttt{loadfile}; reached
+    \emph{only} from \texttt{lwait} when the process is \texttt{ready}, so the
+    path to a \texttt{loadfile} is provably a wait, not a retry.
+  \item[\texttt{lplay}] a file is loaded and the loop is awaiting its
+    ended-future (\texttt{loopAwait} = \texttt{ztrue}).
+\end{description}
+
+An \texttt{end-file} carries one of five reasons. The first four are mpv's own;
+\texttt{rCrashed} is \emph{synthetic} --- the reader injects it into the loop's
+ended-future on socket EOF, because a crash emits no \texttt{end-file}. It is
+produced by \texttt{Crash} (Section~\ref{sec:crash}), never by a real event.
+
+\begin{zed}
+  EndFileReason ::= rEof | rStop | rRedirect | rError | rCrashed
+\end{zed}
+
+The two actors that could conceivably issue a \texttt{loadfile}: the loop and
+the supervisor. The single-loadfile-ownership invariant restricts the issuers
+to $\{ loopA \}$.
+
+\begin{zed}
+  ACTOR ::= loopA | supA
+\end{zed}
+
+A \texttt{ZBOOL} is a Z boolean, named to avoid the ProB/B clash with
+\texttt{BOOL}, exactly as in the transport model. It flags the standing fault,
+the loop's in-flight await, the paused flag, and the load's pause option.
+
+\begin{zed}
+  ZBOOL ::= ztrue | zfalse
+\end{zed}
+
+Four bounds keep the carriers finite so ProB can explore the reachable space.
+\texttt{maxRestarts} is the restart cap; \texttt{maxCmds} bounds the in-flight
+command futures; \texttt{maxPart} bounds the part cursor as in the transport
+model. None is a product limit; each is a model bound chosen small enough to
+exhaust and large enough to exercise every boundary --- the cap reached, more
+than one command in flight, and a cursor that can rotate.
+
+\begin{axdef}
+  maxRestarts : \nat_1 \\
+  maxCmds : \nat_1 \\
+  maxPart : \nat_1
+  \where
+  maxRestarts = 2 \\
+  maxCmds = 2 \\
+  maxPart = 2
+\end{axdef}
+
+\section{State}
+\label{sec:state}
+
+The \texttt{MpvLifecycle} carries the process mode; the number of live
+processes and readers; the restart counter; a standing-fault flag; the count of
+unresolved command futures; the loop phase; the loop's in-flight-await flag;
+the set of actors that have issued the current \texttt{loadfile}; the paused
+flag; the pause option the current file was loaded with; and the current-part
+cursor.
+
+Four of these are \emph{derived}: \texttt{processes}, \texttt{readers}, and
+\texttt{fault} are total functions of \texttt{state}, and \texttt{loopAwait} is
+a total function of \texttt{loopPhase}. They are declared and pinned in the
+predicate --- as the transport model declared and pinned \texttt{advancing} and
+\texttt{glyph} --- so the invariants they carry (\texttt{I2}, \texttt{I5},
+\texttt{I3}, and the await-side of \texttt{I7}) read as facts in the state, not
+as prose. The predicate carries every invariant; read the conjuncts in the
+order \texttt{I1}--\texttt{I7} then ownership.
+
+\begin{schema}{MpvLifecycle}
+  state : MpvState \\
+  processes : 0 \upto 1 \\
+  readers : 0 \upto 1 \\
+  restarts : 0 \upto maxRestarts \\
+  fault : ZBOOL \\
+  pendingCmds : 0 \upto maxCmds \\
+  loopPhase : LoopPhase \\
+  loopAwait : ZBOOL \\
+  loadfileBy : \power ACTOR \\
+  paused : ZBOOL \\
+  loadPause : ZBOOL \\
+  cursor : 1 \upto maxPart
+  \where
+  (loopPhase \in \{ lready, lplay \} \implies state = ready) \\
+  (state \neq ready \implies pendingCmds = 0) \\
+  (processes = 1 \iff state \in \{ starting, restarting, ready \}) \\
+  (readers = 1 \iff state = ready) \\
+  (state = ready \iff processes = 1 \land readers = 1) \\
+  (fault = ztrue \iff state \in \{ crashed, restarting, failed \}) \\
+  (state = failed \implies restarts = maxRestarts) \\
+  (loopAwait = ztrue \iff loopPhase = lplay) \\
+  loadfileBy \subseteq \{ loopA \}
+\end{schema}
+
+The conjuncts discharge the invariants as follows.
+
+\begin{description}
+  \item[\texttt{I1} --- commands only when \texttt{ready}, reached by waiting.]
+    The state face is $loopPhase \in \{ lready, lplay \} \implies state =
+    ready$ together with $state \neq ready \implies pendingCmds = 0$: no
+    command future stands, and the loop has neither cleared-to-issue nor an
+    active load, in any non-\texttt{ready} mode. The \emph{operational} face
+    --- that a \texttt{loadfile} is reached by \emph{waiting} on \texttt{ready}
+    and not by a refuse-and-retry --- is carried by \texttt{WaitReady}
+    (Section~\ref{sec:waitready}): \texttt{lready} is set \emph{only} there, and
+    \emph{only} from \texttt{lwait} when $state = ready$. So \texttt{I1} is
+    proven by the wait, not discharged vacuously.
+  \item[\texttt{I2} --- at most one process.] $processes \in 0 \upto 1$ by
+    type, pinned to $1$ exactly in \texttt{starting}/\texttt{restarting}/%
+    \texttt{ready}. No restart race can spawn a second, because \texttt{Spawn}
+    fires only from \texttt{down} and \texttt{Restart} only from
+    \texttt{crashed}, and neither of those has a live process.
+  \item[\texttt{I3} --- fault iff \texttt{crashed}/\texttt{restarting}/%
+    \texttt{failed}.] $fault = ztrue \iff state \in \{ crashed, restarting,
+    failed \}$. This is the schema-sketch reading of \texttt{I3}, which is
+    \emph{stricter} than the prose reading ``fault iff not ready'' and,
+    Section~\ref{sec:forks} argues, the correct one: \texttt{down} and
+    \texttt{starting} are non-\texttt{ready} but carry no standing fault, being
+    clean shutdown/pre-spawn and clean first bring-up.
+  \item[\texttt{I4} --- the restart cap terminates.] $restarts \in 0 \upto
+    maxRestarts$ by type, and $state = failed \implies restarts =
+    maxRestarts$. \texttt{Restart} increments \texttt{restarts} and is enabled
+    only while $restarts < maxRestarts$; at the cap only \texttt{Fail} is
+    enabled, and \texttt{failed} spawns nothing. There is no hot respawn loop.
+  \item[\texttt{I5} --- one reader.] $readers \in 0 \upto 1$ by type, pinned
+    to $1$ exactly in \texttt{ready}: the reader is alive iff the connection is
+    up, started on \texttt{Connect} and gone on \texttt{Crash}/\texttt{Shutdown}.
+  \item[\texttt{I6} --- the lifecycle does not corrupt the cursor, and recovery
+    honours pause.] A property of the crash/recovery operations, not a standing
+    conjunct: \texttt{Crash}, \texttt{Restart}, and \texttt{ReplayCurrent} all
+    hold $cursor' = cursor$ (Sections~\ref{sec:crash}, \ref{sec:replay}), and
+    \texttt{ReplayCurrent} sets $loadPause' = paused$ --- the reload is loaded
+    paused exactly when the paused flag stands. Recovery reaches its
+    \texttt{loadfile} through \texttt{WaitReady}, never a busy-retry.
+  \item[\texttt{I7} --- no orphaned await across a crash.] The await face is
+    $loopAwait = ztrue \iff loopPhase = lplay$, and $loopPhase \in \{ lready,
+    lplay \} \implies state = ready$; the command face is $state \neq ready
+    \implies pendingCmds = 0$. Together: entering any non-\texttt{ready} mode
+    forces $pendingCmds = 0$ and $loopAwait = zfalse$. \texttt{Crash}
+    (Section~\ref{sec:crash}) realises this: it sets $pendingCmds' = 0$ (fails
+    every pending command future) and $loopPhase' = lwait$ (resolves the
+    ended-future, with the synthetic \texttt{crashed} reason). No await is left
+    hanging.
+  \item[\emph{single-loadfile-ownership}.] $loadfileBy \subseteq \{ loopA \}$:
+    only the loop ever issues \texttt{loadfile}. \texttt{Spawn},
+    \texttt{Connect}, \texttt{Crash}, \texttt{Restart}, \texttt{Fail},
+    \texttt{CrashDuringRestart}, and \texttt{Shutdown} --- the supervisor's
+    transitions --- never write \texttt{loadfileBy}; only
+    \texttt{ReplayCurrent} and \texttt{AutoAdvance} do, and both set it to
+    $\{ loopA \}$. The supervisor never enters the set.
+\end{description}
+
+Because \texttt{processes}, \texttt{readers}, and \texttt{fault} are total
+functions of \texttt{state}, and \texttt{loopAwait} of \texttt{loopPhase},
+every state fixes them uniquely; they add no freedom, only a name for a fact.
+The genuinely free variables are \texttt{state}, \texttt{restarts},
+\texttt{pendingCmds}, \texttt{loopPhase}, \texttt{loadfileBy}, \texttt{paused},
+\texttt{loadPause}, and \texttt{cursor}, and the operations below frame all
+eight; the four derived observations follow from the state invariant of
+\texttt{MpvLifecycle$'$} and are not written out, exactly as
+\texttt{advancing$'$}/\texttt{glyph$'$} were left to the invariant in the
+transport model.
+
+\section{Initialisation}
+
+The daemon starts \texttt{down}: no process, the loop parked in
+\texttt{WaitReady}, the restart counter and command futures at zero, nothing
+paused. The boot cursor is left free over $1 \upto maxPart$ so the animator
+explores every starting part; an initialisation establishes a state, it does
+not consume an input.
+
+\begin{schema}{MpvInit}
+  MpvLifecycle'
+  \where
+  state' = down \\
+  restarts' = 0 \\
+  pendingCmds' = 0 \\
+  loopPhase' = lwait \\
+  loadfileBy' = \emptyset \\
+  paused' = zfalse \\
+  loadPause' = zfalse
+\end{schema}
+
+From $state' = down$ and $loopPhase' = lwait$ the invariant forces
+$processes' = 0$, $readers' = 0$, $fault' = zfalse$, and $loopAwait' =
+zfalse$; only \texttt{cursor$'$} is free.
+
+\section{Transitions}
+
+Each operation names its enabling mode on an early predicate line, then frames
+the eight free variables. The supervisor owns \texttt{Spawn}, \texttt{Connect},
+\texttt{Crash}, \texttt{Restart}, \texttt{Fail}, \texttt{CrashDuringRestart},
+and \texttt{Shutdown}; the loop owns \texttt{WaitReady}, \texttt{ReplayCurrent},
+\texttt{AutoAdvance}, and \texttt{EofWhilePaused}; the service owns
+\texttt{SetPause}, \texttt{SetResume}, and \texttt{ResolveCommand}.
+
+\subsection{Spawn --- bring the process up}
+\label{sec:spawn}
+
+From \texttt{down}, \texttt{Spawn} starts the process; the socket is not yet
+connected, so the mode is \texttt{starting}, not \texttt{ready}.
+
+\begin{schema}{Spawn}
+  \Delta MpvLifecycle
+  \where
+  state = down \\
+  state' = starting \\
+  restarts' = restarts \\
+  pendingCmds' = pendingCmds \\
+  loopPhase' = loopPhase \\
+  loadfileBy' = loadfileBy \\
+  paused' = paused \\
+  loadPause' = loadPause \\
+  cursor' = cursor
+\end{schema}
+
+The invariant forces $processes' = 1$, $readers' = 0$, $fault' = zfalse$: one
+process, no reader, no fault --- a clean bring-up.
+
+\subsection{Connect --- the connection comes up}
+\label{sec:connect}
+
+From \texttt{starting} (first bring-up) or \texttt{restarting} (post-crash
+respawn), \texttt{Connect} attaches the reader and reaches \texttt{ready}. The
+two are one path, as the design intends: ``first connect'' and ``reconnect
+after crash'' run the identical routine. A successful reconnect resets the
+restart counter --- this is how the model renders the design's ``restart cap
+within a window'': the counter measures \emph{consecutive} respawns that never
+reached \texttt{ready}, and reaching \texttt{ready} clears it.
+
+\begin{schema}{Connect}
+  \Delta MpvLifecycle
+  \where
+  state \in \{ starting, restarting \} \\
+  state' = ready \\
+  restarts' = 0 \\
+  pendingCmds' = pendingCmds \\
+  loopPhase' = loopPhase \\
+  loadfileBy' = loadfileBy \\
+  paused' = paused \\
+  loadPause' = loadPause \\
+  cursor' = cursor
+\end{schema}
+
+The invariant forces $readers' = 1$ and $fault' = zfalse$. Because
+$pendingCmds = 0$ held in \texttt{starting}/\texttt{restarting}, $pendingCmds'
+= 0$ still satisfies the ready-side of the state predicate, which permits any
+count. The loop phase is unchanged --- typically \texttt{lwait}, waiting for
+exactly this signal.
+
+\subsection{WaitReady --- the loop waits, it does not retry}
+\label{sec:waitready}
+
+From \texttt{lwait}, and only once the process is \texttt{ready}, the loop
+transitions to \texttt{lready}: cleared to issue its \texttt{loadfile}. This is
+the whole content of \texttt{I1}'s operational face. The loop parks in
+\texttt{lwait} exactly as long as mpv takes to come up, and no longer; it never
+issues a \texttt{loadfile} into a not-ready client and gets refused into a
+fault, then spins.
+
+\begin{schema}{WaitReady}
+  \Delta MpvLifecycle
+  \where
+  state = ready \\
+  loopPhase = lwait \\
+  state' = state \\
+  restarts' = restarts \\
+  pendingCmds' = pendingCmds \\
+  loopPhase' = lready \\
+  loadfileBy' = loadfileBy \\
+  paused' = paused \\
+  loadPause' = loadPause \\
+  cursor' = cursor
+\end{schema}
+
+\subsection{ReplayCurrent --- (re)play the current part, honouring pause}
+\label{sec:replay}
+
+From \texttt{lready}, the loop issues the \texttt{loadfile} for the
+\emph{current} part. This is both the first play at startup and the replay
+after a crash --- one operation, because the design unifies them. The cursor is
+unmoved (\texttt{I6}), the loader is the loop (\emph{ownership}), and the load's
+pause option equals the paused flag (\texttt{I6}: a crash while paused replays
+paused, so recovery never silently resumes playing). The loop enters
+\texttt{lplay}, now awaiting the ended-future.
+
+\begin{schema}{ReplayCurrent}
+  \Delta MpvLifecycle
+  \where
+  state = ready \\
+  loopPhase = lready \\
+  state' = state \\
+  restarts' = restarts \\
+  pendingCmds' = pendingCmds \\
+  loopPhase' = lplay \\
+  loadfileBy' = \{ loopA \} \\
+  paused' = paused \\
+  loadPause' = paused \\
+  cursor' = cursor
+\end{schema}
+
+The invariant forces $loopAwait' = ztrue$ from $loopPhase' = lplay$. Because
+$loadfileBy' = \{ loopA \}$, ownership is preserved; because $loadPause' =
+paused$, the reload honours the paused flag whatever its value; because
+$cursor' = cursor$, the part does not move.
+
+\subsection{AutoAdvance --- a part ends cleanly, advance and reload}
+\label{sec:autoadvance}
+
+While \texttt{lplay} and \emph{not paused}, an \texttt{end-file} with reason
+\texttt{rEof} (natural end) or \texttt{rError} (bad part, advance past it)
+rotates the cursor to another part of the album --- avoiding an immediate
+repeat when the album holds more than one part, replaying when it holds exactly
+one --- and immediately reloads, staying in \texttt{lplay}. The paused guard is
+the retained \texttt{T3} check (\texttt{loop.py:159}): an \texttt{rEof} that mpv
+buffered in the instant before the user paused must not advance-then-load while
+the mode reads paused.
+
+\begin{schema}{AutoAdvance}
+  \Delta MpvLifecycle \\
+  reason? : EndFileReason
+  \where
+  state = ready \\
+  loopPhase = lplay \\
+  reason? \in \{ rEof, rError \} \\
+  paused = zfalse \\
+  state' = state \\
+  restarts' = restarts \\
+  pendingCmds' = pendingCmds \\
+  loopPhase' = lplay \\
+  loadfileBy' = \{ loopA \} \\
+  paused' = paused \\
+  loadPause' = paused \\
+  1 \leq cursor' \land cursor' \leq maxPart \\
+  (maxPart \geq 2 \implies cursor' \neq cursor) \\
+  (maxPart = 1 \implies cursor' = cursor)
+\end{schema}
+
+Only the cursor moves, and it stays in $1 \upto maxPart$. The load is the
+loop's ($loadfileBy' = \{ loopA \}$) and is played, not paused ($loadPause' =
+paused = zfalse$), so ownership and \texttt{I6} hold.
+
+\subsection{EofWhilePaused --- the guarded \texttt{rEof} is dropped}
+\label{sec:eofpaused}
+
+While \texttt{lplay} and \emph{paused}, an \texttt{end-file} with reason
+\texttt{rEof} is dropped: the cursor does not move and the loop keeps awaiting.
+This is the other face of the \texttt{T3} guard. A paused mpv reaches no
+\emph{new} \texttt{rEof}, but the one it buffered just before the pause must not
+advance the cursor; the loop ignores it and stays where it is.
+
+\begin{schema}{EofWhilePaused}
+  \Xi MpvLifecycle \\
+  reason? : EndFileReason
+  \where
+  state = ready \\
+  loopPhase = lplay \\
+  reason? = rEof \\
+  paused = ztrue
+\end{schema}
+
+$\Xi MpvLifecycle$ holds every variable fixed: the guarded event changes
+nothing.
+
+\subsection{Crash --- the connection dies}
+\label{sec:crash}
+
+From \texttt{ready}, socket EOF (or a set \texttt{returncode}) is a crash. On
+detection the reader fails every pending command future and resolves the loop's
+in-flight ended-future with the synthetic reason \texttt{crashed}; the model
+renders both as $pendingCmds' = 0$ and $loopPhase' = lwait$ (which forces
+$loopAwait' = zfalse$). The cursor is untouched and the paused flag survives ---
+a crash while paused stays paused. The current load is gone, so $loadfileBy' =
+\emptyset$.
+
+\begin{schema}{Crash}
+  \Delta MpvLifecycle
+  \where
+  state = ready \\
+  state' = crashed \\
+  restarts' = restarts \\
+  pendingCmds' = 0 \\
+  loopPhase' = lwait \\
+  loadfileBy' = \emptyset \\
+  paused' = paused \\
+  loadPause' = loadPause \\
+  cursor' = cursor
+\end{schema}
+
+The invariant forces $processes' = 0$, $readers' = 0$, $fault' = ztrue$. This
+is the \texttt{I7} transition: no await --- neither a command future nor the
+ended-future --- survives the crash. \texttt{Crash} is enabled from every
+\texttt{ready} state, whatever the loop phase; when the loop was not in
+\texttt{lplay} there is no ended-future to resolve, but the pending command
+futures are failed and the loop is pushed to \texttt{lwait} to recover all the
+same.
+
+\subsection{Restart --- respawn within the cap}
+\label{sec:restart}
+
+From \texttt{crashed}, while the cap is not yet reached, \texttt{Restart}
+increments the counter and respawns, reaching \texttt{restarting}. The standing
+fault persists (\texttt{restarting} carries it) until \texttt{Connect} clears
+it.
+
+\begin{schema}{Restart}
+  \Delta MpvLifecycle
+  \where
+  state = crashed \\
+  restarts < maxRestarts \\
+  state' = restarting \\
+  restarts' = restarts + 1 \\
+  pendingCmds' = pendingCmds \\
+  loopPhase' = loopPhase \\
+  loadfileBy' = loadfileBy \\
+  paused' = paused \\
+  loadPause' = loadPause \\
+  cursor' = cursor
+\end{schema}
+
+The invariant forces $processes' = 1$ (respawned), $readers' = 0$ (not yet
+connected), $fault' = ztrue$.
+
+\subsection{CrashDuringRestart --- the respawn dies before connecting}
+\label{sec:crashrestart}
+
+A respawn that dies before it reaches \texttt{ready} returns to \texttt{crashed}
+without resetting the counter. This is the path that lets the counter climb to
+the cap: a run of respawns that never connect drives \texttt{restarts} to
+\texttt{maxRestarts}, at which point only \texttt{Fail} is enabled.
+
+\begin{schema}{CrashDuringRestart}
+  \Delta MpvLifecycle
+  \where
+  state = restarting \\
+  state' = crashed \\
+  restarts' = restarts \\
+  pendingCmds' = pendingCmds \\
+  loopPhase' = loopPhase \\
+  loadfileBy' = loadfileBy \\
+  paused' = paused \\
+  loadPause' = loadPause \\
+  cursor' = cursor
+\end{schema}
+
+\subsection{Fail --- the cap is reached, give up}
+\label{sec:fail}
+
+From \texttt{crashed} at the cap, \texttt{Fail} enters \texttt{failed}: a
+standing hard fault, no further respawn. This is \texttt{I4}'s terminating
+edge.
+
+\begin{schema}{Fail}
+  \Delta MpvLifecycle
+  \where
+  state = crashed \\
+  restarts = maxRestarts \\
+  state' = failed \\
+  restarts' = restarts \\
+  pendingCmds' = pendingCmds \\
+  loopPhase' = loopPhase \\
+  loadfileBy' = loadfileBy \\
+  paused' = paused \\
+  loadPause' = loadPause \\
+  cursor' = cursor
+\end{schema}
+
+The after-state satisfies $state = failed \implies restarts = maxRestarts$; the
+invariant forces $processes' = 0$, $fault' = ztrue$. No transition from
+\texttt{failed} respawns; only \texttt{Shutdown} leaves it.
+
+\subsection{SetPause, SetResume --- direct pause/resume}
+\label{sec:pause}
+
+The service pauses and resumes by a direct IPC command in \texttt{ready}
+(settled: not routed through the control channel, because they mutate no source
+state). Each registers a command future --- captured here as an increment of
+\texttt{pendingCmds} --- and flips the paused flag. Neither reloads: the load's
+pause option \texttt{loadPause} is untouched, which is the click-free property.
+
+\begin{schema}{SetPause}
+  \Delta MpvLifecycle
+  \where
+  state = ready \\
+  pendingCmds < maxCmds \\
+  state' = state \\
+  restarts' = restarts \\
+  pendingCmds' = pendingCmds + 1 \\
+  loopPhase' = loopPhase \\
+  loadfileBy' = loadfileBy \\
+  paused' = ztrue \\
+  loadPause' = loadPause \\
+  cursor' = cursor
+\end{schema}
+
+\begin{schema}{SetResume}
+  \Delta MpvLifecycle
+  \where
+  state = ready \\
+  pendingCmds < maxCmds \\
+  state' = state \\
+  restarts' = restarts \\
+  pendingCmds' = pendingCmds + 1 \\
+  loopPhase' = loopPhase \\
+  loadfileBy' = loadfileBy \\
+  paused' = zfalse \\
+  loadPause' = loadPause \\
+  cursor' = cursor
+\end{schema}
+
+Both require \texttt{ready} --- part of \texttt{I1}: no command is issued into
+a not-ready connection.
+
+\subsection{ResolveCommand --- a response arrives}
+\label{sec:resolve}
+
+A command's response arrives and its future resolves, decrementing the
+in-flight count. This is the ordinary counterpart to \texttt{Crash}, which
+resolves them all at once with an error.
+
+\begin{schema}{ResolveCommand}
+  \Delta MpvLifecycle
+  \where
+  state = ready \\
+  pendingCmds > 0 \\
+  state' = state \\
+  restarts' = restarts \\
+  pendingCmds' = pendingCmds - 1 \\
+  loopPhase' = loopPhase \\
+  loadfileBy' = loadfileBy \\
+  paused' = paused \\
+  loadPause' = loadPause \\
+  cursor' = cursor
+\end{schema}
+
+\subsection{Shutdown --- graceful teardown}
+\label{sec:shutdown}
+
+From any live mode, \texttt{Shutdown} quits mpv and returns to \texttt{down}:
+the process and reader gone, the counter and futures cleared, the loop parked
+to wait again should the daemon come back up. Enabled from \texttt{failed} as
+well, so a failed process is not a wedge --- the daemon can be shut down and a
+fresh \texttt{Spawn} started.
+
+\begin{schema}{Shutdown}
+  \Delta MpvLifecycle
+  \where
+  state \neq down \\
+  state' = down \\
+  restarts' = 0 \\
+  pendingCmds' = 0 \\
+  loopPhase' = lwait \\
+  loadfileBy' = \emptyset \\
+  paused' = zfalse \\
+  loadPause' = zfalse \\
+  cursor' = cursor
+\end{schema}
+
+The invariant forces $processes' = 0$, $readers' = 0$, $fault' = zfalse$: a
+clean \texttt{down}, indistinguishable from the pre-spawn state save for the
+cursor it leaves in place.
+
+\section{Design forks and observations surfaced by the formalisation}
+\label{sec:forks}
+
+Formalising the lifecycle exposes one genuine fork and three modelling
+decisions worth recording for the leader. The model takes a stated position in
+each and flags the tension rather than papering over it.
+
+\begin{description}
+  \item[Fork~1 --- the reading of \texttt{I3}. \emph{Recommend the strict
+    reading.}] The design states \texttt{I3} two ways that do not agree. The
+    prose (\S6, invariant list) says ``fault $\iff$ not ready''; the state-schema
+    sketch (\S6) says $fault = ztrue \iff state \in \{ crashed, restarting,
+    failed \}$. These differ on \texttt{down} and \texttt{starting}, which are
+    non-\texttt{ready} but, under the sketch, fault-free. The two clean
+    non-\texttt{ready} modes --- \texttt{down} (pre-spawn or post-clean-shutdown)
+    and \texttt{starting} (normal first bring-up) --- carry no standing fault:
+    marking them faulted would report a fault during every ordinary startup and
+    after every ordinary shutdown, which is not what a client should see.
+    \textbf{This model takes the strict schema reading}, $fault \iff state \in
+    \{ crashed, restarting, failed \}$, and recommends the design prose be
+    corrected to match. \emph{Decision needed from the leader before
+    implementation:} confirm the strict reading, so \texttt{doctor} and
+    \texttt{ProgramStatus.playback\_error} report a standing fault in
+    \texttt{crashed}/\texttt{restarting}/\texttt{failed} only, and treat the
+    spawn-failure \texttt{PLAYER\_UNAVAILABLE} case as the next item rather than
+    as ``\texttt{starting} with a fault''.
+  \item[Observation~A --- \texttt{PLAYER\_UNAVAILABLE} is outside this model.]
+    The design's spawn-failure fault (mpv missing or too old at bring-up) is a
+    \emph{startup} edge, not part of the crash/recovery lifecycle the brief's
+    transitions cover; there is no \texttt{SpawnFailure} transition in the set.
+    It surfaces as a standing \texttt{PLAYER\_UNAVAILABLE} fault with the daemon
+    still up, and it does \emph{not} fit the six-mode/\texttt{I3} shape cleanly
+    (a failed spawn has $restarts = 0$, so it is not \texttt{failed}, and it
+    carries a fault, so it is not \texttt{down}/\texttt{starting} under the
+    strict \texttt{I3}). \textbf{Recommendation:} model it, if at all, as a
+    seventh mode \texttt{unavailable} distinct from \texttt{failed}, or accept
+    that the startup-availability fault lives outside this lifecycle's
+    invariant. It is bracketed here as scope, exactly as the transport model
+    bracketed the catalogue operations. Flagged because it is the one place the
+    strict \texttt{I3} and the design's fault surface must be reconciled in
+    code.
+  \item[Observation~B --- \texttt{restarting} versus reusing \texttt{starting}.]
+    The design sketch's \texttt{Restart} reads ``\texttt{crashed} $\to$
+    \texttt{starting}''. This model routes the post-crash respawn through the
+    distinct \texttt{restarting} mode instead, so that \texttt{I3}'s fault
+    biconditional stays clean: \texttt{restarting} carries the standing fault
+    the crash raised, whereas \texttt{starting} (first bring-up) does not. The
+    two modes are otherwise identical --- process up, socket not yet connected
+    --- and \texttt{Connect} serves both. This is a refinement, not a
+    contradiction; recorded so the implementation keeps the standing fault up
+    across a respawn until \texttt{ready} is re-reached.
+  \item[Observation~C --- the restart window is modelled as consecutive failed
+    respawns.] The design specifies a ``restart cap within a window''. Modelling
+    wall-clock windows is out of a Z model's reach; this model renders the
+    window as \emph{consecutive respawns that never reached \texttt{ready}}:
+    \texttt{restarts} climbs on each \texttt{Restart} and \texttt{Connect}
+    resets it to $0$. A single successful reconnect clears the count. This is a
+    faithful and checkable abstraction of the intent --- ``do not hot-loop'' ---
+    and the implementation is free to add a time bound on top; the invariant it
+    must preserve, \texttt{I4}, is unaffected.
+\end{description}
+
+\section{Type-checking and model-checking}
+\label{sec:results}
+
+The specification is \texttt{fuzz}-clean: \texttt{fuzz -t} exits~0.
+
+It was then model-checked with ProB (\texttt{probcli}, $maxRestarts = 2$,
+$maxCmds = 2$, $maxPart = 2$, integers bounded to $0 \upto 3$). Over the boot
+cursor ranging across every part, ProB visits every reachable state
+(125~states, 485~transitions) and finds \emph{no invariant violation and no
+deadlock}: the \texttt{MpvLifecycle} predicate --- and with it \texttt{I1}
+(the state face), \texttt{I2}, \texttt{I3}, \texttt{I4}, \texttt{I5}, the await
+side of \texttt{I7}, and single-loadfile-ownership --- holds on every reachable
+state, and every state has an enabled successor. All fourteen operations are
+covered, so each is reachable and exercised. The absence of a deadlock is the
+key liveness result: a \texttt{crashed} state is never a wedge, because
+\texttt{Restart}/\texttt{Fail} always leave it and \texttt{Shutdown} leaves any
+live mode.
+
+The invariants that are properties of the crash/recovery \emph{operations}
+rather than standing conjuncts were confirmed by temporal checks over the full
+reachable space:
+
+\begin{description}
+  \item[\texttt{I7} --- no orphaned await.] $\mathrm{AG}(state = crashed
+    \implies loopAwait = zfalse \land pendingCmds = 0)$ holds: every crash
+    resolves both the loop's ended-future and every pending command future.
+    That the loop \emph{genuinely} awaits and that \emph{several} futures can be
+    in flight --- so this is not vacuous --- is witnessed by
+    $\mathrm{EF}(loopAwait = ztrue)$ and $\mathrm{EF}(pendingCmds = maxCmds)$,
+    both reachable.
+  \item[Crash liveness.] $\mathrm{AG}(state = crashed \implies \mathrm{EF}(state
+    = ready \lor state = failed))$ holds: from any crashed state the machine can
+    always reach \texttt{ready} again or terminate at \texttt{failed} --- it
+    never wedges.
+  \item[\texttt{I4} --- the cap terminates.] $\mathrm{EF}(state = failed)$ is
+    reachable, and $\mathrm{EF}(state = failed \land restarts = maxRestarts)$
+    confirms \texttt{failed} is entered only at the cap; the state invariant
+    $state = failed \implies restarts = maxRestarts$ holds throughout. No
+    reachable state respawns from \texttt{failed}.
+  \item[\texttt{I6} --- recovery honours pause.] $\mathrm{EF}(loopPhase = lplay
+    \land loadPause = ztrue \land paused = ztrue)$ is reachable: a witness of
+    length~12 drives the machine to pause a playing part, crash, restart,
+    reconnect, wait, and replay --- and the replayed load carries
+    $loadPause = ztrue$ because the paused flag stood. A crash while paused
+    does not silently resume playing.
+  \item[single-loadfile-ownership.] $\mathrm{AG}(supA \notin loadfileBy)$ holds:
+    across the whole reachable space the supervisor never appears among the
+    \texttt{loadfile} issuers. The double-load the earlier supervisor-reloads
+    split allowed is foreclosed.
+  \item[\texttt{I1} --- commands only when ready.] $\mathrm{AG}(state \neq ready
+    \implies pendingCmds = 0)$ holds, and \texttt{lready} --- the loop's
+    cleared-to-issue phase --- is set only by \texttt{WaitReady} from
+    \texttt{lwait} at $state = ready$, so the path to every \texttt{loadfile} is
+    a wait on \texttt{ready}, not a refuse-and-retry.
+\end{description}
+
+The model is deadlock-free by construction of \texttt{Shutdown} (enabled from
+any live mode) and \texttt{Spawn} (from \texttt{down}); unlike the transport
+model, there is no scope-boundary dead end, because the process lifecycle is
+self-contained --- it does not depend on an unmodelled catalogue operation to
+make progress.
+
+\end{document}
