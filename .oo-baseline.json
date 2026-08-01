@@ -2339,6 +2339,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/voxd/programs/mpv/orphan_reaper.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.4,
+    "max_complexity": 4.0,
+    "avg_complexity": 1.9,
+    "module_size": 106.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/voxd/programs/music_producer.py": {
     "avg_complexity": 1.86,
     "avg_params": 1.0,
