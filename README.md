@@ -40,7 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/e5b0eab/install.sh | 
 Restart Claude Code, then:
 
 ```text
-/enable       # turn vox on for this repo
+/vox enable   # turn vox on for this repo
 /recap        # spoken summary of what just happened
 ```
 

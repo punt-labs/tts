@@ -21,10 +21,10 @@ directly races the daemon.
 Vox is per-repo: it chimes and narrates only where a human ran `enable` and
 committed the `.punt-labs/vox/enabled` marker.
 
-- `mic:enablement action="enable"` (or `/enable`) — turn vox on for this repo:
+- `mic:enablement action="enable"` (or `/vox enable`) — turn vox on for this repo:
   deposit the guide, write the marker, add the `@`-import, register settings.
   Idempotent; re-running upgrades the deposited guide.
-- `mic:enablement action="disable"` (or `/disable`) — turn it off: remove the
+- `mic:enablement action="disable"` (or `/vox disable`) — turn it off: remove the
   import, marker, and settings. The `.punt-labs/vox/` subtree is left dormant.
 - CLI equivalent: `vox enable` / `vox disable` (`vox disable --purge` also
   removes the subtree). Neither surface runs git — commit the marker via a PR.
@@ -95,7 +95,7 @@ Catalog verbs (address a saved album by the id `list` prints):
 
 ## Slash commands
 
-- `/enable` — turn vox on for this repo; `/disable` — turn it off.
+- `/vox enable` — turn vox on for this repo; `/vox disable` — turn it off.
 - `/vox model <name>` / `/vox provider <name>` — switch TTS engine mid-session.
 - `/unmute [voice]` — enable voice mode, optionally set the session voice;
   `/unmute` (no argument) browses the roster.
