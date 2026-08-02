@@ -42,7 +42,7 @@ class _FakeCommands:
     def replay_album(self, album_id: AlbumId) -> None:
         self.played.append(album_id)
 
-    def off(self) -> None:
+    def stop(self) -> None:
         self.stops += 1
 
     def advance(self) -> None:

@@ -27,7 +27,11 @@ from punt_vox.config import ConfigStore
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.program_gateway import ProgramGateway
-from punt_vox.types_programs.control import SelectionRequest, StartRequest
+from punt_vox.types_programs.control import (
+    CommandOutcome,
+    SelectionRequest,
+    StartRequest,
+)
 from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.types_programs.status import ProgramStatus
 
@@ -258,11 +262,50 @@ class MusicCli:
 
         The bare positional is *id-or-name* (a saved id, else the saved-name
         radio); the ``--style``/``--vibe``/``--name`` selectors keep the shipped
-        per-vibe, cross-genre union radio -- both resolve.
+        per-vibe, cross-genre union radio -- both resolve. With no argument at all
+        it repeats the last-played album (:meth:`_replay_last`).
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         request = SelectionRequest(style=style, vibe=vibe, name=name, id=album_id)
+        if request.is_empty:
+            self._replay_last(request)
+            return
         outcome = self._guard(lambda: self._gateway_factory().select(request))
+        self._emit_play(outcome)
+
+    def _replay_last(self, request: SelectionRequest) -> None:
+        """Replay the last-played album; with no history, list the catalog and fail.
+
+        A bare ``play`` repeats the daemon's last-played album. When none has
+        played yet the daemon rejects the empty request, and this prints that
+        message beside the saved-album list rather than starting an arbitrary
+        album, so the caller can pick one.
+        """
+        gateway = self._gateway_factory()
+        try:
+            outcome = gateway.select(request)
+        except _GATEWAY_ERRORS as exc:
+            self._fail_with_catalog(str(exc), gateway)
+        self._emit_play(outcome)
+
+    def _fail_with_catalog(self, message: str, gateway: ProgramGateway) -> NoReturn:
+        """Fail with *message* and the saved-album list, when the daemon is reachable.
+
+        The album list is best-effort: a second daemon fault (an unreachable
+        daemon, not a missing history) drops it, so the caller still sees the
+        original error rather than a masking one.
+        """
+        try:
+            albums = gateway.catalog()
+        except _GATEWAY_ERRORS:
+            self._fail(message)
+        if not albums:
+            self._fail(message)
+        listing = "\n".join(f"  {a.display_line()}" for a in albums)
+        self._fail(f"{message}\nsaved albums:\n{listing}")
+
+    def _emit_play(self, outcome: CommandOutcome) -> None:
+        """Emit the play outcome (the one place both play paths render)."""
         self._formatter.emit(
             {"music": "play", "applied": outcome.applied},
             outcome.display("Playing selection."),
@@ -322,23 +365,23 @@ class MusicCli:
         self._guard(lambda: self._catalog_factory().remove(album_id))
         self._formatter.emit({"removed": album_id}, f"removed {album_id}")
 
-    def off(
+    def stop(
         self,
         *,
         json_output: _JsonOutput = False,
         verbose: _Verbose = False,
         quiet: _Quiet = False,
     ) -> None:
-        """Turn the music program off (stop playback); a no-op when already off.
+        """Stop the music program (halt playback); a no-op when already stopped.
 
-        The one CLI stop verb, matching ``mic:music mode="off"``: both route the
-        same daemon program-off op. A stop against an already-idle Program is
+        The one CLI halt verb, matching ``mic:music stop``: both route the same
+        daemon program-stop op. A stop against an already-idle Program is
         idempotent -- the daemon acks and the CLI prints a clean confirmation.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         outcome = self._guard(lambda: self._gateway_factory().stop())
         self._formatter.emit(
-            {"music": "off", "applied": outcome.applied},
+            {"music": "stop", "applied": outcome.applied},
             outcome.display("Music stopped."),
         )
 
@@ -440,7 +483,7 @@ def build_music_app(formatter: OutputFormatter, flags: OutputFlags) -> typer.Typ
     app.command("new")(cli.new)
     app.command("list")(cli.list_programs)
     app.command("play")(cli.play)
-    app.command("off")(cli.off)
+    app.command("stop")(cli.stop)
     app.command("get")(cli.get)
     app.command("remove")(cli.remove)
     app.command("next")(cli.advance)

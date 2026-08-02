@@ -23,7 +23,7 @@ def _subsystem(root: Path) -> ProgramSubsystem:
 _EXPECTED_HANDLERS = frozenset(
     {
         "program_on",
-        "program_off",
+        "program_stop",
         "program_next",
         "program_prev",
         "program_pause",

@@ -62,7 +62,7 @@ class _FakeCommands:
     def replay_album(self, album_id: AlbumId) -> None:
         self.played.append(album_id)
 
-    def off(self) -> None:
+    def stop(self) -> None:
         self.stops += 1
 
     def advance(self) -> None:
@@ -515,7 +515,7 @@ async def test_on_event_surfaces_a_playback_refusal_to_the_scene() -> None:
             msg = "no album with that id"
             raise ValueError(msg)
 
-        def off(self) -> None:  # pragma: no cover - unused here
+        def stop(self) -> None:  # pragma: no cover - unused here
             raise NotImplementedError
 
         def advance(self) -> None:  # pragma: no cover - unused here
@@ -546,7 +546,7 @@ async def test_on_event_surfaces_a_stop_refusal_to_the_scene() -> None:
         def replay_album(self, album_id: AlbumId) -> None:  # pragma: no cover
             raise NotImplementedError
 
-        def off(self) -> None:
+        def stop(self) -> None:
             msg = "cannot stop right now"
             raise ValueError(msg)
 
@@ -583,7 +583,7 @@ async def test_on_event_survives_a_presenter_that_fails_to_surface(
             msg = "no album with that id"
             raise ValueError(msg)
 
-        def off(self) -> None:  # pragma: no cover - unused here
+        def stop(self) -> None:  # pragma: no cover - unused here
             raise NotImplementedError
 
         def advance(self) -> None:  # pragma: no cover - unused here

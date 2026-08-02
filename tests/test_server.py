@@ -1463,28 +1463,28 @@ class TestMusicTool:
 
         assert "error" in result
 
-    def test_off_stops_via_gateway(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_stop_stops_via_gateway(self, monkeypatch: pytest.MonkeyPatch) -> None:
         fake = FakeProgramGateway()
         _install_fake(monkeypatch, fake)
 
-        result = json.loads(music(mode="off"))
+        result = json.loads(music(mode="stop"))
 
         assert result["applied"] is True
         assert result["message"] in {f"♪ {p}" for p in STOPPED}
         assert fake.verbs() == ["stop"]
 
-    def test_off_clears_the_style(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """music off clears the style so a later vibe change gets no stale hint."""
+    def test_stop_clears_the_style(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """music stop clears the style so a later vibe change gets no stale hint."""
         import punt_vox.server as srv
 
         srv._music_pref.started("flamenco")
         _install_fake(monkeypatch, FakeProgramGateway())
 
-        music(mode="off")
+        music(mode="stop")
 
         assert srv._music_pref.style is None
 
-    def test_rejected_off_keeps_style_and_omits_trace(
+    def test_rejected_stop_keeps_style_and_omits_trace(
         self, monkeypatch: pytest.MonkeyPatch, hermetic_vibe_trace: Path
     ) -> None:
         """A rejected stop must not clear the style nor write a success trace."""
@@ -1493,7 +1493,7 @@ class TestMusicTool:
         srv._music_pref.started("flamenco")
         _install_fake(monkeypatch, FakeProgramGateway(applied=False))
 
-        music(mode="off")
+        music(mode="stop")
 
         assert srv._music_pref.style == "flamenco"  # register untouched
         assert not _music_trace_lines(hermetic_vibe_trace)

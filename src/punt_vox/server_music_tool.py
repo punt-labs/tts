@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 MusicSubcommand = Literal[
     "on",
-    "off",
+    "stop",
     "play",
     "next",
     "prev",
@@ -140,7 +140,7 @@ class MusicTool:
         loopable."``. See ``/music`` for a worked example.
 
         Args:
-            subcommand: The verb -- ``on``/``off``/``play``/``next`` drive the
+            subcommand: The verb -- ``on``/``stop``/``play``/``next`` drive the
                 running Program; ``new``/``get``/``remove`` mutate the saved
                 catalog; ``list`` shows it.
             style: Style tag; persists across calls for ``on``/``play``.
@@ -203,8 +203,8 @@ class MusicTool:
             return _error(str(exc))
         return json.dumps({"message": message, "applied": outcome.applied})
 
-    def _off(self, _args: MusicArgs) -> str:
-        """Stop the active Program; clear the style register."""
+    def _stop(self, _args: MusicArgs) -> str:
+        """Halt the active Program; clear the style register."""
         try:
             outcome = self._program_factory().stop()
             self._pref_provider().confirm_stopped(outcome)
@@ -214,7 +214,12 @@ class MusicTool:
         return json.dumps({"message": message, "applied": outcome.applied})
 
     def _play(self, args: MusicArgs) -> str:
-        """Replay a Selection resolved by tags or by an exact album id."""
+        """Replay a Selection resolved by tags, an exact album id, or last-played.
+
+        A call carrying no id and no tags is the bare ``play``: the daemon repeats
+        the last-played album, and with none played yet the reject is rendered with
+        the saved-album list (:meth:`_no_history`) rather than an arbitrary album.
+        """
         vibe = args.canonical_vibe
         name = args.canonical_name
         request = SelectionRequest(
@@ -224,6 +229,8 @@ class MusicTool:
         try:
             outcome = gateway.select(request)
         except (ValueError, *_DAEMON_ERRORS) as exc:  # bad id / no match, or fault
+            if request.is_empty:
+                return self._no_history(str(exc), gateway)
             return _error(str(exc))
         # Name the re-pool genre from the live catalog on an applied replay; a
         # catalog fault falls back to None, never failing the applied replay.
@@ -239,6 +246,24 @@ class MusicTool:
         self._pref_provider().confirm_selected(outcome, resolved_style, vibe, name)
         message = f"♪ {outcome.display(self._marquee.replay(name))}"
         return json.dumps({"message": message, "applied": outcome.applied})
+
+    def _no_history(self, message: str, gateway: ProgramGateway) -> str:
+        """Return the no-history reject with the saved-album list appended.
+
+        A bare ``play`` over a fresh daemon has no album to repeat: the daemon's
+        *message* says so, and the saved-album list gives the caller something to
+        pick. The list is best-effort -- a second daemon fault (unreachable, not a
+        missing history) drops it, so the caller still sees the original reject.
+        """
+        try:
+            summaries = gateway.catalog()
+        except _DAEMON_ERRORS:
+            return _error(message)
+        if not summaries:
+            return _error(message)
+        lines = [message, "saved albums:"]
+        lines.extend(f"  {summary.display_line()}" for summary in summaries)
+        return _error("\n".join(lines))
 
     def _advance(self, _args: MusicArgs) -> str:
         """User transport next -- step the replay cursor forward, or skip a Program."""
@@ -332,7 +357,7 @@ class MusicTool:
     # methods, never getattr-by-name (PY-TS-11 forbids introspective dispatch).
     _HANDLERS: ClassVar[dict[str, Callable[[MusicTool, MusicArgs], str]]] = {
         "on": _on,
-        "off": _off,
+        "stop": _stop,
         "play": _play,
         "next": _advance,
         "prev": _prev,

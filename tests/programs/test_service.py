@@ -331,7 +331,7 @@ class TestConsumeControls:
         service = _service(tmp_path)
         service.replay(TagQuery(style="trance"))
         await service.run_once()
-        service.off()
+        service.stop()
         await service.run_once()
         assert service.status().is_idle  # a replay stops to idle (RadioOff)
 
@@ -339,7 +339,7 @@ class TestConsumeControls:
         service = _service(tmp_path)
         service.turn_on(style="techno", vibe="calm", name=None, prompts=_ONE)
         await service.run_once()
-        service.off()
+        service.stop()
         await service.run_once()
         service.shutdown()
         assert service.status().mode is Mode.OFF
@@ -531,7 +531,7 @@ class TestStoppedProgramBacking:
         assert service.status().mode is Mode.PLAYING_ROTATING
         # A live program playing a full pool backs its album (removal is refused).
         assert service.active_backing_locators() == frozenset({locator})
-        service.off()
+        service.stop()
         await service.run_once()
         assert service.status().mode is Mode.OFF
         return service, locator

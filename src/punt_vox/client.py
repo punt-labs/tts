@@ -972,9 +972,9 @@ class VoxClient:
             fields["variations"] = list(prompts.variations)
         return self._outcome(await self._command("program_on", **fields))
 
-    async def program_off(self) -> CommandOutcome:
-        """Turn the active Program off."""
-        return self._outcome(await self._command("program_off"))
+    async def program_stop(self) -> CommandOutcome:
+        """Halt the active Program."""
+        return self._outcome(await self._command("program_stop"))
 
     async def program_next(self) -> CommandOutcome:
         """User transport next: step the replay cursor forward, or skip a Program."""

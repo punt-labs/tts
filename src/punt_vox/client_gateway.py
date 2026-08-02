@@ -53,8 +53,8 @@ class ClientProgramGateway:
         )
 
     def stop(self) -> CommandOutcome:
-        """Turn the active Program off."""
-        return self._client.program_off()
+        """Halt the active Program."""
+        return self._client.program_stop()
 
     def advance(self) -> CommandOutcome:
         """User transport next: step the replay cursor forward, or skip a Program."""

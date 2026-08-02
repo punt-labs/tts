@@ -67,8 +67,8 @@ class StopMusic:
     """Stop the active source -- the projection of ``music.stop`` onto ``off``."""
 
     def apply(self, service: PlayerCommands) -> None:
-        """Turn the active source off, returning to idle (Z model RadioOff)."""
-        service.off()
+        """Halt the active source, returning to idle (Z model RadioOff)."""
+        service.stop()
 
     def surface_failure(self, presenter: FailurePresenter) -> None:
         """Ask the scene to warn that the stop could not apply (double dispatch)."""

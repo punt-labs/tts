@@ -60,6 +60,21 @@ class SelectionRequest:
     name: str | None = None
     id: str | None = None  # specific album, resolved id-or-name; never a tag axis
 
+    @property
+    def is_empty(self) -> bool:
+        """Return whether no album or tag axis is set -- the replay-last request.
+
+        A bare ``play`` (``vox music play`` / ``mic:music play`` with no argument)
+        carries nothing; the surface routes it to the last-played replay rather
+        than an all-wildcard union radio.
+        """
+        return (
+            self.style is None
+            and self.vibe is None
+            and self.name is None
+            and self.id is None
+        )
+
     def resolved_style(self, catalog: Iterable[ProgramSummary]) -> str | None:
         """Return the single genre this replay selects, else ``None`` for a union.
 

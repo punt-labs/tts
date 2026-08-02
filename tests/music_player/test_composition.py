@@ -64,7 +64,7 @@ class _FakeService:
     def replay_album(self, album_id: AlbumId) -> None:
         self.played.append(album_id)
 
-    def off(self) -> None:
+    def stop(self) -> None:
         self.stops += 1
 
     def advance(self) -> None:  # pragma: no cover - unused here
@@ -102,7 +102,7 @@ class _FlakyService:
     def replay_album(self, album_id: AlbumId) -> None:  # pragma: no cover - unused here
         raise NotImplementedError
 
-    def off(self) -> None:  # pragma: no cover - unused here
+    def stop(self) -> None:  # pragma: no cover - unused here
         raise NotImplementedError
 
     def advance(self) -> None:  # pragma: no cover - unused here

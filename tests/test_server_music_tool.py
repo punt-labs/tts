@@ -175,9 +175,9 @@ def test_on_malformed_prompt_shape_is_a_clean_error() -> None:
     assert "error" in result
 
 
-def test_off_routes_to_program_stop() -> None:
+def test_stop_routes_to_program_stop() -> None:
     program = FakeProgramGateway()
-    result = json.loads(_tool(program=program).dispatch("off"))
+    result = json.loads(_tool(program=program).dispatch("stop"))
 
     assert result["applied"] is True
     assert program.verbs() == ["stop"]
@@ -193,6 +193,34 @@ def test_play_routes_to_program_select() -> None:
     assert program.calls[0].verb == "select"
     assert program.calls[0].selection is not None
     assert program.calls[0].selection.style == "trance"
+
+
+def test_play_no_argument_replays_the_last_played() -> None:
+    """A bare `mic:music play` sends the empty request the daemon replays."""
+    program = FakeProgramGateway()
+    result = json.loads(_tool(program=program).dispatch("play"))
+
+    assert result["applied"] is True
+    assert program.calls[0].verb == "select"
+    assert program.calls[0].selection is not None
+    assert program.calls[0].selection.is_empty
+
+
+def test_play_no_argument_without_history_errors_and_lists() -> None:
+    """A bare play with no history returns the message AND the saved-album list."""
+    program = FakeProgramGateway(
+        catalog=(
+            ProgramSummary(
+                id="a3f1c9", style="trance", vibe="calm", format="music", ready=3
+            ),
+        ),
+        select_error="no album played yet; specify an album by id, name, or style/vibe",
+    )
+    result = json.loads(_tool(program=program).dispatch("play"))
+
+    assert "no album played yet" in result["error"]
+    assert "a3f1c9" in result["error"]  # the saved-album list is included
+    assert program.verbs() == ["select", "catalog"]  # never a play of album #1
 
 
 def test_next_routes_to_program_advance() -> None:
@@ -314,7 +342,7 @@ def test_playback_verbs_never_touch_the_catalog_gateway() -> None:
     tool = _tool(catalog=catalog)
 
     tool.dispatch("on")
-    tool.dispatch("off")
+    tool.dispatch("stop")
     tool.dispatch("next")
 
     assert catalog.calls == []

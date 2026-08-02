@@ -1412,11 +1412,11 @@ class TestVoxClientProgram:
         assert status.is_idle
 
     @pytest.mark.asyncio
-    async def test_program_off_returns_applied_outcome(self) -> None:
+    async def test_program_stop_returns_applied_outcome(self) -> None:
         """A bare ack (no 'applied') reads as an applied CommandOutcome."""
-        client = self._client_returning({"type": "program_off", "id": "x"})
+        client = self._client_returning({"type": "program_stop", "id": "x"})
 
-        outcome = await client.program_off()
+        outcome = await client.program_stop()
 
         assert outcome.applied is True
 

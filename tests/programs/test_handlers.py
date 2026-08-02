@@ -18,10 +18,10 @@ import pytest
 from punt_vox.voxd.programs.command_handler import ProgramCommandHandler
 from punt_vox.voxd.programs.list_handler import ListHandler
 from punt_vox.voxd.programs.next_handler import NextHandler
-from punt_vox.voxd.programs.off_handler import OffHandler
 from punt_vox.voxd.programs.on_handler import OnHandler
 from punt_vox.voxd.programs.select_handler import SelectHandler
 from punt_vox.voxd.programs.status_handler import StatusHandler
+from punt_vox.voxd.programs.stop_handler import StopHandler
 
 from .conftest import make_service, seed_album
 
@@ -92,8 +92,8 @@ class TestMutatingHandlers:
         assert not service.status().is_idle
 
     async def test_off_acks(self, tmp_path: Path) -> None:
-        reply = await _reply(OffHandler(_service(tmp_path)), {"id": "9"})
-        assert reply == {"type": "program_off", "id": "9"}
+        reply = await _reply(StopHandler(_service(tmp_path)), {"id": "9"})
+        assert reply == {"type": "program_stop", "id": "9"}
 
     async def test_next_acks(self, tmp_path: Path) -> None:
         reply = await _reply(NextHandler(_service(tmp_path)), {"id": "2"})
@@ -131,17 +131,17 @@ class TestMutatingHandlers:
         assert reply["type"] == "error"
         assert "no albums match" in str(reply["message"])
 
-    async def test_select_ignores_unknown_field_and_matches_nothing(
+    async def test_select_ignores_unknown_field_and_replays_last_played(
         self, tmp_path: Path
     ) -> None:
         # An unknown field ("id_arg") is neither the album_id nor a tag axis, so it
-        # is ignored: the query is all-wildcards, and over an empty catalog that
-        # replies with a "no albums match" error.
+        # is ignored: with no album_id and no tags this is the bare-``play`` path,
+        # which repeats the last-played album -- and with none played yet, errors.
         reply = await _reply(
             SelectHandler(_service(tmp_path)), {"id": "3", "id_arg": "x"}
         )
         assert reply["type"] == "error"
-        assert "no albums match" in str(reply["message"])
+        assert "no album played yet" in str(reply["message"])
 
     @pytest.mark.parametrize("field", ["album_id", "style", "name"])
     async def test_select_non_string_field_is_an_error(

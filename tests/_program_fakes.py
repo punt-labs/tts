@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Self, final
 
+from punt_vox.client_errors import VoxdProtocolError
 from punt_vox.types_programs.control import (
     CommandOutcome,
     ProgramSummary,
@@ -36,11 +37,14 @@ class GatewayCall:
 class FakeProgramGateway:
     """A stateful, filesystem-free ``ProgramGateway`` for surface tests."""
 
-    __slots__ = ("_applied", "_catalog", "_reason", "_status", "calls")
+    __slots__ = ("_applied", "_catalog", "_reason", "_select_error", "_status", "calls")
     _status: ProgramStatus
     _catalog: tuple[ProgramSummary, ...]
     _applied: bool
     _reason: str | None
+    # When set, :meth:`select` raises this as a daemon reject -- the empty-request
+    # "no album played yet" path the bare-``play`` surfaces render with the list.
+    _select_error: str | None
     calls: list[GatewayCall]
 
     def __new__(
@@ -50,12 +54,14 @@ class FakeProgramGateway:
         *,
         applied: bool = True,
         reason: str | None = None,
+        select_error: str | None = None,
     ) -> Self:
         self = super().__new__(cls)
         self._status = status if status is not None else ProgramStatus.idle()
         self._catalog = catalog
         self._applied = applied
         self._reason = reason
+        self._select_error = select_error
         self.calls = []
         return self
 
@@ -107,6 +113,8 @@ class FakeProgramGateway:
 
     def select(self, request: SelectionRequest) -> CommandOutcome:
         self.calls.append(GatewayCall("select", selection=request))
+        if self._select_error is not None:
+            raise VoxdProtocolError(self._select_error)
         return self._outcome("playing selection")
 
     def catalog(self) -> tuple[ProgramSummary, ...]:

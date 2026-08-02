@@ -163,6 +163,17 @@ class TagQuery:
     vibe: str | None = None  # None wildcards the vibe axis
     name: str | None = None  # None wildcards the name axis
 
+    @property
+    def is_empty(self) -> bool:
+        """Return whether every axis wildcards -- the match-everything query.
+
+        A caller distinguishes a *bare* replay (no selector) from a filtered one
+        by asking the query rather than reading its three fields itself: the
+        select path routes an empty query to the last-played album instead of
+        unioning the whole catalog.
+        """
+        return self.style is None and self.vibe is None and self.name is None
+
     def __post_init__(self) -> None:
         """Bound a present vibe filter to the same label the write path stores.
 

@@ -192,9 +192,9 @@ class VoxClientSync:
             self._call("program_on", style=style, vibe=vibe, name=name, prompts=prompts)
         )
 
-    def program_off(self) -> CommandOutcome:
-        """Turn the active Program off."""
-        return self._runner.run(self._call("program_off"))  # type: ignore[no-any-return]
+    def program_stop(self) -> CommandOutcome:
+        """Halt the active Program."""
+        return self._runner.run(self._call("program_stop"))  # type: ignore[no-any-return]
 
     def program_next(self) -> CommandOutcome:
         """User transport next: step the replay cursor forward, or skip a Program."""

@@ -247,7 +247,7 @@ def test_music_group_exposes_the_unified_verb_set() -> None:
         "new",
         "list",
         "play",
-        "off",
+        "stop",
         "get",
         "remove",
         "next",
@@ -349,6 +349,39 @@ def test_play_websocket_error_is_clean_error() -> None:
         cli.play("a3f1c9")
 
 
+def test_play_no_argument_replays_the_last_played() -> None:
+    """A bare `vox music play` sends the empty request the daemon replays."""
+    fake = FakeProgramGateway()
+    cli, formatter = _cli(fake)
+
+    cli.play()
+
+    assert fake.calls[0].verb == "select"
+    assert fake.calls[0].selection is not None
+    assert fake.calls[0].selection.is_empty
+    payload, _ = _emitted(formatter)
+    assert payload == {"music": "play", "applied": True}
+
+
+def test_play_no_argument_without_history_errors_and_lists(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A bare play with no history fails with the message AND the album list."""
+    fake = FakeProgramGateway(
+        catalog=(_summary("a3f1c9", "trance", "calm", 3),),
+        select_error="no album played yet; specify an album by id, name, or style/vibe",
+    )
+    cli = MusicCli(MagicMock(spec=OutputFormatter), lambda: fake)
+
+    with pytest.raises(typer.Exit):
+        cli.play()
+
+    text = capsys.readouterr().err
+    assert "no album played yet" in text
+    assert "a3f1c9" in text  # the saved-album list is printed
+    assert fake.verbs() == ["select", "catalog"]  # never a play of album #1
+
+
 def test_status_websocket_handshake_error_is_clean_error() -> None:
     """A stale-token handshake failure on status surfaces cleanly, not raw."""
     gateway = MagicMock()
@@ -360,44 +393,44 @@ def test_status_websocket_handshake_error_is_clean_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# off -- the one CLI stop verb, routed to the daemon program-off op
+# stop -- the one CLI halt verb, routed to the daemon program-stop op
 # ---------------------------------------------------------------------------
 
 
-def test_off_invokes_the_program_off_op() -> None:
-    """`vox music off` issues the gateway stop() -- the daemon program-off path."""
+def test_stop_invokes_the_program_stop_op() -> None:
+    """`vox music stop` issues the gateway stop() -- the daemon program-stop path."""
     fake = FakeProgramGateway()
     cli, formatter = _cli(fake)
 
-    cli.off()
+    cli.stop()
 
     assert fake.verbs() == ["stop"]
     payload, text = _emitted(formatter)
-    assert payload == {"music": "off", "applied": True}
+    assert payload == {"music": "stop", "applied": True}
     assert text == "Music stopped."
 
 
-def test_off_is_idempotent_when_already_off() -> None:
+def test_stop_is_idempotent_when_already_stopped() -> None:
     """Stopping an already-idle Program is a clean no-op, not an error."""
     fake = FakeProgramGateway(status=ProgramStatus.idle())
     cli, formatter = _cli(fake)
 
-    cli.off()
-    cli.off()
+    cli.stop()
+    cli.stop()
 
     assert fake.verbs() == ["stop", "stop"]
     _, text = _emitted(formatter)
     assert text == "Music stopped."
 
 
-def test_off_websocket_error_is_clean_error() -> None:
-    """A mid-request WebSocket close on off is a clean CLI error, not raw."""
+def test_stop_websocket_error_is_clean_error() -> None:
+    """A mid-request WebSocket close on stop is a clean CLI error, not raw."""
     gateway = MagicMock()
     gateway.stop.side_effect = WebSocketException("connection closed")
     cli = MusicCli(MagicMock(spec=OutputFormatter), lambda: gateway)
 
     with pytest.raises(typer.Exit):
-        cli.off()
+        cli.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -473,7 +506,7 @@ def test_list_accepts_json_flag_after_the_subcommand() -> None:
     # the runner treats "list" as the subcommand -- where --json failed (vox-cnak).
     app = typer.Typer()
     app.command("list")(cli.list_programs)
-    app.command("off")(cli.off)
+    app.command("stop")(cli.stop)
 
     result = CliRunner().invoke(app, ["list", "--json"])
 

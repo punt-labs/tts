@@ -28,8 +28,8 @@ class PlayerCommands(Protocol):
         """Replay the single saved album named by ``album_id`` (start or switch)."""
         ...
 
-    def off(self) -> None:
-        """Turn the active source off, returning the player to idle (Stop)."""
+    def stop(self) -> None:
+        """Halt the active source, returning the player to idle (Stop)."""
         ...
 
     def advance(self) -> None:

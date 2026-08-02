@@ -120,17 +120,36 @@ class TestSelectHandler:
         assert reply["type"] == "error"
         assert "album_id must not be blank" in str(reply["message"])
 
-    async def test_absent_album_id_is_the_union_radio(self, tmp_path: Path) -> None:
-        # Absence of album_id (and no tag selectors) is the legitimate "no specific
-        # album -> union radio" path: it is accepted (program_select over the whole
-        # catalog), not rejected -- the contrast with the blank-id error above.
+    async def test_bare_play_without_history_errors_not_union_radio(
+        self, tmp_path: Path
+    ) -> None:
+        # Absence of album_id AND every tag selector is the bare-``play`` path: it
+        # repeats the last-played album, never a play-everything union radio. With
+        # no album played yet it is rejected with the helpful message -- so a bare
+        # play cannot silently start an arbitrary album over a fresh daemon.
         seed_album(tmp_path / "programs", 1, style="trance", vibe="calm")
         seed_album(
             tmp_path / "programs", 1, style="ambient", vibe="dark", album_id="bbbbbb"
         )
         service = make_service(tmp_path / "programs")
         reply = await _reply(service, {"id": "u"})
-        assert reply == {"type": "program_select", "id": "u"}
+        assert reply["type"] == "error"
+        assert "no album played yet" in str(reply["message"])
+
+    async def test_bare_play_repeats_the_last_played_album(
+        self, tmp_path: Path
+    ) -> None:
+        # Once an album has been played by id, a bare ``play`` (no album_id, no
+        # tags) repeats that album -- the last-played register drives it.
+        seed_album(
+            tmp_path / "programs", 1, style="trance", vibe="calm", album_id="a3f1c9"
+        )
+        service = make_service(tmp_path / "programs")
+        await _reply(service, {"id": "1", "album_id": "a3f1c9"})
+        reply = await _reply(service, {"id": "2"})
+        assert reply == {"type": "program_select", "id": "2"}
+        await service.run_once()
+        assert service.status().now_playing is not None
 
     async def test_service_os_error_is_an_operational_fault(
         self,

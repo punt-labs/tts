@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.types_programs.status import ProgramStatus
-from punt_vox.types_programs.status_views import NowPlaying
 from punt_vox.voxd.programs.active_context import (
     ActiveContext,
     ActiveProgram,
@@ -30,6 +29,7 @@ from punt_vox.voxd.programs.change_signal import ChangeSignal
 from punt_vox.voxd.programs.control_channel import ControlChannel
 from punt_vox.voxd.programs.fill_reconciler import FillReconciler
 from punt_vox.voxd.programs.filler import Filler
+from punt_vox.voxd.programs.last_played import LastPlayed
 from punt_vox.voxd.programs.lifecycle_signal import TurnOff
 from punt_vox.voxd.programs.loop import ProgramLoop
 from punt_vox.voxd.programs.mpv.mpv_program_player import MpvProgramPlayer
@@ -42,13 +42,13 @@ from punt_vox.voxd.programs.select_signal import SwitchSelection
 from punt_vox.voxd.programs.selection import Selection
 from punt_vox.voxd.programs.selection_playback import SelectionPlayback
 from punt_vox.voxd.programs.state import ProgramState
+from punt_vox.voxd.programs.status_projection import StatusProjection
 from punt_vox.voxd.programs.suspension import PlaybackSuspension
 from punt_vox.voxd.programs.switch_signal import SwitchProgram
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from punt_vox.types_programs.playback_fault import PlaybackFault
     from punt_vox.voxd.programs.active_context import ActiveSource
     from punt_vox.voxd.programs.album_id import AlbumId
     from punt_vox.voxd.programs.filler import FillPlan
@@ -76,7 +76,9 @@ class ProgramService:
         "_context",
         "_filler",
         "_health",
+        "_last_played",
         "_loop",
+        "_projection",
         "_root",
         "_store",
         "_supervisor",
@@ -94,6 +96,8 @@ class ProgramService:
     _changes: ChangeSignal
     _suspension: PlaybackSuspension
     _supervisor: MpvSupervisor
+    _last_played: LastPlayed
+    _projection: StatusProjection
 
     def __new__(
         cls,
@@ -129,6 +133,10 @@ class ProgramService:
         self._changes = ChangeSignal()
         self._channel.attach_change_signal(self._changes)
         self._catalog.attach_change_signal(self._changes)
+        self._last_played = LastPlayed()
+        self._projection = StatusProjection(
+            self._channel, self._supervisor, self._health
+        )
         return self
 
     @property
@@ -190,29 +198,8 @@ class ProgramService:
         active = self._context.current
         if active is None:
             return ProgramStatus.idle()
-        return replace(self._active_status(active), paused=self._suspension.is_paused)
-
-    def _active_status(self, active: ActiveSource) -> ProgramStatus:
-        """Return the active source's base status (before the paused overlay)."""
-        source = self._channel.source
-        fault = self._playback_fault()
-        if isinstance(source, Program):
-            return source.to_status(active.name, fault)
-        if isinstance(source, SelectionPlayback):
-            return ProgramStatus.radio(
-                active.name, self._radio_now_playing(source), fault
-            )
-        return ProgramStatus.idle()
-
-    def _playback_fault(self) -> PlaybackFault | None:
-        """Return the standing fault a client sees, process-level first.
-
-        The one persistent mpv process is the more serious failure -- missing,
-        crashed, or given up -- so a supervisor fault outranks a per-part track
-        error. Either way the fault is surfaced through ``playback_error``, never
-        a log-only signal.
-        """
-        return self._supervisor.fault or self._health.fault
+        base = self._projection.of(active)
+        return replace(base, paused=self._suspension.is_paused)
 
     def catalog_albums(self) -> tuple[Album, ...]:
         """Return every catalog album, newest first (the ``list`` view)."""
@@ -232,10 +219,10 @@ class ProgramService:
         (``wants_generation``) -- so the first track being written in
         ``generating_first`` (an empty pool) is protected too, and removing it
         cannot corrupt the in-flight generation; a Radio contributes every album
-        its Selection spans; an idle daemon none. A Program stopped by ``off``
+        its Selection spans; an idle daemon none. A Program halted by ``stop``
         is neither playing nor generating, so its retained pool -- kept only for
         a later re-``on`` -- backs nothing and must not block removal, mirroring
-        how Radio ``off`` clears its selection.
+        how a Radio ``stop`` clears its selection.
         """
         active = self._context.current
         if active is None:
@@ -326,7 +313,18 @@ class ProgramService:
         if not selection:
             msg = f"album {album_id.value!r} has no playable tracks yet"
             raise ValueError(msg)
+        self._last_played.remember(album_id)
         self._start_replay(selection, album.locator)
+
+    def replay_last(self) -> None:
+        """Replay the last single album played, or raise when none has yet.
+
+        The no-argument ``play`` path: it repeats the album ``replay_album`` last
+        recorded, so a bare ``play`` never silently falls back to an arbitrary
+        album -- with no history the register raises and the surface lists the
+        catalog instead.
+        """
+        self.replay_album(self._last_played.require())
 
     def advance(self) -> None:
         """User transport next: step a replay forward, or skip a generate Program.
@@ -368,11 +366,11 @@ class ProgramService:
         self._suspension.resume()
         self._changes.emit()
 
-    def off(self) -> None:
+    def stop(self) -> None:
         """Stop the active source (a Program keeps its pool; a replay goes idle).
 
         Resetting the suspension first returns the player to the not-paused, unheld
-        state, so ``off`` from a paused source lands idle exactly as from a playing
+        state, so ``stop`` from a paused source lands idle exactly as from a playing
         one (Z ``Stop`` from either active mode), leaving no paused residue.
         """
         self._suspension.reset()
@@ -398,20 +396,6 @@ class ProgramService:
         self._channel.post(
             SwitchSelection(self._channel, self._context, playback, active)
         )
-
-    @staticmethod
-    def _radio_now_playing(source: SelectionPlayback) -> NowPlaying | None:
-        """Return the replay cursor's "Part N of M" view, or ``None`` when idle.
-
-        ``N`` is the playing track's 1-based *position* in the selection and ``M``
-        is the selection's size, so ``N <= M`` always holds -- the same
-        position-of-count contract the generate-Program status uses. The cursor is
-        read O(1) from the source, never rescanned over an uncapped selection.
-        """
-        position = source.position
-        if position is None:
-            return None
-        return NowPlaying(index=position, of=len(source.selection))
 
     @staticmethod
     def _idle_program() -> Program:
