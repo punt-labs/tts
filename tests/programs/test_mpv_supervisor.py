@@ -101,6 +101,15 @@ def test_min_version_is_a_pinned_three_tuple() -> None:
     assert all(isinstance(part, int) for part in MPV_MIN_VERSION)
 
 
+def test_startup_flags_set_the_reduced_music_volume() -> None:
+    # The program tier plays under speech/chimes, so mpv starts at the reduced
+    # _MUSIC_VOLUME (60) -- the music half of the two-tier static rebalance.
+    supervisor = MpvSupervisor(_SOCK, FakeSleeper())
+
+    assert f"--volume={sup_mod._MUSIC_VOLUME}" in supervisor._flags()
+    assert "--volume=60" in supervisor._flags()
+
+
 async def test_cold_start_that_never_connects_reaches_failed_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

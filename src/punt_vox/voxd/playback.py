@@ -174,8 +174,8 @@ def _player_command(path: Path) -> list[str]:
     No ``-loglevel quiet`` on ffplay -- we want its stream summary and errors.
     """
     if _is_darwin():
-        return ["afplay", str(path)]
-    return ["ffplay", "-nodisp", "-autoexit", str(path)]
+        return ["afplay", "-v", "0.8", str(path)]
+    return ["ffplay", "-nodisp", "-autoexit", "-volume", "80", str(path)]
 
 
 async def _probe_duration(path: Path) -> float | None:

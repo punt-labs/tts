@@ -46,7 +46,7 @@ MPV_MIN_VERSION: tuple[int, int, int] = (0, 35, 0)
 player relies on. ``doctor`` imports this and fails a too-old mpv."""
 
 _MPV_BINARY = "mpv"
-_MUSIC_VOLUME = 30  # the reduced program volume so speech and chimes overlay music
+_MUSIC_VOLUME = 60  # the reduced program volume so speech and chimes overlay music
 _SPAWN_BACKOFF_SECONDS = 2.0
 _MAX_RESTARTS = 3
 _CONNECT_ATTEMPTS = 50
