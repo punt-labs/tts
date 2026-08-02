@@ -2036,7 +2036,7 @@ Separation of concerns. `vibe()` is voice direction; driving playback from it co
 ### Consequences
 
 - `vibe()` gains a read-only music hint in its return and **never posts a switch/music signal** (asserted by test). The `music` tool's re-pool is unchanged — no daemon or state-machine change, so **no Z-model change** (the re-pool is the existing `VibeStyleChange`, still triggered only by the `music` tool).
-- The authored style is tracked in a cohesive `MusicPreference` session register, maintained on **every** playback-changing path (`music on` adopts, `music_play` adopts or clears for a union radio, `music off` clears) so the hint always names the genre actually playing.
+- The authored style is tracked in a cohesive `MusicPreference` session register, maintained on **every** playback-changing path (`music on` adopts, `music_play` adopts or clears for a union radio, `music stop` clears) so the hint always names the genre actually playing.
 - Reliability is **soft** (prompt-level — the agent must follow the hint). Mitigated by the imperative directive and made *provable* by the `[vibe-trace]` observability (DES-046).
 - Reverses the prior "the session vibe is display/record state; a Program retune is a deliberate music command, never a side effect" decision (the `vibe()` comment), which is struck.
 
@@ -2392,7 +2392,7 @@ dead display can never freeze audio.
 - New package `src/punt_vox/voxd/music_player/`; the change signal is
   voxd-internal, not gated on lux's PRs — a read-only scene that lies is worthless.
 - The player re-implements no playback: play/stop/now-playing map to the existing
-  `replay_album` / `off` / `status` / `catalog_albums` primitives.
+  `replay_album` / `stop` / `status` / `catalog_albums` primitives.
 - Cross-references DES-028 (voxd is the audio host), DES-041 (Program/catalog
   model), DES-049 (daemon owns audio + files), and the `PlayerView` model
   (DES-053). Architecture settled cross-repo with the lux agent.
@@ -2454,7 +2454,7 @@ publish `music.play {album_id}` / `music.stop`. `voxd` subscribes over the
 persistent `LuxRestClient` WebSocket extension (`LuxSubscription`), decodes each
 message into a `PlayerEvent` — a `PlayAlbum` / `StopMusic` discriminated union,
 each with a polymorphic `apply(service)` (no `if`-ladder, per oo.md) — and calls
-the existing `replay_album` / `off` primitive. The Phase-1 change signal then
+the existing `replay_album` / `stop` primitive. The Phase-1 change signal then
 re-pushes the scene, so it reflects the change. A "Music" menu callback (a ~30s
 lease renewed by contact) opens the scene.
 
@@ -2503,7 +2503,7 @@ Three modes — `idle` / `playing` / `paused`.
   current mode (`⏸` + `music.pause` when playing, `⏵` + `music.resume` when
   paused), so the daemon always receives one unambiguous transition.
 
-The daemon gains `pause()` / `resume()` / `prev()` alongside `advance()` / `off` /
+The daemon gains `pause()` / `resume()` / `prev()` alongside `advance()` / `stop` /
 `replay_album`, each with a non-UI CLI/MCP caller mirroring `next`.
 
 ### Consequences
@@ -2728,3 +2728,49 @@ graceful-kill+seek) is deleted (forward integration, no shim).
 
 Design: `docs/mpv-program-player.md`; model: `docs/mpv-program-player.tex`.
 Commits 558ae3f, 9549906 (hardening), 0ecfd6f (install/doctor gate).
+
+## DES-062: Transport Verb `stop` and Last-Played `play`
+
+**Date:** 2026-08-02
+**Status:** SETTLED
+**Topic:** Naming the halt verb and defining the no-argument `play`
+
+### Context
+
+The music transport reads play / pause / resume / prev / next, but the halt
+verb was `off` (paired with `on`), out of step with that media-player
+vocabulary and with the lux transport's "Stop" button. Separately, `music play`
+with no argument silently started the first album in the catalog — a surprising
+default with no relation to what the user last heard.
+
+### Decision
+
+**Rename the halt verb `off` → `stop` on every surface**, forward-integrated with
+no alias (PL-PP-1): the CLI (`vox music stop`), the MCP `music` tool
+(`subcommand="stop"`), and the daemon's `program_stop` wire method and
+`ProgramService.stop()`. `on` is unchanged — it starts the generative radio, a
+distinct action from replaying a saved album. The lux receive-leg `music.stop`
+topic already matched the new name; its `StopMusic` event now calls
+`service.stop()`.
+
+**A no-argument `play` replays the last-played album.** `ProgramService` records
+the id of each single album it replays (`replay_album`) in an ephemeral,
+daemon-owned `LastPlayed` register. `SelectHandler` routes a request with no
+album id and no tags to `ProgramService.replay_last()`, which repeats that album
+or raises `no album played yet; specify an album by id, name, or style/vibe` when
+none has played. The CLI and MCP surfaces detect the empty request and, on that
+reject, print the saved-album list beside the message so the caller can pick one
+— they never fall back to an arbitrary album. The register is ephemeral: a daemon
+restart clears it, and the next bare `play` reports no history rather than
+migrating any state (no persistence, no `vox.md` touch).
+
+### Consequences
+
+- The status-projection responsibility (`_active_status` / `_playback_fault` /
+  the radio now-playing view) is extracted from `ProgramService` into
+  `StatusProjection`, paying down the service god-module while the last-played
+  register is added.
+- No album-history persistence: last-played is in-memory only, consistent with
+  the daemon-is-audio-host invariant and DES-049.
+
+Design of record: this ADR. Closes the transport-verb polish (vox `fix/lux-observability`).

@@ -1,6 +1,6 @@
 ---
 description: "Control background music generation"
-argument-hint: "on [--title ...] [style ...] | off | next | prev | pause | resume | play <name> | list | status"
+argument-hint: "on [--title ...] [style ...] | stop | next | prev | pause | resume | play [<name>] | list | status"
 allowed-tools: ["mcp__plugin_vox_mic__music", "mcp__plugin_vox_mic__status"]
 ---
 
@@ -36,12 +36,13 @@ prompt -- functional, but flavorless.
 - `/music on` -- start music with current vibe
 - `/music on style techno` -- start music with a style modifier
 - `/music on --title "Focus Beats"` -- start music and name the album "Focus Beats"
-- `/music off` -- stop music
+- `/music stop` -- stop music
 - `/music next` -- optional manual skip (playback auto-advances on its own): jump to the next track now — rotate the pool if it holds 12+ (zero credits), else generate a fresh one
 - `/music prev` -- step back to the previous part of the now-playing album
 - `/music pause` -- suspend the current album in place
 - `/music resume` -- resume the suspended album in place
 - `/music play <name>` -- replay a saved album by name
+- `/music play` -- with no argument, replay the last-played album (errors and lists the catalog if nothing has played yet)
 - `/music list` -- show saved albums with metadata
 - `/music status` -- show current music state (same as `/music` with no argument)
 - `/music` -- show current music state
@@ -63,7 +64,7 @@ style jazz` changes it.
 
 ## Implementation
 
-> **Control actions produce NO agent text.** `on`, `off`, `next`, `prev`,
+> **Control actions produce NO agent text.** `on`, `stop`, `next`, `prev`,
 > `pause`, `resume`, and `play` are fire-and-forget: the `suppress-output.sh`
 > hook and the audio panel are the whole response. After calling their tool,
 > stop -- write no summary, no confirmation, no narration. Only the query
@@ -74,7 +75,7 @@ Parse `$ARGUMENTS`:
 
 Every music action is ONE call to the `music` MCP tool, whose first argument is
 `subcommand`
-(`on`/`off`/`play`/`next`/`prev`/`pause`/`resume`/`list`/`status`/`new`/`get`/`remove`)
+(`on`/`stop`/`play`/`next`/`prev`/`pause`/`resume`/`list`/`status`/`new`/`get`/`remove`)
 -- uniform with `vox music <subcommand>` on the CLI.
 
 ### `on` (with optional `--title ...` and `style ...`)
@@ -87,9 +88,9 @@ Call `music` with `subcommand="on"`. If the user provided style words after
 exactly 12 `variations` for the requested style (see "Authoring prompts" below)
 and pass them. Re-author them whenever the style or vibe changes.
 
-### `off`
+### `stop`
 
-Call `music` with `subcommand="off"`.
+Call `music` with `subcommand="stop"`.
 
 ### `next`
 
@@ -109,9 +110,11 @@ Call `music` with `subcommand="pause"`. Suspends the current album in place.
 
 Call `music` with `subcommand="resume"`. Resumes the suspended album in place.
 
-### `play <name>`
+### `play [<name>]`
 
-Call `music` with `subcommand="play"` and the album name.
+Call `music` with `subcommand="play"` and the album name. With no argument,
+`play` replays the last-played album; if nothing has played yet it returns an
+error naming the saved albums, so pick one by id, name, or style/vibe.
 
 ### `list`
 

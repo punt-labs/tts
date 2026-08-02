@@ -235,9 +235,10 @@ You author the tracks: vox is a pipe to the ElevenLabs Music API and never decid
 /music on --title focus-beats  # generate and save under a title --- or replay it if it exists
 /music next                    # jump to another track now
 /music play focus-beats        # replay a saved pool by name --- zero credits
+/music play                    # replay the last-played album (no argument)
 /music list                    # list saved pools
 /music                         # show current music state
-/music off                     # stop
+/music stop                    # stop
 ```
 
 Each pool is saved under `~/Music/vox/<name>/` --- named by `--title`, else the style --- with ID3 tags (artist, album, title, genre, track number) on every track, so your generated music shows up in macOS Music.app, Rhythmbox, and other players. Replaying a saved pool, or rotating a full one, costs **zero credits**; generation runs only while a pool has fewer than 12 tracks.
@@ -310,8 +311,9 @@ Chimes are two short notification tones — one for task completion, one for a p
 | `/music on style techno` | Start music with a style modifier |
 | `/music next` | Jump to another track now |
 | `/music play <name>` | Replay a saved pool by name (zero credits) |
+| `/music play` | Replay the last-played album (no argument) |
 | `/music list` | List saved pools |
-| `/music off` | Stop background music |
+| `/music stop` | Stop background music |
 
 ## Providers
 
@@ -477,11 +479,12 @@ vox music resume                               # Resume playback
 vox music status                               # Show the active program's status
 vox music play focus-beats                     # Replay a saved album by name/tags (zero credits)
 vox music play 7f3a91                          # Replay a saved album by id
+vox music play                                 # Replay the last-played album (no argument)
 vox music list                                 # List saved albums
 vox music new "warm analog pads, D minor" --title night-pads  # Generate one track (verbatim prompt) into the catalog
 vox music get 7f3a91                           # Materialize an album into the CWD
 vox music remove 7f3a91                        # Delete an album from the catalog
-vox music off                                  # Stop background music
+vox music stop                                 # Stop background music
 vox status                                     # Current state
 vox version                                    # Print version
 vox doctor                                     # Check setup
