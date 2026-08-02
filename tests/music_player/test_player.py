@@ -19,6 +19,19 @@ if TYPE_CHECKING:
     type PlayingFactory = Callable[[Album, int, int], ProgramStatus]
 
 
+def _by_id(elements: list[dict[str, object]], elem_id: str) -> dict[str, object]:
+    """Return the scene element with ``elem_id`` (the scene is a flat id-keyed list)."""
+    return next(element for element in elements if element["id"] == elem_id)
+
+
+def _position_text(elements: list[dict[str, object]]) -> str:
+    """Return the ``N of M`` cell from the now-playing track line."""
+    line = _by_id(elements, "music.now.line")
+    children = line["children"]
+    assert isinstance(children, list)
+    return str(children[1]["content"])
+
+
 @final
 class _FakeService:
     """A PlayerService double returning a fixed status and catalog."""
@@ -55,10 +68,10 @@ def test_notify_changed_projects_the_playing_scene_and_submits_once(
     MusicPlayer(service, publisher).notify_changed()
 
     assert len(publisher.submitted) == 1
-    request = publisher.submitted[0]
-    assert request.scene_id == "vox.music"
-    assert "Techno Mix" in str(request.elements[1]["content"])
-    assert "1 of 3" in str(request.elements[1]["content"])
+    elements = publisher.submitted[0].elements
+    assert publisher.submitted[0].scene_id == "vox.music"
+    assert "Techno Mix" in str(_by_id(elements, "music.now.album")["content"])
+    assert _position_text(elements) == "1 of 3"
 
 
 def test_notify_changed_projects_the_idle_scene(album_of: AlbumFactory) -> None:
@@ -67,7 +80,8 @@ def test_notify_changed_projects_the_idle_scene(album_of: AlbumFactory) -> None:
 
     MusicPlayer(service, publisher).notify_changed()
 
-    assert publisher.submitted[0].elements[1]["content"] == "Nothing playing"
+    elements = publisher.submitted[0].elements
+    assert _by_id(elements, "music.now")["content"] == "Nothing playing"
 
 
 def test_present_play_failure_surfaces_the_warning_then_a_change_clears_it(
@@ -84,15 +98,16 @@ def test_present_play_failure_surfaces_the_warning_then_a_change_clears_it(
     player.present_play_failure(AlbumId("aa11bb"))
 
     failed = publisher.submitted[-1].elements
-    assert failed[1]["content"] == "Nothing playing"  # I2: idle stays idle
-    assert failed[2] == {
+    assert _by_id(failed, "music.now")["content"] == "Nothing playing"  # I2 idle
+    assert _by_id(failed, "music.status") == {
         "kind": "text",
         "id": "music.status",
         "content": "⚠ couldn't play Techno Mix — it has no tracks yet",
     }
 
     player.notify_changed()
-    assert publisher.submitted[-1].elements[2]["content"] == ""  # cleared in place
+    cleared = publisher.submitted[-1].elements
+    assert _by_id(cleared, "music.status")["content"] == ""  # cleared in place
 
 
 def test_present_play_failure_keeps_now_playing_when_a_source_plays(
@@ -107,9 +122,12 @@ def test_present_play_failure_keeps_now_playing_when_a_source_plays(
     MusicPlayer(service, publisher).present_play_failure(AlbumId("ff99ee"))
 
     elements = publisher.submitted[-1].elements
-    assert "Techno Mix" in str(elements[1]["content"])  # I2: the source still shows
-    assert "2 of 3" in str(elements[1]["content"])
-    assert elements[2]["content"] == "⚠ couldn't play ff99ee — no longer in the crate"
+    assert "Techno Mix" in str(_by_id(elements, "music.now.album")["content"])  # I2
+    assert _position_text(elements) == "2 of 3"
+    assert (
+        _by_id(elements, "music.status")["content"]
+        == "⚠ couldn't play ff99ee — no longer in the crate"
+    )
 
 
 def test_present_stop_failure_surfaces_the_stop_warning(album_of: AlbumFactory) -> None:
@@ -118,4 +136,5 @@ def test_present_stop_failure_surfaces_the_stop_warning(album_of: AlbumFactory) 
 
     MusicPlayer(service, publisher).present_stop_failure()
 
-    assert publisher.submitted[-1].elements[2]["content"] == "⚠ couldn't stop the music"
+    elements = publisher.submitted[-1].elements
+    assert _by_id(elements, "music.status")["content"] == "⚠ couldn't stop the music"

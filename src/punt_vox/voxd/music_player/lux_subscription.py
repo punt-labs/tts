@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_lux import HubUnavailableError
 
 from punt_vox.voxd.music_player.lux_trace import LuxTrace
-from punt_vox.voxd.music_player.player_events import PlayerEventCodec
+from punt_vox.voxd.music_player.player_event_codec import PlayerEventCodec
 from punt_vox.voxd.music_player.wire import MusicTopic
 
 if TYPE_CHECKING:
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from punt_lux import CallbackHandler, EventHandler
     from punt_lux.hub_client import ConnectHandler
 
-    from punt_vox.voxd.music_player.command_ports import PlayerCommands
+    from punt_vox.voxd.music_player.command_ports import ProgramSeam
     from punt_vox.voxd.music_player.hub_ports import HubListener, MenuRegistrar
     from punt_vox.voxd.music_player.player_events import PlayerEvent
     from punt_vox.voxd.music_player.presenter_ports import ScenePresenter
@@ -57,7 +57,7 @@ class LuxSubscription:
     """Own voxd's one hub connection, the ``Music`` menu, and event dispatch."""
 
     __slots__ = ("_codec", "_connect_hub", "_menu", "_presenter", "_service")
-    _service: PlayerCommands
+    _service: ProgramSeam
     _presenter: ScenePresenter
     _menu: MenuRegistrar
     _connect_hub: Callable[[EventHandler, CallbackHandler, ConnectHandler], HubListener]
@@ -65,7 +65,7 @@ class LuxSubscription:
 
     def __new__(
         cls,
-        service: PlayerCommands,
+        service: ProgramSeam,
         presenter: ScenePresenter,
         menu: MenuRegistrar,
         connect_hub: Callable[
@@ -153,7 +153,9 @@ class LuxSubscription:
         """
         _trace.info("received %s %r; applying", topic, dict(payload))
         try:
-            event = self._codec.decode(topic, payload)
+            # Fresh catalog: a music.play anchor resolves against the albums as they
+            # stand now, not a subscribe-time snapshot (codec owns the resolution).
+            event = self._codec.decode(topic, payload, self._service.catalog_albums())
         except Exception:
             logger.exception("[lux] dropping music event on %s: %r", topic, payload)
             return

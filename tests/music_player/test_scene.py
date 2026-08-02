@@ -1,16 +1,22 @@
-"""Tests for AlbumListScene: the element tree it projects for a known catalog.
+"""Tests for AlbumListScene: the three-region element tree it projects.
 
-The Play/Stop button assertions are the offline substitute for the (PR-3-gated)
-live click: they pin the exact ``publish`` attribute each button carries, which is
-the wire contract :class:`LuxSubscription` decodes on the other leg. The status-line
-assertions pin the transient failure surface: a warning notice renders one line, a
-silent notice renders it empty, and the scene shape is the same either way.
+The scene is a flat, id-keyed list of wire elements in three regions -- now-playing,
+transport, and the collapsible album table. These tests pin the shape by element id
+(not list position, which shifts between the idle one-line now-playing and the active
+three-element one): the now-playing block for a playing and a paused source, the table
+columns and its ``music.play`` row-selection publish, and the idle greying of the
+transport. The publish assertion is the offline substitute for a live click -- it pins
+the exact wire contract :class:`LuxSubscription` decodes on the other leg.
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
+from punt_vox.types_programs.identifiers import ProgramName
+from punt_vox.types_programs.status import ProgramStatus
+from punt_vox.types_programs.status_views import NowPlaying
 from punt_vox.voxd.music_player.playback_notice import PlaybackNotice
 from punt_vox.voxd.music_player.player_view import PlayerView
 from punt_vox.voxd.music_player.scene import AlbumListScene
@@ -18,109 +24,197 @@ from punt_vox.voxd.music_player.scene import AlbumListScene
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from punt_vox.types_programs.status import ProgramStatus
     from punt_vox.voxd.programs.catalog import Album
 
     type AlbumFactory = Callable[..., Album]
     type PlayingFactory = Callable[[Album, int, int], ProgramStatus]
 
 
-def test_scene_header_controls_and_one_row_per_album(
-    album_of: AlbumFactory, playing_of: PlayingFactory
-) -> None:
-    first = album_of("aa11bb", name="Techno Mix")
-    second = album_of("cc22dd", name="Ambient Drift")
-    view = PlayerView.from_status(playing_of(first, 1, 3), (first, second))
+def _by_id(elements: list[dict[str, object]], elem_id: str) -> dict[str, object]:
+    """Return the scene element with ``elem_id`` (the scene is a flat id-keyed list)."""
+    return next(element for element in elements if element["id"] == elem_id)
 
-    request = AlbumListScene((first, second), view).render_request()
-    elements = request.elements
+
+def _children(element: dict[str, object]) -> list[dict[str, object]]:
+    """Return a container element's children, asserting the wire shape is a list."""
+    children = element["children"]
+    assert isinstance(children, list)
+    return children
+
+
+def _table(elements: list[dict[str, object]]) -> dict[str, object]:
+    """Return the album table nested inside the collapsible ``Albums`` header."""
+    return _children(_by_id(elements, "music.albums.header"))[0]
+
+
+def _paused(status: ProgramStatus) -> ProgramStatus:
+    """Return a copy of a playing status suspended in place (transport pause)."""
+    return replace(status, paused=True)
+
+
+def test_scene_region_order_when_idle(album_of: AlbumFactory) -> None:
+    request = AlbumListScene((album_of("aa11bb"),), PlayerView.idle()).render_request()
 
     assert request.scene_id == "vox.music"
     assert request.title == "Music"
-    assert elements[0] == {
+    assert [element["id"] for element in request.elements] == [
+        "music.header",
+        "music.now",
+        "music.status",
+        "music.transport",
+        "music.sep",
+        "music.albums.header",
+    ]
+    assert _by_id(request.elements, "music.header") == {
         "kind": "markdown",
         "id": "music.header",
         "content": "## Music",
     }
-    assert elements[1]["kind"] == "text"
-    assert "Techno Mix" in str(elements[1]["content"])
-    assert "1 of 3" in str(elements[1]["content"])
-    # The status slot is always present -- empty here, so it renders nothing.
-    assert elements[2] == {"kind": "text", "id": "music.status", "content": ""}
-    # The transport row replaces the old standalone Stop: a columns group of four.
-    transport = elements[3]
-    assert transport["kind"] == "group"
-    assert transport["id"] == "music.transport"
-    children = transport["children"]
-    assert isinstance(children, list)
-    assert [child["id"] for child in children] == [
-        "music.transport.prev",
-        "music.transport.playpause",
-        "music.transport.next",
-        "music.transport.stop",
+
+
+def test_now_playing_block_shows_album_track_position_and_progress(
+    album_of: AlbumFactory, playing_of: PlayingFactory
+) -> None:
+    album = album_of("aa11bb", name="Techno Mix")
+    view = PlayerView.from_status(playing_of(album, 1, 3), (album,))
+
+    elements = AlbumListScene((album,), view).render_request().elements
+
+    assert _by_id(elements, "music.now.album") == {
+        "kind": "markdown",
+        "id": "music.now.album",
+        "content": "### Techno Mix",
+    }
+    line = _children(_by_id(elements, "music.now.line"))
+    assert line[0]["content"] == "Track 1"  # title falls back until ID3 titles land
+    assert line[1]["content"] == "1 of 3"  # position, right of the title
+    assert _by_id(elements, "music.now.progress")["kind"] == "progress"
+
+
+def test_now_playing_uses_the_id3_title_when_present(album_of: AlbumFactory) -> None:
+    album = album_of("aa11bb", name="Techno Mix")
+    status = ProgramStatus.radio(
+        ProgramName(album.locator), NowPlaying(index=2, of=10, title="Neon Nights")
+    )
+    view = PlayerView.from_status(status, (album,))
+
+    elements = AlbumListScene((album,), view).render_request().elements
+
+    line = _children(_by_id(elements, "music.now.line"))
+    assert line[0]["content"] == "Neon Nights"  # the ID3 title, not "Track 2"
+    assert line[1]["content"] == "2 of 10"
+
+
+def test_playing_transport_shows_the_pause_glyph_and_topic(
+    album_of: AlbumFactory, playing_of: PlayingFactory
+) -> None:
+    album = album_of("aa11bb", name="Techno Mix")
+    view = PlayerView.from_status(playing_of(album, 1, 3), (album,))
+
+    elements = AlbumListScene((album,), view).render_request().elements
+    play_pause = _children(_by_id(elements, "music.transport"))[1]
+
+    assert play_pause["label"] == "⏸"  # playing -> press to pause
+    assert play_pause["publish"] == {"topic": "music.pause"}
+
+
+def test_paused_transport_shows_the_play_glyph_and_topic(
+    album_of: AlbumFactory, playing_of: PlayingFactory
+) -> None:
+    # The paused-vs-playing distinction the scene surfaces: one button flips off the
+    # wire ``paused`` flag (ProgramStatus.paused) -- ⏵ + music.resume while paused.
+    album = album_of("aa11bb", name="Techno Mix")
+    view = PlayerView.from_status(_paused(playing_of(album, 1, 3)), (album,))
+
+    elements = AlbumListScene((album,), view).render_request().elements
+    play_pause = _children(_by_id(elements, "music.transport"))[1]
+
+    assert play_pause["label"] == "⏵"  # paused -> press to resume
+    assert play_pause["publish"] == {"topic": "music.resume"}
+
+
+def test_idle_reads_nothing_playing_and_greys_the_transport(
+    album_of: AlbumFactory,
+) -> None:
+    request = AlbumListScene((album_of("aa11bb"),), PlayerView.idle()).render_request()
+
+    assert _by_id(request.elements, "music.now")["content"] == "Nothing playing"
+    transport = _children(_by_id(request.elements, "music.transport"))
+    assert all(child["disabled"] is True for child in transport)
+
+
+def test_album_table_columns_key_column_and_play_publish(
+    album_of: AlbumFactory,
+) -> None:
+    albums = (album_of("aa11bb", name="Techno Mix"), album_of("cc22dd", name="Ambient"))
+    table = _table(AlbumListScene(albums, PlayerView.idle()).render_request().elements)
+
+    assert table["kind"] == "table"
+    assert table["columns"] == ["Album", "Genre", "Tracks"]  # no id column
+    assert table["key_column"] == 0  # the Album (name) column is the row-id source
+    assert table["selection_mode"] == "single"
+    # Selecting a row publishes music.play; the ``publish`` sugar key IS the decorator
+    # declaration. lux delivers the clicked row's key cell (the album name) as
+    # payload['anchor'], which voxd resolves back to an id.
+    assert table["handlers"] == [
+        {"event": "row_selection_changed", "publish": ["music.play"]}
     ]
-    assert elements[4]["kind"] == "separator"
-
-    rows = elements[5:]
-    assert [row["id"] for row in rows] == ["music.row.aa11bb", "music.row.cc22dd"]
 
 
-def test_playing_row_is_marked_and_carries_its_play_button(
+def test_album_table_rows_carry_name_genre_and_track_count(
+    album_of: AlbumFactory,
+) -> None:
+    album = album_of("aa11bb", name="Techno Mix", tracks=7)
+    scene = AlbumListScene((album,), PlayerView.idle())
+    table = _table(scene.render_request().elements)
+
+    assert table["rows"] == [["Techno Mix", "techno", 7]]
+
+
+def test_album_table_marks_the_playing_row(
     album_of: AlbumFactory, playing_of: PlayingFactory
 ) -> None:
     first = album_of("aa11bb", name="Techno Mix")
     second = album_of("cc22dd", name="Ambient Drift")
     view = PlayerView.from_status(playing_of(first, 2, 3), (first, second))
 
-    rows = AlbumListScene((first, second), view).render_request().elements[5:]
-    playing_children = rows[0]["children"]
-    idle_children = rows[1]["children"]
-    assert isinstance(playing_children, list)  # each row nests its cells in a list
-    assert isinstance(idle_children, list)
+    table = _table(AlbumListScene((first, second), view).render_request().elements)
+    rows = table["rows"]
+    assert isinstance(rows, list)
 
-    assert playing_children[0]["content"] == "▶ Techno Mix"
-    assert playing_children[1] == {
-        "kind": "button",
-        "id": "play-aa11bb",
-        "label": "Play",
-        "publish": {"topic": "music.play", "payload": {"album_id": "aa11bb"}},
-    }
-    assert idle_children[0]["content"] == "Ambient Drift"  # unmarked, not playing
+    assert rows[0][0] == "▶ Techno Mix"  # the playing album's name cell is marked
+    assert rows[1][0] == "Ambient Drift"  # the idle album's is not
 
 
-def test_transport_is_inert_when_idle(album_of: AlbumFactory) -> None:
-    # T6/scene: nothing plays -> every transport button renders disabled. Playback
-    # starts from the album-list Play buttons, which stay enabled in every mode.
-    album = album_of("aa11bb", name="Techno Mix")
-    request = AlbumListScene((album,), PlayerView.idle()).render_request()
-
-    assert request.elements[1]["content"] == "Nothing playing"
-    assert request.elements[2] == {"kind": "text", "id": "music.status", "content": ""}
-    children = request.elements[3]["children"]
-    assert isinstance(children, list)
-    assert all(child["disabled"] is True for child in children)
-    play_pause = children[1]
-    # Idle wears the play glyph, ready to resume nothing.
-    assert play_pause["label"] == "⏵"
-    assert play_pause["publish"] == {"topic": "music.resume"}
+def test_unnamed_album_row_falls_back_to_its_id(album_of: AlbumFactory) -> None:
+    table = _table(
+        AlbumListScene((album_of("aa11bb", name=None),), PlayerView.idle())
+        .render_request()
+        .elements
+    )
+    rows = table["rows"]
+    assert isinstance(rows, list)
+    assert rows[0][0] == "album aa11bb"  # the unique, resolvable fallback cell
 
 
-def test_unnamed_album_falls_back_to_its_id(album_of: AlbumFactory) -> None:
-    album = album_of("aa11bb", name=None)
-    rows = AlbumListScene((album,), PlayerView.idle()).render_request().elements[5:]
-    children = rows[0]["children"]
-    assert isinstance(children, list)  # each row nests its cells in a list
-    assert children[0]["content"] == "album aa11bb"
+def test_collapsing_header_shows_the_album_count(album_of: AlbumFactory) -> None:
+    albums = (album_of("aa11bb"), album_of("cc22dd"), album_of("ee33ff"))
+    elements = AlbumListScene(albums, PlayerView.idle()).render_request().elements
+    header = _by_id(elements, "music.albums.header")
+
+    assert header["kind"] == "collapsing_header"
+    assert header["open"] is True
+    assert header["label"] == "Albums · 3 albums"
 
 
 def test_warning_notice_renders_the_status_line(album_of: AlbumFactory) -> None:
-    # A failure notice the receive leg raised shows as the one-line status surface,
-    # so a click that could not be applied is visible in the scene, not only the log.
+    # A failure notice the receive leg raised shows as the one-line status surface, so
+    # a click that could not be applied is visible in the scene, not only the log.
     album = album_of("aa11bb", name="Techno Mix")
     warning = "⚠ couldn't play Techno Mix — it has no tracks yet"
     scene = AlbumListScene((album,), PlayerView.idle(), PlaybackNotice.warning(warning))
 
-    assert scene.render_request().elements[2] == {
+    assert _by_id(scene.render_request().elements, "music.status") == {
         "kind": "text",
         "id": "music.status",
         "content": warning,
@@ -130,7 +224,6 @@ def test_warning_notice_renders_the_status_line(album_of: AlbumFactory) -> None:
 def test_silent_notice_leaves_the_status_line_empty(album_of: AlbumFactory) -> None:
     # The default silent notice keeps the slot present but empty -- the same scene
     # shape as a warning, so a later silent re-push clears a prior warning in place.
-    album = album_of("aa11bb", name="Techno Mix")
-    scene = AlbumListScene((album,), PlayerView.idle())
+    scene = AlbumListScene((album_of("aa11bb"),), PlayerView.idle())
 
-    assert scene.render_request().elements[2]["content"] == ""
+    assert _by_id(scene.render_request().elements, "music.status")["content"] == ""

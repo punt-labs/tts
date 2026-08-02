@@ -1,30 +1,24 @@
-"""Tests for the player events and codec: decode, and the polymorphic apply.
+"""Tests for the player events: the polymorphic apply and failure double-dispatch.
 
-These are the offline substitute for the (PR-3-gated) live click: a synthesized
-``music.play``/``music.stop`` decodes into a typed event that applies to exactly one
-daemon command -- the Z model's total ``dispatch`` (invariant V), exercised without a
-running luxd.
+Each event maps to exactly one daemon command -- the Z model's total ``dispatch``
+(invariant V) -- and names its own failure surface (double dispatch), so the
+subscription never branches on the topic. Decoding lives with
+:class:`PlayerEventCodec` in ``test_player_event_codec``.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, final
-
-import pytest
+from typing import final
 
 from punt_vox.voxd.music_player.player_events import (
     Next,
     Pause,
     PlayAlbum,
-    PlayerEventCodec,
     Prev,
     Resume,
     StopMusic,
 )
 from punt_vox.voxd.programs.album_id import AlbumId
-
-if TYPE_CHECKING:
-    from punt_vox.voxd.music_player.player_events import PlayerEvent
 
 
 @final
@@ -58,36 +52,6 @@ class _FakeCommands:
         self.resumes += 1
 
 
-def test_decode_play_builds_a_play_album_with_the_album_id() -> None:
-    event = PlayerEventCodec().decode("music.play", {"album_id": "aa11bb"})
-    assert event == PlayAlbum(AlbumId("aa11bb"))
-
-
-def test_decode_stop_builds_a_stop_music() -> None:
-    assert PlayerEventCodec().decode("music.stop", {}) == StopMusic()
-
-
-def test_decode_rejects_an_unknown_topic() -> None:
-    with pytest.raises(ValueError, match="unknown music topic"):
-        PlayerEventCodec().decode("music.bogus", {})
-
-
-def test_decode_rejects_a_play_missing_its_album_id() -> None:
-    with pytest.raises(ValueError, match="missing a string 'album_id'"):
-        PlayerEventCodec().decode("music.play", {})
-
-
-def test_decode_rejects_a_non_string_album_id() -> None:
-    with pytest.raises(ValueError, match="missing a string 'album_id'"):
-        PlayerEventCodec().decode("music.play", {"album_id": 123})
-
-
-def test_decode_rejects_a_malformed_album_id() -> None:
-    # AlbumId validates hex shape at the boundary, so a non-hex id raises there.
-    with pytest.raises(ValueError, match="album id"):
-        PlayerEventCodec().decode("music.play", {"album_id": "not-hex!"})
-
-
 def test_play_album_applies_exactly_one_replay() -> None:
     service = _FakeCommands()
     PlayAlbum(AlbumId("aa11bb")).apply(service)
@@ -100,27 +64,6 @@ def test_stop_music_applies_exactly_one_off() -> None:
     StopMusic().apply(service)
     assert service.stops == 1
     assert service.played == []
-
-
-def test_a_decoded_event_dispatches_to_a_single_transition() -> None:
-    # Invariant V: each event maps to exactly one playback transition.
-    service = _FakeCommands()
-    events: list[PlayerEvent] = [
-        PlayerEventCodec().decode("music.play", {"album_id": "aa11bb"}),
-        PlayerEventCodec().decode("music.stop", {}),
-    ]
-    for event in events:
-        event.apply(service)
-    assert service.played == [AlbumId("aa11bb")]
-    assert service.stops == 1
-
-
-def test_decode_transport_topics_build_their_events() -> None:
-    codec = PlayerEventCodec()
-    assert codec.decode("music.prev", {}) == Prev()
-    assert codec.decode("music.next", {}) == Next()
-    assert codec.decode("music.pause", {}) == Pause()
-    assert codec.decode("music.resume", {}) == Resume()
 
 
 def test_transport_events_each_apply_to_one_daemon_call() -> None:
@@ -172,3 +115,12 @@ def test_stop_music_surfaces_its_own_stop_failure() -> None:
     StopMusic().surface_failure(presenter)
     assert presenter.stop_failures == 1
     assert presenter.play_failures == []
+
+
+def test_transport_events_surface_a_transport_failure() -> None:
+    presenter = _FakePresenter()
+    for event in (Prev(), Next(), Pause(), Resume()):
+        event.surface_failure(presenter)
+    assert presenter.transport_failures == 4
+    assert presenter.play_failures == []
+    assert presenter.stop_failures == 0
