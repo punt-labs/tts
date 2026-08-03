@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import IO
 
+class ID3NoHeaderError(Exception): ...
 class Frame: ...
 
 class TextFrame(Frame):

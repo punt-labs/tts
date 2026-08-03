@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import json
 import re
+from dataclasses import replace
 from pathlib import Path
 from typing import Self, final
 from unittest.mock import MagicMock
@@ -473,6 +474,20 @@ def test_status_renders_now_playing_and_failures() -> None:
     assert "ambient_techno" in text
     assert "playing 1 of 1" in text
     assert "part 2 failed" in text
+
+
+def test_status_renders_paused_when_the_source_is_suspended() -> None:
+    program = Program(ProgramState.initial(), _AvoidRepeat())
+    program.turn_on()
+    program.first_track_ok(Part("id001", 1))
+    status = replace(program.to_status(ProgramName("ambient_techno")), paused=True)
+    cli, formatter = _cli(FakeProgramGateway(status=status))
+
+    cli.status()
+
+    _, text = _emitted(formatter)
+    assert "paused 1 of 1" in text  # not the misleading "playing" for a held source
+    assert "playing 1 of 1" not in text
 
 
 def test_status_idle() -> None:

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.types_programs.status_views import NowPlaying
+from punt_vox.voxd.programs.part_tags import PartTags
 from punt_vox.voxd.programs.program import Program
 from punt_vox.voxd.programs.selection_playback import SelectionPlayback
 
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
     from punt_vox.voxd.programs.control_channel import ControlChannel
     from punt_vox.voxd.programs.mpv.mpv_supervisor import MpvSupervisor
     from punt_vox.voxd.programs.playback_health import PlaybackHealth
+    from punt_vox.voxd.programs.playback_source import PlaybackSource
 
 __all__ = ["StatusProjection"]
 
@@ -52,10 +54,28 @@ class StatusProjection:
         source = self._channel.source
         fault = self._fault()
         if isinstance(source, Program):
-            return source.to_status(active.name, fault)
+            title = self._playing_title(source, active)
+            return source.to_status(active.name, fault, title=title)
         if isinstance(source, SelectionPlayback):
-            return ProgramStatus.radio(active.name, self._now_playing(source), fault)
+            cursor = self._now_playing(source, active)
+            return ProgramStatus.radio(active.name, cursor, fault)
         return ProgramStatus.idle()
+
+    @staticmethod
+    def _playing_title(source: PlaybackSource, active: ActiveSource) -> str | None:
+        """Return the playing Part's ID3 song title, or ``None`` when none is set.
+
+        The projection is where disk is touched: it resolves the playing Part to
+        its on-disk path through the active context and reads the ``TIT2`` frame,
+        so the pure domain (``Program``/``SelectionPlayback``) never reads a file.
+        A silent source, a Part with no title, or an unreadable file yields
+        ``None`` (:meth:`PartTags.read_title` is tolerant), so a status read never
+        raises over a cosmetic label.
+        """
+        playing = source.playing
+        if playing is None:
+            return None
+        return PartTags.read_title(active.locate(playing))
 
     def _fault(self) -> PlaybackFault | None:
         """Return the standing fault a client sees, process-level first.
@@ -67,16 +87,23 @@ class StatusProjection:
         """
         return self._supervisor.fault or self._health.fault
 
-    @staticmethod
-    def _now_playing(source: SelectionPlayback) -> NowPlaying | None:
+    @classmethod
+    def _now_playing(
+        cls, source: SelectionPlayback, active: ActiveSource
+    ) -> NowPlaying | None:
         """Return the replay cursor's "Part N of M" view, or ``None`` when idle.
 
         ``N`` is the playing track's 1-based position in the selection and ``M``
         is the selection's size, so ``N <= M`` always holds -- the same
         position-of-count contract the generate-Program status uses. The cursor is
-        read O(1) from the source, never rescanned over an uncapped selection.
+        read O(1) from the source, never rescanned over an uncapped selection. The
+        playing track's ID3 title labels the view (``None`` when it has none).
         """
         position = source.position
         if position is None:
             return None
-        return NowPlaying(index=position, of=len(source.selection))
+        return NowPlaying(
+            index=position,
+            of=len(source.selection),
+            title=cls._playing_title(source, active),
+        )

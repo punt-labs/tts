@@ -1316,11 +1316,11 @@
     "public_names": 3.0
   },
   "src/punt_vox/voxd/programs/part_tags.py": {
-    "avg_lcom": 0.0,
-    "circular_imports": 0.0,
     "efferent_coupling": 0.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
     "max_lcom": 0.0,
-    "public_names": 1.0
+    "avg_lcom": 0.0
   },
   "src/punt_vox/voxd/programs/playback_health.py": {
     "avg_lcom": 0.0,
@@ -1372,11 +1372,11 @@
     "public_names": 4.0
   },
   "src/punt_vox/voxd/programs/program.py": {
-    "avg_lcom": 0.074,
-    "circular_imports": 0.0,
     "efferent_coupling": 8.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
     "max_lcom": 0.074,
-    "public_names": 1.0
+    "avg_lcom": 0.074
   },
   "src/punt_vox/voxd/programs/retry_machine.py": {
     "avg_lcom": 0.0,

@@ -28,6 +28,9 @@ _UNSAFE: Final = re.compile(r"[^a-z0-9]+")
 _FINGERPRINT_CHARS: Final = 16  # 64-bit truncation of the sha256 hex digest
 _NAME_SEGMENT_CHARS: Final = 32  # per-segment cap keeping an auto-name a short handle
 _SEGMENT_FLOOR: Final = "album"  # leading token when a slug segment is otherwise empty
+# The trailing ``-YYYYMMDD-HHMM`` (plus any mint collision digits) an auto-name
+# carries; ``display_title`` strips it so the human label drops the timestamp.
+_AUTO_STAMP: Final = re.compile(r"-\d{8}-\d{4}\d*$")
 
 
 @final
@@ -102,6 +105,24 @@ class AlbumTags:
         if self.name is not None:
             return self._slugify(self.name)
         return f"{self._slugify(self.style)}--{self._slugify(self.vibe)}"
+
+    def display_title(self) -> str:
+        """Return the human display title: the name with its auto-stamp dropped.
+
+        An auto-named pool carries a ``{vibe}-{style}-{YYYYMMDD-HHMM}`` handle; the
+        display drops that trailing timestamp and title-cases the remaining slug,
+        so ``synthwave-20260726-0326`` reads as "Synthwave" and
+        ``cool-modal-jazz-20260726-0330`` as "Cool Modal Jazz". A curated name
+        carries no stamp, so it survives verbatim (only re-cased). An unnamed pool
+        has no handle to shorten -- it titles as "Album", and the catalogue-wide
+        name map disambiguates any collision by id. Dropping the stamp is why two
+        same-``(style, vibe)`` pools collide here and must be re-made unique
+        downstream, never why the wrong one plays.
+        """
+        if self.name is None:
+            return _SEGMENT_FLOOR.capitalize()
+        stem = _AUTO_STAMP.sub("", self.name)
+        return " ".join(word.capitalize() for word in stem.replace("-", " ").split())
 
     def to_dict(self) -> dict[str, object]:
         """Return the wire object ``{style, vibe, name}`` (``name`` may be null)."""

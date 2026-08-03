@@ -5,7 +5,7 @@ A ``music.play`` (an album-table row selection) names its target by the clicked
 row's ``key_column`` cell -- the album's displayed name -- which lux delivers as
 ``payload['anchor']``; the codec resolves that name back to an :class:`AlbumId`
 against the fresh catalog, since voxd owns the name-to-id mapping
-(:meth:`AlbumDisplay.resolve`). It raises on anything it does not recognise
+(:meth:`AlbumNames.resolve`). It raises on anything it does not recognise
 (PY-EH-8) so a malformed or transitional frame never reaches playback as a silent
 no-op; the subscription boundary logs and drops what it raises.
 """
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, final
 
-from punt_vox.voxd.music_player.album_display import AlbumDisplay
+from punt_vox.voxd.music_player.album_names import AlbumNames
 from punt_vox.voxd.music_player.player_events import (
     Next,
     Pause,
@@ -84,4 +84,4 @@ class PlayerEventCodec:
         if not isinstance(anchor, str) or not anchor:
             msg = f"music.play payload carries no {ANCHOR_KEY!r} anchor: {payload!r}"
             raise ValueError(msg)
-        return AlbumDisplay.resolve(anchor, albums).id
+        return AlbumNames(albums).resolve(anchor).id

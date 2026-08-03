@@ -82,11 +82,9 @@ def test_decode_play_resolves_a_marked_anchor(album_of: AlbumFactory) -> None:
 def test_decode_play_resolves_an_unnamed_albums_fallback(
     album_of: AlbumFactory,
 ) -> None:
-    # An unnamed album renders as ``album <id>``; that fallback cell resolves too.
+    # An unnamed album titles as "Album"; sole in the catalog, that cell resolves.
     album = album_of("aa11bb", name=None)
-    event = PlayerEventCodec().decode(
-        "music.play", {"anchor": "album aa11bb"}, (album,)
-    )
+    event = PlayerEventCodec().decode("music.play", {"anchor": "Album"}, (album,))
     assert event == PlayAlbum(AlbumId("aa11bb"))
 
 

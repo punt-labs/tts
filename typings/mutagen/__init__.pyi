@@ -5,3 +5,5 @@ mutagen ships ``py.typed`` but its call signatures are unannotated, so
 handful of ID3 frames and the ``ID3`` container vox uses to tag generated
 Parts (mirrors the ``typings/pydub`` precedent).
 """
+
+class MutagenError(Exception): ...

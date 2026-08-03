@@ -1,12 +1,13 @@
 """Tests for AlbumListScene: the three-region element tree it projects.
 
 The scene is a flat, id-keyed list of wire elements in three regions -- now-playing,
-transport, and the collapsible album table. These tests pin the shape by element id
-(not list position, which shifts between the idle one-line now-playing and the active
-three-element one): the now-playing block for a playing and a paused source, the table
-columns and its ``music.play`` row-selection publish, and the idle greying of the
-transport. The publish assertion is the offline substitute for a live click -- it pins
-the exact wire contract :class:`LuxSubscription` decodes on the other leg.
+transport, and the album table under its count label. These tests pin the shape by
+element id (not list position, which shifts between the idle one-line now-playing and
+the active two-element one): the now-playing block for a playing and a paused source,
+the table columns, its sortable flag, and its ``music.play`` row-selection publish,
+and the idle greying of the transport. The publish assertion is the offline substitute
+for a live click -- it pins the exact wire contract :class:`LuxSubscription` decodes on
+the other leg.
 """
 
 from __future__ import annotations
@@ -43,8 +44,8 @@ def _children(element: dict[str, object]) -> list[dict[str, object]]:
 
 
 def _table(elements: list[dict[str, object]]) -> dict[str, object]:
-    """Return the album table nested inside the collapsible ``Albums`` header."""
-    return _children(_by_id(elements, "music.albums.header"))[0]
+    """Return the album table -- a top-level element now, not nested under a header."""
+    return _by_id(elements, "music.albums")
 
 
 def _paused(status: ProgramStatus) -> ProgramStatus:
@@ -57,22 +58,18 @@ def test_scene_region_order_when_idle(album_of: AlbumFactory) -> None:
 
     assert request.scene_id == "vox.music"
     assert request.title == "Music"
+    # No "music.header": the lux frame is already titled "Music".
     assert [element["id"] for element in request.elements] == [
-        "music.header",
         "music.now",
         "music.status",
         "music.transport",
         "music.sep",
-        "music.albums.header",
+        "music.albums.label",
+        "music.albums",
     ]
-    assert _by_id(request.elements, "music.header") == {
-        "kind": "markdown",
-        "id": "music.header",
-        "content": "## Music",
-    }
 
 
-def test_now_playing_block_shows_album_track_position_and_progress(
+def test_now_playing_block_shows_album_and_track_position(
     album_of: AlbumFactory, playing_of: PlayingFactory
 ) -> None:
     album = album_of("aa11bb", name="Techno Mix")
@@ -86,9 +83,10 @@ def test_now_playing_block_shows_album_track_position_and_progress(
         "content": "### Techno Mix",
     }
     line = _children(_by_id(elements, "music.now.line"))
-    assert line[0]["content"] == "Track 1"  # title falls back until ID3 titles land
+    assert line[0]["content"] == "Track 1"  # positional fallback when no ID3 title
     assert line[1]["content"] == "1 of 3"  # position, right of the title
-    assert _by_id(elements, "music.now.progress")["kind"] == "progress"
+    # No progress bar element in the block anymore.
+    assert not any(e["id"] == "music.now.progress" for e in elements)
 
 
 def test_now_playing_uses_the_id3_title_when_present(album_of: AlbumFactory) -> None:
@@ -161,6 +159,17 @@ def test_album_table_columns_key_column_and_play_publish(
     ]
 
 
+def test_album_table_is_sortable(album_of: AlbumFactory) -> None:
+    # The sortable flag turns on ImGui's Display-local column sort; the default
+    # borders/row-backgrounds ride alongside it.
+    table = _table(
+        AlbumListScene((album_of("aa11bb"),), PlayerView.idle())
+        .render_request()
+        .elements
+    )
+    assert table["flags"] == ["borders", "row_bg", "sortable"]
+
+
 def test_album_table_rows_carry_name_genre_and_track_count(
     album_of: AlbumFactory,
 ) -> None:
@@ -186,7 +195,7 @@ def test_album_table_marks_the_playing_row(
     assert rows[1][0] == "Ambient Drift"  # the idle album's is not
 
 
-def test_unnamed_album_row_falls_back_to_its_id(album_of: AlbumFactory) -> None:
+def test_unnamed_album_row_titles_as_album(album_of: AlbumFactory) -> None:
     table = _table(
         AlbumListScene((album_of("aa11bb", name=None),), PlayerView.idle())
         .render_request()
@@ -194,17 +203,18 @@ def test_unnamed_album_row_falls_back_to_its_id(album_of: AlbumFactory) -> None:
     )
     rows = table["rows"]
     assert isinstance(rows, list)
-    assert rows[0][0] == "album aa11bb"  # the unique, resolvable fallback cell
+    assert rows[0][0] == "Album"  # sole unnamed album titles cleanly as "Album"
 
 
-def test_collapsing_header_shows_the_album_count(album_of: AlbumFactory) -> None:
+def test_album_count_label_sits_above_the_table(album_of: AlbumFactory) -> None:
     albums = (album_of("aa11bb"), album_of("cc22dd"), album_of("ee33ff"))
     elements = AlbumListScene(albums, PlayerView.idle()).render_request().elements
-    header = _by_id(elements, "music.albums.header")
 
-    assert header["kind"] == "collapsing_header"
-    assert header["open"] is True
-    assert header["label"] == "Albums · 3 albums"
+    assert _by_id(elements, "music.albums.label") == {
+        "kind": "text",
+        "id": "music.albums.label",
+        "content": "Albums · 3 albums",
+    }
 
 
 def test_warning_notice_renders_the_status_line(album_of: AlbumFactory) -> None:

@@ -300,6 +300,8 @@ class Program:
         self,
         name: ProgramName | None,
         playback_error: PlaybackFault | None = None,
+        *,
+        title: str | None = None,
     ) -> ProgramStatus:
         """Assemble this Program's runtime status for a client.
 
@@ -307,6 +309,9 @@ class Program:
         failures, playback fault) into the neutral ``ProgramStatus`` value any
         client parses. ``name`` is the active manifest handle the pure domain
         does not carry; ``playback_error`` is the daemon's live player fault.
+        ``title`` is the playing Part's ID3 song title, read by the projection
+        (the pure domain does not touch disk); ``None`` leaves the now-playing
+        view label-free so a client falls back to the positional ``Track N``.
         """
         state = self._state
         error = None if state.last_error is None else str(state.last_error)
@@ -317,7 +322,7 @@ class Program:
                 filling=state.filling, attempts=state.attempts, last_error=error
             ),
             name=name,
-            now_playing=self._now_playing(),
+            now_playing=self._now_playing(title),
             failed_parts=tuple(
                 FailedPartView(index=part.index, reason=str(reason))
                 for part, reason in state.failed_parts.ordered()
@@ -325,16 +330,19 @@ class Program:
             playback_error=playback_error,
         )
 
-    def _now_playing(self) -> NowPlaying | None:
+    def _now_playing(self, title: str | None) -> NowPlaying | None:
         """Return the "Part N of M" view (1-based pool position), or None.
 
         ``N`` is the playing Part's position in the ordered ready pool so a
         gapped pool reports "part 3 of 3", never the intrinsic "4 of 3".
+        ``title`` is the playing Part's ID3 song title (``None`` when absent).
         """
         playing = self.playing
         if playing is None:
             return None
-        return NowPlaying(index=self.pool.index(playing) + 1, of=len(self.pool))
+        return NowPlaying(
+            index=self.pool.index(playing) + 1, of=len(self.pool), title=title
+        )
 
     @staticmethod
     def _reject(message: str) -> NoReturn:

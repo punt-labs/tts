@@ -1,10 +1,11 @@
 """``NowPlayingBlock`` -- the scene's top region: what is playing, right now.
 
-Three stacked elements when a source is active: the **album name** (prominent, a
-markdown heading), the **track line** (its title on the left, the ``N of M``
-position on the right), and a **progress bar**. The bar is the one element meant
-to move -- fed by mpv's ``time-pos`` polled ~1/s -- but that poll is deferred, so
-it renders static at zero for now; everything else is static per track.
+Two stacked elements when a source is active: the **album name** (prominent, a
+markdown heading) and the **track line** (the song title on the left, the ``N of
+M`` position on the right). There is no progress bar: a live one would force voxd
+to push mpv's ``time-pos`` on a constant timer for a sliver of information, so the
+block carries only what is static per track -- the album, the song, and the
+position.
 
 When nothing plays the region collapses to a single ``"Nothing playing"`` line and
 the transport greys out (the :class:`TransportRow` renders every button disabled off
@@ -16,9 +17,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, final
 
-from punt_lux import MarkdownElement, ProgressElement, TextElement
+from punt_lux import MarkdownElement, TextElement
 
-from punt_vox.voxd.music_player.album_display import AlbumDisplay
+from punt_vox.voxd.music_player.album_names import AlbumNames
 
 if TYPE_CHECKING:
     from punt_vox.types_programs.status_views import NowPlaying
@@ -39,11 +40,11 @@ class NowPlayingBlock:
     albums: tuple[Album, ...]
 
     def elements(self) -> list[dict[str, object]]:
-        """Return the region's wire elements: idle line, or album/track/progress."""
+        """Return the region's wire elements: the idle line, or album + track line."""
         cursor = self.view.now_playing
         if cursor is None:
             return [self._idle()]
-        return [self._album(), self._track_line(cursor), self._progress()]
+        return [self._album(), self._track_line(cursor)]
 
     @staticmethod
     def _idle() -> dict[str, object]:
@@ -57,9 +58,14 @@ class NowPlayingBlock:
         ).to_dict()
 
     def _playing_name(self) -> str:
-        """Return the display name of the playing album (T7 guarantees it exists)."""
+        """Return the friendly name of the playing album (T7 guarantees it exists).
+
+        The name comes from the catalogue-wide :class:`AlbumNames` map so it is the
+        same unique friendly name the album's table row shows, not a bare re-derive
+        that could drift from it.
+        """
         match = next((a for a in self.albums if a.id == self.view.album), None)
-        return "album" if match is None else AlbumDisplay(match).name
+        return "album" if match is None else AlbumNames(self.albums).friendly(match)
 
     def _track_line(self, cursor: NowPlaying) -> dict[str, object]:
         """Return the track line: the song title left, the ``N of M`` position right."""
@@ -76,10 +82,5 @@ class NowPlayingBlock:
 
     @staticmethod
     def _track_title(cursor: NowPlaying) -> str:
-        """Return the song title, falling back to ``Track N`` until ID3 titles land."""
+        """Return the song title, or ``Track N`` when no ID3 title exists."""
         return cursor.title or f"Track {cursor.index}"
-
-    @staticmethod
-    def _progress() -> dict[str, object]:
-        """Return the static progress bar -- zero-filled until time polling lands."""
-        return ProgressElement(id="music.now.progress", fraction=0.0).to_dict()

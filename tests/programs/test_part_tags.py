@@ -66,3 +66,28 @@ def test_unicode_title_round_trips(tmp_path: Path) -> None:
         tmp_path / "001.mp3", title="夜", album="néon 夜", genre="ambient"
     )
     assert frames["TALB"].text == ["néon 夜"]
+
+
+def test_read_title_returns_the_written_title(tmp_path: Path) -> None:
+    """``read_title`` is the read counterpart to ``write_to`` -- it recovers TIT2."""
+    path = tmp_path / "001.mp3"
+    PartTags(title="Neon Rain", album="A", genre="synth", index=1, total=3).write_to(
+        path
+    )
+    assert PartTags.read_title(path) == "Neon Rain"
+
+
+def test_read_title_is_none_for_a_missing_file(tmp_path: Path) -> None:
+    """A missing file (mutagen wraps the OSError) yields None, never a raise --
+
+    the status projection reads this on every call and must not crash over a
+    mid-write race or a just-deleted part.
+    """
+    assert PartTags.read_title(tmp_path / "gone.mp3") is None
+
+
+def test_read_title_is_none_when_the_file_has_no_id3_header(tmp_path: Path) -> None:
+    """An mp3 with no ID3 header yields None, so the caller uses the fallback label."""
+    path = tmp_path / "bare.mp3"
+    path.write_bytes(b"\xff\xfb\x90\x00" + b"\x00" * 256)
+    assert PartTags.read_title(path) is None
