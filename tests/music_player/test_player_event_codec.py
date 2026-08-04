@@ -70,15 +70,6 @@ def test_decode_play_resolves_the_anchor_name_to_the_album_id(
     assert event == PlayAlbum(AlbumId("aa11bb"))
 
 
-def test_decode_play_resolves_a_marked_anchor(album_of: AlbumFactory) -> None:
-    # The playing album's cell wears the ▶ cue, so its anchor arrives marked; the
-    # codec resolves it to the same id as the unmarked form.
-    album = album_of("aa11bb", name="Techno Mix")
-    codec = PlayerEventCodec()
-    event = codec.decode("music.play", {"anchor": "▶ Techno Mix"}, (album,))
-    assert event == PlayAlbum(AlbumId("aa11bb"))
-
-
 def test_decode_play_resolves_an_unnamed_albums_fallback(
     album_of: AlbumFactory,
 ) -> None:

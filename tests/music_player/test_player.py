@@ -25,11 +25,8 @@ def _by_id(elements: list[dict[str, object]], elem_id: str) -> dict[str, object]
 
 
 def _position_text(elements: list[dict[str, object]]) -> str:
-    """Return the ``N of M`` cell from the now-playing track line."""
-    line = _by_id(elements, "music.now.line")
-    children = line["children"]
-    assert isinstance(children, list)
-    return str(children[1]["content"])
+    """Return the ``N of M`` cell from the now-playing position line."""
+    return str(_by_id(elements, "music.now.position")["content"])
 
 
 @final

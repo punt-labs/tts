@@ -15,9 +15,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from punt_vox.types_programs.identifiers import ProgramName
 from punt_vox.types_programs.status import ProgramStatus
-from punt_vox.types_programs.status_views import NowPlaying
 from punt_vox.voxd.music_player.playback_notice import PlaybackNotice
 from punt_vox.voxd.music_player.player_view import PlayerView
 from punt_vox.voxd.music_player.scene import AlbumListScene
@@ -82,25 +80,16 @@ def test_now_playing_block_shows_album_and_track_position(
         "id": "music.now.album",
         "content": "### Techno Mix",
     }
-    line = _children(_by_id(elements, "music.now.line"))
-    assert line[0]["content"] == "Track 1"  # positional fallback when no ID3 title
-    assert line[1]["content"] == "1 of 3"  # position, right of the title
-    # No progress bar element in the block anymore.
+    # The block carries only album + position: no song-title line (it held the
+    # generation prompt, not a song name) and no progress bar.
+    assert _by_id(elements, "music.now.position") == {
+        "kind": "text",
+        "id": "music.now.position",
+        "content": "1 of 3",
+    }
+    assert not any(e["id"] == "music.now.line" for e in elements)
+    assert not any(e["id"] == "music.now.track" for e in elements)
     assert not any(e["id"] == "music.now.progress" for e in elements)
-
-
-def test_now_playing_uses_the_id3_title_when_present(album_of: AlbumFactory) -> None:
-    album = album_of("aa11bb", name="Techno Mix")
-    status = ProgramStatus.radio(
-        ProgramName(album.locator), NowPlaying(index=2, of=10, title="Neon Nights")
-    )
-    view = PlayerView.from_status(status, (album,))
-
-    elements = AlbumListScene((album,), view).render_request().elements
-
-    line = _children(_by_id(elements, "music.now.line"))
-    assert line[0]["content"] == "Neon Nights"  # the ID3 title, not "Track 2"
-    assert line[1]["content"] == "2 of 10"
 
 
 def test_playing_transport_shows_the_pause_glyph_and_topic(
@@ -180,9 +169,12 @@ def test_album_table_rows_carry_name_genre_and_track_count(
     assert table["rows"] == [["Techno Mix", "techno", 7]]
 
 
-def test_album_table_marks_the_playing_row(
+def test_album_table_leaves_the_playing_row_name_unmarked(
     album_of: AlbumFactory, playing_of: PlayingFactory
 ) -> None:
+    # The playing album's name cell carries no ▶ cue: a marker would sort the row
+    # to the bottom and corrupt the click key (the ▶-prefixed name resolves to no
+    # album). The now-playing block above already names what is playing.
     first = album_of("aa11bb", name="Techno Mix")
     second = album_of("cc22dd", name="Ambient Drift")
     view = PlayerView.from_status(playing_of(first, 2, 3), (first, second))
@@ -191,8 +183,8 @@ def test_album_table_marks_the_playing_row(
     rows = table["rows"]
     assert isinstance(rows, list)
 
-    assert rows[0][0] == "▶ Techno Mix"  # the playing album's name cell is marked
-    assert rows[1][0] == "Ambient Drift"  # the idle album's is not
+    assert rows[0][0] == "Techno Mix"  # the playing album's cell is a plain name
+    assert rows[1][0] == "Ambient Drift"
 
 
 def test_unnamed_album_row_titles_as_album(album_of: AlbumFactory) -> None:

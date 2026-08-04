@@ -1248,17 +1248,17 @@
     "future_annotations": 1.0
   },
   "src/punt_vox/types_programs/status_views.py": {
-    "avg_complexity": 1.33,
-    "avg_params": 0.5,
-    "class_to_func_ratio": 1.0,
-    "classes_per_module": 3.0,
-    "encapsulation_ratio": 1.0,
-    "future_annotations": 1.0,
-    "init_violations": 0.0,
-    "max_complexity": 2.0,
     "method_ratio": 1.0,
-    "module_size": 79.0,
-    "public_attr_violations": 0.0
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.5,
+    "max_complexity": 2.0,
+    "avg_complexity": 1.17,
+    "module_size": 69.0,
+    "classes_per_module": 3.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
   },
   "src/punt_vox/types_programs/vibe_label.py": {
     "avg_complexity": 1.7,
@@ -1598,6 +1598,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/voxd/music_player/album_names.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.0,
+    "max_complexity": 3.0,
+    "avg_complexity": 2.0,
+    "module_size": 66.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/voxd/music_player/album_table.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -1718,10 +1731,10 @@
   "src/punt_vox/voxd/music_player/now_playing_block.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.33,
+    "avg_params": 0.2,
     "max_complexity": 3.0,
-    "avg_complexity": 1.67,
-    "module_size": 67.0,
+    "avg_complexity": 1.6,
+    "module_size": 59.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
@@ -2693,10 +2706,10 @@
   "src/punt_vox/voxd/programs/status_projection.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.6,
+    "avg_params": 1.25,
     "max_complexity": 3.0,
     "avg_complexity": 2.0,
-    "module_size": 92.0,
+    "module_size": 68.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

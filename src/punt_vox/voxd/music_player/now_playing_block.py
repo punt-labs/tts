@@ -1,11 +1,13 @@
 """``NowPlayingBlock`` -- the scene's top region: what is playing, right now.
 
 Two stacked elements when a source is active: the **album name** (prominent, a
-markdown heading) and the **track line** (the song title on the left, the ``N of
-M`` position on the right). There is no progress bar: a live one would force voxd
-to push mpv's ``time-pos`` on a constant timer for a sliver of information, so the
-block carries only what is static per track -- the album, the song, and the
-position.
+markdown heading) and the **position line** (the ``N of M`` slot in the pool).
+There is no song-title line: the per-track title carried the generation prompt,
+not a song name, so it read as a wall of text next to the position and told the
+user nothing -- the album name above already names what is playing. There is no
+progress bar either: a live one would force voxd to push mpv's ``time-pos`` on a
+constant timer for a sliver of information, so the block carries only what is
+static per track -- the album and the position.
 
 When nothing plays the region collapses to a single ``"Nothing playing"`` line and
 the transport greys out (the :class:`TransportRow` renders every button disabled off
@@ -40,11 +42,11 @@ class NowPlayingBlock:
     albums: tuple[Album, ...]
 
     def elements(self) -> list[dict[str, object]]:
-        """Return the region's wire elements: the idle line, or album + track line."""
+        """Return the region's wire elements: the idle line, or album + position."""
         cursor = self.view.now_playing
         if cursor is None:
             return [self._idle()]
-        return [self._album(), self._track_line(cursor)]
+        return [self._album(), self._position(cursor)]
 
     @staticmethod
     def _idle() -> dict[str, object]:
@@ -67,20 +69,9 @@ class NowPlayingBlock:
         match = next((a for a in self.albums if a.id == self.view.album), None)
         return "album" if match is None else AlbumNames(self.albums).friendly(match)
 
-    def _track_line(self, cursor: NowPlaying) -> dict[str, object]:
-        """Return the track line: the song title left, the ``N of M`` position right."""
-        title = TextElement(id="music.now.track", content=self._track_title(cursor))
-        position = TextElement(
-            id="music.now.position", content=f"{cursor.index} of {cursor.of}"
-        )
-        return {
-            "kind": "group",
-            "id": "music.now.line",
-            "layout": "columns",
-            "children": [title.to_dict(), position.to_dict()],
-        }
-
     @staticmethod
-    def _track_title(cursor: NowPlaying) -> str:
-        """Return the song title, or ``Track N`` when no ID3 title exists."""
-        return cursor.title or f"Track {cursor.index}"
+    def _position(cursor: NowPlaying) -> dict[str, object]:
+        """Return the ``N of M`` position line -- the playing slot in the pool."""
+        return TextElement(
+            id="music.now.position", content=f"{cursor.index} of {cursor.of}"
+        ).to_dict()

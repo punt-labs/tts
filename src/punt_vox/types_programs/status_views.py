@@ -30,25 +30,15 @@ class NowPlaying:
 
     index: int  # 1-based position of the playing Part in the ordered pool
     of: int  # total Parts currently in the pool (the "M" in "N of M")
-    title: str | None = (
-        None  # optional display label from the manifest, never an address
-    )
 
     def to_dict(self) -> dict[str, object]:
-        """Return the JSON object form, omitting an absent title."""
-        record: dict[str, object] = {"index": self.index, "of": self.of}
-        if self.title is not None:
-            record["title"] = self.title
-        return record
+        """Return the JSON object form."""
+        return {"index": self.index, "of": self.of}
 
     @classmethod
     def from_wire(cls, obj: JsonObject) -> Self:
         """Build a now-playing view from a wire object, raising on a bad record."""
-        return cls(
-            index=obj.require_int("index"),
-            of=obj.require_int("of"),
-            title=obj.opt_str("title"),
-        )
+        return cls(index=obj.require_int("index"), of=obj.require_int("of"))
 
 
 @final

@@ -1,14 +1,16 @@
 """``AlbumTable`` -- the click-to-play album grid of the scene.
 
 A one-line count label (``Albums · 18 albums``) above one lux ``table`` of three
-sortable columns -- **Album · Genre · Tracks** -- one row per catalogued album,
-the playing album's name cell marked with ``▶``. The table renders directly, not
-inside a ``collapsing_header``: collapsing it only hid the grid while the lux frame
-stayed full-size, leaving an empty void. There is no id column: the table's
-``key_column`` is the Album (name) column, so a row selection publishes the clicked
-album's *friendly name*, which voxd resolves back to its id against its own catalog
-(:meth:`AlbumDisplay.resolve`). Friendly names are made catalogue-unique (a
-collision suffix on later albums), so the name is an unambiguous key.
+sortable columns -- **Album · Genre · Tracks** -- one row per catalogued album.
+The table renders directly, not inside a ``collapsing_header``: collapsing it only
+hid the grid while the lux frame stayed full-size, leaving an empty void. There is
+no id column and no now-playing marker in the name cell -- a ``▶`` prefix would
+change the cell's sort order and its identity as the click key, so the now-playing
+album is shown only in the now-playing block above. The table's ``key_column`` is
+the Album (name) column, so a row selection publishes the clicked album's *friendly
+name*, which voxd resolves back to its id against its own catalog
+(:meth:`AlbumNames.resolve`). Friendly names are made catalogue-unique (a collision
+suffix on later albums), so the name is an unambiguous key.
 
 **Click-to-play.** The table is ``selection_mode="single"`` with a ``publish``
 decorator on its row-selection event: selecting a row publishes ``music.play``, and
@@ -28,7 +30,6 @@ from punt_lux import TextElement
 
 from punt_vox.voxd.music_player.album_display import AlbumDisplay
 from punt_vox.voxd.music_player.album_names import AlbumNames
-from punt_vox.voxd.music_player.player_view import PlayerView
 from punt_vox.voxd.music_player.wire import MusicTopic
 from punt_vox.voxd.programs.catalog import Album
 
@@ -50,7 +51,6 @@ class AlbumTable:
     """Project the catalog onto the labelled, single-select, sortable album table."""
 
     albums: tuple[Album, ...]
-    view: PlayerView
 
     def elements(self) -> list[dict[str, object]]:
         """Return the count label followed by the album table (two flat elements)."""
@@ -89,11 +89,11 @@ class AlbumTable:
         }
 
     def _row(self, album: Album, names: AlbumNames) -> list[object]:
-        """Return one album's row: its marked friendly name, its genre, its tracks.
+        """Return one album's row: its friendly name, its genre, its track count.
 
-        The name cell comes from the catalogue-wide ``names`` map (unique, marked
-        with ``▶`` when this album plays), the genre and track count from the
-        album's own :class:`AlbumDisplay`.
+        The name cell comes from the catalogue-wide ``names`` map (unique, no
+        marker); the genre and track count from the album's own
+        :class:`AlbumDisplay`.
         """
         display = AlbumDisplay(album)
-        return [names.marked_name(album, self.view), display.genre, display.track_count]
+        return [names.friendly(album), display.genre, display.track_count]

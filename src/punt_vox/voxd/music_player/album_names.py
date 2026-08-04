@@ -12,10 +12,12 @@ collide; the id suffix is why click-to-play still resolves the one the user
 clicked, never its twin.
 
 The map is invertible: :meth:`resolve` maps a clicked row's key cell -- the
-plain friendly name, or the ``▶``-marked form the playing row carries -- back to
-its :class:`Album`. Both the scene that renders the cells and the receive leg
-that resolves a click build ``AlbumNames`` from the same catalog snapshot, so
-the names they produce and consume agree.
+album's plain friendly name -- back to its :class:`Album`. The name cell carries
+no now-playing marker (which would change its sort key and its identity as the
+click key); the now-playing album is shown in the now-playing block, not in the
+table. Both the scene that renders the cells and the receive leg that resolves a
+click build ``AlbumNames`` from the same catalog snapshot, so the names they
+produce and consume agree.
 """
 
 from __future__ import annotations
@@ -24,13 +26,10 @@ from collections import Counter
 from typing import TYPE_CHECKING, Self, final
 
 if TYPE_CHECKING:
-    from punt_vox.voxd.music_player.player_view import PlayerView
     from punt_vox.voxd.programs.album_id import AlbumId
     from punt_vox.voxd.programs.catalog import Album
 
 __all__ = ["AlbumNames"]
-
-_MARKER = "▶ "  # the now-playing cue prefixed to the playing album's name cell
 
 
 @final
@@ -39,16 +38,12 @@ class AlbumNames:
 
     __slots__ = ("_by_cell", "_by_id")
     _by_id: dict[AlbumId, str]  # album id -> its unique friendly name
-    _by_cell: dict[str, Album]  # friendly name and ▶-marked name -> album
+    _by_cell: dict[str, Album]  # friendly name -> album
 
     def __new__(cls, albums: tuple[Album, ...]) -> Self:
         self = super().__new__(cls)
         self._by_id = cls._assign(albums)
-        self._by_cell = {}
-        for album in albums:
-            name = self._by_id[album.id]
-            self._by_cell[name] = album
-            self._by_cell[f"{_MARKER}{name}"] = album
+        self._by_cell = {self._by_id[album.id]: album for album in albums}
         return self
 
     @staticmethod
@@ -71,20 +66,13 @@ class AlbumNames:
         """Return the album's unique friendly name (its plain name-cell text)."""
         return self._by_id[album.id]
 
-    def marked_name(self, album: Album, view: PlayerView) -> str:
-        """Return the name cell, prefixed with the ``▶`` cue when this album plays."""
-        name = self.friendly(album)
-        return f"{_MARKER}{name}" if view.album == album.id else name
-
     def resolve(self, anchor: str) -> Album:
         """Return the album whose name cell the clicked ``anchor`` names, or raise.
 
-        ``anchor`` is the ``key_column`` cell of the selected row -- the plain
-        friendly name for an idle album, the ``▶``-prefixed name for the playing
-        one -- and the map holds both forms, so a click resolves regardless of
-        which album was playing when the row rendered. An anchor that names no
-        album is a stale or unknown click and raises (PY-EH-8), so the receive
-        boundary drops it rather than playing the wrong album.
+        ``anchor`` is the ``key_column`` cell of the selected row -- an album's
+        plain friendly name. An anchor that names no album is a stale or unknown
+        click and raises (PY-EH-8), so the receive boundary drops it rather than
+        playing the wrong album.
         """
         album = self._by_cell.get(anchor)
         if album is None:

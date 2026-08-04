@@ -10,26 +10,17 @@ identically once the timestamp is dropped, so each must gain its id to stay uniq
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
 import pytest
 
 from punt_vox.types_programs.format import Format
 from punt_vox.voxd.music_player.album_names import AlbumNames
-from punt_vox.voxd.music_player.player_view import PlayerView
 from punt_vox.voxd.programs.album_id import AlbumId
 from punt_vox.voxd.programs.album_tags import AlbumTags, PromptFingerprint
 from punt_vox.voxd.programs.catalog import Album
 from punt_vox.voxd.programs.manifest import AlbumManifest, ManifestDraft, PartEntry
 from punt_vox.voxd.programs.part import PartStatus
 from punt_vox.voxd.programs.store import PartStore, ProgramStore
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from punt_vox.types_programs.status import ProgramStatus
-
-    type PlayingFactory = Callable[[Album, int, int], ProgramStatus]
 
 _FINGERPRINT = PromptFingerprint.from_prompts("base", ())
 _EPOCH = datetime(2026, 1, 1, tzinfo=UTC)
@@ -104,24 +95,11 @@ def test_resolve_inverts_a_colliding_cell_to_its_own_album() -> None:
     assert names.resolve("K Pop (cc22dd)") is second
 
 
-def test_marked_name_prefixes_the_cue_only_for_the_playing_album(
-    playing_of: PlayingFactory,
-) -> None:
-    playing = _album("aa11bb", style="techno", vibe="ambient", name="Techno Mix")
-    idle = _album("cc22dd", style="techno", vibe="ambient", name="Ambient Drift")
-    view = PlayerView.from_status(playing_of(playing, 1, 1), (playing, idle))
-    names = AlbumNames((playing, idle))
-
-    assert names.marked_name(playing, view) == "▶ Techno Mix"
-    assert names.marked_name(idle, view) == "Ambient Drift"
-
-
-def test_resolve_matches_the_marked_and_plain_forms() -> None:
+def test_resolve_inverts_a_plain_name_to_its_album() -> None:
     album = _album("aa11bb", style="techno", vibe="ambient", name="Techno Mix")
     names = AlbumNames((album,))
 
     assert names.resolve("Techno Mix") is album
-    assert names.resolve("▶ Techno Mix") is album
 
 
 def test_resolve_raises_when_no_album_matches() -> None:

@@ -12,7 +12,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, final
 
-from mutagen import MutagenError
 from mutagen.id3 import ID3, TALB, TCON, TIT2, TPE1, TPE2, TRCK
 
 if TYPE_CHECKING:
@@ -22,7 +21,6 @@ __all__ = ["PartTags"]
 
 _ARTIST = "vox"
 _UTF8 = 3  # ID3 text-encoding byte for UTF-8 (mutagen Encoding.UTF8).
-_TITLE_FRAME = "TIT2"  # the ID3v2 frame that carries a track's title
 
 
 @final
@@ -52,24 +50,3 @@ class PartTags:
         tags.add(TCON(encoding=_UTF8, text=[self.genre]))
         tags.add(TRCK(encoding=_UTF8, text=[f"{self.index}/{self.total}"]))
         tags.save(path)
-
-    @classmethod
-    def read_title(cls, path: Path) -> str | None:
-        """Return the ID3 ``TIT2`` title on the mp3 at ``path``, or ``None`` if absent.
-
-        The read counterpart to :meth:`write_to`: the status projection labels the
-        playing track by the same frame :meth:`write_to` stamps, so the Lux
-        now-playing line reads the real song name rather than a bare positional
-        ``Track N``. This is deliberately tolerant, not a boundary parser -- a file
-        with no ID3 header, no title frame, an empty title, or one that cannot be
-        read (a mid-write race, a missing file) yields ``None`` so the caller falls
-        back to the positional label, never a raised status read.
-        """
-        try:
-            tags = ID3(path)
-            frame = tags[_TITLE_FRAME]
-        except (MutagenError, KeyError, OSError, ValueError):
-            # MutagenError covers a missing header AND a missing/unreadable file
-            # (mutagen wraps the OSError); KeyError is an absent title frame.
-            return None
-        return "".join(frame.text).strip() or None
