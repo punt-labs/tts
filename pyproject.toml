@@ -40,7 +40,7 @@ dependencies = [
     # (reconnect with port re-resolution), and the publish-button surface. 0.22.1
     # adds the listener on_connect hook (fired after every handshake, including
     # internal reconnects) that voxd uses to re-register the Music menu register-fresh.
-    "punt-lux>=0.22.1",
+    "punt-lux>=0.23.0",
 ]
 
 [project.urls]
