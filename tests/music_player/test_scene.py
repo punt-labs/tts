@@ -187,6 +187,34 @@ def test_album_table_leaves_the_playing_row_name_unmarked(
     assert rows[1][0] == "Ambient Drift"
 
 
+def test_playing_album_row_is_selected(
+    album_of: AlbumFactory, playing_of: PlayingFactory
+) -> None:
+    # The now-playing cue is a row selection, not a cell marker: the table's
+    # authoritative selection names the playing album's key cell (its friendly
+    # name), so lux highlights that row. Single-select carries exactly one id.
+    first = album_of("aa11bb", name="Techno Mix")
+    second = album_of("cc22dd", name="Ambient Drift")
+    view = PlayerView.from_status(playing_of(second, 2, 3), (first, second))
+
+    table = _table(AlbumListScene((first, second), view).render_request().elements)
+
+    assert table["selection_mode"] == "single"
+    assert table["selected_row_ids"] == ["Ambient Drift"]
+
+
+def test_idle_scene_selects_no_row(album_of: AlbumFactory) -> None:
+    # Idle leaves the selection empty -- no highlighted row -- so the encoder omits
+    # ``selected_row_ids`` entirely (a terse display-only selection).
+    table = _table(
+        AlbumListScene((album_of("aa11bb", name="Techno Mix"),), PlayerView.idle())
+        .render_request()
+        .elements
+    )
+
+    assert "selected_row_ids" not in table
+
+
 def test_unnamed_album_row_titles_as_album(album_of: AlbumFactory) -> None:
     table = _table(
         AlbumListScene((album_of("aa11bb", name=None),), PlayerView.idle())

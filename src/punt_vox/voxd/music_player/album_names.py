@@ -66,6 +66,19 @@ class AlbumNames:
         """Return the album's unique friendly name (its plain name-cell text)."""
         return self._by_id[album.id]
 
+    def friendly_for_id(self, album_id: AlbumId | None) -> str | None:
+        """Return the friendly name of the album ``album_id`` names, or ``None``.
+
+        ``None`` is the absence contract, not a failure: a ``None`` id (nothing
+        playing) and an id this catalog does not carry (a radio the catalog names
+        to no album) both mean "no row to name". Unlike :meth:`resolve` -- which
+        raises on an unknown *name* because a click must resolve -- an unknown id
+        here is the ordinary idle/radio case, so it returns ``None``.
+        """
+        if album_id is None:
+            return None
+        return self._by_id.get(album_id)
+
     def resolve(self, anchor: str) -> Album:
         """Return the album whose name cell the clicked ``anchor`` names, or raise.
 

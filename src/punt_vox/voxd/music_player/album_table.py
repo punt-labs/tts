@@ -4,17 +4,28 @@ A one-line count label (``Albums · 18 albums``) above one lux ``table`` of thre
 sortable columns -- **Album · Genre · Tracks** -- one row per catalogued album.
 The table renders directly, not inside a ``collapsing_header``: collapsing it only
 hid the grid while the lux frame stayed full-size, leaving an empty void. There is
-no id column and no now-playing marker in the name cell -- a ``▶`` prefix would
-change the cell's sort order and its identity as the click key, so the now-playing
-album is shown only in the now-playing block above. The table's ``key_column`` is
-the Album (name) column, so a row selection publishes the clicked album's *friendly
-name*, which voxd resolves back to its id against its own catalog
+no id column and no now-playing marker *in the name cell* -- a ``▶`` prefix would
+change the cell's sort order and its identity as the click key. Instead the
+now-playing album is shown by *selecting its row*: the table's authoritative
+selection is set to the playing album's ``key_column`` cell, so lux renders that
+row highlighted -- the natural media-player indicator, and a row highlight, not a
+cell value, so it leaves column sort and the click-to-play key intact. The
+``key_column`` is the Album (name) column, so a row selection publishes the clicked
+album's *friendly name*, which voxd resolves back to its id against its own catalog
 (:meth:`AlbumNames.resolve`). Friendly names are made catalogue-unique (a collision
 suffix on later albums), so the name is an unambiguous key.
 
+**Now-playing highlight.** The playing album (``playing``, an :class:`AlbumId` or
+``None`` when idle) maps to its row's key cell via :class:`AlbumNames`, and that
+name goes onto the wire as ``selected_row_ids`` -- lux seats it into the table's
+single-select model and highlights the row. When idle, or when the playing source
+is a multi-album radio the catalog cannot name to one row, no row is selected.
+
 **Click-to-play.** The table is ``selection_mode="single"`` with a ``publish``
 decorator on its row-selection event: selecting a row publishes ``music.play``, and
-lux delivers the selected row's key cell to voxd as ``payload['anchor']``. Today
+lux delivers the selected row's key cell to voxd as ``payload['anchor']``. A user
+click both selects the row (lux's built-in selection sync) and plays the album; the
+next scene re-push then re-seats the selection onto the now-playing album. Today
 lux's publish path emits an empty payload, so the click is inert; ``lux-r4pp``
 (branch ``feat/publish-event-payload``) adds the passthrough, after which ``anchor``
 arrives and click-to-play works with no change on this side. The wire shape is the
@@ -24,7 +35,7 @@ final one either way -- only the payload content changes.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final, final
+from typing import TYPE_CHECKING, Final, final
 
 from punt_lux import TextElement
 
@@ -32,6 +43,9 @@ from punt_vox.voxd.music_player.album_display import AlbumDisplay
 from punt_vox.voxd.music_player.album_names import AlbumNames
 from punt_vox.voxd.music_player.wire import MusicTopic
 from punt_vox.voxd.programs.catalog import Album
+
+if TYPE_CHECKING:
+    from punt_vox.voxd.programs.album_id import AlbumId
 
 __all__ = ["AlbumTable"]
 
@@ -48,9 +62,14 @@ _FLAGS: Final = ["borders", "row_bg", "sortable"]
 @final
 @dataclass(frozen=True, slots=True)
 class AlbumTable:
-    """Project the catalog onto the labelled, single-select, sortable album table."""
+    """Project the catalog onto the labelled, single-select, sortable album table.
+
+    ``playing`` is the active album's id (or ``None`` when idle / an uncatalogued
+    radio): its row is pre-selected so lux highlights it as the now-playing cue.
+    """
 
     albums: tuple[Album, ...]
+    playing: AlbumId | None = None
 
     def elements(self) -> list[dict[str, object]]:
         """Return the count label followed by the album table (two flat elements)."""
@@ -86,7 +105,19 @@ class AlbumTable:
             "selection_mode": "single",
             "flags": list(_FLAGS),
             "handlers": [{"event": _ROW_EVENT, "publish": [MusicTopic.PLAY.value]}],
+            **self._selection(names),
         }
+
+    def _selection(self, names: AlbumNames) -> dict[str, object]:
+        """Return the now-playing selection wire fragment: one row id, or empty.
+
+        Selecting the playing album's row is how the scene marks now-playing --
+        lux highlights the selected row. Empty when idle or when the active source
+        is a radio the catalog names to no single row (``friendly_for_id`` returns
+        ``None``), so no row is highlighted.
+        """
+        selected = names.friendly_for_id(self.playing)
+        return {} if selected is None else {"selected_row_ids": [selected]}
 
     def _row(self, album: Album, names: AlbumNames) -> list[object]:
         """Return one album's row: its friendly name, its genre, its track count.

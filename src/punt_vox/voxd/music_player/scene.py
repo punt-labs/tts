@@ -60,5 +60,5 @@ class AlbumListScene:
         )
         elements.append(TransportRow(self.view).to_dict())
         elements.append(SeparatorElement(id="music.sep").to_dict())
-        elements.extend(AlbumTable(self.albums).elements())
+        elements.extend(AlbumTable(self.albums, self.view.album).elements())
         return RenderRequest(scene_id=_SCENE_ID, elements=elements, title=_TITLE)
