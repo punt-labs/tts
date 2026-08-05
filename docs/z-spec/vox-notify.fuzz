@@ -1,0 +1,326 @@
+(GIVEN 56
+  (LIST
+    (NAME "VOICE" "")))
+
+(DATA 67
+  (NAME "NotifyMode" "")
+  (LIST
+    (ARM 67
+      (NAME "nOff" "")
+      (NOTHING 67))
+    (ARM 67
+      (NAME "nOn" "")
+      (NOTHING 67))
+    (ARM 67
+      (NAME "nCont" "")
+      (NOTHING 67))))
+
+(DATA 71
+  (NAME "SpeakMode" "")
+  (LIST
+    (ARM 71
+      (NAME "sUnset" "")
+      (NOTHING 71))
+    (ARM 71
+      (NAME "sChime" "")
+      (NOTHING 71))
+    (ARM 71
+      (NAME "sVoice" "")
+      (NOTHING 71))))
+
+(SDEF 83
+  (SHEAD 83
+    "VoxState"
+    ())
+  (BODY 84
+    (LIST
+      (DECL 84
+        (LIST
+          (NAME "notify" ""))
+        (REF 84 (NAME "NotifyMode" "") ()))
+      (DECL 85
+        (LIST
+          (NAME "speak" ""))
+        (REF 85 (NAME "SpeakMode" "") ()))
+      (DECL 86
+        (LIST
+          (NAME "voice" ""))
+        (POWER 86
+          (REF 86 (NAME "VOICE" "") ()))))
+    (LIST
+      (INREL 88
+        (NAME "\leq" "")
+        (APPLY 88
+          (REF 88 (NAME "\#" "") ())
+          (REF 88 (NAME "voice" "") ()))
+        (NUMBER 88 "1")))))
+
+(SDEF 98
+  (SHEAD 98
+    "Init"
+    ())
+  (BODY 99
+    (LIST
+      (SDECL 99
+        (SREF 99 "VoxState" "'" () ())))
+    (LIST
+      (EQUAL 101
+        (REF 101 (NAME "notify" "'") ())
+        (REF 101 (NAME "nOff" "") ()))
+      (EQUAL 102
+        (REF 102 (NAME "speak" "'") ())
+        (REF 102 (NAME "sUnset" "") ()))
+      (EQUAL 103
+        (REF 103 (NAME "voice" "'") ())
+        (REF 103 (NAME "\emptyset" "") ())))))
+
+(SDEF 0
+  (SHEAD 0
+    "\Xi VoxState"
+    ())
+  (BODY 0
+    (LIST
+      (SDECL 0
+        (SREF 0 "VoxState" "" () ()))
+      (SDECL 0
+        (SREF 0 "VoxState" "'" () ())))
+    (LIST
+      (EQUAL 0
+        (THETA 0
+          "VoxState"
+          ""
+          ())
+        (THETA 0
+          "VoxState"
+          "'"
+          ())))))
+
+(SDEF 123
+  (SHEAD 123
+    "StopFires"
+    ())
+  (BODY 124
+    (LIST
+      (SDECL 124
+        (SREF 124 "\Xi VoxState" "" () ())))
+    (LIST
+      (INREL 126
+        (NAME "\neq" "")
+        (REF 126 (NAME "notify" "") ())
+        (REF 126 (NAME "nOff" "") ())))))
+
+(SDEF 129
+  (SHEAD 129
+    "StopChime"
+    ())
+  (BODY 130
+    (LIST
+      (SDECL 130
+        (SREF 130 "\Xi VoxState" "" () ())))
+    (LIST
+      (INREL 132
+        (NAME "\neq" "")
+        (REF 132 (NAME "notify" "") ())
+        (REF 132 (NAME "nOff" "") ()))
+      (EQUAL 133
+        (REF 133 (NAME "speak" "") ())
+        (REF 133 (NAME "sChime" "") ())))))
+
+(SDEF 136
+  (SHEAD 136
+    "StopVoice"
+    ())
+  (BODY 137
+    (LIST
+      (SDECL 137
+        (SREF 137 "\Xi VoxState" "" () ())))
+    (LIST
+      (INREL 139
+        (NAME "\neq" "")
+        (REF 139 (NAME "notify" "") ())
+        (REF 139 (NAME "nOff" "") ()))
+      (INREL 140
+        (NAME "\neq" "")
+        (REF 140 (NAME "speak" "") ())
+        (REF 140 (NAME "sChime" "") ())))))
+
+(SDEF 147
+  (SHEAD 147
+    "WatcherFires"
+    ())
+  (BODY 148
+    (LIST
+      (SDECL 148
+        (SREF 148 "\Xi VoxState" "" () ())))
+    (LIST
+      (EQUAL 150
+        (REF 150 (NAME "notify" "") ())
+        (REF 150 (NAME "nCont" "") ())))))
+
+(SDEF 153
+  (SHEAD 153
+    "WatcherChime"
+    ())
+  (BODY 154
+    (LIST
+      (SDECL 154
+        (SREF 154 "\Xi VoxState" "" () ())))
+    (LIST
+      (EQUAL 156
+        (REF 156 (NAME "notify" "") ())
+        (REF 156 (NAME "nCont" "") ()))
+      (EQUAL 157
+        (REF 157 (NAME "speak" "") ())
+        (REF 157 (NAME "sChime" "") ())))))
+
+(SDEF 160
+  (SHEAD 160
+    "WatcherVoice"
+    ())
+  (BODY 161
+    (LIST
+      (SDECL 161
+        (SREF 161 "\Xi VoxState" "" () ())))
+    (LIST
+      (EQUAL 163
+        (REF 163 (NAME "notify" "") ())
+        (REF 163 (NAME "nCont" "") ()))
+      (INREL 164
+        (NAME "\neq" "")
+        (REF 164 (NAME "speak" "") ())
+        (REF 164 (NAME "sChime" "") ())))))
+
+(SDEF 0
+  (SHEAD 0
+    "\Delta VoxState"
+    ())
+  (BODY 0
+    (LIST
+      (SDECL 0
+        (SREF 0 "VoxState" "" () ()))
+      (SDECL 0
+        (SREF 0 "VoxState" "'" () ())))
+    ()))
+
+(SDEF 213
+  (SHEAD 213
+    "VoxOn"
+    ())
+  (BODY 214
+    (LIST
+      (SDECL 214
+        (SREF 214 "\Delta VoxState" "" () ())))
+    (LIST
+      (EQUAL 216
+        (REF 216 (NAME "notify" "'") ())
+        (REF 216 (NAME "nOn" "") ()))
+      (EQUAL 217
+        (REF 217 (NAME "speak" "'") ())
+        (IF 217
+          (EQUAL 217
+            (REF 217 (NAME "speak" "") ())
+            (REF 217 (NAME "sUnset" "") ()))
+          (REF 217 (NAME "sVoice" "") ())
+          (REF 217 (NAME "speak" "") ())))
+      (EQUAL 218
+        (REF 218 (NAME "voice" "'") ())
+        (REF 218 (NAME "voice" "") ())))))
+
+(SDEF 225
+  (SHEAD 225
+    "VoxOff"
+    ())
+  (BODY 226
+    (LIST
+      (SDECL 226
+        (SREF 226 "\Delta VoxState" "" () ())))
+    (LIST
+      (EQUAL 228
+        (REF 228 (NAME "notify" "'") ())
+        (REF 228 (NAME "nOff" "") ()))
+      (EQUAL 229
+        (REF 229 (NAME "speak" "'") ())
+        (REF 229 (NAME "speak" "") ()))
+      (EQUAL 230
+        (REF 230 (NAME "voice" "'") ())
+        (REF 230 (NAME "voice" "") ())))))
+
+(SDEF 238
+  (SHEAD 238
+    "VoxCont"
+    ())
+  (BODY 239
+    (LIST
+      (SDECL 239
+        (SREF 239 "\Delta VoxState" "" () ())))
+    (LIST
+      (EQUAL 241
+        (REF 241 (NAME "notify" "'") ())
+        (REF 241 (NAME "nCont" "") ()))
+      (EQUAL 242
+        (REF 242 (NAME "speak" "'") ())
+        (IF 242
+          (EQUAL 242
+            (REF 242 (NAME "speak" "") ())
+            (REF 242 (NAME "sUnset" "") ()))
+          (REF 242 (NAME "sVoice" "") ())
+          (REF 242 (NAME "speak" "") ())))
+      (EQUAL 243
+        (REF 243 (NAME "voice" "'") ())
+        (REF 243 (NAME "voice" "") ())))))
+
+(SDEF 252
+  (SHEAD 252
+    "Unmute"
+    ())
+  (BODY 253
+    (LIST
+      (SDECL 253
+        (SREF 253 "\Delta VoxState" "" () ()))
+      (DECL 254
+        (LIST
+          (NAME "v" "?"))
+        (POWER 254
+          (REF 254 (NAME "VOICE" "") ()))))
+    (LIST
+      (INREL 256
+        (NAME "\leq" "")
+        (APPLY 256
+          (REF 256 (NAME "\#" "") ())
+          (REF 256 (NAME "v" "?") ()))
+        (NUMBER 256 "1"))
+      (EQUAL 257
+        (REF 257 (NAME "notify" "'") ())
+        (REF 257 (NAME "notify" "") ()))
+      (EQUAL 258
+        (REF 258 (NAME "speak" "'") ())
+        (REF 258 (NAME "sVoice" "") ()))
+      (EQUAL 259
+        (REF 259 (NAME "voice" "'") ())
+        (IF 259
+          (EQUAL 259
+            (REF 259 (NAME "v" "?") ())
+            (REF 259 (NAME "\emptyset" "") ()))
+          (REF 259 (NAME "voice" "") ())
+          (REF 259 (NAME "v" "?") ()))))))
+
+(SDEF 266
+  (SHEAD 266
+    "Mute"
+    ())
+  (BODY 267
+    (LIST
+      (SDECL 267
+        (SREF 267 "\Delta VoxState" "" () ())))
+    (LIST
+      (EQUAL 269
+        (REF 269 (NAME "notify" "'") ())
+        (REF 269 (NAME "notify" "") ()))
+      (EQUAL 270
+        (REF 270 (NAME "speak" "'") ())
+        (REF 270 (NAME "sChime" "") ()))
+      (EQUAL 271
+        (REF 271 (NAME "voice" "'") ())
+        (REF 271 (NAME "voice" "") ())))))
+
+
