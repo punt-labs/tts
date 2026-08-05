@@ -43,12 +43,13 @@ class RecoveringFillOutcome(ABC):
         """A fill outcome joins the pool or records a failure; it never interrupts."""
         return False
 
-    def apply(self, source: PlaybackSource, /) -> None:
+    def apply(self, source: PlaybackSource, /) -> bool:
         """Recover a retrying Program, then apply the mode-appropriate transition.
 
         A fill outcome landing while a replay Selection is active is a benign
         lost race: the ``isinstance`` narrow fails and the writer
-        rejects via ``GuardViolationError`` (INFO-logged) instead of crashing.
+        rejects via ``GuardViolationError`` (INFO-logged) instead of crashing. A
+        fill outcome never interrupts, so the return only marks it consumed.
         """
         if not isinstance(source, Program):
             GuardViolationError.reject("fill outcome dropped: replay source active")
@@ -62,6 +63,7 @@ class RecoveringFillOutcome(ABC):
                 self._on_playing_filling(program)
             case _:
                 pass  # the pool no longer wants this outcome -- drop it
+        return True
 
     @abstractmethod
     def _on_generating_first(self, program: Program) -> None:

@@ -34,6 +34,14 @@ class ControlSignal(Protocol):
         """
         ...
 
-    def apply(self, source: PlaybackSource, /) -> None:
-        """Apply this command's transition to ``source`` (positional-only write)."""
+    def apply(self, source: PlaybackSource, /) -> bool:
+        """Apply this command's transition to ``source`` (positional-only write).
+
+        Return whether the command took effect on playback. ``True`` means the
+        current track should be interrupted when :attr:`interrupts` is set;
+        ``False`` marks a modelled no-op -- a transport step that stalled at a
+        pool boundary (Z ``Next`` at M / ``Prev`` at 1) or a dropped stale
+        outcome -- which must leave the current track playing untouched even
+        though the command type nominally interrupts.
+        """
         ...

@@ -154,9 +154,15 @@ class ControlChannel:
             self._changes.emit()
 
     def _apply_one(self, signal: ControlSignal) -> bool:
-        """Apply one command; return whether it took effect (False on lost race)."""
+        """Apply one command; return whether it took effect.
+
+        ``False`` covers two no-effect outcomes that must not fire the interrupt:
+        a lost race (a rejected guard, caught here) and a modelled no-op the
+        command itself reports (a transport step stalled at a pool boundary),
+        which :meth:`ControlSignal.apply` signals by returning ``False``.
+        """
         try:
-            signal.apply(self._source)
+            return signal.apply(self._source)
         except GuardViolationError:
             # A losing racer, not a bug -- log the source + signal for the trail.
             logger.info(
@@ -165,16 +171,16 @@ class ControlChannel:
                 signal,
             )
             return False
-        return True
 
     def _mark_applied(self, signal: ControlSignal, *, applied: bool) -> None:
-        """Wake the loop, interrupting only when a command that demands it applied.
+        """Wake the loop, interrupting only when a command that demands it took effect.
 
-        A rejected command (lost race) that declares ``interrupts`` must NOT fire
-        the interrupt: it changed no state, so killing the current track would
-        restart it from zero while the cursor stayed put -- a silent no-op that
-        sounds like a stutter. ``changed`` still fires unconditionally so the loop
-        never blocks on a settled command.
+        A command that declares ``interrupts`` but took no effect must NOT fire the
+        interrupt -- whether it was a lost race (a rejected guard) or a modelled
+        no-op (a transport step stalled at a pool boundary). Firing it would kill
+        and reload the current track from zero while the cursor stayed put, a
+        silent restart that sounds like a stutter. ``changed`` still fires
+        unconditionally so the loop never blocks on a settled command.
         """
         if applied and signal.interrupts:
             self._interrupt.set()

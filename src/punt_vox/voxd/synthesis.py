@@ -324,23 +324,7 @@ class SynthesisPipeline:
                     output_path = Path(tmp.name)
 
                 await asyncio.to_thread(client.synthesize, request, output_path)
-
-                try:
-                    synth_size = output_path.stat().st_size
-                except OSError:
-                    synth_size = -1
-                if synth_size <= 0:
-                    # Delete the broken temp file and fail fast; caching it
-                    # would poison every identical request. The caller logs
-                    # this exception (traceback + fields) -- no separate log.
-                    output_path.unlink(missing_ok=True)
-                    msg = (
-                        f"synthesis produced missing or empty output file: "
-                        f"{output_path} (provider={provider_name}, "
-                        f"voice={resolved_voice}, size={synth_size}, "
-                        f"chars_in={len(text)})"
-                    )
-                    raise RuntimeError(msg)
+                self._require_nonempty_output(output_path, spec, len(text))
 
                 # Anonymous path only; log the real cache_put path, never a
                 # CACHE_DIR snapshot and never file= when the bytes weren't cached
@@ -353,6 +337,27 @@ class SynthesisPipeline:
                     ", cached" if cached_path else "",
                 )
                 return SynthesisOutcome(path=output_path, cached=False)
+
+    def _require_nonempty_output(
+        self, output_path: Path, spec: SynthesisSpec, chars_in: int
+    ) -> None:
+        """Delete and reject a missing or empty synthesis output; caching it would
+        poison every identical request, so it fails fast. The caller logs the
+        exception (traceback + fields) -- no separate log here.
+        """
+        try:
+            synth_size = output_path.stat().st_size
+        except OSError:
+            synth_size = -1
+        if synth_size > 0:
+            return
+        output_path.unlink(missing_ok=True)
+        msg = (
+            f"synthesis produced missing or empty output file: {output_path} "
+            f"(provider={spec.provider or ''}, voice={spec.voice or ''}, "
+            f"size={synth_size}, chars_in={chars_in})"
+        )
+        raise RuntimeError(msg)
 
     async def try_direct_play(
         self,

@@ -44,19 +44,19 @@ class FreshFillOutcome:
         """Delegate to the wrapped outcome -- a fill outcome never interrupts."""
         return self.inner.interrupts
 
-    def apply(self, source: PlaybackSource, /) -> None:
+    def apply(self, source: PlaybackSource, /) -> bool:
         """Apply the wrapped outcome, unless the writer has switched sources.
 
         ``source`` is the writer's *current* source; ``origin`` is the Program
         the generation ran for. A mismatch means a switch overtook this outcome
         in the queue (to another Program or a replay Selection), so the outcome
-        is an orphan of an abandoned pool and is dropped rather than polluting
-        the switched-in source.
+        is an orphan of an abandoned pool and is dropped (``False``) rather than
+        polluting the switched-in source.
         """
         if source is not self.origin:
             logger.info(
                 "dropped a stale fill outcome: its source was switched away "
                 "before the control writer could apply it"
             )
-            return
-        self.inner.apply(source)
+            return False
+        return self.inner.apply(source)

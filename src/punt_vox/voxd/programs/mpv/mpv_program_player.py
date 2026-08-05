@@ -84,16 +84,25 @@ class MpvProgramPlayer:
         wedged (timeout) or crashed (lost) connection. A reply of ``success``
         confirms only that mpv queued the file, never that it decodes -- a bad
         file surfaces later as an ``end-file`` reason ``error``.
+
+        The ended-future is armed *after* the load is acknowledged, never before:
+        a prev/next issued near the previous part's natural end can leave an
+        ``end-file`` eof in flight, and mpv emits it before the ``loadfile``
+        reply on the one ordered socket. Arming after the reply means that stale
+        eof resolves the prior load's future (harmlessly -- the loop has already
+        abandoned it), not the freshly-loaded track's; arming before it would let
+        the stale eof resolve the new track's future, and the loop would advance
+        past a part it never heard play. mpv cannot end the new part before it
+        starts, so no genuine end is missed in the window.
         """
         client = self._require_client()
         path = str(self._directory.locate(part))
         client.write_command(MpvCommand.set_pause(paused=paused))
-        ended = client.arm_ended()
         response = await client.request(MpvCommand.loadfile(path))
         if not response.ok:
             msg = f"mpv rejected loadfile: {response.error}"
             raise ConnectionError(msg)
-        return MpvPlayHandle(ended)
+        return MpvPlayHandle(client.arm_ended())
 
     def pause(self) -> None:
         """Suspend playback in place (click-free); dropped when mpv is not ready."""

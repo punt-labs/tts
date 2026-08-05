@@ -69,12 +69,13 @@ class TransientFailure:
         """A transient backoff pauses generation, never the existing playback."""
         return False
 
-    def apply(self, source: PlaybackSource, /) -> None:
+    def apply(self, source: PlaybackSource, /) -> bool:
         """Drive the retry machine by mode, rejecting against a replay Selection.
 
         A transient outcome landing while a replay Selection is active is a
         benign lost race: the narrow fails and the writer rejects via
-        ``GuardViolationError`` (INFO-logged) instead of crashing.
+        ``GuardViolationError`` (INFO-logged) instead of crashing. A transient
+        never interrupts playback, so the return only marks the outcome consumed.
         """
         if not isinstance(source, Program):
             GuardViolationError.reject("transient outcome dropped: replay active")
@@ -87,6 +88,7 @@ class TransientFailure:
         elif mode is Mode.RETRYING:
             self._continue_retry(program)
         # else: drop -- no fill is in flight to fail.
+        return True
 
     def _continue_retry(self, program: Program) -> None:
         """Route the retrying Program to the one valid transition for its state.

@@ -28,8 +28,11 @@ from punt_vox.voxd.programs.filler import Filler, FillPlan
 from punt_vox.voxd.programs.guard import GuardViolationError
 from punt_vox.voxd.programs.lifecycle_signal import TurnOff, TurnOn, VibeStyleChange
 from punt_vox.voxd.programs.manifest import ManifestDraft
-from punt_vox.voxd.programs.playback_signal import Rotate, StepBack
+from punt_vox.voxd.programs.playback_signal import Rotate, StepBack, StepForward
 from punt_vox.voxd.programs.producer import PartSpec
+from punt_vox.voxd.programs.rotate_policy import RotatePolicy
+from punt_vox.voxd.programs.selection import Selection
+from punt_vox.voxd.programs.selection_playback import SelectionPlayback
 from punt_vox.voxd.programs.sleeper import Sleeper
 
 from .conftest import AvoidRepeatPolicy
@@ -170,6 +173,51 @@ class TestRejectedInterruptDoesNotFire:
         channel.post(Rotate())
         await channel.apply_next()
         assert channel.interrupt.is_set()  # an applied user skip interrupts as before
+
+
+class TestBoundaryStepDoesNotInterrupt:
+    """A next at the last pool slot / prev at the first is a modelled no-op (T5).
+
+    ``StepForward``/``StepBack`` declare ``interrupts``, but at a pool boundary the
+    cursor does not move. If the interrupt fired anyway, the loop would kill and
+    reload the current part from the start -- a silent restart of a track the user
+    expected to keep playing. ``changed`` still fires so the loop is never blocked.
+    """
+
+    @staticmethod
+    def _two_track_replay() -> SelectionPlayback:
+        selection = Selection.from_albums(
+            [("album-a", (Part("001.mp3", 1), Part("002.mp3", 2)))]
+        )
+        return SelectionPlayback(selection, RotatePolicy())
+
+    async def test_next_at_last_slot_does_not_interrupt(self) -> None:
+        source = self._two_track_replay()
+        source.step_forward()  # advance to the last slot (position 2 of 2)
+        channel = ControlChannel(source)
+        channel.interrupt.clear()
+        channel.post(StepForward())
+        await channel.apply_next()
+        assert not channel.interrupt.is_set()  # the last part keeps playing
+        assert channel.changed.is_set()  # but the loop is still woken
+
+    async def test_prev_at_first_slot_does_not_interrupt(self) -> None:
+        source = self._two_track_replay()  # begins at the first slot
+        channel = ControlChannel(source)
+        channel.interrupt.clear()
+        channel.post(StepBack())
+        await channel.apply_next()
+        assert not channel.interrupt.is_set()  # the first part keeps playing
+        assert channel.changed.is_set()
+
+    async def test_a_step_that_moves_still_interrupts(self) -> None:
+        # Positive control: a next that MOVES the cursor still interrupts.
+        source = self._two_track_replay()  # at the first slot; next moves to 2
+        channel = ControlChannel(source)
+        channel.interrupt.clear()
+        channel.post(StepForward())
+        await channel.apply_next()
+        assert channel.interrupt.is_set()  # a real advance interrupts as before
 
 
 class TestModeTransitionLogging:
@@ -426,7 +474,7 @@ class _Boom:
     def interrupts(self) -> bool:
         return False
 
-    def apply(self, source: PlaybackSource, /) -> None:
+    def apply(self, source: PlaybackSource, /) -> bool:
         raise self.error
 
 

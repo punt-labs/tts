@@ -1540,11 +1540,11 @@
     "public_names": 1.0
   },
   "src/punt_vox/voxd/synthesis.py": {
-    "avg_lcom": 0.5,
-    "circular_imports": 0.0,
     "efferent_coupling": 7.0,
-    "max_lcom": 0.5,
-    "public_names": 5.0
+    "public_names": 5.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.7,
+    "avg_lcom": 0.7
   },
   "src/punt_vox/voxd/synthesis_result.py": {
     "avg_lcom": 0.0,

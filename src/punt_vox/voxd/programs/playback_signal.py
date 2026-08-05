@@ -36,9 +36,10 @@ class Rotate:
         """A user skip acts now; the loop's own track-end advance sees no player."""
         return True
 
-    def apply(self, source: PlaybackSource, /) -> None:
+    def apply(self, source: PlaybackSource, /) -> bool:
         """Advance whichever source is active (generate Program or replay Selection)."""
         source.rotate()
+        return True
 
 
 @final
@@ -57,12 +58,16 @@ class StepForward:
         """A user next acts now: the loop kills the current track and plays anew."""
         return True
 
-    def apply(self, source: PlaybackSource, /) -> None:
-        """Step a replay Selection forward; skip a generate Program."""
+    def apply(self, source: PlaybackSource, /) -> bool:
+        """Step a replay Selection forward; skip a generate Program.
+
+        Return whether playback moved: a step that stalls at the last slot is a
+        no-op (``False``), so the single writer leaves the current track playing.
+        """
         if isinstance(source, SelectionPlayback):
-            source.step_forward()
-            return
+            return source.step_forward()
         source.rotate()
+        return True
 
 
 @final
@@ -80,11 +85,15 @@ class StepBack:
         """A user prev acts now: the loop kills the current track and plays anew."""
         return True
 
-    def apply(self, source: PlaybackSource, /) -> None:
-        """Step a replay Selection back, rejecting a generate Program."""
+    def apply(self, source: PlaybackSource, /) -> bool:
+        """Step a replay Selection back, rejecting a generate Program.
+
+        Return whether playback moved: a step that stalls at the first slot is a
+        no-op (``False``), so the single writer leaves the current track playing.
+        """
         if not isinstance(source, SelectionPlayback):
             GuardViolationError.reject("prev requires a replay selection")
-        source.step_back()
+        return source.step_back()
 
 
 @final
@@ -99,11 +108,12 @@ class PlayPart:
         """Playing a named Part starts it now."""
         return True
 
-    def apply(self, source: PlaybackSource, /) -> None:
+    def apply(self, source: PlaybackSource, /) -> bool:
         """Play a named Part on a generate Program, rejecting a replay Selection."""
         if not isinstance(source, Program):
             GuardViolationError.reject("play_part requires a generate program")
         source.play_part(self.target)
+        return True
 
 
 @final
@@ -118,8 +128,9 @@ class StartFromDisk:
         """Cold-start begins from ``off`` -- there is no playback to interrupt."""
         return False
 
-    def apply(self, source: PlaybackSource, /) -> None:
+    def apply(self, source: PlaybackSource, /) -> bool:
         """Cold-start a generate Program, rejecting a replay Selection."""
         if not isinstance(source, Program):
             GuardViolationError.reject("start_from_disk requires a generate program")
         source.start_from_disk(self.target)
+        return True

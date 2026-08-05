@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import TYPE_CHECKING, Self, cast, final
+from typing import TYPE_CHECKING, Protocol, Self, cast, final
 
 import pytest
 
@@ -26,6 +26,19 @@ if TYPE_CHECKING:
 from punt_vox.voxd.programs.part import Part as _Part
 
 _PATH = Path("/m/1.mp3")
+
+
+class _LiveClient(Protocol):
+    """The client surface the player drives -- the seam the doubles implement."""
+
+    @property
+    def is_ready(self) -> bool: ...
+
+    def write_command(self, command: MpvCommand) -> None: ...
+
+    async def request(self, command: MpvCommand) -> MpvResponse: ...
+
+    def arm_ended(self) -> asyncio.Future[EndFileReason]: ...
 
 
 @final
@@ -58,18 +71,62 @@ class _RecordingClient:
 
 
 @final
+class _StaleEofClient:
+    """A live-client double where a stale ``end-file`` lands during the loadfile.
+
+    Mirrors :class:`MpvClient`: ``arm_ended`` installs the current ended-future,
+    and the reader resolves whichever future is armed. Here ``request`` resolves
+    the armed future mid-loadfile, standing in for an in-flight ``end-file`` eof
+    from the previous, still-loaded part. A correct player arms the new track's
+    future only after the load is acknowledged, so the stale eof resolves the
+    prior load's future, never the freshly-loaded track's.
+    """
+
+    __slots__ = ("_current",)
+    # None until the first load arms a future -- genuinely absent, not a failure.
+    _current: asyncio.Future[EndFileReason] | None
+
+    def __new__(cls) -> Self:
+        self = super().__new__(cls)
+        self._current = None
+        return self
+
+    @property
+    def is_ready(self) -> bool:
+        return True
+
+    @property
+    def current(self) -> asyncio.Future[EndFileReason] | None:
+        """Return the currently-armed ended-future (the newest load's)."""
+        return self._current
+
+    def write_command(self, command: MpvCommand) -> None:
+        return None
+
+    def arm_ended(self) -> asyncio.Future[EndFileReason]:
+        fut: asyncio.Future[EndFileReason] = asyncio.get_running_loop().create_future()
+        self._current = fut
+        return fut
+
+    async def request(self, command: MpvCommand) -> MpvResponse:
+        if self._current is not None and not self._current.done():
+            self._current.set_result(EndFileReason.EOF)
+        return MpvResponse(request_id=1, error="success")
+
+
+@final
 class _FakeSupervisor:
     """A supervisor double: hands out a client, or ``None`` when not ready."""
 
     __slots__ = ("_client",)
-    _client: _RecordingClient | None
+    _client: _LiveClient | None
 
-    def __new__(cls, client: _RecordingClient | None) -> Self:
+    def __new__(cls, client: _LiveClient | None) -> Self:
         self = super().__new__(cls)
         self._client = client
         return self
 
-    def current_client(self) -> _RecordingClient | None:
+    def current_client(self) -> _LiveClient | None:
         return self._client
 
     async def wait_ready(self) -> None:
@@ -86,7 +143,7 @@ class _FakeDirectory:
         return _PATH
 
 
-def _player(client: _RecordingClient | None) -> MpvProgramPlayer:
+def _player(client: _LiveClient | None) -> MpvProgramPlayer:
     supervisor = cast("MpvSupervisor", _FakeSupervisor(client))
     directory = cast("PlayerDirectory", _FakeDirectory())
     return MpvProgramPlayer(supervisor, directory)
@@ -148,3 +205,24 @@ async def test_rejected_loadfile_raises_so_the_loop_backs_off() -> None:
     client = _RecordingClient(reply_error="unknown command")
     with pytest.raises(ConnectionError, match="mpv rejected loadfile: unknown command"):
         await _player(client).play(_part(), paused=False)
+
+
+async def test_stale_eof_during_loadfile_does_not_finish_the_new_track() -> None:
+    # An end-file eof from the still-playing previous part can land while the new
+    # track's loadfile is in flight. The player must arm the new track's future
+    # only after the load is acknowledged, so the stale eof resolves the PRIOR
+    # load's future, never the freshly-loaded track's -- otherwise the loop sees
+    # the new part as already ended and skips past it after a next/prev near end.
+    client = _StaleEofClient()
+    previous = client.arm_ended()  # the previous part's still-armed future
+    handle = await _player(client).play(_part(), paused=False)
+
+    assert previous.done()  # the stale eof resolved the prior load, not the new one
+    new_future = client.current
+    assert new_future is not None
+    assert new_future is not previous  # a fresh future was armed for the new track
+    assert not new_future.done()  # the new track's future is untouched by the eof
+
+    # The handle awaits exactly that fresh future -- the new track ends on its own.
+    new_future.set_result(EndFileReason.ERROR)
+    assert await asyncio.wait_for(handle.ended(), 1.0) is EndFileReason.ERROR
