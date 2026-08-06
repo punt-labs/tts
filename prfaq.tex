@@ -77,7 +77,7 @@
 
 % ── Document version ─────────────────────────────────────────────────────────
 \newcommand{\prfaqversion}[2]{\def\theprfaqmajor{#1}\def\theprfaqminor{#2}}
-\prfaqversion{2}{2}
+\prfaqversion{2}{3}
 
 % ── Header/footer ────────────────────────────────────────────────────────────
 \usepackage{fancyhdr}
@@ -243,14 +243,15 @@ they do two things: they give the session a voice and a mood, and they let the
 developer stay aware of the agent by ear. Notifications are the first of these
 uses, not the only one.
 
-\texttt{/vox y} enables chime notifications for two events: task completion
-and permission prompts. When the agent finishes a multi-file refactor, the
-developer hears an audio tone. When the agent needs approval to run a
-destructive command, the developer hears that too --- no more silent permission
-dialogs burning minutes of idle time. \texttt{/vox c} adds continuous mode
-with spoken summaries: milestone updates during long-running tasks, so the
-developer hears progress without checking in. \texttt{/unmute} enables voice
-mode with a specific voice from the roster.
+\texttt{/enable} turns vox on for the repository, and the session then chimes
+on two events: task completion and permission prompts. When the agent finishes
+a multi-file refactor, the developer hears an audio tone. When the agent needs
+approval to run a destructive command, the developer hears that too --- no more
+silent permission dialogs burning minutes of idle time. \texttt{vox notify
+continuous} adds continuous mode with spoken summaries: milestone updates
+during long-running tasks, so the developer hears progress without checking in.
+\texttt{/unmute} enables voice mode with a specific voice from the roster.
+\texttt{/disable} turns vox back off.
 
 \texttt{/mute} switches from voice to chime --- the same events fire, but
 the notification is an audio tone instead of words. Chimes are mood-aware:
@@ -316,9 +317,9 @@ One command installs everything:
 The script checks Python 3.13+, installs \texttt{uv} if missing, installs
 the CLI, registers the MCP server with Claude Code, and runs
 \texttt{vox doctor} to verify that at least one TTS provider is available.
-Restart Claude Code and type \texttt{/vox y}. From that moment, every
+Restart Claude Code and type \texttt{/enable}. From that moment, every
 task completion and permission prompt produces a chime notification.
-Type \texttt{/vox c} for continuous spoken summaries.
+Run \texttt{vox notify continuous} for continuous spoken summaries.
 
 There is no voice selection wizard and no audio device configuration. The
 \texttt{voxd} daemon handles synthesis, caching, and playback as a system
@@ -353,7 +354,7 @@ and always will be. Install with one command:
 
 {\small\texttt{curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/main/install.sh | sh}}
 
-Restart Claude Code and type \texttt{/vox y}.
+Restart Claude Code and type \texttt{/enable}.
 
 \newpage
 
@@ -464,7 +465,7 @@ Restart Claude Code and type \texttt{/vox y}.
 
   The script installs the CLI, registers the MCP server with Claude Code, and
   runs \texttt{vox doctor} to verify providers. Restart Claude Code. Type
-  \texttt{/vox y}. Notifications are now active. Type \texttt{/recap} after
+  \texttt{/enable}. Notifications are now active. Type \texttt{/recap} after
   any long output for a spoken summary.
 
   For manual installation:
@@ -544,8 +545,8 @@ vox say "Build finished."
 
 \begin{faqpair}{Can I use my own voice or choose a specific voice?}
   vox auto-selects a default voice per provider (Matilda for ElevenLabs,
-  Nova for OpenAI, Joanna for Polly). Use \texttt{/unmute @matilda} to set a
-  session voice, or \texttt{/unmute @} to browse the roster. The CLI accepts
+  Nova for OpenAI, Joanna for Polly). Use \texttt{/unmute matilda} to set a
+  session voice, or \texttt{/unmute} (no argument) to browse the roster. The CLI accepts
   \texttt{-{}-voice} flags for overriding the default. The design philosophy
   is zero configuration --- defaults work out of the box, but voice selection
   is available for those who want it.
@@ -700,13 +701,13 @@ vox say "Build finished."
 \end{faqpair}
 
 \begin{faqpair}{What is your next step to validate your vision?}\label{faq:validation-plan}
-  All core features are shipped (v4.12.5). The product is approaching
+  All core features are shipped (v4.16.0). The product is approaching
   public recommendation. Validation now focuses on adoption and retention:
 
   \begin{enumerate}[leftmargin=1.5em, nosep]
-    \item Do users who enable \texttt{/vox y} leave it on after one week?
+    \item Do users who \texttt{/enable} vox leave it on after one week?
     \item Which event fires more often: task completion or permission prompt?
-    \item Do users stay on chimes (\texttt{/vox y}) or upgrade to voice
+    \item Do users stay on chimes or upgrade to voice
           (\texttt{/unmute})?
     \item Does remote \texttt{voxd} expand the addressable audience to
           SSH-based workflows?
@@ -782,11 +783,15 @@ vox say "Build finished."
 \end{faqpair}
 
 \begin{faqpair}{What is the estimated development timeline?}\label{faq:timeline}
-  punt-vox is at v4.12.5 on PyPI (July 2026). The product is nearly
+  punt-vox is at v4.16.0 on PyPI (July 2026). The product is nearly
   feature-complete.
 
   \textbf{Shipped:} Stop hook notification with spoken summaries.
-  \texttt{/vox y|n|c} toggle. \texttt{/unmute}/\texttt{/mute} for voice
+  Per-repo \texttt{/enable} / \texttt{/disable} (the \texttt{mic:enablement}
+  tool; a committed \texttt{.punt-labs/vox/enabled} marker) with the
+  notification level set by \texttt{vox notify normal|continuous} (v4.16.0).
+  A CLI-only \texttt{install.sh --no-plugin} install for scripts, CI, and
+  non-Claude harnesses (v4.16.0). \texttt{/unmute}/\texttt{/mute} for voice
   vs.\ chime. Permission-blocked notification via \texttt{Notification}
   hook. \texttt{/recap} command (agent-executed spoken summary).
   \texttt{/vibe} with auto-detection and manual modes --- auto-vibe uses
@@ -808,8 +813,16 @@ vox say "Build finished."
   \texttt{VOXD\_HOST}/\texttt{VOXD\_PORT}/\texttt{VOXD\_TOKEN} env vars
   for cross-host audio playback without SSH tunnels, plus server-side
   \texttt{VOXD\_BIND} to control the bind address (v4.7.7).
+  Daemon-as-audio-host record/play redesign --- \texttt{vox rec} captures into
+  a daemon-owned recordings store addressed by bare store id, and \texttt{vox
+  play} plays on the daemon host, so a recording driven from a remote client
+  sounds on the machine with speakers (v4.13.0).
+  Lux Music Player --- a visual album player projected to a co-located lux
+  display: an album list plus transport controls (play/pause/prev/next/stop),
+  driven from the running \texttt{voxd} daemon (this release).
 
-  \textbf{Next:} Downstream library adoption beyond langlearn-tts. Public
+  \textbf{Next:} Per-session voices. Codebase-aware audio programs (podcast and
+  audiobook). Broader downstream library adoption beyond langlearn-tts. Public
   recommendation and outreach.
 \end{faqpair}
 
@@ -862,8 +875,8 @@ vox say "Build finished."
     \item \textbf{PyPI installs:} Monthly download count as adoption proxy.
           Target: 500 monthly installs within 6 months of the notification
           feature shipping.
-    \item \textbf{Notification retention:} Percentage of users who enable
-          \texttt{/vox y} and keep it enabled after one week. Target:
+    \item \textbf{Notification retention:} Percentage of users who
+          \texttt{/enable} vox and keep it enabled after one week. Target:
           30\%+. Below this, the product is not sticky.
     \item \textbf{Event distribution:} Ratio of task-completion to
           permission-prompt notifications. Informs whether the product's
@@ -919,8 +932,8 @@ vox say "Build finished."
   Two plausible failure scenarios:
 
   \textbf{People turn it off.} Voice notifications are intrusive. If the
-  default voice is too loud, too frequent, or too slow, users disable
-  \texttt{/vox n} within hours and never re-enable. The notification
+  default voice is too loud, too frequent, or too slow, users
+  \texttt{/disable} vox within hours and never re-enable. The notification
   retention metric (see \faqref{faq:metrics}) is the canary: below 30\%
   after one week means the UX is wrong.
   \textit{Response:} \texttt{/mute} (chime-only) is the escape valve.
@@ -996,7 +1009,7 @@ available on PyPI.
 \begin{enumerate}[nosep,leftmargin=2.5em]
   \featureitem{Stop hook notification}{When Claude Code finishes a task, synthesize and play a spoken summary of what happened. Shipped v0.2.0.}\label{feat:stop-hook}
   \featureitem{Permission-blocked notification}{When the agent waits for user approval, announce it. Uses the \texttt{Notification} hook with \texttt{permission\_prompt} subtype. Shipped v0.2.0.}\label{feat:permission}
-  \featureitem{\texttt{/vox} command}{Enable or disable vox: \texttt{y} (chime notifications), \texttt{c} (continuous spoken summaries), \texttt{n} (off). Shipped v1.0.0.}\label{feat:notify}
+  \featureitem{Per-repo enable / disable}{Turn vox on or off for a repository via \texttt{/enable} / \texttt{/disable} (the \texttt{mic:enablement} tool, or \texttt{vox enable} / \texttt{vox disable} from a shell). Enablement deposits an agent guide, writes a committed \texttt{.punt-labs/vox/enabled} marker, and adds the \texttt{@}-import to \texttt{CLAUDE.md}; the audio hooks fire only in an enabled repo. The notification level --- task-completion vs.\ continuous --- is set separately with \texttt{vox notify normal|continuous}. Shipped v4.16.0.}\label{feat:notify}
   \featureitem{\texttt{/unmute} and \texttt{/mute} commands}{Toggle voice vs.\ chime. \texttt{/unmute} enables spoken notifications with optional voice selection. \texttt{/mute} switches to chime-only. Shipped v0.11.0.}\label{feat:speak}
   \featureitem{Chime audio}{Mood-aware audio tones for chime mode (\texttt{/mute}). Eight distinct signals pitch-shift to match session vibe (bright/neutral/dark). 24 total assets. Shipped v0.11.0.}\label{feat:chime}
   \featureitem{Provider auto-detection}{Detect best available TTS provider on first use. ElevenLabs > OpenAI > Polly > macOS \texttt{say} > Linux \texttt{espeak-ng}. Shipped v0.7.0.}\label{feat:autodetect}
@@ -1018,6 +1031,9 @@ available on PyPI.
   \texttt{vox} CLI. All three share one \texttt{voxd} daemon, so voice,
   caching, and playback are identical across surfaces. Unified over
   \texttt{voxd} since v3.0.0.}\label{feat:surfaces}
+  \featureitem{CLI-only \texttt{--no-plugin} install}{\texttt{install.sh --no-plugin} (or \texttt{VOX\_NO\_PLUGIN=1}) installs the \texttt{vox} CLI and its guidance import without the Claude Code plugin --- for scripts, CI, and non-Claude harnesses. The plugin auto-skips when \texttt{claude} is absent. Shipped v4.16.0.}\label{feat:no-plugin}
+  \featureitem{Daemon-as-audio-host record/play}{\texttt{vox rec} captures into a daemon-owned recordings store addressed by a bare store id (never a client-supplied path), and \texttt{vox play} plays on the daemon host --- so a recording driven from a remote client sounds on the machine with speakers. Bytes cross the wire in bounded, sha256-verified chunks. Shipped v4.13.0.}\label{feat:audio-host}
+  \featureitem{Lux Music Player}{A visual album player projected to a co-located lux display: the saved-album catalog plus transport controls (play/pause/prev/next/stop), driven from the running \texttt{voxd} daemon and kept truthful as playback and the catalog change. Shipped this release.}\label{feat:music-player}
 \end{enumerate}
 
 \subsection*{Should Do / Next}
@@ -1027,6 +1043,7 @@ adoption of the shipped feature set. Listed here so the deferral is a visible
 positioning choice rather than an oversight.
 
 \begin{enumerate}[nosep,leftmargin=2.5em]
+  \featureitem{Per-session voices}{Distinct voices per session (or per agent) rather than one session voice at a time, so concurrent or successive sessions are distinguishable by ear. Deliberately deferred roadmap, not shipped.}\label{feat:per-session-voices}
   \featureitem{Broader downstream library adoption}{Grow the set of tools that use punt-vox as their TTS backend beyond langlearn-tts. The MCP server, Python library, and CLI surfaces are built; broader adoption is the deferred work, not new engineering.}\label{feat:downstream}
   \featureitem{Public recommendation and outreach}{Move from ecosystem/internal use to public recommendation --- marketplace promotion, documentation, and community outreach. Deferred until usage data validates the broadened engagement bet (see \faqref{faq:validation-plan}).}\label{feat:outreach}
   \featureitem{Codebase-aware audio programs}{Podcast and audiobook programs whose content is drawn from the codebase's own domain, the technology it uses, or fiction inspired by it --- so a developer can step back and decompress between sessions rather than burn out. This extends the DJ/entertainment side of vox beyond background music. Deliberately deferred roadmap, not shipped.}\label{feat:audio-programs}

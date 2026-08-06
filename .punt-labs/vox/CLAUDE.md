@@ -21,10 +21,10 @@ directly races the daemon.
 Vox is per-repo: it chimes and narrates only where a human ran `enable` and
 committed the `.punt-labs/vox/enabled` marker.
 
-- `mic:enablement action="enable"` (or `/enable`) — turn vox on for this repo:
+- `mic:enablement action="enable"` (or `/vox enable`) — turn vox on for this repo:
   deposit the guide, write the marker, add the `@`-import, register settings.
   Idempotent; re-running upgrades the deposited guide.
-- `mic:enablement action="disable"` (or `/disable`) — turn it off: remove the
+- `mic:enablement action="disable"` (or `/vox disable`) — turn it off: remove the
   import, marker, and settings. The `.punt-labs/vox/` subtree is left dormant.
 - CLI equivalent: `vox enable` / `vox disable` (`vox disable --purge` also
   removes the subtree). Neither surface runs git — commit the marker via a PR.
@@ -71,9 +71,10 @@ exactly 12 genre-accurate `variations`, one per pool slot.
 
 - `mic:music subcommand="on"` — start or re-pool the background program from your
   `base_prompt` + 12 `variations`.
-- `mic:music subcommand="off"` — stop the program.
+- `mic:music subcommand="stop"` — stop the program.
 - `mic:music subcommand="play"` — replay a saved album (by id/name/tags) from
-  disk; no generation, no credits.
+  disk; no generation, no credits. With no argument, replays the last-played
+  album, or errors and lists the catalog when nothing has played yet.
 - `mic:music subcommand="next"` — optional manual skip (playback auto-advances).
 - `mic:music subcommand="list"` — list saved albums.
 
@@ -95,13 +96,13 @@ Catalog verbs (address a saved album by the id `list` prints):
 
 ## Slash commands
 
-- `/enable` — turn vox on for this repo; `/disable` — turn it off.
+- `/vox enable` — turn vox on for this repo; `/vox disable` — turn it off.
 - `/vox model <name>` / `/vox provider <name>` — switch TTS engine mid-session.
 - `/unmute [voice]` — enable voice mode, optionally set the session voice;
   `/unmute` (no argument) browses the roster.
 - `/mute` — chimes only (spoken notifications off).
 - `/vibe <mood>|auto|off` — set session mood.
-- `/music on|off|next|play <name>|list` — background music.
+- `/music on|stop|next|play [<name>]|list` — background music.
 - `/recap` — speak a 2–3 point summary of your last response.
 
 ## Driving vox from the CLI (no plugin)
@@ -118,7 +119,7 @@ a plugin-less agent can drive vox with no MCP surface at all.
 - `vox voice <name>` — set the session voice; `vox voices` — list the roster.
 - `vox vibe <mood>|auto|off` — set the session mood (same director role as
   `mic:vibe`).
-- `vox music on|off|next|play <name>|list` — background music.
+- `vox music on|stop|next|play [<name>]|list` — background music.
 - `vox status` — current provider, voice, notify/vibe state.
 - `vox enable` / `vox disable` — per-repo enablement, the CLI door to the marker.
 
