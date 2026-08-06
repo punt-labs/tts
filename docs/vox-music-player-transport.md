@@ -69,7 +69,7 @@ player events that call the daemon:
 | `music.pause` | `⏸` (while playing) | `ProgramService.pause()` (**new**) |
 | `music.resume` | `⏵` (while paused) | `ProgramService.resume()` (**new**) |
 | `music.next` | `⏭` next | `ProgramService.advance()` (**exists**) |
-| `music.stop` | `⏹` stop | `off` (**exists**) |
+| `music.stop` | `⏹` stop | `ProgramService.stop()` (**exists**) |
 | `music.play` | list Play | `replay_album` (**exists**, phase 2) |
 
 The play/pause button is **one button** whose `publish` and glyph the projection
@@ -78,7 +78,7 @@ sets from the current mode: `playing` → `⏸` + `music.pause`; `paused` → `�
 one unambiguous transition for the state it was rendered in.
 
 The daemon gains `pause()`, `resume()`, and `prev()` alongside the existing
-`advance()`, `off`, and `replay_album`.
+`advance()`, `stop()`, and `replay_album`.
 
 ## Scene (projection)
 

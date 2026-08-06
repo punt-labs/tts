@@ -243,7 +243,7 @@ they do two things: they give the session a voice and a mood, and they let the
 developer stay aware of the agent by ear. Notifications are the first of these
 uses, not the only one.
 
-\texttt{/enable} turns vox on for the repository, and the session then chimes
+\texttt{/vox enable} turns vox on for the repository, and the session then chimes
 on two events: task completion and permission prompts. When the agent finishes
 a multi-file refactor, the developer hears an audio tone. When the agent needs
 approval to run a destructive command, the developer hears that too --- no more
@@ -251,7 +251,7 @@ silent permission dialogs burning minutes of idle time. \texttt{vox notify
 continuous} adds continuous mode with spoken summaries: milestone updates
 during long-running tasks, so the developer hears progress without checking in.
 \texttt{/unmute} enables voice mode with a specific voice from the roster.
-\texttt{/disable} turns vox back off.
+\texttt{/vox disable} turns vox back off.
 
 \texttt{/mute} switches from voice to chime --- the same events fire, but
 the notification is an audio tone instead of words. Chimes are mood-aware:
@@ -317,7 +317,7 @@ One command installs everything:
 The script checks Python 3.13+, installs \texttt{uv} if missing, installs
 the CLI, registers the MCP server with Claude Code, and runs
 \texttt{vox doctor} to verify that at least one TTS provider is available.
-Restart Claude Code and type \texttt{/enable}. From that moment, every
+Restart Claude Code and type \texttt{/vox enable}. From that moment, every
 task completion and permission prompt produces a chime notification.
 Run \texttt{vox notify continuous} for continuous spoken summaries.
 
@@ -354,7 +354,7 @@ and always will be. Install with one command:
 
 {\small\texttt{curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/main/install.sh | sh}}
 
-Restart Claude Code and type \texttt{/enable}.
+Restart Claude Code and type \texttt{/vox enable}.
 
 \newpage
 
@@ -465,7 +465,7 @@ Restart Claude Code and type \texttt{/enable}.
 
   The script installs the CLI, registers the MCP server with Claude Code, and
   runs \texttt{vox doctor} to verify providers. Restart Claude Code. Type
-  \texttt{/enable}. Notifications are now active. Type \texttt{/recap} after
+  \texttt{/vox enable}. Notifications are now active. Type \texttt{/recap} after
   any long output for a spoken summary.
 
   For manual installation:
@@ -705,7 +705,7 @@ vox say "Build finished."
   public recommendation. Validation now focuses on adoption and retention:
 
   \begin{enumerate}[leftmargin=1.5em, nosep]
-    \item Do users who \texttt{/enable} vox leave it on after one week?
+    \item Do users who \texttt{/vox enable} vox leave it on after one week?
     \item Which event fires more often: task completion or permission prompt?
     \item Do users stay on chimes or upgrade to voice
           (\texttt{/unmute})?
@@ -787,7 +787,7 @@ vox say "Build finished."
   feature-complete.
 
   \textbf{Shipped:} Stop hook notification with spoken summaries.
-  Per-repo \texttt{/enable} / \texttt{/disable} (the \texttt{mic:enablement}
+  Per-repo \texttt{/vox enable} / \texttt{/vox disable} (the \texttt{mic:enablement}
   tool; a committed \texttt{.punt-labs/vox/enabled} marker) with the
   notification level set by \texttt{vox notify normal|continuous} (v4.16.0).
   A CLI-only \texttt{install.sh --no-plugin} install for scripts, CI, and
@@ -876,7 +876,7 @@ vox say "Build finished."
           Target: 500 monthly installs within 6 months of the notification
           feature shipping.
     \item \textbf{Notification retention:} Percentage of users who
-          \texttt{/enable} vox and keep it enabled after one week. Target:
+          \texttt{/vox enable} vox and keep it enabled after one week. Target:
           30\%+. Below this, the product is not sticky.
     \item \textbf{Event distribution:} Ratio of task-completion to
           permission-prompt notifications. Informs whether the product's
@@ -933,7 +933,7 @@ vox say "Build finished."
 
   \textbf{People turn it off.} Voice notifications are intrusive. If the
   default voice is too loud, too frequent, or too slow, users
-  \texttt{/disable} vox within hours and never re-enable. The notification
+  \texttt{/vox disable} vox within hours and never re-enable. The notification
   retention metric (see \faqref{faq:metrics}) is the canary: below 30\%
   after one week means the UX is wrong.
   \textit{Response:} \texttt{/mute} (chime-only) is the escape valve.
@@ -1009,7 +1009,7 @@ available on PyPI.
 \begin{enumerate}[nosep,leftmargin=2.5em]
   \featureitem{Stop hook notification}{When Claude Code finishes a task, synthesize and play a spoken summary of what happened. Shipped v0.2.0.}\label{feat:stop-hook}
   \featureitem{Permission-blocked notification}{When the agent waits for user approval, announce it. Uses the \texttt{Notification} hook with \texttt{permission\_prompt} subtype. Shipped v0.2.0.}\label{feat:permission}
-  \featureitem{Per-repo enable / disable}{Turn vox on or off for a repository via \texttt{/enable} / \texttt{/disable} (the \texttt{mic:enablement} tool, or \texttt{vox enable} / \texttt{vox disable} from a shell). Enablement deposits an agent guide, writes a committed \texttt{.punt-labs/vox/enabled} marker, and adds the \texttt{@}-import to \texttt{CLAUDE.md}; the audio hooks fire only in an enabled repo. The notification level --- task-completion vs.\ continuous --- is set separately with \texttt{vox notify normal|continuous}. Shipped v4.16.0.}\label{feat:notify}
+  \featureitem{Per-repo enable / disable}{Turn vox on or off for a repository via \texttt{/vox enable} / \texttt{/vox disable} (the \texttt{mic:enablement} tool, or \texttt{vox enable} / \texttt{vox disable} from a shell). Enablement deposits an agent guide, writes a committed \texttt{.punt-labs/vox/enabled} marker, and adds the \texttt{@}-import to \texttt{CLAUDE.md}; the audio hooks fire only in an enabled repo. The notification level --- task-completion vs.\ continuous --- is set separately with \texttt{vox notify normal|continuous}. Shipped v4.16.0.}\label{feat:notify}
   \featureitem{\texttt{/unmute} and \texttt{/mute} commands}{Toggle voice vs.\ chime. \texttt{/unmute} enables spoken notifications with optional voice selection. \texttt{/mute} switches to chime-only. Shipped v0.11.0.}\label{feat:speak}
   \featureitem{Chime audio}{Mood-aware audio tones for chime mode (\texttt{/mute}). Eight distinct signals pitch-shift to match session vibe (bright/neutral/dark). 24 total assets. Shipped v0.11.0.}\label{feat:chime}
   \featureitem{Provider auto-detection}{Detect best available TTS provider on first use. ElevenLabs > OpenAI > Polly > macOS \texttt{say} > Linux \texttt{espeak-ng}. Shipped v0.7.0.}\label{feat:autodetect}
