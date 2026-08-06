@@ -18,6 +18,10 @@ from typing import TYPE_CHECKING, Self, final
 from punt_vox.types_programs.playback_fault import PlaybackFaultKind
 from punt_vox.voxd.programs.mpv import MPV_MIN_VERSION, mpv_supervisor as sup_mod
 from punt_vox.voxd.programs.mpv.mpv_supervisor import MpvState, MpvSupervisor
+from punt_vox.voxd.programs.mpv.orphan_reaper import (
+    OrphanReaper,
+    OrphanUnreachableError,
+)
 
 from .conftest import FakeSleeper
 
@@ -108,6 +112,18 @@ def test_startup_flags_set_the_reduced_music_volume() -> None:
 
     assert f"--volume={sup_mod._MUSIC_VOLUME}" in supervisor._flags()
     assert "--volume=60" in supervisor._flags()
+
+
+def test_startup_flags_disable_network_and_script_fetch() -> None:
+    # Hardening of the persistent-mpv surface: a crafted media path must not
+    # trigger network or script fetching. --ytdl=no kills the youtube-dl URL
+    # hook, --load-scripts=no blocks user-script execution, --no-config bars the
+    # config dir. loadfile then plays only the contained local file it is given.
+    flags = MpvSupervisor(_SOCK, FakeSleeper())._flags()
+
+    assert "--ytdl=no" in flags
+    assert "--load-scripts=no" in flags
+    assert "--no-config" in flags
 
 
 async def test_cold_start_that_never_connects_reaches_failed_unavailable(
@@ -280,3 +296,29 @@ async def test_shutdown_teardown_clears_the_standing_fault(
     await _cancel(run)  # shutdown cancels run -> teardown to ``down``
     assert supervisor.state is MpvState.DOWN
     assert supervisor.fault is None  # I3: ``down`` carries no fault
+
+
+async def test_eacces_orphan_probe_aborts_bring_up_without_spawning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An orphan socket whose probe is denied (EACCES) must NOT let a second mpv
+    # spawn (I2). reap raises OrphanUnreachableError, so _bring_up aborts BEFORE
+    # the spawn and folds into the restart-to-failed path: zero spawns, and the
+    # standing fault is PLAYER_UNAVAILABLE (mpv never came up).
+    def _denied(_self: OrphanReaper) -> None:
+        msg = "denied"
+        raise OrphanUnreachableError(msg)
+
+    monkeypatch.setattr(OrphanReaper, "reap", _denied)
+    spawns: list[int] = []
+    _patch_spawn(monkeypatch, spawns)
+
+    supervisor = MpvSupervisor(_SOCK, FakeSleeper())
+    run = asyncio.create_task(supervisor.run())
+    await _wait_until(lambda: supervisor.state is MpvState.FAILED)
+
+    assert spawns == []  # never spawned an mpv while an orphan may hold the socket
+    fault = supervisor.fault
+    assert fault is not None
+    assert fault.kind is PlaybackFaultKind.PLAYER_UNAVAILABLE
+    await _cancel(run)

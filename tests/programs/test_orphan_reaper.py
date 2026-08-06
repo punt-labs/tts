@@ -20,14 +20,15 @@ import os
 import socket
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING
+
+import pytest
 
 from punt_vox.types_programs.end_file_reason import EndFileReason
 from punt_vox.types_programs.mpv_event import MpvCommand
-from punt_vox.voxd.programs.mpv.orphan_reaper import OrphanReaper
-
-if TYPE_CHECKING:
-    import pytest
+from punt_vox.voxd.programs.mpv.orphan_reaper import (
+    OrphanReaper,
+    OrphanUnreachableError,
+)
 
 _SOCK_NAME = "mpv.sock"
 
@@ -122,12 +123,13 @@ def test_reap_survives_an_unlink_error(
     OrphanReaper(sock).reap()  # must not raise
 
 
-def test_reap_preserves_a_socket_whose_connect_is_denied(
+def test_reap_raises_and_preserves_a_socket_whose_connect_is_denied(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # EACCES on connect is a hard stop: a live mpv may still own the socket, so
-    # the path is left in place, never unlinked into an orphan that lets a second
-    # mpv spawn on a fresh inode (I2).
+    # reap raises OrphanUnreachableError (the supervisor aborts bring-up) and the
+    # path is left in place, never unlinked into an orphan that lets a second mpv
+    # spawn on a fresh inode (I2).
     def _denied(_self: socket.socket, _address: str) -> None:
         msg = "permission denied"
         raise PermissionError(msg)
@@ -135,7 +137,8 @@ def test_reap_preserves_a_socket_whose_connect_is_denied(
     monkeypatch.setattr(socket.socket, "connect", _denied)
     sock = tmp_path / _SOCK_NAME
     sock.write_bytes(b"")  # the path exists; the probe connect will be denied
-    OrphanReaper(sock).reap()  # must not raise
+    with pytest.raises(OrphanUnreachableError):
+        OrphanReaper(sock).reap()  # aborts bring-up rather than orphaning an mpv
     assert sock.exists()  # an unprobed socket is preserved, not orphaned
 
 

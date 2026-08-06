@@ -479,6 +479,41 @@ class TestErrorReasonAdvances:
         await _stop(run, serve)
 
 
+class TestContainmentRefusalAdvances:
+    """A part the player refuses before loadfile (containment) is skipped, not spun."""
+
+    async def test_refused_part_records_a_fault_and_advances(
+        self, rotating: Program
+    ) -> None:
+        # A hostile/corrupt manifest part path (symlink or escaping the album dir)
+        # makes the player raise ValueError from its containment gate before
+        # loadfile. The loop must treat it like a bad file: record a per-part
+        # TRACK_ERROR and advance past it -- never hot-spin on the ValueError.
+        channel = ControlChannel(rotating)
+        player = FakePlayer()
+        player.fail_next_load(ValueError("part name escapes its root"))
+        health = PlaybackHealth()
+        sleeper = _GateSleeper()
+        suspension = PlaybackSuspension(player)
+        loop = ProgramLoop(channel, player, sleeper, health, suspension)
+        serve = asyncio.create_task(channel.serve())
+        run = asyncio.create_task(loop.run())
+
+        for _ in range(500):
+            if health.fault is not None and sleeper.sleeps:
+                break
+            await asyncio.sleep(0)
+
+        fault = health.fault
+        assert fault is not None  # observable, not a silent hot spin
+        assert fault.kind is PlaybackFaultKind.TRACK_ERROR
+
+        sleeper.release()  # let the loop advance past the refused part
+        await player.wait_for(1)
+        assert player.parts  # advanced to (and loaded) a following part
+        await _stop(run, serve)
+
+
 class TestLoopSurvivesAFailingStep:
     """The run() guard keeps playback alive when one step raises unexpectedly."""
 

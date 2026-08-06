@@ -96,6 +96,10 @@ class MpvProgramPlayer:
         starts, so no genuine end is missed in the window.
         """
         client = self._require_client()
+        # ``locate`` gates the Part path through the shared containment check: an
+        # untrusted manifest file field that is a symlink or escapes the album
+        # directory raises ``ValueError`` here, before ``loadfile`` -- the loop
+        # treats that refusal like a bad file (skip), so no crafted path loads.
         path = str(self._directory.locate(part))
         client.write_command(MpvCommand.set_pause(paused=paused))
         response = await client.request(MpvCommand.loadfile(path))

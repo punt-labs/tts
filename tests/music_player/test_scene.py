@@ -16,6 +16,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from punt_vox.types_programs.status import ProgramStatus
+from punt_vox.voxd.music_player.now_playing_block import MarkdownText
 from punt_vox.voxd.music_player.playback_notice import PlaybackNotice
 from punt_vox.voxd.music_player.player_view import PlayerView
 from punt_vox.voxd.music_player.scene import AlbumListScene
@@ -90,6 +91,41 @@ def test_now_playing_block_shows_album_and_track_position(
     assert not any(e["id"] == "music.now.line" for e in elements)
     assert not any(e["id"] == "music.now.track" for e in elements)
     assert not any(e["id"] == "music.now.progress" for e in elements)
+
+
+def test_now_playing_album_name_is_markdown_escaped(
+    album_of: AlbumFactory, playing_of: PlayingFactory
+) -> None:
+    # The album name is agent/user-influenced. A name carrying markdown
+    # metacharacters must render inert under the heading: the ``### `` marker
+    # keeps its prominence, the name injects no heading, emphasis, or link.
+    album = album_of("aa11bb", name="Pwn *x* #h [a](b)")
+    view = PlayerView.from_status(playing_of(album, 1, 3), (album,))
+
+    elements = AlbumListScene((album,), view).render_request().elements
+
+    content = _by_id(elements, "music.now.album")["content"]
+    assert content == "### Pwn \\*x\\* \\#h \\[a\\]\\(b\\)"
+    # The only unescaped ``#`` is the heading marker itself -- the name's own
+    # ``#`` is backslash-escaped, so no second heading is forged.
+    assert isinstance(content, str)
+    assert "\\#h" in content  # the name's # is escaped, not a heading
+
+
+class TestMarkdownText:
+    """The escaper that makes an untrusted album name inert in a markdown block."""
+
+    def test_backslash_escapes_markdown_punctuation(self) -> None:
+        assert MarkdownText("*x* #h [a](b)").text == "\\*x\\* \\#h \\[a\\]\\(b\\)"
+
+    def test_folds_line_breaks_so_a_name_cannot_open_a_new_block(self) -> None:
+        # A newline would let the name escape the heading line into a fresh
+        # markdown block (a forged heading); it is folded to a space.
+        assert "\n" not in MarkdownText("Evil\n# Pwned").text
+        assert MarkdownText("a\r\nb").text == "a b"
+
+    def test_plain_text_and_spaces_survive_unescaped(self) -> None:
+        assert MarkdownText("Techno Mix").text == "Techno Mix"
 
 
 def test_playing_transport_shows_the_pause_glyph_and_topic(

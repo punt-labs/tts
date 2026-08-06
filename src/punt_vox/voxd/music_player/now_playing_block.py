@@ -17,7 +17,7 @@ the same idle view), so the whole scene reads as quiescent.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_lux import MarkdownElement, TextElement
 
@@ -31,6 +31,45 @@ if TYPE_CHECKING:
 __all__ = ["NowPlayingBlock"]
 
 _IDLE_TEXT = "Nothing playing"
+
+# Every CommonMark backslash-escapable ASCII punctuation char. A backslash
+# before any of these renders it as a literal, so escaping the whole set (plus
+# folding line breaks) neutralises heading, emphasis, link, code, and raw-HTML
+# injection from an untrusted album name.
+_MD_PUNCTUATION: frozenset[str] = frozenset("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
+
+
+@final
+class MarkdownText:
+    """An untrusted string escaped so markdown paints it as inert literal text.
+
+    The now-playing album name is agent/user-influenced. Interpolated raw into a
+    ``### {name}`` heading it could inject markdown -- a forged heading via an
+    embedded newline, emphasis, a link, or raw HTML. Construction backslash-
+    escapes every CommonMark-escapable ASCII punctuation char and folds line
+    breaks to spaces, so the name renders under the heading with no markup of its
+    own while the ``### `` marker (added by the caller after escaping) keeps its
+    prominence.
+    """
+
+    __slots__ = ("_text",)
+    _text: str
+
+    def __new__(cls, raw: str) -> Self:
+        self = super().__new__(cls)
+        self._text = cls._escaped(raw)
+        return self
+
+    @property
+    def text(self) -> str:
+        """Return the escaped text, safe to interpolate into a markdown heading."""
+        return self._text
+
+    @staticmethod
+    def _escaped(raw: str) -> str:
+        """Fold line breaks to spaces, then backslash-escape markdown punctuation."""
+        folded = raw.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+        return "".join(f"\\{ch}" if ch in _MD_PUNCTUATION else ch for ch in folded)
 
 
 @final
@@ -54,10 +93,14 @@ class NowPlayingBlock:
         return TextElement(id="music.now", content=_IDLE_TEXT).to_dict()
 
     def _album(self) -> dict[str, object]:
-        """Return the prominent album-name heading of the playing source."""
-        return MarkdownElement(
-            id="music.now.album", content=f"### {self._playing_name()}"
-        ).to_dict()
+        """Return the prominent album-name heading, the name escaped inert (F#).
+
+        The album name is untrusted (agent/user-influenced), so it is escaped
+        through :class:`MarkdownText` before it is interpolated into the heading:
+        the ``### `` marker keeps the prominence, the name cannot inject markup.
+        """
+        heading = MarkdownText(self._playing_name()).text
+        return MarkdownElement(id="music.now.album", content=f"### {heading}").to_dict()
 
     def _playing_name(self) -> str:
         """Return the friendly name of the playing album (T7 guarantees it exists).

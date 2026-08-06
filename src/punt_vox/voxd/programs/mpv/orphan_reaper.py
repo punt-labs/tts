@@ -31,7 +31,7 @@ from punt_vox.types_programs.mpv_event import MpvCommand
 if TYPE_CHECKING:
     from pathlib import Path
 
-__all__ = ["OrphanReaper"]
+__all__ = ["OrphanReaper", "OrphanUnreachableError"]
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,16 @@ _PROBE_TIMEOUT_SECONDS = 2.0
 
 _REAP_REQUEST_ID = 0
 """The ``request_id`` on the fire-and-forget ``quit`` -- no reply is awaited."""
+
+
+class OrphanUnreachableError(Exception):
+    """Connecting to the orphan socket was denied (EACCES) -- bring-up must abort.
+
+    A live mpv may still own the socket, so probing cannot prove it dead. The
+    supervisor folds this into the same bring-up-failure path as a failed
+    spawn/connect: it stands a ``PLAYER_UNAVAILABLE`` fault and never spawns a
+    second mpv on a fresh inode (I2), rather than reaping into an orphan.
+    """
 
 
 @final
@@ -63,44 +73,44 @@ class OrphanReaper:
         the fresh mpv can bind there. Connecting is robust to ``OSError``, so a
         probe failure is logged, not raised into the supervisor.
 
-        A path we cannot even probe because connecting is *denied* (EACCES) is a
-        hard stop: a live mpv may still own it, so it is left in place rather than
-        unlinked. Unlinking a socket we could not probe would orphan that mpv and
-        let a second one spawn on a fresh inode, breaking single-mpv (I2).
+        A path we cannot even probe because connecting is *denied* (EACCES)
+        raises :class:`OrphanUnreachableError` before the unlink: a live mpv may
+        still own it, so bring-up must abort rather than unlink it into an orphan
+        and spawn a second mpv on a fresh inode, breaking single-mpv (I2).
         """
-        if self._probe_socket():
-            self._unlink_socket()
+        self._probe_socket()  # raises OrphanUnreachableError on a denied probe
+        self._unlink_socket()
 
-    def _probe_socket(self) -> bool:
-        """Quit any listening orphan; report whether the stale path may be unlinked.
+    def _probe_socket(self) -> None:
+        """Quit any listening orphan; raise when the socket cannot be probed.
 
-        Returns ``True`` for an absent path, a stale inode, or an orphan we quit --
-        all safe to unlink. Returns ``False`` only when connecting was denied
-        (EACCES): a live mpv may still own the socket, so it is preserved rather
-        than orphaned (I2).
+        Returns for an absent path, a stale inode, or an orphan we quit -- all
+        safe for the caller to unlink. Raises :class:`OrphanUnreachableError`
+        only when connecting was denied (EACCES): a live mpv may still own the
+        socket, so bring-up aborts rather than orphaning it (I2).
         """
         probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         probe.settimeout(_PROBE_TIMEOUT_SECONDS)
         try:
-            return self._connect_and_quit(probe)
+            self._connect_and_quit(probe)
         finally:
             probe.close()
 
-    def _connect_and_quit(self, probe: socket.socket) -> bool:
-        """Connect and send ``quit``; report whether the stale path may be unlinked."""
+    def _connect_and_quit(self, probe: socket.socket) -> None:
+        """Connect and send ``quit``; raise ``OrphanUnreachableError`` on EACCES."""
         try:
             probe.connect(str(self._socket))
-        except PermissionError:
+        except PermissionError as exc:
             logger.warning(
-                "cannot probe the mpv socket %s (permission denied); leaving it "
-                "in place to avoid orphaning a running mpv",
+                "cannot probe the mpv socket %s (permission denied); aborting "
+                "bring-up to avoid orphaning a running mpv",
                 self._socket,
             )
-            return False  # a live mpv may own it -- never unlink an unprobed socket
+            msg = "mpv orphan socket probe denied"
+            raise OrphanUnreachableError(msg) from exc  # a live mpv may own it (I2)
         except OSError:
-            return True  # no socket, a stale inode, or unreachable -- safe to unlink
+            return  # no socket, a stale inode, or unreachable -- safe to unlink
         self._quit(probe)
-        return True
 
     def _quit(self, probe: socket.socket) -> None:
         """Send mpv's ``quit`` frame to a connected orphan; log the outcome."""

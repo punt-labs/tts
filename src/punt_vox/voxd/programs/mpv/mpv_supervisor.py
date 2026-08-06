@@ -30,7 +30,10 @@ from typing import TYPE_CHECKING, Self, final
 from punt_vox.types_programs.mpv_event import MpvCommand
 from punt_vox.types_programs.playback_fault import PlaybackFault, PlaybackFaultKind
 from punt_vox.voxd.programs.mpv.mpv_client import MpvClient
-from punt_vox.voxd.programs.mpv.orphan_reaper import OrphanReaper
+from punt_vox.voxd.programs.mpv.orphan_reaper import (
+    OrphanReaper,
+    OrphanUnreachableError,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -75,6 +78,7 @@ class MpvSupervisor:
         "_fault",
         "_proc",
         "_ready",
+        "_reaped",
         "_reaper",
         "_restarts",
         "_sleeper",
@@ -92,6 +96,7 @@ class MpvSupervisor:
     _restarts: int
     _ever_ready: bool
     _reaper: OrphanReaper
+    _reaped: bool
 
     def __new__(cls, socket: Path, sleeper: Sleeper) -> Self:
         self = super().__new__(cls)
@@ -106,6 +111,7 @@ class MpvSupervisor:
         self._restarts = 0
         self._ever_ready = False
         self._reaper = OrphanReaper(socket)
+        self._reaped = False
         return self
 
     @property
@@ -147,7 +153,7 @@ class MpvSupervisor:
             await self._teardown()
 
     async def _supervise(self) -> None:
-        """Reap any orphan, supervise mpv, and stand a fault on an unexpected error.
+        """Supervise mpv, standing a fault on an unexpected error.
 
         The restart loop handles a modeled crash. An UNEXPECTED error -- a
         supervisor bug -- is logged and stood as a hard ``PLAYER_FAILED`` fault,
@@ -155,7 +161,6 @@ class MpvSupervisor:
         ``wait_ready`` with the task dead and no fault set.
         """
         try:
-            self._reaper.reap()
             while True:
                 if await self._bring_up():
                     await self._crashed.wait()
@@ -181,6 +186,9 @@ class MpvSupervisor:
 
     async def _bring_up(self) -> bool:
         """Spawn and connect mpv; on success reach ``ready`` and clear the counter."""
+        if not self._reap_orphan():
+            self._record_bring_up_failure()
+            return False
         self._crashed.clear()
         self._state = MpvState.RESTARTING if self._fault else MpvState.STARTING
         proc = await self._spawn()
@@ -194,6 +202,24 @@ class MpvSupervisor:
             self._record_bring_up_failure()
             return False
         self._reach_ready(client)
+        return True
+
+    def _reap_orphan(self) -> bool:
+        """Reap a prior-daemon orphan once at cold start; report bring-up may proceed.
+
+        The reap runs before the first spawn only (I2 startup hygiene) -- once we
+        own the socket, re-probing would quit our *own* mpv. A denied (EACCES)
+        probe raises :class:`OrphanUnreachableError`: a live mpv may still own the
+        socket, so bring-up aborts and folds into the restart-to-failed path
+        rather than spawning a second mpv on a fresh inode.
+        """
+        if self._reaped:
+            return True
+        try:
+            self._reaper.reap()
+        except OrphanUnreachableError:
+            return False
+        self._reaped = True
         return True
 
     async def _spawn(self) -> asyncio.subprocess.Process | None:
@@ -226,13 +252,19 @@ class MpvSupervisor:
         return None
 
     def _flags(self) -> list[str]:
-        """Return the mpv startup flags -- audio-only, idle, IPC, reduced volume."""
+        """Return the mpv flags -- audio-only, idle, IPC, no network/scripts, quiet."""
         return [
             "--idle=yes",
             "--no-video",
             "--vo=null",
             f"--input-ipc-server={self._socket}",
             "--no-config",
+            # A crafted media path must not reach the network or run a script:
+            # --ytdl=no kills the youtube-dl/yt-dlp URL hook, --load-scripts=no
+            # blocks user-script execution (--no-config already bars the config
+            # dir). loadfile then plays only the contained local file it is given.
+            "--ytdl=no",
+            "--load-scripts=no",
             f"--volume={_MUSIC_VOLUME}",
             "--gapless-audio=yes",
             "--terminal=no",

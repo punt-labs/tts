@@ -140,9 +140,27 @@ class ProgramLoop:
         except OSError as exc:  # ConnectionError/TimeoutError are OSError subclasses
             await self._back_off_load(target, exc)
             return
+        except ValueError:
+            # The player's containment gate refused the part path before loadfile
+            # -- a hostile/corrupt manifest whose file field is a symlink or
+            # escapes the album dir. Treat it exactly like a bad file: record it
+            # observably and advance past it, so one poisoned part can neither
+            # open a file outside the album nor hot-spin the loop.
+            await self._skip_unplayable(target)
+            return
         self._health.clear()
         end = await self._race.settle(handle)
         await self._finish(target, end)
+
+    async def _skip_unplayable(self, target: Part) -> None:
+        """Record a part the player refused before loadfile, then advance past it.
+
+        Shares the bad-file transition (``_note_error_fault`` + ``_advance_after``)
+        a mpv ``end-file`` ``error`` reason takes, so a containment-refused part
+        and a decode-failed part leave the loop in the same advanced state.
+        """
+        await self._note_error_fault(target)
+        await self._advance_after(target)
 
     async def _finish(self, target: Part, end: TrackEnd) -> None:
         """Act on how the part stopped: replay, hold, idle, or advance the cursor.
