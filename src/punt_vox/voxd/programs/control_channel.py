@@ -132,8 +132,9 @@ class ControlChannel:
         captures every transition uniformly, at INFO, without scattering loggers.
         """
         signal = await self._queue.get()
+        applied = False
         try:
-            self._apply_one(signal)
+            applied = self._apply_one(signal)
         finally:
             self._queue.task_done()
             try:
@@ -141,7 +142,7 @@ class ControlChannel:
             finally:
                 # The wake is unconditional: even a raising reconcile must not
                 # leave the playback loop blocked on ``changed``.
-                self._mark_applied(signal)
+                self._mark_applied(signal, applied=applied)
                 # The re-push rides the same finally so a raising apply still
                 # re-projects the settled state; ``emit`` is fail-soft.
                 self._emit_change()
@@ -152,10 +153,16 @@ class ControlChannel:
         if self._changes is not None:
             self._changes.emit()
 
-    def _apply_one(self, signal: ControlSignal) -> None:
-        """Apply one command, swallowing only a benign lost-race guard."""
+    def _apply_one(self, signal: ControlSignal) -> bool:
+        """Apply one command; return whether it took effect.
+
+        ``False`` covers two no-effect outcomes that must not fire the interrupt:
+        a lost race (a rejected guard, caught here) and a modelled no-op the
+        command itself reports (a transport step stalled at a pool boundary),
+        which :meth:`ControlSignal.apply` signals by returning ``False``.
+        """
         try:
-            signal.apply(self._source)
+            return signal.apply(self._source)
         except GuardViolationError:
             # A losing racer, not a bug -- log the source + signal for the trail.
             logger.info(
@@ -163,10 +170,19 @@ class ControlChannel:
                 type(self._source).__name__,
                 signal,
             )
+            return False
 
-    def _mark_applied(self, signal: ControlSignal) -> None:
-        """Wake the loop, interrupting the current track if the command demands it."""
-        if signal.interrupts:
+    def _mark_applied(self, signal: ControlSignal, *, applied: bool) -> None:
+        """Wake the loop, interrupting only when a command that demands it took effect.
+
+        A command that declares ``interrupts`` but took no effect must NOT fire the
+        interrupt -- whether it was a lost race (a rejected guard) or a modelled
+        no-op (a transport step stalled at a pool boundary). Firing it would kill
+        and reload the current track from zero while the cursor stayed put, a
+        silent restart that sounds like a stutter. ``changed`` still fires
+        unconditionally so the loop never blocks on a settled command.
+        """
+        if applied and signal.interrupts:
             self._interrupt.set()
         self._changed.set()
 

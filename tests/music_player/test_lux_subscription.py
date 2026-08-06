@@ -8,7 +8,10 @@ Each test names the ``docs/vox-music-player.tex`` invariant it pins:
   on no surviving Hub state (the buffer is luxd's, swept on lease expiry);
 * V  -- each ``music.play``/``music.stop`` maps to exactly one playback transition.
 
-The suite uses fakes; it needs no running luxd.
+A ``music.play`` names its target by the clicked row's Album cell (the display name);
+the leg resolves that anchor back to an album id against the fresh catalog, so the
+fakes here carry both the command sink and the catalog. The suite uses fakes; it
+needs no running luxd.
 """
 
 from __future__ import annotations
@@ -18,8 +21,14 @@ from typing import TYPE_CHECKING, final
 
 from punt_lux import HubUnavailableError
 
+from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.voxd.music_player.lux_subscription import LuxSubscription
+from punt_vox.voxd.music_player.wire import MusicTopic
 from punt_vox.voxd.programs.album_id import AlbumId
+
+# Every topic the scene can publish: the album-table play/stop plus the transport
+# bar's prev/pause/resume/next. The receive leg must subscribe to all of them.
+_ALL_TOPICS = tuple(topic.value for topic in MusicTopic)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -29,10 +38,12 @@ if TYPE_CHECKING:
     from punt_lux.hub_client import ConnectHandler
 
     from punt_vox.voxd.music_player.hub_ports import HubListener
+    from punt_vox.voxd.programs.catalog import Album
 
     type _ConnectHub = Callable[
         [EventHandler, CallbackHandler, ConnectHandler], HubListener
     ]
+    type AlbumFactory = Callable[..., Album]
 
 
 async def _fire(on_connect: ConnectHandler) -> None:
@@ -44,31 +55,72 @@ async def _fire(on_connect: ConnectHandler) -> None:
 
 @final
 class _FakeCommands:
-    """A PlayerCommands double recording each replay/off the leg applies."""
+    """A ProgramSeam double: records each replay/off, and serves a fixed catalog."""
 
-    def __init__(self) -> None:
+    def __init__(self, catalog: tuple[Album, ...] = ()) -> None:
         self.played: list[AlbumId] = []
         self.stops = 0
+        self.nexts = 0
+        self.prevs = 0
+        self.pauses = 0
+        self.resumes = 0
+        self._catalog = catalog
+
+    def catalog_albums(self) -> tuple[Album, ...]:
+        return self._catalog
+
+    def status(self) -> ProgramStatus:
+        return ProgramStatus.idle()
 
     def replay_album(self, album_id: AlbumId) -> None:
         self.played.append(album_id)
 
-    def off(self) -> None:
+    def stop(self) -> None:
         self.stops += 1
+
+    def advance(self) -> None:
+        self.nexts += 1
+
+    def prev(self) -> None:
+        self.prevs += 1
+
+    def pause(self) -> None:
+        self.pauses += 1
+
+    def resume(self) -> None:
+        self.resumes += 1
 
 
 @final
 class _FakeOpener:
-    """A ChangeListener double counting the scene re-pushes a menu click drives."""
+    """A ScenePresenter double: counts re-pushes and records surfaced failures."""
 
     def __init__(self, *, boom: bool = False) -> None:
         self.opens = 0
+        self.play_failures: list[AlbumId] = []
+        self.stop_failures = 0
+        self.transport_failures = 0
         self._boom = boom
 
     def notify_changed(self) -> None:
         self.opens += 1
         if self._boom:
             msg = "projection blew up"
+            raise RuntimeError(msg)
+
+    def present_play_failure(self, album: AlbumId) -> None:
+        self.play_failures.append(album)
+        if self._boom:
+            msg = "surface blew up"
+            raise RuntimeError(msg)
+
+    def present_stop_failure(self) -> None:
+        self.stop_failures += 1
+
+    def present_transport_failure(self) -> None:
+        self.transport_failures += 1
+        if self._boom:
+            msg = "surface blew up"
             raise RuntimeError(msg)
 
 
@@ -190,7 +242,7 @@ def _subscription(
 
 
 async def test_run_registers_the_menu_and_subscribes_once() -> None:
-    # Invariant I: one connection, one subscription to exactly the two topics.
+    # Invariant I: one connection, one subscription to exactly the topic set.
     service = _FakeCommands()
     menu = _FakeMenu()
     listener = _RecordingListener()
@@ -200,7 +252,7 @@ async def test_run_registers_the_menu_and_subscribes_once() -> None:
     await sub.run()
 
     assert menu.registered == [("music", "Music")]
-    assert listener.subscribed == ("music.play", "music.stop")
+    assert listener.subscribed == _ALL_TOPICS  # all six topics, not just play/stop
     assert len(calls) == 1  # exactly one connection built
     assert listener.listens == 1
 
@@ -232,7 +284,7 @@ async def test_run_retries_until_luxd_is_up_then_registers_fresh(
     await sub.run()
 
     assert len(attempts) == 2  # retried once, then one connection
-    assert listener.subscribed == ("music.play", "music.stop")
+    assert listener.subscribed == _ALL_TOPICS  # all six topics, not just play/stop
 
 
 async def test_run_restarts_and_recovers_after_a_listen_fault(
@@ -289,12 +341,93 @@ async def test_run_re_registers_the_menu_on_reconnect_after_expiry(
     assert menu.registered == [("music", "Music"), ("music", "Music")]
 
 
-async def test_on_event_play_dispatches_to_replay_album() -> None:
-    # The offline substitute for a live click: play -> replay_album (invariant V).
-    service = _FakeCommands()
+async def test_run_logs_connect_subscribe_connected_and_clean_stop(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The connect/subscribe/connected/disconnect audit trail: one grep of [lux]
+    # shows the whole receive-leg lifecycle in order.
+    listener = _RecordingListener()
+    sub = LuxSubscription(
+        _FakeCommands(), _FakeOpener(), _FakeMenu(), _connect(listener, [])
+    )
+
+    with caplog.at_level(logging.INFO):
+        await sub.run()
+
+    lux = [r.getMessage() for r in caplog.records if "[lux]" in r.getMessage()]
+    assert any("connecting" in m for m in lux)
+    assert any("subscribed to topics music.play, music.stop" in m for m in lux)
+    assert any("handshake complete" in m for m in lux)  # connected
+    assert any("stopped cleanly" in m for m in lux)  # clean disconnect
+
+
+async def test_run_logs_the_reconnect_when_luxd_is_down(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A down luxd is retried; the [lux] warning names the attempt and backoff so a
+    # reconnect storm is legible in vox.log.
+    monkeypatch.setattr(
+        "punt_vox.voxd.music_player.lux_subscription._RETRY_SECONDS", 0.001
+    )
+    listener = _RecordingListener()
+    attempts: list[int] = []
+
+    def connect(
+        on_event: EventHandler,
+        on_callback: CallbackHandler,
+        on_connect: ConnectHandler,
+    ) -> HubListener:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise HubUnavailableError("luxd down")
+        listener.bind(on_connect)
+        return listener
+
+    sub = LuxSubscription(_FakeCommands(), _FakeOpener(), _FakeMenu(), connect)
+
+    with caplog.at_level(logging.WARNING):
+        await sub.run()
+
+    assert any(
+        "[lux]" in r.getMessage() and "luxd down" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def test_on_event_logs_the_inbound_play(
+    caplog: pytest.LogCaptureFixture,
+    album_of: AlbumFactory,
+) -> None:
+    album = album_of("aa11bb", name="Techno Mix")
+    sub = _subscription(service=_FakeCommands((album,)))
+    with caplog.at_level(logging.INFO):
+        await sub.on_event("music.play", {"anchor": "Techno Mix"})
+    assert any(
+        "[lux]" in r.getMessage() and "received music.play" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def test_on_callback_logs_the_menu_click(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sub = _subscription()
+    with caplog.at_level(logging.INFO):
+        await sub.on_callback("music")
+    assert any(
+        "[lux]" in r.getMessage() and "Music menu clicked" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def test_on_event_play_dispatches_to_replay_album(album_of: AlbumFactory) -> None:
+    # The offline substitute for a live click: play -> resolve the anchor name to its
+    # album id -> replay_album (invariant V).
+    album = album_of("aa11bb", name="Techno Mix")
+    service = _FakeCommands((album,))
     sub = _subscription(service=service)
 
-    await sub.on_event("music.play", {"album_id": "aa11bb"})
+    await sub.on_event("music.play", {"anchor": "Techno Mix"})
 
     assert service.played == [AlbumId("aa11bb")]
     assert service.stops == 0
@@ -310,48 +443,222 @@ async def test_on_event_stop_dispatches_to_off() -> None:
     assert service.played == []
 
 
-async def test_on_event_dispatches_each_event_exactly_once() -> None:
+async def test_on_event_dispatches_each_event_exactly_once(
+    album_of: AlbumFactory,
+) -> None:
     # Invariant II: an event received while subscribed is dispatched exactly once.
-    service = _FakeCommands()
+    album = album_of("aa11bb", name="Techno Mix")
+    service = _FakeCommands((album,))
     sub = _subscription(service=service)
 
-    await sub.on_event("music.play", {"album_id": "aa11bb"})
+    await sub.on_event("music.play", {"anchor": "Techno Mix"})
     await sub.on_event("music.stop", {})
 
     assert service.played == [AlbumId("aa11bb")]
     assert service.stops == 1
 
 
-async def test_on_event_drops_a_malformed_frame_without_raising(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    # A malformed frame must never tear down the single connection (invariant I).
+async def test_run_subscribes_to_all_six_topics_including_the_transport() -> None:
+    # The regression this guards: the leg once subscribed to only play/stop, so the
+    # transport buttons (prev/pause/resume/next) published into a void and did
+    # nothing in the live display. Assert every MusicTopic is subscribed.
+    listener = _RecordingListener()
+    sub = LuxSubscription(
+        _FakeCommands(), _FakeOpener(), _FakeMenu(), _connect(listener, [])
+    )
+
+    await sub.run()
+
+    assert set(listener.subscribed) == set(MusicTopic)  # all six, order-independent
+    for transport in (
+        MusicTopic.PREV,
+        MusicTopic.PAUSE,
+        MusicTopic.RESUME,
+        MusicTopic.NEXT,
+    ):
+        assert transport in listener.subscribed  # the transport bar reaches voxd
+
+
+async def test_on_event_prev_dispatches_end_to_end_to_service_prev() -> None:
+    # A delivered music.prev must reach service.prev() through the real decode+apply
+    # path (not the event object directly) -- the gap the unit tests missed, since a
+    # button that publishes an unsubscribed topic is never delivered here at all.
     service = _FakeCommands()
     sub = _subscription(service=service)
 
+    await sub.on_event("music.prev", {})
+
+    assert service.prevs == 1  # decode(music.prev) -> Prev().apply -> service.prev()
+    assert service.nexts == 0
+    assert service.pauses == 0
+    assert service.resumes == 0
+
+
+async def test_on_event_transport_topics_each_dispatch_to_their_command() -> None:
+    # The full transport quartet, end to end through decode+apply.
+    service = _FakeCommands()
+    sub = _subscription(service=service)
+
+    await sub.on_event("music.prev", {})
+    await sub.on_event("music.next", {})
+    await sub.on_event("music.pause", {})
+    await sub.on_event("music.resume", {})
+
+    assert (service.prevs, service.nexts, service.pauses, service.resumes) == (
+        1,
+        1,
+        1,
+        1,
+    )
+
+
+async def test_on_event_drops_an_empty_play_payload_without_raising(
+    caplog: pytest.LogCaptureFixture,
+    album_of: AlbumFactory,
+) -> None:
+    # Until lux-r4pp lands, a row-selection publishes an empty payload -- no anchor.
+    # The click is inert: the frame is dropped, never applied, and the single
+    # connection survives (invariant I).
+    album = album_of("aa11bb", name="Techno Mix")
+    service = _FakeCommands((album,))
+    sub = _subscription(service=service)
+
     with caplog.at_level(logging.ERROR):
-        await sub.on_event("music.play", {})  # missing the album id
+        await sub.on_event("music.play", {})  # empty payload, no anchor yet
 
     assert service.played == []  # dropped, not applied
     assert any("dropping music event" in r.getMessage() for r in caplog.records)
 
 
-async def test_on_event_drops_a_playback_refusal_without_raising() -> None:
-    # A play whose album is unknown/empty raises in replay_album; the leg survives.
+async def test_on_event_surfaces_a_playback_refusal_to_the_scene(
+    album_of: AlbumFactory,
+) -> None:
+    # A play whose album is known but unplayable raises in replay_album; the leg
+    # survives AND the failure is surfaced to the scene (client-observable), not
+    # only logged.
+    album = album_of("aa11bb", name="Techno Mix")
+
     @final
     class _Refusing:
+        def catalog_albums(self) -> tuple[Album, ...]:
+            return (album,)
+
+        def status(self) -> ProgramStatus:
+            return ProgramStatus.idle()
+
         def replay_album(self, album_id: AlbumId) -> None:
-            msg = "no album with that id"
+            msg = "no ready tracks"
             raise ValueError(msg)
 
-        def off(self) -> None:  # pragma: no cover - unused here
+        def stop(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def advance(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def prev(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def pause(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def resume(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+    opener = _FakeOpener()
+    sub = LuxSubscription(
+        _Refusing(), opener, _FakeMenu(), _connect(_RecordingListener(), [])
+    )
+
+    await sub.on_event("music.play", {"anchor": "Techno Mix"})  # must not raise
+
+    assert opener.play_failures == [AlbumId("aa11bb")]  # surfaced to the scene
+
+
+async def test_on_event_surfaces_a_stop_refusal_to_the_scene() -> None:
+    @final
+    class _RefusingStop:
+        def catalog_albums(self) -> tuple[Album, ...]:
+            return ()
+
+        def status(self) -> ProgramStatus:
+            return ProgramStatus.idle()
+
+        def replay_album(self, album_id: AlbumId) -> None:  # pragma: no cover
+            raise NotImplementedError
+
+        def stop(self) -> None:
+            msg = "cannot stop right now"
+            raise ValueError(msg)
+
+        def advance(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def prev(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def pause(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def resume(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+    opener = _FakeOpener()
+    sub = LuxSubscription(
+        _RefusingStop(), opener, _FakeMenu(), _connect(_RecordingListener(), [])
+    )
+
+    await sub.on_event("music.stop", {})  # must not raise
+
+    assert opener.stop_failures == 1  # the failed stop is surfaced too
+
+
+async def test_on_event_survives_a_presenter_that_fails_to_surface(
+    caplog: pytest.LogCaptureFixture,
+    album_of: AlbumFactory,
+) -> None:
+    # Even the surface path is a boundary: a presenter that itself raises is logged
+    # and dropped, so the connection never falls over a click that could not surface.
+    album = album_of("aa11bb", name="Techno Mix")
+
+    @final
+    class _Refusing:
+        def catalog_albums(self) -> tuple[Album, ...]:
+            return (album,)
+
+        def status(self) -> ProgramStatus:
+            return ProgramStatus.idle()
+
+        def replay_album(self, album_id: AlbumId) -> None:
+            msg = "no ready tracks"
+            raise ValueError(msg)
+
+        def stop(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def advance(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def prev(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def pause(self) -> None:  # pragma: no cover - unused here
+            raise NotImplementedError
+
+        def resume(self) -> None:  # pragma: no cover - unused here
             raise NotImplementedError
 
     sub = LuxSubscription(
-        _Refusing(), _FakeOpener(), _FakeMenu(), _connect(_RecordingListener(), [])
+        _Refusing(),
+        _FakeOpener(boom=True),
+        _FakeMenu(),
+        _connect(_RecordingListener(), []),
     )
 
-    await sub.on_event("music.play", {"album_id": "aa11bb"})  # must not raise
+    with caplog.at_level(logging.ERROR):
+        await sub.on_event("music.play", {"anchor": "Techno Mix"})  # must not raise
+
+    assert any("could not surface" in r.getMessage() for r in caplog.records)
 
 
 async def test_on_callback_opens_the_scene_for_the_music_menu() -> None:
@@ -385,10 +692,9 @@ async def test_on_callback_survives_a_failing_open(
 
 
 async def test_on_connect_registers_the_menu_and_repushes_the_scene() -> None:
-    # The Bugbot fix (invariant III, register-fresh): a fresh handshake fires
-    # on_connect, which BOTH re-registers the Music menu AND re-pushes the scene -- so
-    # a >30s outage that lapses the lease is healed on the internal reconnect, not only
-    # on an outer fault.
+    # register-fresh (invariant III): a fresh handshake fires on_connect, which BOTH
+    # re-registers the Music menu AND re-pushes the scene -- so a >30s outage that
+    # lapses the lease is healed on the internal reconnect, not only on an outer fault.
     menu = _FakeMenu()
     opener = _FakeOpener()
     sub = LuxSubscription(

@@ -49,7 +49,7 @@ class SwitchProgram:
         """A switch stops whatever was playing at once and begins the new Program."""
         return True
 
-    def apply(self, _source: PlaybackSource, /) -> None:
+    def apply(self, _source: PlaybackSource, /) -> bool:
         """Retarget the channel and context, then drive the seeded transition.
 
         The prior source (the positional argument) is discarded outright -- the
@@ -62,3 +62,4 @@ class SwitchProgram:
             self.program.turn_on()
         else:
             self.program.start_from_disk(self.target)
+        return True

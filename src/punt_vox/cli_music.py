@@ -27,7 +27,11 @@ from punt_vox.config import ConfigStore
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.program_gateway import ProgramGateway
-from punt_vox.types_programs.control import SelectionRequest, StartRequest
+from punt_vox.types_programs.control import (
+    CommandOutcome,
+    SelectionRequest,
+    StartRequest,
+)
 from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.types_programs.status import ProgramStatus
 
@@ -130,8 +134,8 @@ class MusicCli:
         style: Annotated[
             str | None, typer.Option("--style", help="Style tag, e.g. 'trance'.")
         ] = None,
-        name: Annotated[
-            str | None, typer.Option("--name", help="Curated album handle to save.")
+        title: Annotated[
+            str | None, typer.Option("--title", help="Human album title.")
         ] = None,
         *,
         json_output: _JsonOutput = False,
@@ -153,7 +157,7 @@ class MusicCli:
         request = StartRequest(
             style=StartRequest.canonical_tag(style),
             vibe=self._vibe_source(),
-            name=StartRequest.canonical_tag(name),
+            name=StartRequest.canonical_tag(title),
             prompts=prompts,
         )
         outcome = self._guard(lambda: self._gateway_factory().start(request))
@@ -258,11 +262,50 @@ class MusicCli:
 
         The bare positional is *id-or-name* (a saved id, else the saved-name
         radio); the ``--style``/``--vibe``/``--name`` selectors keep the shipped
-        per-vibe, cross-genre union radio -- both resolve.
+        per-vibe, cross-genre union radio -- both resolve. With no argument at all
+        it repeats the last-played album (:meth:`_replay_last`).
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         request = SelectionRequest(style=style, vibe=vibe, name=name, id=album_id)
+        if request.is_empty:
+            self._replay_last(request)
+            return
         outcome = self._guard(lambda: self._gateway_factory().select(request))
+        self._emit_play(outcome)
+
+    def _replay_last(self, request: SelectionRequest) -> None:
+        """Replay the last-played album; with no history, list the catalog and fail.
+
+        A bare ``play`` repeats the daemon's last-played album. When none has
+        played yet the daemon rejects the empty request, and this prints that
+        message beside the saved-album list rather than starting an arbitrary
+        album, so the caller can pick one.
+        """
+        gateway = self._gateway_factory()
+        try:
+            outcome = gateway.select(request)
+        except _GATEWAY_ERRORS as exc:
+            self._fail_with_catalog(str(exc), gateway)
+        self._emit_play(outcome)
+
+    def _fail_with_catalog(self, message: str, gateway: ProgramGateway) -> NoReturn:
+        """Fail with *message* and the saved-album list, when the daemon is reachable.
+
+        The album list is best-effort: a second daemon fault (an unreachable
+        daemon, not a missing history) drops it, so the caller still sees the
+        original error rather than a masking one.
+        """
+        try:
+            albums = gateway.catalog()
+        except _GATEWAY_ERRORS:
+            self._fail(message)
+        if not albums:
+            self._fail(message)
+        listing = "\n".join(f"  {a.display_line()}" for a in albums)
+        self._fail(f"{message}\nsaved albums:\n{listing}")
+
+    def _emit_play(self, outcome: CommandOutcome) -> None:
+        """Emit the play outcome (the one place both play paths render)."""
         self._formatter.emit(
             {"music": "play", "applied": outcome.applied},
             outcome.display("Playing selection."),
@@ -273,8 +316,8 @@ class MusicCli:
         prompt: Annotated[
             str, typer.Argument(help="Verbatim ElevenLabs descriptive prompt.")
         ],
-        name: Annotated[
-            str | None, typer.Option("--name", help="Curated album handle.")
+        title: Annotated[
+            str | None, typer.Option("--title", help="Human album title.")
         ] = None,
         *,
         json_output: _JsonOutput = False,
@@ -291,7 +334,7 @@ class MusicCli:
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         prompts = self._guard(lambda: PromptSet.single(prompt))
-        album_id = self._guard(lambda: self._catalog_factory().new(prompts, name))
+        album_id = self._guard(lambda: self._catalog_factory().new(prompts, title))
         self._formatter.emit({"album_id": album_id}, album_id)
 
     def get(
@@ -322,23 +365,23 @@ class MusicCli:
         self._guard(lambda: self._catalog_factory().remove(album_id))
         self._formatter.emit({"removed": album_id}, f"removed {album_id}")
 
-    def off(
+    def stop(
         self,
         *,
         json_output: _JsonOutput = False,
         verbose: _Verbose = False,
         quiet: _Quiet = False,
     ) -> None:
-        """Turn the music program off (stop playback); a no-op when already off.
+        """Stop the music program (halt playback); a no-op when already stopped.
 
-        The one CLI stop verb, matching ``mic:music mode="off"``: both route the
-        same daemon program-off op. A stop against an already-idle Program is
+        The one CLI halt verb, matching ``mic:music stop``: both route the same
+        daemon program-stop op. A stop against an already-idle Program is
         idempotent -- the daemon acks and the CLI prints a clean confirmation.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         outcome = self._guard(lambda: self._gateway_factory().stop())
         self._formatter.emit(
-            {"music": "off", "applied": outcome.applied},
+            {"music": "stop", "applied": outcome.applied},
             outcome.display("Music stopped."),
         )
 
@@ -349,12 +392,57 @@ class MusicCli:
         verbose: _Verbose = False,
         quiet: _Quiet = False,
     ) -> None:
-        """Advance the active source to another Part."""
+        """Step the active source forward one part (transport next)."""
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         outcome = self._guard(lambda: self._gateway_factory().advance())
         self._formatter.emit(
             {"music": "next", "applied": outcome.applied},
             outcome.display("Advancing to another part."),
+        )
+
+    def prev(
+        self,
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
+    ) -> None:
+        """Step the active source back one part (transport prev)."""
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+        outcome = self._guard(lambda: self._gateway_factory().prev())
+        self._formatter.emit(
+            {"music": "prev", "applied": outcome.applied},
+            outcome.display("Stepping to the previous part."),
+        )
+
+    def pause(
+        self,
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
+    ) -> None:
+        """Suspend the active source in place (transport pause)."""
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+        outcome = self._guard(lambda: self._gateway_factory().pause())
+        self._formatter.emit(
+            {"music": "pause", "applied": outcome.applied},
+            outcome.display("Paused."),
+        )
+
+    def resume(
+        self,
+        *,
+        json_output: _JsonOutput = False,
+        verbose: _Verbose = False,
+        quiet: _Quiet = False,
+    ) -> None:
+        """Continue a suspended source (transport resume)."""
+        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+        outcome = self._guard(lambda: self._gateway_factory().resume())
+        self._formatter.emit(
+            {"music": "resume", "applied": outcome.applied},
+            outcome.display("Resumed."),
         )
 
     def status(
@@ -374,14 +462,27 @@ class MusicCli:
         """Render a ProgramStatus as a short human block for the CLI."""
         if status.is_idle:
             return "Nothing playing."
-        now = status.now_playing
-        where = f"playing {now.index} of {now.of}" if now is not None else "stopped"
+        where = MusicCli._position(status)
         head = status.name.value if status.name is not None else status.format.label
         lines = [f"{head} [{status.format.label}] — {where} ({status.mode.value})"]
         if status.generation.last_error is not None:
             lines.append(f"  error: {status.generation.last_error}")
         lines += [f"  part {f.index} failed: {f.reason}" for f in status.failed_parts]
         return "\n".join(lines)
+
+    @staticmethod
+    def _position(status: ProgramStatus) -> str:
+        """Return the transport phrase: ``paused``/``playing N of M``, or ``stopped``.
+
+        The wire status carries ``paused`` (the transport suspension), so a held
+        source reads "paused N of M" rather than the misleading "playing N of M" a
+        client would otherwise print for a source that is not advancing.
+        """
+        now = status.now_playing
+        if now is None:
+            return "stopped"
+        verb = "paused" if status.paused else "playing"
+        return f"{verb} {now.index} of {now.of}"
 
 
 def build_music_app(formatter: OutputFormatter, flags: OutputFlags) -> typer.Typer:
@@ -395,9 +496,12 @@ def build_music_app(formatter: OutputFormatter, flags: OutputFlags) -> typer.Typ
     app.command("new")(cli.new)
     app.command("list")(cli.list_programs)
     app.command("play")(cli.play)
-    app.command("off")(cli.off)
+    app.command("stop")(cli.stop)
     app.command("get")(cli.get)
     app.command("remove")(cli.remove)
     app.command("next")(cli.advance)
+    app.command("prev")(cli.prev)
+    app.command("pause")(cli.pause)
+    app.command("resume")(cli.resume)
     app.command("status")(cli.status)
     return app

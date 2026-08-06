@@ -34,11 +34,12 @@ class TurnOn:
         """Turn-on starts from ``off`` -- there is no playback to interrupt."""
         return False
 
-    def apply(self, source: PlaybackSource, /) -> None:
+    def apply(self, source: PlaybackSource, /) -> bool:
         """Apply the turn-on transition, rejecting a non-generate source."""
         if not isinstance(source, Program):
             GuardViolationError.reject("turn_on requires a generate program")
         source.turn_on()
+        return True
 
 
 @final
@@ -61,13 +62,14 @@ class TurnOff:
         """Turn-off stops playback now."""
         return True
 
-    def apply(self, source: PlaybackSource, /) -> None:
+    def apply(self, source: PlaybackSource, /) -> bool:
         """Turn a Program off, or retarget a replay Selection to idle."""
         if isinstance(source, Program):
             source.turn_off()
-            return
+            return True
         self.channel.retarget(self.idle)
         self.context.clear()
+        return True
 
 
 @final
@@ -87,7 +89,12 @@ class VibeStyleChange:
         """A retune finishes the current track first, then switches pools."""
         return False
 
-    def apply(self, source: PlaybackSource, /) -> None:
-        """Retune a generate Program; ignore the vibe against a replay Selection."""
+    def apply(self, source: PlaybackSource, /) -> bool:
+        """Retune a generate Program; ignore the vibe against a replay Selection.
+
+        A retune never interrupts (it finishes the current track), so the return
+        value only reports that the command was consumed -- ``True`` either way.
+        """
         if isinstance(source, Program):
             source.vibe_style_change(self.new_pool)
+        return True

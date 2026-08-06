@@ -43,7 +43,7 @@ class SwitchSelection:
         """A switch stops whatever was playing at once and begins the replay."""
         return True
 
-    def apply(self, _source: PlaybackSource, /) -> None:
+    def apply(self, _source: PlaybackSource, /) -> bool:
         """Retarget the channel and context to the seeded replay Selection.
 
         The prior source (the positional argument) is discarded outright,
@@ -51,3 +51,4 @@ class SwitchSelection:
         """
         self.channel.retarget(self.playback)
         self.context.switch(self.active)
+        return True

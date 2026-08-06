@@ -21,12 +21,17 @@ from punt_vox.voxd.programs.library_handlers import (
 )
 from punt_vox.voxd.programs.list_handler import ListHandler
 from punt_vox.voxd.programs.next_handler import NextHandler
-from punt_vox.voxd.programs.off_handler import OffHandler
 from punt_vox.voxd.programs.on_handler import OnHandler
 from punt_vox.voxd.programs.select_handler import SelectHandler
 from punt_vox.voxd.programs.service import ProgramService
 from punt_vox.voxd.programs.sleeper import RealSleeper
 from punt_vox.voxd.programs.status_handler import StatusHandler
+from punt_vox.voxd.programs.stop_handler import StopHandler
+from punt_vox.voxd.programs.transport_handlers import (
+    PauseHandler,
+    PrevHandler,
+    ResumeHandler,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -46,11 +51,11 @@ class ProgramSubsystem:
     _service: ProgramService
     _library: MusicLibrary
 
-    def __new__(cls, root: Path, producer: Producer) -> Self:
+    def __new__(cls, root: Path, producer: Producer, mpv_socket: Path) -> Self:
         self = super().__new__(cls)
         store = FilesystemProgramStore(root)
         self._root = root
-        self._service = ProgramService(producer, store, root, RealSleeper())
+        self._service = ProgramService(producer, store, root, RealSleeper(), mpv_socket)
         # The library shares the service's one catalog and store, so an authored
         # album is instantly listable/playable and a removed one vanishes.
         self._library = MusicLibrary(self._service.catalog, store, root, producer)
@@ -72,8 +77,11 @@ class ProgramSubsystem:
         library = self._library
         return {
             "program_on": OnHandler(service),
-            "program_off": OffHandler(service),
+            "program_stop": StopHandler(service),
             "program_next": NextHandler(service),
+            "program_prev": PrevHandler(service),
+            "program_pause": PauseHandler(service),
+            "program_resume": ResumeHandler(service),
             "program_select": SelectHandler(service),
             "program_list": ListHandler(service),
             "program_status": StatusHandler(service),

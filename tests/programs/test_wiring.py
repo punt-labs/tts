@@ -17,14 +17,17 @@ if TYPE_CHECKING:
 
 def _subsystem(root: Path) -> ProgramSubsystem:
     """Build a subsystem with a fake producer (Fix #5e: producer is injectable)."""
-    return ProgramSubsystem(root, QuietProducer())
+    return ProgramSubsystem(root, QuietProducer(), root / "mpv.sock")
 
 
 _EXPECTED_HANDLERS = frozenset(
     {
         "program_on",
-        "program_off",
+        "program_stop",
         "program_next",
+        "program_prev",
+        "program_pause",
+        "program_resume",
         "program_select",
         "program_list",
         "program_status",

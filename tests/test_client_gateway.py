@@ -122,14 +122,14 @@ def test_advance_returns_the_client_outcome() -> None:
     assert outcome.message == "lost race"
 
 
-def test_stop_delegates_to_program_off() -> None:
-    """stop() delegates to program_off and returns its outcome."""
+def test_stop_delegates_to_program_stop() -> None:
+    """stop() delegates to program_stop and returns its outcome."""
     client = MagicMock()
-    client.program_off.return_value = CommandOutcome.ok("")
+    client.program_stop.return_value = CommandOutcome.ok("")
 
     outcome = ClientProgramGateway(client).stop()
 
-    client.program_off.assert_called_once_with()
+    client.program_stop.assert_called_once_with()
     assert outcome.applied is True
 
 

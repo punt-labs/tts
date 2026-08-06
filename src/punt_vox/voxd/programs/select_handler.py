@@ -26,26 +26,29 @@ class SelectHandler(ProgramCommandHandler):
     _WIRE_TYPE = "program_select"
 
     def _run(self, msg: dict[str, object], /) -> None:
-        """Route by resolution kind: the bare positional (id-or-name), else tags.
+        """Dispatch by request shape: a specific album, the bare play, or a radio.
 
-        The positional rides the wire as ``album_id`` -- distinct from the ``id``
-        request-correlation field the envelope already uses -- and is resolved by
-        :meth:`_replay_positional`. Absent it, the ``style``/``vibe``/``name``
-        selectors build the tag query.
+        The three shapes map to three service methods: an ``album_id`` positional
+        replays one album (:meth:`_replay_positional`); a request with no album and
+        no ``style``/``vibe``/``name`` selector is the bare ``play`` that repeats
+        the last-played album (:meth:`ProgramService.replay_last`, which raises when
+        none has played yet); any selector builds the tag-query radio. Tags are
+        canonicalized as the on-path mints them, so a replay of " trance " matches
+        an album minted as "trance".
         """
         album_id = self._opt_str(msg, "album_id")
         if album_id is not None:
             self._replay_positional(album_id)
             return
-        # Canonicalize the tags the same way the on-path mints them, so a replay
-        # of " trance " matches an album minted as "trance" -- write and read agree.
-        self._service.replay(
-            TagQuery.normalized(
-                style=self._opt_str(msg, "style"),
-                vibe=self._opt_str(msg, "vibe"),
-                name=self._opt_str(msg, "name"),
-            )
+        query = TagQuery.normalized(
+            style=self._opt_str(msg, "style"),
+            vibe=self._opt_str(msg, "vibe"),
+            name=self._opt_str(msg, "name"),
         )
+        if query.is_empty:
+            self._service.replay_last()
+        else:
+            self._service.replay(query)
 
     def _replay_positional(self, ref: str) -> None:
         """Replay what the bare positional names: a saved album id, else a name radio.

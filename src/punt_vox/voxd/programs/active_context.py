@@ -12,9 +12,10 @@ writer swaps, so the player and the fill never see a half-swapped context.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.types_programs.identifiers import ProgramName
+from punt_vox.voxd.containment import ContainmentRoot
 from punt_vox.voxd.programs.filler import FillPlan
 
 if TYPE_CHECKING:
@@ -28,6 +29,8 @@ if TYPE_CHECKING:
     from punt_vox.voxd.programs.store import PartStore
 
 __all__ = ["ActiveContext", "ActiveProgram", "ActiveSelection"]
+
+_PART_LABEL: Final = "part name"
 
 
 @final
@@ -52,8 +55,18 @@ class ActiveProgram:
         return FillPlan(store=self.store, tags=self.tags, prompts=self.prompts)
 
     def locate(self, part: Part) -> Path:
-        """Return the on-disk path of ``part`` in this album's single directory."""
-        return self.directory / part.identity
+        """Return ``part``'s contained regular file in this album's directory (F2).
+
+        The Part identity is untrusted -- it is the manifest ``file`` field. It is
+        resolved through the shared :class:`ContainmentRoot` gate: a name that is a
+        symlink, a directory, absent, or escapes the album directory raises
+        ``ValueError`` before the path can reach ``loadfile``, mirroring the
+        ``music get`` fetch path so no crafted manifest opens a file outside the
+        album.
+        """
+        return ContainmentRoot(self.directory, _PART_LABEL).contained_regular_file(
+            part.identity
+        )
 
     @property
     def name(self) -> ProgramName:
@@ -71,22 +84,34 @@ class ActiveSelection:
     ``playable`` identity, so :meth:`locate` never parses a string.
     """
 
-    __slots__ = ("_label", "_paths")
-    _paths: dict[Part, Path]
+    __slots__ = ("_label", "_parts")
+    # Each playable Part -> (its album directory, its untrusted file identity).
+    # The album directory (from the catalog locator) is trusted; the identity is
+    # the manifest ``file`` field and is gated at :meth:`locate`, not precomputed
+    # into a raw path, so a crafted manifest is caught at play time.
+    _parts: dict[Part, tuple[Path, str]]
     _label: str
 
     def __new__(cls, root: Path, selection: Selection, label: str) -> Self:
         self = super().__new__(cls)
-        self._paths = {
-            selected.playable: root / selected.locator / selected.part.identity
+        self._parts = {
+            selected.playable: (root / selected.locator, selected.part.identity)
             for selected in selection
         }
         self._label = label
         return self
 
     def locate(self, part: Part) -> Path:
-        """Return the resolved on-disk path of ``part`` in the selection."""
-        return self._paths[part]
+        """Return ``part``'s contained regular file in its album directory (F2).
+
+        The file identity is untrusted (the manifest ``file`` field); it is
+        resolved through the shared :class:`ContainmentRoot` gate, so a symlink,
+        a directory, an absent name, or one escaping the album directory raises
+        ``ValueError`` before the path can reach ``loadfile`` -- the same refusal
+        the ``music get`` fetch path applies.
+        """
+        album_dir, identity = self._parts[part]
+        return ContainmentRoot(album_dir, _PART_LABEL).contained_regular_file(identity)
 
     @property
     def name(self) -> ProgramName:

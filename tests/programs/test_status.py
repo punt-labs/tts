@@ -141,7 +141,7 @@ def test_playback_error_surfaces_and_round_trips() -> None:
     fault = PlaybackFault(
         part_index=2,
         reason="afplay: No such file or directory",
-        kind=PlaybackFaultKind.SPAWN,
+        kind=PlaybackFaultKind.PLAYER_UNAVAILABLE,
     )
 
     original = program.to_status(ProgramName("ambient_techno"), fault)
@@ -152,7 +152,7 @@ def test_playback_error_surfaces_and_round_trips() -> None:
     assert restored.playback_error is not None
     assert restored.playback_error.part_index == 2
     assert "No such file" in restored.playback_error.reason
-    assert restored.playback_error.kind is PlaybackFaultKind.SPAWN
+    assert restored.playback_error.kind is PlaybackFaultKind.PLAYER_UNAVAILABLE
 
 
 def test_radio_surfaces_a_playback_fault() -> None:
@@ -164,7 +164,7 @@ def test_radio_surfaces_a_playback_fault() -> None:
     fault = PlaybackFault(
         part_index=3,
         reason="player exited with code 1",
-        kind=PlaybackFaultKind.TRACK_EXIT,
+        kind=PlaybackFaultKind.TRACK_ERROR,
     )
 
     status = ProgramStatus.radio(ProgramName("radio"), None, fault)
@@ -174,7 +174,7 @@ def test_radio_surfaces_a_playback_fault() -> None:
     assert restored == status
     assert restored.playback_error is not None
     assert restored.playback_error.part_index == 3
-    assert restored.playback_error.kind is PlaybackFaultKind.TRACK_EXIT
+    assert restored.playback_error.kind is PlaybackFaultKind.TRACK_ERROR
 
 
 def test_healthy_radio_has_no_playback_error() -> None:

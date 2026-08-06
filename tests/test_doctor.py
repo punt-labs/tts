@@ -114,6 +114,83 @@ class TestCheckFfmpeg:
 
 
 # ---------------------------------------------------------------------------
+# check_mpv (present + version gate)
+# ---------------------------------------------------------------------------
+
+
+class TestCheckMpv:
+    @staticmethod
+    def _proc(stdout: str) -> MagicMock:
+        return MagicMock(stdout=stdout)
+
+    @patch("punt_vox.doctor.shutil.which", return_value="/usr/bin/mpv")
+    def test_present_recent_passes(self, _which: MagicMock) -> None:
+        with patch(
+            "punt_vox.doctor.subprocess.run",
+            return_value=self._proc("mpv 0.38.0 Copyright"),
+        ):
+            result = DoctorCheck().check_mpv()
+        assert result.passed is True
+        assert result.message == "mpv: present (0.38.0)"
+        assert "/usr/bin/mpv" not in result.message  # out-of-jail path dropped
+
+    @patch("punt_vox.doctor.shutil.which", return_value=None)
+    def test_missing_fails(self, _which: MagicMock) -> None:
+        result = DoctorCheck().check_mpv()
+        assert result.passed is False
+        assert result.symbol == "✗"
+        assert "not found" in result.message
+
+    @patch("punt_vox.doctor.shutil.which", return_value="/usr/bin/mpv")
+    def test_too_old_fails(self, _which: MagicMock) -> None:
+        with patch(
+            "punt_vox.doctor.subprocess.run",
+            return_value=self._proc("mpv 0.30.0 Copyright"),
+        ):
+            result = DoctorCheck().check_mpv()
+        assert result.passed is False
+        assert result.symbol == "✗"
+        assert "too old" in result.message
+        assert "0.30.0" in result.message
+        assert "0.35.0" in result.message  # names the required floor
+
+    @patch("punt_vox.doctor.shutil.which", return_value="/usr/bin/mpv")
+    def test_unparseable_version_fails(self, _which: MagicMock) -> None:
+        with patch(
+            "punt_vox.doctor.subprocess.run",
+            return_value=self._proc("not a version line"),
+        ):
+            result = DoctorCheck().check_mpv()
+        assert result.passed is False
+        assert result.symbol == "✗"
+        assert "unreadable" in result.message
+
+    @patch("punt_vox.doctor.shutil.which", return_value="/usr/bin/mpv")
+    def test_subprocess_error_fails(self, _which: MagicMock) -> None:
+        with patch("punt_vox.doctor.subprocess.run", side_effect=OSError("boom")):
+            result = DoctorCheck().check_mpv()
+        assert result.passed is False
+        assert "unreadable" in result.message
+
+
+class TestParseMpvVersion:
+    @pytest.mark.parametrize(
+        ("output", "expected"),
+        [
+            ("mpv 0.38.0 Copyright © 2000-2024", (0, 38, 0)),
+            ("mpv v0.35.1 Copyright", (0, 35, 1)),
+            ("mpv 0.37 Copyright", (0, 37, 0)),
+            ("mpv 0.40.0-git-abc123", (0, 40, 0)),
+        ],
+    )
+    def test_parses_version(self, output: str, expected: tuple[int, int, int]) -> None:
+        assert DoctorCheck._parse_mpv_version(output) == expected
+
+    def test_no_version_returns_none(self) -> None:
+        assert DoctorCheck._parse_mpv_version("no version here") is None
+
+
+# ---------------------------------------------------------------------------
 # check_daemon_health
 # ---------------------------------------------------------------------------
 

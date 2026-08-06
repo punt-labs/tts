@@ -64,8 +64,20 @@ class _FakeService:
     def replay_album(self, album_id: AlbumId) -> None:
         self.played.append(album_id)
 
-    def off(self) -> None:
+    def stop(self) -> None:
         self.stops += 1
+
+    def advance(self) -> None:  # pragma: no cover - unused here
+        raise NotImplementedError
+
+    def prev(self) -> None:  # pragma: no cover - unused here
+        raise NotImplementedError
+
+    def pause(self) -> None:  # pragma: no cover - unused here
+        raise NotImplementedError
+
+    def resume(self) -> None:  # pragma: no cover - unused here
+        raise NotImplementedError
 
 
 @final
@@ -90,7 +102,19 @@ class _FlakyService:
     def replay_album(self, album_id: AlbumId) -> None:  # pragma: no cover - unused here
         raise NotImplementedError
 
-    def off(self) -> None:  # pragma: no cover - unused here
+    def stop(self) -> None:  # pragma: no cover - unused here
+        raise NotImplementedError
+
+    def advance(self) -> None:  # pragma: no cover - unused here
+        raise NotImplementedError
+
+    def prev(self) -> None:  # pragma: no cover - unused here
+        raise NotImplementedError
+
+    def pause(self) -> None:  # pragma: no cover - unused here
+        raise NotImplementedError
+
+    def resume(self) -> None:  # pragma: no cover - unused here
         raise NotImplementedError
 
 
@@ -232,22 +256,28 @@ async def _stop(task: asyncio.Task[None]) -> None:
 
 async def test_run_pushes_the_initial_scene_then_re_pushes_on_change(
     album_of: AlbumFactory,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     service = _FakeService(ProgramStatus.idle(), (album_of("aa11bb", name="Mix"),))
     changes = ChangeSignal()
     renderer = _FakeRenderer()
     sub = MusicPlayerSubsystem(service, changes, _FakeClients(renderer))
 
-    task = await _run(sub, settle=0.1)
-    assert len(renderer.rendered) == 1  # the initial vox.music scene
+    with caplog.at_level(logging.INFO):
+        task = await _run(sub, settle=0.1)
+        assert len(renderer.rendered) == 1  # the initial vox.music scene
 
-    changes.emit()  # a state change, as the control channel / catalog fires it
-    await asyncio.sleep(0.1)
-    assert len(renderer.rendered) == 2  # re-pushed on the change
-    assert renderer.menus == [("music", "Music")]  # the receive leg registered once
+        changes.emit()  # a state change, as the control channel / catalog fires it
+        await asyncio.sleep(0.1)
+        assert len(renderer.rendered) == 2  # re-pushed on the change
+        assert renderer.menus == [("music", "Music")]  # the receive leg registered
 
-    await _stop(task)
+        await _stop(task)
     assert all(r.scene_id == "vox.music" for r in renderer.rendered)
+    assert any(
+        "[lux]" in r.getMessage() and "starting both lux legs" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 async def test_emit_returns_at_once_even_when_lux_is_slow(

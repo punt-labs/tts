@@ -170,14 +170,19 @@ class VoxDaemon:
         music = MusicPlayerSubsystem(service, service.changes)
         consumer_task = asyncio.create_task(self._playback.consumer())
         control_task = asyncio.create_task(service.serve_control())
+        # The mpv supervisor spawns the one program-tier process and keeps it up;
+        # the loop waits on it before any load. Its cancellation on shutdown drives
+        # the graceful mpv teardown (quit then hard-kill).
+        supervisor_task = asyncio.create_task(service.run_player_supervisor())
         playback_task = asyncio.create_task(service.run_playback())
         scene_task = asyncio.create_task(music.run())
-        logger.info("Playback consumer, control writer, loop, and scene publisher up")
+        logger.info("Playback consumer, control writer, loop, mpv, and scene up")
         try:
             yield
         finally:
             await VoxDaemon._cancel(scene_task)
             await VoxDaemon._cancel(playback_task)
+            await VoxDaemon._cancel(supervisor_task)
             await VoxDaemon._cancel(control_task)
             service.shutdown()
             await VoxDaemon._cancel(consumer_task)
@@ -229,7 +234,8 @@ class VoxDaemon:
         the daemon composition root.
         """
         producer = MusicProducer(ElevenLabsMusicProvider(), LengthPolicy())
-        return ProgramSubsystem(VoxDaemon._programs_root(), producer)
+        mpv_socket = _run_dir() / "mpv.sock"
+        return ProgramSubsystem(VoxDaemon._programs_root(), producer, mpv_socket)
 
     @staticmethod
     def _health_handler(

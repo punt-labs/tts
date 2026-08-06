@@ -12,6 +12,7 @@ from __future__ import annotations
 import io
 import json
 import re
+from dataclasses import replace
 from pathlib import Path
 from typing import Self, final
 from unittest.mock import MagicMock
@@ -141,6 +142,18 @@ def test_new_passes_prompt_verbatim_and_prints_bare_id() -> None:
     assert payload == {"album_id": text}  # human text is exactly the bare id
 
 
+def test_new_forwards_the_title_as_the_album_name() -> None:
+    """``vox music new --title`` hands the title to the catalog as the name."""
+    catalog = InMemoryCatalogGateway()
+    cli, formatter = _cli_catalog(catalog)
+
+    cli.new("warm pads", title="Warm Pads")
+
+    payload, _ = _emitted(formatter)
+    # The fake keys the album on the name it was handed; the CLI prints that id.
+    assert payload == {"album_id": "Warm Pads"}
+
+
 def test_new_does_not_touch_the_active_program() -> None:
     """music new parks a track in the catalog; the Program is untouched (D-5)."""
     program = FakeProgramGateway()
@@ -235,10 +248,13 @@ def test_music_group_exposes_the_unified_verb_set() -> None:
         "new",
         "list",
         "play",
-        "off",
+        "stop",
         "get",
         "remove",
         "next",
+        "prev",
+        "pause",
+        "resume",
         "status",
     }
 
@@ -334,6 +350,39 @@ def test_play_websocket_error_is_clean_error() -> None:
         cli.play("a3f1c9")
 
 
+def test_play_no_argument_replays_the_last_played() -> None:
+    """A bare `vox music play` sends the empty request the daemon replays."""
+    fake = FakeProgramGateway()
+    cli, formatter = _cli(fake)
+
+    cli.play()
+
+    assert fake.calls[0].verb == "select"
+    assert fake.calls[0].selection is not None
+    assert fake.calls[0].selection.is_empty
+    payload, _ = _emitted(formatter)
+    assert payload == {"music": "play", "applied": True}
+
+
+def test_play_no_argument_without_history_errors_and_lists(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A bare play with no history fails with the message AND the album list."""
+    fake = FakeProgramGateway(
+        catalog=(_summary("a3f1c9", "trance", "calm", 3),),
+        select_error="no album played yet; specify an album by id, name, or style/vibe",
+    )
+    cli = MusicCli(MagicMock(spec=OutputFormatter), lambda: fake)
+
+    with pytest.raises(typer.Exit):
+        cli.play()
+
+    text = capsys.readouterr().err
+    assert "no album played yet" in text
+    assert "a3f1c9" in text  # the saved-album list is printed
+    assert fake.verbs() == ["select", "catalog"]  # never a play of album #1
+
+
 def test_status_websocket_handshake_error_is_clean_error() -> None:
     """A stale-token handshake failure on status surfaces cleanly, not raw."""
     gateway = MagicMock()
@@ -345,44 +394,44 @@ def test_status_websocket_handshake_error_is_clean_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# off -- the one CLI stop verb, routed to the daemon program-off op
+# stop -- the one CLI halt verb, routed to the daemon program-stop op
 # ---------------------------------------------------------------------------
 
 
-def test_off_invokes_the_program_off_op() -> None:
-    """`vox music off` issues the gateway stop() -- the daemon program-off path."""
+def test_stop_invokes_the_program_stop_op() -> None:
+    """`vox music stop` issues the gateway stop() -- the daemon program-stop path."""
     fake = FakeProgramGateway()
     cli, formatter = _cli(fake)
 
-    cli.off()
+    cli.stop()
 
     assert fake.verbs() == ["stop"]
     payload, text = _emitted(formatter)
-    assert payload == {"music": "off", "applied": True}
+    assert payload == {"music": "stop", "applied": True}
     assert text == "Music stopped."
 
 
-def test_off_is_idempotent_when_already_off() -> None:
+def test_stop_is_idempotent_when_already_stopped() -> None:
     """Stopping an already-idle Program is a clean no-op, not an error."""
     fake = FakeProgramGateway(status=ProgramStatus.idle())
     cli, formatter = _cli(fake)
 
-    cli.off()
-    cli.off()
+    cli.stop()
+    cli.stop()
 
     assert fake.verbs() == ["stop", "stop"]
     _, text = _emitted(formatter)
     assert text == "Music stopped."
 
 
-def test_off_websocket_error_is_clean_error() -> None:
-    """A mid-request WebSocket close on off is a clean CLI error, not raw."""
+def test_stop_websocket_error_is_clean_error() -> None:
+    """A mid-request WebSocket close on stop is a clean CLI error, not raw."""
     gateway = MagicMock()
     gateway.stop.side_effect = WebSocketException("connection closed")
     cli = MusicCli(MagicMock(spec=OutputFormatter), lambda: gateway)
 
     with pytest.raises(typer.Exit):
-        cli.off()
+        cli.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -427,6 +476,20 @@ def test_status_renders_now_playing_and_failures() -> None:
     assert "part 2 failed" in text
 
 
+def test_status_renders_paused_when_the_source_is_suspended() -> None:
+    program = Program(ProgramState.initial(), _AvoidRepeat())
+    program.turn_on()
+    program.first_track_ok(Part("id001", 1))
+    status = replace(program.to_status(ProgramName("ambient_techno")), paused=True)
+    cli, formatter = _cli(FakeProgramGateway(status=status))
+
+    cli.status()
+
+    _, text = _emitted(formatter)
+    assert "paused 1 of 1" in text  # not the misleading "playing" for a held source
+    assert "playing 1 of 1" not in text
+
+
 def test_status_idle() -> None:
     cli, formatter = _cli(FakeProgramGateway(status=ProgramStatus.idle()))
 
@@ -458,7 +521,7 @@ def test_list_accepts_json_flag_after_the_subcommand() -> None:
     # the runner treats "list" as the subcommand -- where --json failed (vox-cnak).
     app = typer.Typer()
     app.command("list")(cli.list_programs)
-    app.command("off")(cli.off)
+    app.command("stop")(cli.stop)
 
     result = CliRunner().invoke(app, ["list", "--json"])
 
@@ -572,17 +635,31 @@ def test_on_incomplete_object_pool_is_a_clean_error(
     assert fake.calls == []  # rejected before the gateway start
 
 
-def test_on_blank_style_and_name_reach_the_daemon_as_none(
+def test_on_blank_style_and_title_reach_the_daemon_as_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A blank/whitespace style or name is canonicalised to None in the request,
+    """A blank/whitespace style or title is canonicalised to None in the request,
     matching the MCP tool so the two surfaces build one StartRequest."""
     monkeypatch.setattr("sys.stdin", io.StringIO(""))
     fake = FakeProgramGateway()
 
-    _on_cli(fake).on(style="   ", name="  ")
+    _on_cli(fake).on(style="   ", title="  ")
 
     request = fake.calls[0].request
     assert request is not None
     assert request.style is None
     assert request.name is None
+
+
+def test_on_title_becomes_the_request_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The authored ``--title`` becomes the album ``name`` on the StartRequest."""
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+    fake = FakeProgramGateway()
+
+    _on_cli(fake).on(title="  Midnight Drive  ")
+
+    request = fake.calls[0].request
+    assert request is not None
+    assert request.name == "Midnight Drive"

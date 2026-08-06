@@ -1,9 +1,7 @@
-"""The music player's pub-sub wire vocabulary: the two topics and the play key.
+"""The music player's pub-sub wire vocabulary: the topics and the anchor key.
 
-Both legs of the receive path share these names -- the :class:`AlbumListScene`
-Play/Stop buttons *publish* them, and :class:`LuxSubscription` *subscribes* to and
-decodes them -- so they live in one module neither leg owns, and a rename can never
-drift the publisher out of step with the subscriber.
+Shared by both legs -- :class:`AlbumTable` publishes and :class:`LuxSubscription`
+subscribes -- so a rename can never drift one out of step with the other.
 """
 
 from __future__ import annotations
@@ -11,15 +9,24 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Final
 
-__all__ = ["ALBUM_ID_KEY", "MusicTopic"]
+__all__ = ["ANCHOR_KEY", "MusicTopic"]
 
 
 class MusicTopic(StrEnum):
-    """The two lux pub-sub topics the scene publishes and voxd subscribes to."""
+    """The lux pub-sub topics the scene publishes and voxd subscribes to.
+
+    ``PLAY`` is the album table's row-selection publish -- one topic for every
+    album, its target carried in the payload's ``anchor`` rather than the topic.
+    The rest are the transport row. The receive leg subscribes to each once.
+    """
 
     PLAY = "music.play"
     STOP = "music.stop"
+    PREV = "music.prev"
+    PAUSE = "music.pause"
+    RESUME = "music.resume"
+    NEXT = "music.next"
 
 
-ALBUM_ID_KEY: Final = "album_id"
-"""The key carrying the target album id in a ``music.play`` event payload."""
+ANCHOR_KEY: Final = "anchor"
+"""The ``music.play`` payload key holding the clicked row's ``key_column`` cell."""

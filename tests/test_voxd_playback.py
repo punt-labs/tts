@@ -425,6 +425,35 @@ class TestPlayAudioProportionalTimeout:
         assert captured_timeout[0] == _PLAYBACK_TIMEOUT_DEFAULT_S
 
 
+class TestPlayerCommandVolume:
+    """The notification/speech tier plays at a fixed sub-100% volume so that
+    music (mpv, a separate process) is not drowned out -- the voice half of the
+    two-tier static rebalance."""
+
+    def test_afplay_carries_the_voice_volume_flag(self) -> None:
+        from punt_vox.voxd.playback import _player_command
+
+        with patch("punt_vox.voxd.playback._is_darwin", return_value=True):
+            cmd = _player_command(Path("/tmp/clip.mp3"))
+
+        assert cmd == ["afplay", "-v", "0.8", "/tmp/clip.mp3"]
+
+    def test_ffplay_carries_the_voice_volume_flag(self) -> None:
+        from punt_vox.voxd.playback import _player_command
+
+        with patch("punt_vox.voxd.playback._is_darwin", return_value=False):
+            cmd = _player_command(Path("/tmp/clip.mp3"))
+
+        assert cmd == [
+            "ffplay",
+            "-nodisp",
+            "-autoexit",
+            "-volume",
+            "80",
+            "/tmp/clip.mp3",
+        ]
+
+
 class TestStderrTruncation:
     """ffplay stderr can be unbounded; the truncator caps it but keeps both ends."""
 

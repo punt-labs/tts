@@ -56,7 +56,11 @@ def _make_router(
     pb = PlaybackQueue()
     hl = DaemonHealth(pb, lambda: 0, 0)
     syn = SynthesisPipeline(playback_mutex=pb.mutex)
-    programs = ProgramSubsystem(default_output_dir() / "programs", _UnusedProducer())
+    programs = ProgramSubsystem(
+        default_output_dir() / "programs",
+        _UnusedProducer(),
+        default_output_dir() / "mpv.sock",
+    )
 
     handlers: dict[str, MessageHandler] = {
         "synthesize": SynthesizeHandler(
@@ -321,8 +325,11 @@ class TestHandlerRegistration:
             "voices",
             "health",
             "program_on",
-            "program_off",
+            "program_stop",
             "program_next",
+            "program_prev",
+            "program_pause",
+            "program_resume",
             "program_select",
             "program_list",
             "program_status",

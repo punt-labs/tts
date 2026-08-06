@@ -1234,6 +1234,8 @@ class TestDoctorCommand:
         tmp_path: Path,
         *,
         ffmpeg_found: bool = True,
+        mpv_found: bool = True,
+        mpv_version: str = "0.38.0",
         uvx_found: bool = True,
         config_exists: bool = False,
         config_data: dict[str, object] | None = None,
@@ -1255,6 +1257,8 @@ class TestDoctorCommand:
         def which_side_effect(name: str) -> str | None:
             if name == "ffmpeg" and ffmpeg_found:
                 return "/opt/homebrew/bin/ffmpeg"
+            if name == "mpv" and mpv_found:
+                return "/opt/homebrew/bin/mpv"
             if name == "uvx" and uvx_found:
                 return "/usr/local/bin/uvx"
             if name in ("espeak-ng", "espeak") and espeak_found == name:
@@ -1292,6 +1296,10 @@ class TestDoctorCommand:
             patch(f"{_doc}.shutil.which", side_effect=which_side_effect),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
             patch(
+                f"{_doc}.subprocess.run",
+                return_value=MagicMock(stdout=f"mpv {mpv_version} Copyright"),
+            ),
+            patch(
                 f"{_doc}.installed_version",
                 return_value=installed_version,
             ),
@@ -1321,6 +1329,25 @@ class TestDoctorCommand:
         result = self._run_doctor(tmp_path, ffmpeg_found=False)
         assert result.exit_code == 1
         assert "\u2717 ffmpeg" in result.output
+
+    def test_mpv_missing_fails(self, tmp_path: Path) -> None:
+        # mpv is a hard dependency: absence is a red \u2717 and a non-zero exit.
+        result = self._run_doctor(tmp_path, mpv_found=False)
+        assert result.exit_code == 1
+        assert "\u2717 mpv" in result.output
+        assert "not found" in result.output
+
+    def test_mpv_too_old_fails(self, tmp_path: Path) -> None:
+        # A present mpv below the pinned minimum is a hard error, not a warning.
+        result = self._run_doctor(tmp_path, mpv_version="0.30.0")
+        assert result.exit_code == 1
+        assert "\u2717 mpv" in result.output
+        assert "too old" in result.output
+
+    def test_mpv_present_recent_passes(self, tmp_path: Path) -> None:
+        result = self._run_doctor(tmp_path, mpv_version="0.38.0")
+        assert result.exit_code == 0
+        assert "\u2713 mpv: present" in result.output
 
     def test_uvx_missing_is_optional(self, tmp_path: Path) -> None:
         result = self._run_doctor(tmp_path, uvx_found=False)
@@ -1397,6 +1424,8 @@ class TestDoctorCommand:
         def which_side_effect(name: str) -> str | None:
             if name == "ffmpeg":
                 return "/opt/homebrew/bin/ffmpeg"
+            if name == "mpv":
+                return "/opt/homebrew/bin/mpv"
             if name == "uvx":
                 return "/usr/local/bin/uvx"
             return None
@@ -1418,6 +1447,10 @@ class TestDoctorCommand:
         _doc = "punt_vox.doctor"
         with (
             patch(f"{_doc}.shutil.which", side_effect=which_side_effect),
+            patch(
+                f"{_doc}.subprocess.run",
+                return_value=MagicMock(stdout="mpv 0.38.0 Copyright"),
+            ),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
             patch(f"{_doc}.installed_version", return_value="4.2.0"),
             patch(
@@ -1474,6 +1507,8 @@ class TestDoctorCommand:
         def which_side_effect(name: str) -> str | None:
             if name == "ffmpeg":
                 return "/opt/homebrew/bin/ffmpeg"
+            if name == "mpv":
+                return "/opt/homebrew/bin/mpv"
             if name == "uvx":
                 return "/usr/local/bin/uvx"
             return None
@@ -1495,6 +1530,10 @@ class TestDoctorCommand:
         _doc = "punt_vox.doctor"
         with (
             patch(f"{_doc}.shutil.which", side_effect=which_side_effect),
+            patch(
+                f"{_doc}.subprocess.run",
+                return_value=MagicMock(stdout="mpv 0.38.0 Copyright"),
+            ),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
             patch(f"{_doc}.installed_version", return_value="4.2.0"),
             patch(
@@ -1542,6 +1581,8 @@ class TestDoctorCommand:
         def which_side_effect(name: str) -> str | None:
             if name == "ffmpeg":
                 return "/opt/homebrew/bin/ffmpeg"
+            if name == "mpv":
+                return "/opt/homebrew/bin/mpv"
             if name == "uvx":
                 return "/usr/local/bin/uvx"
             return None
@@ -1558,6 +1599,10 @@ class TestDoctorCommand:
         _doc = "punt_vox.doctor"
         with (
             patch(f"{_doc}.shutil.which", side_effect=which_side_effect),
+            patch(
+                f"{_doc}.subprocess.run",
+                return_value=MagicMock(stdout="mpv 0.38.0 Copyright"),
+            ),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
             patch(f"{_doc}.installed_version", return_value="4.2.0"),
             patch(

@@ -17,12 +17,12 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, Self, final
 
 from websockets.exceptions import WebSocketException
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.music_args import MusicArgs
 from punt_vox.music_phrases import MusicMarquee
 from punt_vox.types_programs.control import SelectionRequest, StartRequest
 from punt_vox.types_programs.prompts import PromptSet
@@ -32,13 +32,26 @@ if TYPE_CHECKING:
 
     from punt_vox.catalog_gateway import CatalogGateway
     from punt_vox.program_gateway import ProgramGateway
+    from punt_vox.types_programs.control import CommandOutcome
     from punt_vox.vibe_command import MusicPreference
 
-__all__ = ["MusicArgs", "MusicSubcommand", "MusicTool"]
+__all__ = ["MusicSubcommand", "MusicTool"]
 
 logger = logging.getLogger(__name__)
 
-MusicSubcommand = Literal["on", "off", "play", "next", "new", "list", "get", "remove"]
+MusicSubcommand = Literal[
+    "on",
+    "stop",
+    "play",
+    "next",
+    "prev",
+    "pause",
+    "resume",
+    "new",
+    "list",
+    "get",
+    "remove",
+]
 
 # The daemon-transport faults every subcommand funnels to a JSON _error; named
 # once so the whole tool shares one contract, mirroring server.py/server_audio_tools.
@@ -64,50 +77,6 @@ class MusicSession(Protocol):
 
     def refresh_from_config(self) -> None:
         """Re-read the config files so the yielded mood is current."""
-
-
-@final
-@dataclass(frozen=True, slots=True)
-class MusicArgs:
-    """The raw ``music`` tool arguments bundled for a subcommand handler.
-
-    One frozen value object per call (PY-OO-3) instead of a fan of loose
-    parameters threaded through eight handlers; each handler reads only the
-    fields it needs. The tag fields carry their own canonicalisation so a
-    blank/whitespace tag is absent (``None``), never an explicit ``""`` the
-    daemon would store while the panel reads it as no tag.
-    """
-
-    subcommand: str
-    style: str | None = None
-    vibe: str | None = None
-    name: str | None = None
-    album_id: str | None = None
-    base_prompt: str | None = None
-    # Wire-shaped optional list: the agent's 12-entry pool for ``on``, or absent
-    # (PY-TS-14 -- the tool schema needs the list shape FastMCP builds).
-    variations: list[str] | None = None
-    dest: str | None = None
-
-    @property
-    def canonical_style(self) -> str | None:
-        """Return the style tag trimmed, or None when blank/absent."""
-        return StartRequest.canonical_tag(self.style)
-
-    @property
-    def canonical_vibe(self) -> str | None:
-        """Return the vibe tag trimmed, or None when blank/absent."""
-        return StartRequest.canonical_tag(self.vibe)
-
-    @property
-    def canonical_name(self) -> str | None:
-        """Return the name tag trimmed, or None when blank/absent."""
-        return StartRequest.canonical_tag(self.name)
-
-    @property
-    def authored(self) -> bool:
-        """Return whether the agent supplied an authored variation pool."""
-        return bool(self.variations)
 
 
 @final
@@ -155,6 +124,7 @@ class MusicTool:
         style: str | None = None,
         vibe: str | None = None,
         name: str | None = None,
+        title: str | None = None,
         album_id: str | None = None,
         base_prompt: str | None = None,
         variations: list[str] | None = None,
@@ -170,12 +140,15 @@ class MusicTool:
         loopable."``. See ``/music`` for a worked example.
 
         Args:
-            subcommand: The verb -- ``on``/``off``/``play``/``next`` drive the
+            subcommand: The verb -- ``on``/``stop``/``play``/``next`` drive the
                 running Program; ``new``/``get``/``remove`` mutate the saved
                 catalog; ``list`` shows it.
             style: Style tag; persists across calls for ``on``/``play``.
             vibe: Vibe tag radio for ``play``.
-            name: Curated album handle -- replays or saves.
+            name: Existing album handle ``play`` replays by name.
+            title: Human album title the authoring verbs (``on``/``new``)
+                give the album they create; it becomes the album's unique
+                ``name`` and rides the ID3 ``TALB``/``TIT2`` frames.
             album_id: Bare album id for ``play``/``get``/``remove``.
             base_prompt: Authored base for ``on`` (with the 12 ``variations``)
                 and the verbatim single prompt for ``new``.
@@ -191,7 +164,15 @@ class MusicTool:
         """
         self._session_provider().refresh_from_config()
         args = MusicArgs(
-            subcommand, style, vibe, name, album_id, base_prompt, variations, dest
+            subcommand=subcommand,
+            style=style,
+            vibe=vibe,
+            name=name,
+            title=title,
+            album_id=album_id,
+            base_prompt=base_prompt,
+            variations=variations,
+            dest=dest,
         )
         handler = self._HANDLERS.get(subcommand)
         if handler is None:
@@ -208,7 +189,7 @@ class MusicTool:
                 StartRequest(
                     style=style,
                     vibe=session.vibe,
-                    name=args.canonical_name,
+                    name=args.canonical_title,
                     prompts=prompts,
                 )
             )
@@ -222,8 +203,8 @@ class MusicTool:
             return _error(str(exc))
         return json.dumps({"message": message, "applied": outcome.applied})
 
-    def _off(self, _args: MusicArgs) -> str:
-        """Stop the active Program; clear the style register."""
+    def _stop(self, _args: MusicArgs) -> str:
+        """Halt the active Program; clear the style register."""
         try:
             outcome = self._program_factory().stop()
             self._pref_provider().confirm_stopped(outcome)
@@ -233,7 +214,12 @@ class MusicTool:
         return json.dumps({"message": message, "applied": outcome.applied})
 
     def _play(self, args: MusicArgs) -> str:
-        """Replay a Selection resolved by tags or by an exact album id."""
+        """Replay a Selection resolved by tags, an exact album id, or last-played.
+
+        A call carrying no id and no tags is the bare ``play``: the daemon repeats
+        the last-played album, and with none played yet the reject is rendered with
+        the saved-album list (:meth:`_no_history`) rather than an arbitrary album.
+        """
         vibe = args.canonical_vibe
         name = args.canonical_name
         request = SelectionRequest(
@@ -243,6 +229,8 @@ class MusicTool:
         try:
             outcome = gateway.select(request)
         except (ValueError, *_DAEMON_ERRORS) as exc:  # bad id / no match, or fault
+            if request.is_empty:
+                return self._no_history(str(exc), gateway)
             return _error(str(exc))
         # Name the re-pool genre from the live catalog on an applied replay; a
         # catalog fault falls back to None, never failing the applied replay.
@@ -259,14 +247,54 @@ class MusicTool:
         message = f"♪ {outcome.display(self._marquee.replay(name))}"
         return json.dumps({"message": message, "applied": outcome.applied})
 
-    def _advance(self, _args: MusicArgs) -> str:
-        """Advance to another Part -- the one ungated skip/next transition."""
+    def _no_history(self, message: str, gateway: ProgramGateway) -> str:
+        """Return the no-history reject with the saved-album list appended.
+
+        A bare ``play`` over a fresh daemon has no album to repeat: the daemon's
+        *message* says so, and the saved-album list gives the caller something to
+        pick. The list is best-effort -- a second daemon fault (unreachable, not a
+        missing history) drops it, so the caller still sees the original reject.
+        """
         try:
-            outcome = self._program_factory().advance()
+            summaries = gateway.catalog()
+        except _DAEMON_ERRORS:
+            return _error(message)
+        if not summaries:
+            return _error(message)
+        lines = [message, "saved albums:"]
+        lines.extend(f"  {summary.display_line()}" for summary in summaries)
+        return _error("\n".join(lines))
+
+    def _advance(self, _args: MusicArgs) -> str:
+        """User transport next -- step the replay cursor forward, or skip a Program."""
+        return self._transport(self._program_factory().advance, self._marquee.skip())
+
+    def _prev(self, _args: MusicArgs) -> str:
+        """User transport prev -- step the replay cursor back one part."""
+        return self._transport(self._program_factory().prev, "Previous part.")
+
+    def _pause(self, _args: MusicArgs) -> str:
+        """Suspend the active source in place (transport pause)."""
+        return self._transport(self._program_factory().pause, "Paused.")
+
+    def _resume(self, _args: MusicArgs) -> str:
+        """Continue a suspended source (transport resume)."""
+        return self._transport(self._program_factory().resume, "Resumed.")
+
+    def _transport(self, op: Callable[[], CommandOutcome], phrase: str) -> str:
+        """Run a transport command ``op`` and render its outcome (one shared path).
+
+        The four transport verbs (next/prev/pause/resume) differ only in the daemon
+        call and the marquee phrase, so they share this render-and-error path -- a
+        daemon fault funnels to the same JSON ``_error`` envelope as every verb.
+        """
+        try:
+            outcome = op()
         except _DAEMON_ERRORS as exc:
             return _error(str(exc))
-        message = f"♪ {outcome.display(self._marquee.skip())}"
-        return json.dumps({"message": message, "applied": outcome.applied})
+        return json.dumps(
+            {"message": f"♪ {outcome.display(phrase)}", "applied": outcome.applied}
+        )
 
     def _list(self, _args: MusicArgs) -> str:
         """List saved albums with their tags and ready/total part counts."""
@@ -300,7 +328,7 @@ class MusicTool:
             return _error("music new requires base_prompt")
         try:
             prompts = PromptSet.single(args.base_prompt)
-            album_id = self._catalog_factory().new(prompts, args.canonical_name)
+            album_id = self._catalog_factory().new(prompts, args.canonical_title)
         except (ValueError, *_DAEMON_ERRORS) as exc:
             return _error(str(exc))
         return json.dumps({"album_id": album_id})
@@ -329,9 +357,12 @@ class MusicTool:
     # methods, never getattr-by-name (PY-TS-11 forbids introspective dispatch).
     _HANDLERS: ClassVar[dict[str, Callable[[MusicTool, MusicArgs], str]]] = {
         "on": _on,
-        "off": _off,
+        "stop": _stop,
         "play": _play,
         "next": _advance,
+        "prev": _prev,
+        "pause": _pause,
+        "resume": _resume,
         "list": _list,
         "new": _new,
         "get": _get,

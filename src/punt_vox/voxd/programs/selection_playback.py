@@ -88,6 +88,45 @@ class SelectionPlayback:
         # the status read O(1).
         self._position = pool.index(result.part)
 
+    def step_forward(self) -> bool:
+        """Move the cursor to the next part, capped at the last (Z ``Next``).
+
+        Deterministic, unlike :meth:`rotate`: the user's transport ``next`` walks
+        the ordered pool by one and *stalls* at the last part (a no-op), rather than
+        wrapping the way the loop's end-of-part :meth:`rotate` does (Z Fork C). An
+        empty pool holds no cursor, so it is a no-op. Return whether the cursor
+        moved -- ``False`` at the last slot, so the control writer leaves the
+        current track playing instead of restarting it.
+        """
+        return self._step(+1)
+
+    def step_back(self) -> bool:
+        """Move the cursor to the previous part, floored at the first (Z ``Prev``).
+
+        Deterministic: walks the ordered pool back by one and stalls at the first
+        part (a no-op). An empty pool holds no cursor, so it is a no-op. Return
+        whether the cursor moved -- ``False`` at the first slot.
+        """
+        return self._step(-1)
+
+    def _step(self, delta: int) -> bool:
+        """Move the cursor by ``delta`` within ``[0, len-1]``; return whether it moved.
+
+        A boundary step (Prev at 1, Next at M) and an empty pool are the modelled
+        no-ops: the cursor holds and ``False`` is returned, so the single writer
+        fires no interrupt and the current part plays on.
+        """
+        pool = self._selection.playable_pool()
+        if self._position is None or not pool:
+            return False
+        target = self._position + delta
+        if not (0 <= target < len(pool)):
+            return False  # a boundary step (Prev at 1, Next at M) is the modelled no-op
+        self._last_played = self._playing
+        self._position = target
+        self._playing = pool[target]
+        return True
+
     @property
     def wants_generation(self) -> bool:
         """A Selection never generates -- structurally ``False``."""

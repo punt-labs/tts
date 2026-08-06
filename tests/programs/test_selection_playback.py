@@ -102,3 +102,54 @@ class TestEmptyBoundary:
         source = SelectionPlayback(Selection.from_albums([]), RotatePolicy())
         source.rotate()
         assert source.playing is None
+
+
+def _single_album() -> Selection:
+    return Selection.from_albums(
+        [("album-a", (Part("001.mp3", 1), Part("002.mp3", 2), Part("003.mp3", 3)))]
+    )
+
+
+class TestDeterministicStep:
+    """The user transport step (Z ``Next``/``Prev``): deterministic, stalls at bounds.
+
+    Distinct from :meth:`rotate` (the loop's shuffle auto-advance, Fork C): the
+    step walks the ordered pool by one and is a no-op at the boundary (``T5``).
+    """
+
+    def test_step_forward_advances_by_one(self) -> None:
+        source = SelectionPlayback(_single_album(), RotatePolicy())
+        assert source.position == 1
+        source.step_forward()
+        assert source.position == 2
+        source.step_forward()
+        assert source.position == 3
+
+    def test_step_back_retreats_by_one(self) -> None:
+        source = SelectionPlayback(_single_album(), RotatePolicy())
+        source.step_forward()
+        source.step_forward()  # at part 3
+        source.step_back()
+        assert source.position == 2
+
+    def test_t5_next_at_last_part_is_a_no_op(self) -> None:
+        source = SelectionPlayback(_single_album(), RotatePolicy())
+        source.step_forward()
+        source.step_forward()  # at part 3 (the last)
+        held = source.playing
+        source.step_forward()  # next at M stalls -- unlike rotate, it does not wrap
+        assert source.position == 3
+        assert source.playing == held
+
+    def test_t5_prev_at_first_part_is_a_no_op(self) -> None:
+        source = SelectionPlayback(_single_album(), RotatePolicy())
+        held = source.playing
+        source.step_back()  # prev at 1 stalls
+        assert source.position == 1
+        assert source.playing == held
+
+    def test_step_on_empty_is_a_no_op(self) -> None:
+        source = SelectionPlayback(Selection.from_albums([]), RotatePolicy())
+        source.step_forward()
+        source.step_back()
+        assert source.playing is None

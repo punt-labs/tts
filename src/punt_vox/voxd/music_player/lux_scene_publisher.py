@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_lux import HubUnavailableError, OpError
 
+from punt_vox.voxd.music_player.lux_trace import LuxTrace
 from punt_vox.voxd.music_player.scene_mailbox import SceneMailbox
 
 if TYPE_CHECKING:
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
 __all__ = ["LuxScenePublisher"]
 
 logger = logging.getLogger(__name__)
+_trace = LuxTrace(logger)
 
 
 @final
@@ -65,7 +67,9 @@ class LuxScenePublisher:
             try:
                 await self._publish(request)
             except Exception:
-                logger.exception("scene publisher: unexpected error rendering a scene")
+                logger.exception(
+                    "[lux] scene publisher: unexpected error rendering a scene"
+                )
 
     async def _publish(self, request: RenderRequest) -> None:
         """Connect if needed and PUT the scene off-thread, dropping any lux failure."""
@@ -74,12 +78,16 @@ class LuxScenePublisher:
             result = await asyncio.to_thread(client.render, request)
         except HubUnavailableError:
             self._client = None  # force a reconnect on the next scene
-            logger.warning("lux unavailable; dropped %s scene push", request.scene_id)
+            _trace.warning("luxd unavailable; dropped %s scene push", request.scene_id)
             return
         if isinstance(result, OpError):
             # A refused scene is a projection defect, not an absent display: log
             # at error so it reads distinctly from the down-luxd warning above.
-            logger.error("lux rejected %s scene: %s", request.scene_id, result.reason)
+            _trace.error("rejected %s scene: %s", request.scene_id, result.reason)
+            return
+        _trace.info(
+            "pushed %s scene (%d elements)", request.scene_id, len(request.elements)
+        )
 
     async def _ensure_client(self) -> LuxRenderer:
         """Return the connected client, connecting off-thread on first use."""

@@ -22,7 +22,7 @@ __all__ = ["DepositedGuide", "VoxMarker"]
 _MARKER_TEXT = (
     "vox is enabled in this repository.\n"
     "\n"
-    "Managed by `vox enable` / `vox disable` (and the `/enable` / `/disable`\n"
+    "Managed by `vox enable` / `vox disable` (and the `/vox enable` / `/vox disable`\n"
     "slash commands). Presence turns vox's per-repo guidance and hooks on;\n"
     "remove it with `vox disable`, not by hand.\n"
 )

@@ -57,6 +57,9 @@ class ProgramStatus:
     # None means the player is healthy; a fault means a Part could not be spawned
     # (missing afplay/ffplay, or an OS limit) -- observable, not a Program state.
     playback_error: PlaybackFault | None = None
+    # True while the active source is suspended in place (transport pause); the
+    # cursor is held and never auto-advances. Idle and generating are never paused.
+    paused: bool = False
 
     @classmethod
     def idle(cls) -> Self:
@@ -116,6 +119,7 @@ class ProgramStatus:
             "playback_error": None
             if self.playback_error is None
             else self.playback_error.to_dict(),
+            "paused": self.paused,
         }
         if self.name is not None:
             record["name"] = self.name.value
@@ -137,6 +141,7 @@ class ProgramStatus:
                 for item in obj.require_list("failed_parts")
             ),
             playback_error=None if fault is None else PlaybackFault.from_wire(fault),
+            paused=obj.opt_bool("paused") or False,
         )
 
     @staticmethod

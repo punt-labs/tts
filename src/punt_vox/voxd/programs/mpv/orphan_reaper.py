@@ -1,0 +1,135 @@
+"""Reap an mpv orphaned by an unclean prior daemon exit before a fresh spawn.
+
+mpv is spawned ``start_new_session=True`` with ``--idle=yes``, so a SIGKILL,
+OOM, or crash of the daemon *before* :meth:`MpvSupervisor._teardown` runs leaves
+an idle-forever mpv holding our IPC socket. The next daemon start would then
+spawn a *second* mpv, breaking the single-player invariant (I2) across restarts.
+
+:class:`OrphanReaper` closes that gap by the *socket*, not by a recorded pid.
+Our mpv is the only process that can own our ``--input-ipc-server`` socket path,
+so the socket is a safe identity: at the next startup :meth:`reap` runs before
+the first spawn and, if the path is still listening, connects and sends mpv's
+``quit`` command -- a clean shutdown of exactly the process that owns *our*
+socket, with no pid guessing and no risk to any unrelated process. The stale
+socket path is then unlinked so the fresh mpv binds a new inode.
+
+There is deliberately no kill-by-pid fallback. A recorded pid survives a reboot
+and can be recycled by an unrelated process; SIGKILLing it would kill the wrong
+target. A wedged mpv that ignores ``quit`` is rare; it is logged and left, which
+is safer than ever risking the wrong process. This is startup hygiene enforcing
+I2 -- no new modeled state, just a clean bring-up after an unclean exit.
+"""
+
+from __future__ import annotations
+
+import logging
+import socket
+from typing import TYPE_CHECKING, Self, final
+
+from punt_vox.types_programs.mpv_event import MpvCommand
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+__all__ = ["OrphanReaper", "OrphanUnreachableError"]
+
+logger = logging.getLogger(__name__)
+
+_PROBE_TIMEOUT_SECONDS = 2.0
+"""Bound the connect/send probe so a wedged socket cannot stall bring-up."""
+
+_REAP_REQUEST_ID = 0
+"""The ``request_id`` on the fire-and-forget ``quit`` -- no reply is awaited."""
+
+
+class OrphanUnreachableError(Exception):
+    """Connecting to the orphan socket was denied (EACCES) -- bring-up must abort.
+
+    A live mpv may still own the socket, so probing cannot prove it dead. The
+    supervisor folds this into the same bring-up-failure path as a failed
+    spawn/connect: it stands a ``PLAYER_UNAVAILABLE`` fault and never spawns a
+    second mpv on a fresh inode (I2), rather than reaping into an orphan.
+    """
+
+
+@final
+class OrphanReaper:
+    """Enforce single-mpv (I2) across daemon restarts via a socket-identity quit."""
+
+    __slots__ = ("_socket",)
+    _socket: Path
+
+    def __new__(cls, socket_path: Path) -> Self:
+        self = super().__new__(cls)
+        self._socket = socket_path
+        return self
+
+    def reap(self) -> None:
+        """Quit a responsive orphan on our socket, then unlink the stale path.
+
+        The socket is the identity: only our mpv can own our IPC socket, so a
+        listening path is quit cleanly over IPC -- never killed by pid. A path
+        that exists but no longer listens (a stale inode) is simply unlinked so
+        the fresh mpv can bind there. Connecting is robust to ``OSError``, so a
+        probe failure is logged, not raised into the supervisor.
+
+        A path we cannot even probe because connecting is *denied* (EACCES)
+        raises :class:`OrphanUnreachableError` before the unlink: a live mpv may
+        still own it, so bring-up must abort rather than unlink it into an orphan
+        and spawn a second mpv on a fresh inode, breaking single-mpv (I2).
+        """
+        self._probe_socket()  # raises OrphanUnreachableError on a denied probe
+        self._unlink_socket()
+
+    def _probe_socket(self) -> None:
+        """Quit any listening orphan; raise when the socket cannot be probed.
+
+        Returns for an absent path, a stale inode, or an orphan we quit -- all
+        safe for the caller to unlink. Raises :class:`OrphanUnreachableError`
+        only when connecting was denied (EACCES): a live mpv may still own the
+        socket, so bring-up aborts rather than orphaning it (I2).
+        """
+        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        probe.settimeout(_PROBE_TIMEOUT_SECONDS)
+        try:
+            self._connect_and_quit(probe)
+        finally:
+            probe.close()
+
+    def _connect_and_quit(self, probe: socket.socket) -> None:
+        """Connect and send ``quit``; raise ``OrphanUnreachableError`` on EACCES."""
+        try:
+            probe.connect(str(self._socket))
+        except PermissionError as exc:
+            logger.warning(
+                "cannot probe the mpv socket %s (permission denied); aborting "
+                "bring-up to avoid orphaning a running mpv",
+                self._socket,
+            )
+            msg = "mpv orphan socket probe denied"
+            raise OrphanUnreachableError(msg) from exc  # a live mpv may own it (I2)
+        except OSError:
+            return  # no socket, a stale inode, or unreachable -- safe to unlink
+        self._quit(probe)
+
+    def _quit(self, probe: socket.socket) -> None:
+        """Send mpv's ``quit`` frame to a connected orphan; log the outcome."""
+        try:
+            probe.sendall(MpvCommand.quit().framed(_REAP_REQUEST_ID))
+        except OSError as exc:
+            logger.warning(
+                "quitting the orphan mpv on %s failed: %s", self._socket, exc
+            )
+            return
+        logger.warning(
+            "quit an orphaned mpv holding %s left by an unclean exit", self._socket
+        )
+
+    def _unlink_socket(self) -> None:
+        """Remove the stale socket path, robust to any ``OSError``, not just absence."""
+        try:
+            self._socket.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning(
+                "could not unlink the stale mpv socket %s: %s", self._socket, exc
+            )

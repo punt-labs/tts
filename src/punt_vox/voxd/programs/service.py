@@ -12,11 +12,11 @@ service owns only the mint side-effect (a domain object must not call
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Final, Self, final
 
 from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.types_programs.status import ProgramStatus
-from punt_vox.types_programs.status_views import NowPlaying
 from punt_vox.voxd.programs.active_context import (
     ActiveContext,
     ActiveProgram,
@@ -29,17 +29,21 @@ from punt_vox.voxd.programs.change_signal import ChangeSignal
 from punt_vox.voxd.programs.control_channel import ControlChannel
 from punt_vox.voxd.programs.fill_reconciler import FillReconciler
 from punt_vox.voxd.programs.filler import Filler
+from punt_vox.voxd.programs.last_played import LastPlayed
 from punt_vox.voxd.programs.lifecycle_signal import TurnOff
 from punt_vox.voxd.programs.loop import ProgramLoop
+from punt_vox.voxd.programs.mpv.mpv_program_player import MpvProgramPlayer
+from punt_vox.voxd.programs.mpv.mpv_supervisor import MpvSupervisor
 from punt_vox.voxd.programs.playback_health import PlaybackHealth
-from punt_vox.voxd.programs.playback_signal import Rotate
+from punt_vox.voxd.programs.playback_signal import StepBack, StepForward
 from punt_vox.voxd.programs.program import Program
 from punt_vox.voxd.programs.rotate_policy import RotatePolicy
 from punt_vox.voxd.programs.select_signal import SwitchSelection
 from punt_vox.voxd.programs.selection import Selection
 from punt_vox.voxd.programs.selection_playback import SelectionPlayback
 from punt_vox.voxd.programs.state import ProgramState
-from punt_vox.voxd.programs.subprocess_player import SubprocessPlayer
+from punt_vox.voxd.programs.status_projection import StatusProjection
+from punt_vox.voxd.programs.suspension import PlaybackSuspension
 from punt_vox.voxd.programs.switch_signal import SwitchProgram
 
 if TYPE_CHECKING:
@@ -72,9 +76,13 @@ class ProgramService:
         "_context",
         "_filler",
         "_health",
+        "_last_played",
         "_loop",
+        "_projection",
         "_root",
         "_store",
+        "_supervisor",
+        "_suspension",
     )
     _store: ProgramStore
     _root: Path
@@ -86,9 +94,18 @@ class ProgramService:
     _health: PlaybackHealth
     _loop: ProgramLoop
     _changes: ChangeSignal
+    _suspension: PlaybackSuspension
+    _supervisor: MpvSupervisor
+    _last_played: LastPlayed
+    _projection: StatusProjection
 
     def __new__(
-        cls, producer: Producer, store: ProgramStore, root: Path, sleeper: Sleeper
+        cls,
+        producer: Producer,
+        store: ProgramStore,
+        root: Path,
+        sleeper: Sleeper,
+        mpv_socket: Path,
     ) -> Self:
         self = super().__new__(cls)
         self._store = store
@@ -100,14 +117,26 @@ class ProgramService:
         self._filler = Filler(producer, self._channel, sleeper)
         self._channel.attach_reconciler(FillReconciler(self._filler, self))
         self._health = PlaybackHealth()
+        # The one persistent mpv process: the supervisor owns its lifecycle, the
+        # derived player drives it, and the loop owns every loadfile. The service
+        # resolves each Part's path via ``locate`` (it is the PlayerDirectory).
+        self._supervisor = MpvSupervisor(mpv_socket, sleeper)
+        player = MpvProgramPlayer(self._supervisor, self)
+        # The suspension holds the one paused flag and delegates click-free
+        # pause/resume to the player; the service drives it and reports paused.
+        self._suspension = PlaybackSuspension(player)
         self._loop = ProgramLoop(
-            self._channel, SubprocessPlayer(self), sleeper, self._health
+            self._channel, player, sleeper, self._health, self._suspension
         )
         # One change signal drives the scene re-push: the single-writer fires it
         # after each applied command, the catalog after each new/remove.
         self._changes = ChangeSignal()
         self._channel.attach_change_signal(self._changes)
         self._catalog.attach_change_signal(self._changes)
+        self._last_played = LastPlayed()
+        self._projection = StatusProjection(
+            self._channel, self._supervisor, self._health
+        )
         return self
 
     @property
@@ -135,12 +164,24 @@ class ProgramService:
         """Run the playback loop for the daemon's lifetime."""
         await self._loop.run()
 
+    async def run_player_supervisor(self) -> None:
+        """Run the mpv supervisor for the daemon's lifetime (spawn/connect/restart).
+
+        Cancelling this task on shutdown drives the supervisor's graceful teardown
+        (quit then hard-kill), so the one mpv process leaves no orphan.
+        """
+        await self._supervisor.run()
+
     async def run_once(self) -> None:
         """Apply exactly one queued command -- the test seam for the writer."""
         await self._channel.apply_next()
 
     def shutdown(self) -> None:
-        """Cancel any in-flight fill on daemon stop (no orphaned generation)."""
+        """Tear down live work on daemon stop: cancel the background fill.
+
+        The one mpv process is torn down by cancelling the supervisor task (its
+        ``run`` finally quits then kills mpv), so this only stops the fill.
+        """
         self._filler.cancel()
 
     # -- observation (authoritative, read per call, never cached) ----------
@@ -149,19 +190,16 @@ class ProgramService:
         """Return the daemon's authoritative status, read fresh per call.
 
         A generate Program reports the full Program status; a replay Selection
-        reports the consume-only radio status; an idle daemon reports idle.
+        reports the consume-only radio status; an idle daemon reports idle. The
+        transport ``paused`` flag rides every active status (never idle), read
+        authoritatively from the one suspension, so a client's PlayerView can tell
+        a held source from a progressing one.
         """
         active = self._context.current
         if active is None:
             return ProgramStatus.idle()
-        source = self._channel.source
-        if isinstance(source, Program):
-            return source.to_status(active.name, self._health.fault)
-        if isinstance(source, SelectionPlayback):
-            return ProgramStatus.radio(
-                active.name, self._radio_now_playing(source), self._health.fault
-            )
-        return ProgramStatus.idle()
+        base = self._projection.of(active)
+        return replace(base, paused=self._suspension.is_paused)
 
     def catalog_albums(self) -> tuple[Album, ...]:
         """Return every catalog album, newest first (the ``list`` view)."""
@@ -181,10 +219,10 @@ class ProgramService:
         (``wants_generation``) -- so the first track being written in
         ``generating_first`` (an empty pool) is protected too, and removing it
         cannot corrupt the in-flight generation; a Radio contributes every album
-        its Selection spans; an idle daemon none. A Program stopped by ``off``
+        its Selection spans; an idle daemon none. A Program halted by ``stop``
         is neither playing nor generating, so its retained pool -- kept only for
         a later re-``on`` -- backs nothing and must not block removal, mirroring
-        how Radio ``off`` clears its selection.
+        how a Radio ``stop`` clears its selection.
         """
         active = self._context.current
         if active is None:
@@ -250,6 +288,8 @@ class ProgramService:
             ),
             RotatePolicy(),
         )
+        # A turn-on displaces whatever was active, so any held pause is dropped.
+        self._suspension.reset()
         self._channel.post(
             SwitchProgram(self._channel, self._context, program, active, target=None)
         )
@@ -273,42 +313,89 @@ class ProgramService:
         if not selection:
             msg = f"album {album_id.value!r} has no playable tracks yet"
             raise ValueError(msg)
+        self._last_played.remember(album_id)
         self._start_replay(selection, album.locator)
 
-    def advance(self) -> None:
-        """Advance to another Part -- the one ungated skip/next/loop transition."""
-        self._channel.post(Rotate())
+    def replay_last(self) -> None:
+        """Replay the last single album played, or raise when none has yet.
 
-    def off(self) -> None:
-        """Stop the active source (a Program keeps its pool; a replay goes idle)."""
+        The no-argument ``play`` path: it repeats the album ``replay_album`` last
+        recorded, so a bare ``play`` never silently falls back to an arbitrary
+        album -- with no history the register raises and the surface lists the
+        catalog instead.
+        """
+        self.replay_album(self._last_played.require())
+
+    def advance(self) -> None:
+        """User transport next: step a replay forward, or skip a generate Program.
+
+        The user's next (Z ``Next``) is distinct from the loop's end-of-part
+        auto-advance (Z ``AutoAdvance``, which the loop posts as its own ``Rotate``):
+        on a single-album replay it walks the ordered pool by one and stalls at the
+        last part, rather than wrapping.
+        """
+        self._channel.post(StepForward())
+
+    def prev(self) -> None:
+        """User transport prev: step a replay cursor back, floored at the first part.
+
+        Only a replay Selection has an ordered position; a generate Program has no
+        previous, so the signal is rejected as a lost race there (Z ``Prev``).
+        """
+        self._channel.post(StepBack())
+
+    def pause(self) -> None:
+        """Suspend the active source in place (Z ``Pause``): only while active.
+
+        Pause holds the player where it is -- the cursor stays put and never
+        auto-advances -- so it is meaningful only when a source is active; against
+        an idle daemon it is a no-op. Idempotent while already paused. The scene
+        re-push rides the change signal directly, since pause mutates no source
+        cursor and so posts no control command.
+        """
+        if self._context.current is None:
+            return
+        self._suspension.pause()
+        self._changes.emit()
+
+    def resume(self) -> None:
+        """Continue a suspended source (Z ``Resume``): only from paused.
+
+        Idempotent while already playing; the change signal re-pushes the scene.
+        """
+        self._suspension.resume()
+        self._changes.emit()
+
+    def stop(self) -> None:
+        """Stop the active source (a Program keeps its pool; a replay goes idle).
+
+        Resetting the suspension first returns the player to the not-paused, unheld
+        state, so ``stop`` from a paused source lands idle exactly as from a playing
+        one (Z ``Stop`` from either active mode), leaving no paused residue.
+        """
+        self._suspension.reset()
         self._channel.post(TurnOff(self._channel, self._context, self._idle_program()))
 
     # -- internals ---------------------------------------------------------
 
     def _start_replay(self, selection: Selection, label: str) -> None:
-        """Seed a replay over ``selection`` and post the switch, rejecting empty."""
+        """Seed a replay over ``selection`` and post the switch, rejecting empty.
+
+        A switch is start-or-switch (Z Fork A, SWITCH): from idle it starts, and
+        from a playing *or* paused source it displaces the active album and begins
+        the new one at part 1, mode playing. Resetting the suspension first drops
+        any held/paused state so the newly chosen album plays rather than inheriting
+        the displaced one's pause.
+        """
         if not selection:
             msg = "no albums match the selection"
             raise ValueError(msg)
+        self._suspension.reset()
         playback = SelectionPlayback(selection, RotatePolicy())
         active = ActiveSelection(self._root, selection, label)
         self._channel.post(
             SwitchSelection(self._channel, self._context, playback, active)
         )
-
-    @staticmethod
-    def _radio_now_playing(source: SelectionPlayback) -> NowPlaying | None:
-        """Return the replay cursor's "Part N of M" view, or ``None`` when idle.
-
-        ``N`` is the playing track's 1-based *position* in the selection and ``M``
-        is the selection's size, so ``N <= M`` always holds -- the same
-        position-of-count contract the generate-Program status uses. The cursor is
-        read O(1) from the source, never rescanned over an uncapped selection.
-        """
-        position = source.position
-        if position is None:
-            return None
-        return NowPlaying(index=position, of=len(source.selection))
 
     @staticmethod
     def _idle_program() -> Program:

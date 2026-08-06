@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_lux import HubUnavailableError, OpError
 
+from punt_vox.voxd.music_player.lux_trace import LuxTrace
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -24,6 +26,7 @@ if TYPE_CHECKING:
 __all__ = ["LuxMenuRegistrar"]
 
 logger = logging.getLogger(__name__)
+_trace = LuxTrace(logger)
 
 
 @final
@@ -53,12 +56,14 @@ class LuxMenuRegistrar:
                 client.register_callback, callback_id, label
             )
         except HubUnavailableError:
-            logger.warning("lux unavailable; %r menu entry not registered", label)
+            _trace.warning("luxd unavailable; %r menu entry not registered", label)
             return
         except Exception:
-            logger.exception("%r menu registration failed", label)
+            logger.exception("[lux] %r menu registration failed", label)
             return
         if isinstance(result, OpError):
-            logger.error(
-                "lux rejected the %r menu registration: %s", label, result.reason
+            _trace.error(
+                "luxd rejected the %r menu registration: %s", label, result.reason
             )
+            return
+        _trace.info("registered the %r menu entry (callback id %r)", label, callback_id)
