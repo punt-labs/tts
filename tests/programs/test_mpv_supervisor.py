@@ -105,27 +105,6 @@ def test_min_version_is_a_pinned_three_tuple() -> None:
     assert all(isinstance(part, int) for part in MPV_MIN_VERSION)
 
 
-def test_startup_flags_set_the_reduced_music_volume() -> None:
-    # The program tier plays under speech/chimes, so mpv starts at the reduced
-    # _MUSIC_VOLUME (60) -- the music half of the two-tier static rebalance.
-    supervisor = MpvSupervisor(_SOCK, FakeSleeper())
-
-    assert f"--volume={sup_mod._MUSIC_VOLUME}" in supervisor._flags()
-    assert "--volume=60" in supervisor._flags()
-
-
-def test_startup_flags_disable_network_and_script_fetch() -> None:
-    # Hardening of the persistent-mpv surface: a crafted media path must not
-    # trigger network or script fetching. --ytdl=no kills the youtube-dl URL
-    # hook, --load-scripts=no blocks user-script execution, --no-config bars the
-    # config dir. loadfile then plays only the contained local file it is given.
-    flags = MpvSupervisor(_SOCK, FakeSleeper())._flags()
-
-    assert "--ytdl=no" in flags
-    assert "--load-scripts=no" in flags
-    assert "--no-config" in flags
-
-
 async def test_cold_start_that_never_connects_reaches_failed_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -16,7 +16,9 @@ not accumulate toward the cap (I4).
 
 The minimum mpv version is pinned here: the IPC command names and the
 ``end-file`` reason values are the contract this design rests on, and ``doctor``
-imports :data:`MPV_MIN_VERSION` to gate an installed mpv against it.
+imports :data:`MPV_MIN_VERSION` to gate an installed mpv against it. The spawn
+argv and socket-connect mechanics live in :class:`MpvLauncher`; this module is
+the lifecycle machine that decides *when* to launch.
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.types_programs.mpv_event import MpvCommand
 from punt_vox.types_programs.playback_fault import PlaybackFault, PlaybackFaultKind
-from punt_vox.voxd.programs.mpv.mpv_client import MpvClient
+from punt_vox.voxd.programs.mpv.mpv_launcher import MpvLauncher
 from punt_vox.voxd.programs.mpv.orphan_reaper import (
     OrphanReaper,
     OrphanUnreachableError,
@@ -38,6 +40,7 @@ from punt_vox.voxd.programs.mpv.orphan_reaper import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from punt_vox.voxd.programs.mpv.mpv_client import MpvClient
     from punt_vox.voxd.programs.sleeper import Sleeper
 
 __all__ = ["MPV_MIN_VERSION", "MpvState", "MpvSupervisor"]
@@ -48,12 +51,8 @@ MPV_MIN_VERSION: tuple[int, int, int] = (0, 35, 0)
 """The lowest mpv whose JSON-IPC command set and ``end-file`` reasons this
 player relies on. ``doctor`` imports this and fails a too-old mpv."""
 
-_MPV_BINARY = "mpv"
-_MUSIC_VOLUME = 60  # the reduced program volume so speech and chimes overlay music
 _SPAWN_BACKOFF_SECONDS = 2.0
 _MAX_RESTARTS = 3
-_CONNECT_ATTEMPTS = 50
-_CONNECT_DELAY = 0.1
 
 
 class MpvState(StrEnum):
@@ -76,17 +75,17 @@ class MpvSupervisor:
         "_crashed",
         "_ever_ready",
         "_fault",
+        "_launcher",
         "_proc",
         "_ready",
         "_reaped",
         "_reaper",
         "_restarts",
         "_sleeper",
-        "_socket",
         "_state",
     )
-    _socket: Path
     _sleeper: Sleeper
+    _launcher: MpvLauncher
     _ready: asyncio.Event
     _crashed: asyncio.Event
     _client: MpvClient | None
@@ -100,8 +99,8 @@ class MpvSupervisor:
 
     def __new__(cls, socket: Path, sleeper: Sleeper) -> Self:
         self = super().__new__(cls)
-        self._socket = socket
         self._sleeper = sleeper
+        self._launcher = MpvLauncher(socket, sleeper)
         self._ready = asyncio.Event()
         self._crashed = asyncio.Event()
         self._client = None
@@ -191,12 +190,12 @@ class MpvSupervisor:
             return False
         self._crashed.clear()
         self._state = MpvState.RESTARTING if self._fault else MpvState.STARTING
-        proc = await self._spawn()
+        proc = await self._launcher.spawn()
         if proc is None:
             self._record_bring_up_failure()
             return False
         self._proc = proc
-        client = await self._connect()
+        client = await self._launcher.connect(self._on_reader_eof)
         if client is None:
             self._discard_proc()
             self._record_bring_up_failure()
@@ -221,55 +220,6 @@ class MpvSupervisor:
             return False
         self._reaped = True
         return True
-
-    async def _spawn(self) -> asyncio.subprocess.Process | None:
-        """Start the mpv process, or ``None`` if the binary is missing/too old."""
-        try:
-            return await asyncio.create_subprocess_exec(
-                _MPV_BINARY,
-                *self._flags(),
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-                start_new_session=True,
-            )
-        except OSError as exc:
-            logger.error("mpv spawn failed: %s", exc)
-            return None
-
-    async def _connect(self) -> MpvClient | None:
-        """Connect the IPC socket, retrying the brief window before mpv opens it."""
-        for _ in range(_CONNECT_ATTEMPTS):
-            try:
-                reader, writer = await asyncio.open_unix_connection(str(self._socket))
-            except (FileNotFoundError, ConnectionRefusedError, OSError):
-                await self._sleeper.sleep(_CONNECT_DELAY)
-                continue
-            client = MpvClient(reader, writer, self._on_reader_eof)
-            client.start()
-            return client
-        logger.error("mpv connect failed after %d attempts", _CONNECT_ATTEMPTS)
-        return None
-
-    def _flags(self) -> list[str]:
-        """Return the mpv flags -- audio-only, idle, IPC, no network/scripts, quiet."""
-        return [
-            "--idle=yes",
-            "--no-video",
-            "--vo=null",
-            f"--input-ipc-server={self._socket}",
-            "--no-config",
-            # A crafted media path must not reach the network or run a script:
-            # --ytdl=no kills the youtube-dl/yt-dlp URL hook, --load-scripts=no
-            # blocks user-script execution (--no-config already bars the config
-            # dir). loadfile then plays only the contained local file it is given.
-            "--ytdl=no",
-            "--load-scripts=no",
-            f"--volume={_MUSIC_VOLUME}",
-            "--gapless-audio=yes",
-            "--terminal=no",
-            "--msg-level=all=warn",
-        ]
 
     def _reach_ready(self, client: MpvClient) -> None:
         """Enter ``ready``: healthy, counter cleared, the loop's gate opened."""
