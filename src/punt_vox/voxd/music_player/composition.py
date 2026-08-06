@@ -87,9 +87,11 @@ class MusicPlayerSubsystem:
         its REST client lazily and the subscription builds a fresh hub listener per
         connect, so neither re-runs a spent per-connection object.
 
-        Only ``Exception`` is caught, never ``BaseException``: the ``CancelledError``
-        raised when the daemon cancels this task on shutdown propagates out of the
-        loop, tearing both legs down together and ending the subsystem cleanly.
+        ``CancelledError`` is re-raised explicitly, never restarted: the cancel the
+        daemon sends this task on shutdown must propagate out of the loop to tear
+        both legs down together and end the subsystem cleanly. On Python 3.13 it is
+        a ``BaseException`` the bare ``except Exception`` already misses, so the
+        explicit branch guards intent against a future refactor, not a live gap.
         """
         while True:
             try:
@@ -97,6 +99,8 @@ class MusicPlayerSubsystem:
                 async with asyncio.TaskGroup() as legs:
                     legs.create_task(self._publisher.run())
                     legs.create_task(self._subscription.run())
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 logger.exception(
                     "[lux] a leg failed fatally; restarting both in %.1fs",

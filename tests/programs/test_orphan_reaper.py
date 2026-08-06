@@ -122,6 +122,23 @@ def test_reap_survives_an_unlink_error(
     OrphanReaper(sock).reap()  # must not raise
 
 
+def test_reap_preserves_a_socket_whose_connect_is_denied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # EACCES on connect is a hard stop: a live mpv may still own the socket, so
+    # the path is left in place, never unlinked into an orphan that lets a second
+    # mpv spawn on a fresh inode (I2).
+    def _denied(_self: socket.socket, _address: str) -> None:
+        msg = "permission denied"
+        raise PermissionError(msg)
+
+    monkeypatch.setattr(socket.socket, "connect", _denied)
+    sock = tmp_path / _SOCK_NAME
+    sock.write_bytes(b"")  # the path exists; the probe connect will be denied
+    OrphanReaper(sock).reap()  # must not raise
+    assert sock.exists()  # an unprobed socket is preserved, not orphaned
+
+
 def test_end_file_reason_round_trips() -> None:
     # A guard on the wire enum the reaper's quit relies on: quit is a clean
     # teardown, distinct from the advancing eof outcome.

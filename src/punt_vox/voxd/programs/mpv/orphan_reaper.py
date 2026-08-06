@@ -60,24 +60,24 @@ class OrphanReaper:
         The socket is the identity: only our mpv can own our IPC socket, so a
         listening path is quit cleanly over IPC -- never killed by pid. A path
         that exists but no longer listens (a stale inode) is simply unlinked so
-        the fresh mpv can bind there. Every socket operation is robust to
-        ``OSError``, so a probe or unlink failure is logged, not raised into the
-        supervisor.
+        the fresh mpv can bind there. Connecting is robust to ``OSError``, so a
+        probe failure is logged, not raised into the supervisor.
+
+        A path we cannot even probe because connecting is *denied* (EACCES) is a
+        hard stop: a live mpv may still own it, so it is left in place rather than
+        unlinked. Unlinking a socket we could not probe would orphan that mpv and
+        let a second one spawn on a fresh inode, breaking single-mpv (I2).
         """
-        if self._quit_listening_owner():
-            logger.warning(
-                "quit an orphaned mpv holding %s left by an unclean exit",
-                self._socket,
-            )
-        self._unlink_socket()
+        if self._probe_socket():
+            self._unlink_socket()
 
-    def _quit_listening_owner(self) -> bool:
-        """Connect to a listening socket and send ``quit``; return whether one answered.
+    def _probe_socket(self) -> bool:
+        """Quit any listening orphan; report whether the stale path may be unlinked.
 
-        Returns ``True`` only when the socket was listening and the ``quit`` frame
-        was sent -- an orphan owned our socket and was asked to exit cleanly. A
-        missing socket, a stale inode with no listener, or any probe error means
-        there is nothing to quit and returns ``False``.
+        Returns ``True`` for an absent path, a stale inode, or an orphan we quit --
+        all safe to unlink. Returns ``False`` only when connecting was denied
+        (EACCES): a live mpv may still own the socket, so it is preserved rather
+        than orphaned (I2).
         """
         probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         probe.settimeout(_PROBE_TIMEOUT_SECONDS)
@@ -87,19 +87,33 @@ class OrphanReaper:
             probe.close()
 
     def _connect_and_quit(self, probe: socket.socket) -> bool:
-        """Connect ``probe`` to our socket and send ``quit``; report success."""
+        """Connect and send ``quit``; report whether the stale path may be unlinked."""
         try:
             probe.connect(str(self._socket))
+        except PermissionError:
+            logger.warning(
+                "cannot probe the mpv socket %s (permission denied); leaving it "
+                "in place to avoid orphaning a running mpv",
+                self._socket,
+            )
+            return False  # a live mpv may own it -- never unlink an unprobed socket
         except OSError:
-            return False  # no socket, a stale inode, or unreachable -- nothing to quit
+            return True  # no socket, a stale inode, or unreachable -- safe to unlink
+        self._quit(probe)
+        return True
+
+    def _quit(self, probe: socket.socket) -> None:
+        """Send mpv's ``quit`` frame to a connected orphan; log the outcome."""
         try:
             probe.sendall(MpvCommand.quit().framed(_REAP_REQUEST_ID))
         except OSError as exc:
             logger.warning(
                 "quitting the orphan mpv on %s failed: %s", self._socket, exc
             )
-            return False
-        return True
+            return
+        logger.warning(
+            "quit an orphaned mpv holding %s left by an unclean exit", self._socket
+        )
 
     def _unlink_socket(self) -> None:
         """Remove the stale socket path, robust to any ``OSError``, not just absence."""
