@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 __all__ = ["VoxPanelLeg"]
 
 _HUB_RETRY_SECONDS = 2.0
+_HUB_UNAVAILABLE_MESSAGE = "luxd is not running yet; the panel will retry"
 
 
 @final
@@ -86,22 +87,28 @@ class VoxPanelLeg:
             await asyncio.sleep(_HUB_RETRY_SECONDS)
 
     async def _listen_once(self) -> None:
-        """Build one connection, subscribe, and listen until it ends; never die."""
+        """Build one connection, subscribe, and listen until it ends; never die.
+
+        luxd can drop between any two of these three calls -- the leg retries
+        every :data:`_HUB_RETRY_SECONDS`, specifically because it expects
+        exactly that -- so all three building steps share one
+        ``HubUnavailableError`` guard, not just the first.
+        """
         try:
             rest = self._rest_factory()
+            listener = rest.listener(
+                on_callback=self._on_callback,
+                on_event=self._on_event,
+                on_connect=self._register,
+            )
+            listener.subscribe(*self._topics)
         except HubUnavailableError:
-            self._outage.note("luxd is not running yet; the panel will retry")
+            self._outage.note(_HUB_UNAVAILABLE_MESSAGE)
             return
-        listener = rest.listener(
-            on_callback=self._on_callback,
-            on_event=self._on_event,
-            on_connect=self._register,
-        )
-        listener.subscribe(*self._topics)
         try:
             await listener.listen()
         except HubUnavailableError:
-            self._outage.note("luxd is not running yet; the panel will retry")
+            self._outage.note(_HUB_UNAVAILABLE_MESSAGE)
         except Exception:
             logger.exception("the panel's listen leg failed; retrying")
 

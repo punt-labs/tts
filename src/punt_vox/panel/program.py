@@ -11,6 +11,7 @@ protocols so a ``SessionClaim`` and a ``SessionWatch`` -- or their
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING, Self, final
 
 if TYPE_CHECKING:
@@ -18,6 +19,8 @@ if TYPE_CHECKING:
     from punt_lux.applets.watch import SessionEnd
 
     from punt_vox.panel.leg import VoxPanelLeg
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["VoxPanelProgram"]
 
@@ -54,3 +57,20 @@ class VoxPanelProgram:
         finally:
             leg.cancel()
             await asyncio.gather(leg, return_exceptions=True)
+            self._log_if_crashed(leg)
+
+    @staticmethod
+    def _log_if_crashed(leg: asyncio.Task[None]) -> None:
+        """Log the leg's terminal exception, unless it is the expected cancellation.
+
+        ``leg`` is done by the time this runs (the caller already gathered
+        it), so this never blocks -- it only decides whether the outcome is
+        the requested shutdown or a bug that would otherwise vanish with no
+        trace.
+        """
+        try:
+            exc = leg.exception()
+        except asyncio.CancelledError:
+            return
+        if exc is not None:
+            logger.error("vox-panel: the leg's serve loop crashed", exc_info=exc)
