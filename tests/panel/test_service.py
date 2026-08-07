@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, final
 import pytest
 from punt_lux import OpError
 
+from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.panel.panel_notice import PanelNotice
 from punt_vox.panel.service import VoxPanelService
 from punt_vox.panel.state import PanelState
 from punt_vox.panel.topics import PanelTopic
@@ -42,7 +44,7 @@ class _FakeDaemonClient:
     ) -> SynthesizeResult:
         if self._raise_on_synth:
             msg = "voxd unreachable"
-            raise ConnectionError(msg)
+            raise VoxdConnectionError(msg)
         self.synth_calls.append((text, spec))
         return {}  # type: ignore[return-value]
 
@@ -114,7 +116,7 @@ class TestPrefetch:
         class _BrokenClient:
             def voices(self) -> list[str]:
                 msg = "voxd unreachable"
-                raise ConnectionError(msg)
+                raise VoxdConnectionError(msg)
 
             def synthesize(self, *args: object, **kwargs: object) -> object:
                 raise NotImplementedError
@@ -122,6 +124,34 @@ class TestPrefetch:
         service = VoxPanelService(_BrokenClient(), _FakeStore(_config()))  # type: ignore[arg-type]
         service.prefetch()
         assert service.scene().voice == PanelState.empty().voice
+
+    def test_daemon_unavailable_sets_the_notice(self) -> None:
+        class _BrokenClient:
+            def voices(self) -> list[str]:
+                msg = "voxd unreachable"
+                raise VoxdConnectionError(msg)
+
+            def synthesize(self, *args: object, **kwargs: object) -> object:
+                raise NotImplementedError
+
+        service = VoxPanelService(_BrokenClient(), _FakeStore(_config()))  # type: ignore[arg-type]
+        service.prefetch()
+        assert service.scene().notice == PanelNotice.voxd_unavailable()
+
+    def test_a_real_bug_in_the_roster_read_propagates(self) -> None:
+        """Only the voxd-unreachable transient is swallowed -- a protocol bug is not."""
+
+        class _MisbehavingClient:
+            def voices(self) -> list[str]:
+                msg = "unexpected reply"
+                raise VoxdProtocolError(msg)
+
+            def synthesize(self, *args: object, **kwargs: object) -> object:
+                raise NotImplementedError
+
+        service = VoxPanelService(_MisbehavingClient(), _FakeStore(_config()))  # type: ignore[arg-type]
+        with pytest.raises(VoxdProtocolError):
+            service.prefetch()
 
 
 class TestApplyEvent:

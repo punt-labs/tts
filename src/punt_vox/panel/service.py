@@ -6,15 +6,25 @@ confirmed scene. Satisfies :class:`punt_lux.applets.AppletService`
 structurally (``callback_id``, ``label``, ``prefetch``, ``acknowledge``,
 ``service``) plus the extra methods :class:`~punt_vox.panel.leg.VoxPanelLeg`
 calls when a subscribed control-change event arrives.
+
+The held ``_state``/``_notice`` pair is read and replaced from more than one
+thread: a menu click and a subscribed control event each run on their own
+``asyncio.to_thread`` worker, so two can be mid-update at once. ``_lock``
+serializes every read-modify-write against that pair so one thread's commit
+can never be silently overwritten by another's.
 """
 
 from __future__ import annotations
 
 import logging
+import threading
+from dataclasses import replace
 from typing import TYPE_CHECKING, Self, final
 
 from punt_lux import OpError
 
+from punt_vox.client_errors import VoxdConnectionError
+from punt_vox.panel.panel_notice import PanelNotice
 from punt_vox.panel.radio_control import MIC_MODE_SPEC, NOTIFY_SPEC
 from punt_vox.panel.state import PanelState
 from punt_vox.panel.topics import PanelTopic
@@ -22,7 +32,7 @@ from punt_vox.panel.voice_control import VoiceControl
 from punt_vox.types_synthesis import SynthesisSpec
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from punt_lux.applets import ClickLatency
 
@@ -45,13 +55,17 @@ class VoxPanelService:
     _client: PanelDaemonClient
     _store: SettingsStore
     _state: PanelState
-    __slots__ = ("_client", "_state", "_store")
+    _notice: PanelNotice
+    _lock: threading.Lock
+    __slots__ = ("_client", "_lock", "_notice", "_state", "_store")
 
     def __new__(cls, client: PanelDaemonClient, store: SettingsStore) -> Self:
         self = super().__new__(cls)
         self._client = client
         self._store = store
         self._state = PanelState.empty()
+        self._notice = PanelNotice.silent()
+        self._lock = threading.Lock()
         return self
 
     @property
@@ -66,7 +80,7 @@ class VoxPanelService:
 
     def prefetch(self) -> None:
         """Read settings once before any click, so the first click has some to show."""
-        self._refresh()
+        self.refresh()
 
     def acknowledge(self, client: PanelRestClient, latency: ClickLatency) -> None:
         """Push the held scene now -- the visible half of the click."""
@@ -76,63 +90,96 @@ class VoxPanelService:
     def service(self, client: PanelRestClient, latency: ClickLatency) -> None:
         """Re-read settings fresh and push the confirmed scene."""
         with latency.stage("refreshed"):
-            self._refresh()
+            self.refresh()
         self.push_scene(client)
 
     def scene(self) -> PanelScene:
-        """Return the currently-held settings as a scene."""
-        return self._state.scene()
+        """Return the currently-held settings and notice as a scene."""
+        with self._lock:
+            return replace(self._state.scene(), notice=self._notice)
 
     def push_scene(self, client: PanelRestClient) -> None:
         """Push the currently-held scene, logging (never raising) a refusal."""
-        result = client.render(self._state.scene().render_request())
+        result = client.render(self.scene().render_request())
         if isinstance(result, OpError):
             logger.error("vox-panel: luxd rejected the scene: %s", result.reason)
 
+    def refresh(self) -> None:
+        """Re-read settings from disk and voxd; note staleness if voxd is down."""
+        self._resync(PanelNotice.silent())
+
+    def recover_from_write_failure(self, field: str) -> None:
+        """Re-sync from the real settings after a failed persist, and flag the scene."""
+        self._resync(PanelNotice.write_failed(field))
+
     def apply_event(self, topic: str, payload: Mapping[str, object]) -> bool:
-        """Apply one control-topic event; return whether the scene needs a re-push."""
+        """Apply one control-topic event; return whether the scene needs a re-push.
+
+        A payload rejection (``TypeError``/``ValueError``) and a config-write
+        failure (``OSError``) both propagate to the caller -- this method
+        never swallows either, so :class:`~punt_vox.panel.leg.VoxPanelLeg` can
+        tell the two apart and log, and recover, distinctly.
+        """
         if topic == PanelTopic.NOTIFY:
             code = NOTIFY_SPEC.code_for_index(self._index(payload))
-            self._store.write_field("notify", code)
-            self._state = self._state.with_notify(code)
+            self._commit("notify", code, PanelState.with_notify)
         elif topic == PanelTopic.MIC_MODE:
             code = MIC_MODE_SPEC.code_for_index(self._index(payload))
-            self._store.write_field("speak", code)
-            self._state = self._state.with_speak(code)
+            self._commit("speak", code, PanelState.with_speak)
         elif topic == PanelTopic.VOICE:
-            voice = self._voice_control().voice_for_index(self._index(payload))
-            self._store.write_field("voice", voice)
-            self._state = self._state.with_voice(voice)
+            voice = self._voice_for(self._index(payload))
+            self._commit("voice", voice, PanelState.with_voice)
         elif topic == PanelTopic.VOICE_PREVIEW:
-            self._preview()
-            return False
+            return self._preview()
         else:
             logger.warning("vox-panel: no handler for topic %r", topic)
             return False
         return True
 
-    def _voice_control(self) -> VoiceControl:
-        return VoiceControl(roster=self._state.roster, current=self._state.voice)
+    def _commit(
+        self, field: str, value: str, update: Callable[[PanelState, str], PanelState]
+    ) -> None:
+        """Persist *field* and update the held state as one atomic step."""
+        with self._lock:
+            self._store.write_field(field, value)
+            self._state = update(self._state, value)
+            self._notice = PanelNotice.silent()
 
-    def _preview(self) -> None:
-        """Play the held voice back, without touching any config field."""
-        voice = self._state.voice
+    def _voice_for(self, index: int) -> str:
+        with self._lock:
+            roster, current = self._state.roster, self._state.voice
+        return VoiceControl(roster=roster, current=current).voice_for_index(index)
+
+    def _preview(self) -> bool:
+        """Play the held voice back; return whether a status notice needs to show."""
+        with self._lock:
+            voice = self._state.voice
         if voice is None:
             logger.info("vox-panel: no voice selected yet; preview skipped")
-            return
+            return False
         try:
             self._client.synthesize(_PREVIEW_TEXT, SynthesisSpec(voice=voice))
-        except Exception:
-            logger.exception("vox-panel: voice preview failed")
+        except VoxdConnectionError:
+            logger.warning("vox-panel: voice preview failed -- voxd is not reachable")
+            with self._lock:
+                self._notice = PanelNotice.voxd_unavailable()
+            return True
+        return False
 
-    def _refresh(self) -> None:
-        """Re-read settings from disk and voxd, keeping the held state on failure."""
+    def _resync(self, notice_on_success: PanelNotice) -> None:
+        """Re-read settings fresh, holding the last-known ones if voxd is down."""
         try:
-            self._state = PanelState.read(self._client, self._store)
-        except Exception:
-            logger.exception(
-                "vox-panel: could not read fresh settings; keeping the held ones"
+            fresh = PanelState.read(self._client, self._store)
+        except VoxdConnectionError:
+            logger.warning(
+                "vox-panel: voxd unreachable; keeping the last known settings"
             )
+            with self._lock:
+                self._notice = PanelNotice.voxd_unavailable()
+            return
+        with self._lock:
+            self._state = fresh
+            self._notice = notice_on_success
 
     @staticmethod
     def _index(payload: Mapping[str, object]) -> int:

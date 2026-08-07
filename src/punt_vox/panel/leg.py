@@ -22,6 +22,8 @@ from punt_lux import HubUnavailableError, OpError
 from punt_lux.applets import ClickLatency
 from punt_lux.rest_client import LuxRestClient
 
+from punt_vox.panel.hub_outage_log import HubOutageLog
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Mapping
 
@@ -47,7 +49,15 @@ class VoxPanelLeg:
     _topics: tuple[str, ...]
     _rest_factory: Callable[[], PanelRestClient]
     _tasks: set[asyncio.Task[None]]
-    __slots__ = ("_identity", "_rest_factory", "_service", "_tasks", "_topics")
+    _outage: HubOutageLog
+    __slots__ = (
+        "_identity",
+        "_outage",
+        "_rest_factory",
+        "_service",
+        "_tasks",
+        "_topics",
+    )
 
     def __new__(
         cls,
@@ -65,6 +75,7 @@ class VoxPanelLeg:
             lambda: LuxRestClient.for_identity(identity)
         )
         self._tasks = set()
+        self._outage = HubOutageLog(logger)
         return self
 
     async def serve(self) -> None:
@@ -78,7 +89,7 @@ class VoxPanelLeg:
         try:
             rest = self._rest_factory()
         except HubUnavailableError:
-            logger.debug("luxd is not running yet; the panel will retry")
+            self._outage.note("luxd is not running yet; the panel will retry")
             return
         listener = rest.listener(
             on_callback=self._on_callback,
@@ -89,12 +100,13 @@ class VoxPanelLeg:
         try:
             await listener.listen()
         except HubUnavailableError:
-            logger.debug("luxd is not running yet; the panel will retry")
+            self._outage.note("luxd is not running yet; the panel will retry")
         except Exception:
             logger.exception("the panel's listen leg failed; retrying")
 
     async def _register(self) -> None:
         """Put the ``Vox`` entry in the menu and warm the settings cache."""
+        self._outage.clear()
         result = await asyncio.to_thread(self._register_now)
         if isinstance(result, OpError):
             logger.error("the panel's menu entry was refused: %s", result.reason)
@@ -145,12 +157,19 @@ class VoxPanelLeg:
                 "vox-panel: rejected control event on %s: %r", topic, payload
             )
             return
+        except OSError:
+            logger.exception(
+                "vox-panel: could not persist the %s change; correcting the scene",
+                topic,
+            )
+            self._service.recover_from_write_failure(topic)
+            changed = True
         if not changed:
             return
         try:
             rest = self._rest_factory()
         except HubUnavailableError:
-            logger.debug("luxd unavailable; dropped the panel re-push")
+            self._outage.note("luxd unavailable; dropped the panel re-push")
             return
         self._service.push_scene(rest)
 
