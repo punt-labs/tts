@@ -12,8 +12,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import stat
 import subprocess
+import tempfile
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -89,6 +92,23 @@ def _mark_enabled(repo: Path) -> None:
     marker.write_text("", encoding="utf-8")
 
 
+@pytest.fixture
+def isolated_root() -> Iterator[Path]:
+    """A directory tree outside the repo, immune to the parent-marker walk.
+
+    `.envrc` pins `TMPDIR` to `<repo>/.tmp/`, so pytest's `tmp_path` fixture
+    nests under the real vox repo. A test asserting "no marker anywhere up to
+    real /" would otherwise cross this project's own committed
+    `.punt-labs/vox/enabled` marker and fail. Building under `/tmp` directly
+    (bypassing `TMPDIR`) keeps the ancestor chain genuinely marker-free.
+    """
+    root = Path(tempfile.mkdtemp(dir="/tmp"))
+    try:
+        yield root
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 class TestHookGate:
     @pytest.mark.parametrize("name", sorted(_GATED_HOOKS))
     def test_enabled_repo_reaches_vox(self, name: str, tmp_path: Path) -> None:
@@ -157,14 +177,16 @@ class TestHookGate:
         assert rc == 0
         assert sentinel.exists(), "gate did not walk parents to the marker"
 
-    def test_git_unavailable_and_no_marker_is_silent(self, tmp_path: Path) -> None:
+    def test_git_unavailable_and_no_marker_is_silent(self, isolated_root: Path) -> None:
         # git stubbed to fail and no marker in any parent: the parent walk bottoms
-        # out at "/" and the hook exits silently rather than firing.
-        subdir = tmp_path / "tree" / "src" / "nested"
+        # out at "/" and the hook exits silently rather than firing. Built under
+        # isolated_root (real /tmp), not tmp_path, so the walk can't cross this
+        # project's own committed enabled marker on its way to "/".
+        subdir = isolated_root / "tree" / "src" / "nested"
         subdir.mkdir(parents=True)
-        bin_dir = tmp_path / "bin"
+        bin_dir = isolated_root / "bin"
         bin_dir.mkdir()
-        sentinel = tmp_path / "sentinel"
+        sentinel = isolated_root / "sentinel"
         _write_vox_stub(bin_dir, sentinel)
         _write_failing_git(bin_dir)
         env = dict(os.environ)
