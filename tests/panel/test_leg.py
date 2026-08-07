@@ -282,21 +282,24 @@ class TestOnEvent:
         )
         await leg._on_event(PanelTopic.NOTIFY.value, {"value": 0})
         await _wait_until(lambda: service.pushed > 0)  # must not raise
-        assert service.recovered == [PanelTopic.NOTIFY.value]
+        assert service.recovered == ["notify"]
         assert service.pushed == 1
 
-    async def test_rejected_payload_does_not_trigger_recovery(self) -> None:
+    async def test_rejected_payload_repushes_the_held_scene_but_does_not_recover(
+        self,
+    ) -> None:
+        rest = _FakeRest()
         service = _FakeService(raise_on_apply=True)
         leg = VoxPanelLeg(
             _IDENTITY,
             service,  # type: ignore[arg-type]
             topics=(),
-            rest_factory=_FakeRest,
+            rest_factory=lambda: rest,
         )
         await leg._on_event(PanelTopic.NOTIFY.value, {})
-        await asyncio.sleep(0)
+        await _wait_until(lambda: service.pushed > 0)  # must not raise
         assert service.recovered == []
-        assert service.pushed == 0
+        assert service.pushed == 1
 
 
 class TestOutageLogging:

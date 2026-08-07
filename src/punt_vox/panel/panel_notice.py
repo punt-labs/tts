@@ -41,3 +41,10 @@ class PanelNotice:
     def write_failed(cls, field: str) -> Self:
         """Return the warning shown when persisting *field* could not be saved."""
         return cls(f"⚠ couldn't save {field} -- reverted to the last saved value")
+
+    @classmethod
+    def write_failed_and_voxd_unavailable(cls, field: str) -> Self:
+        """Return the warning when a failed *field* persist AND the resync
+        meant to confirm the reverted value both fail -- two unrelated
+        subsystems (local disk, voxd), so neither message may be dropped."""
+        return cls(f"⚠ couldn't save {field}, and voxd is unreachable too")

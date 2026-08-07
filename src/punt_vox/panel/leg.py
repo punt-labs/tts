@@ -23,6 +23,7 @@ from punt_lux.applets import ClickLatency
 from punt_lux.rest_client import LuxRestClient
 
 from punt_vox.panel.hub_outage_log import HubOutageLog
+from punt_vox.panel.topics import PanelTopic
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Mapping
@@ -153,16 +154,20 @@ class VoxPanelLeg:
         try:
             changed = self._service.apply_event(topic, payload)
         except (TypeError, ValueError):
+            # A malformed click carries no config change to recover, but the
+            # widget may already show it optimistically -- re-push the
+            # still-true held scene below to snap it back.
             logger.exception(
                 "vox-panel: rejected control event on %s: %r", topic, payload
             )
-            return
+            changed = True
         except OSError:
+            field = PanelTopic(topic).field_name
             logger.exception(
                 "vox-panel: could not persist the %s change; correcting the scene",
-                topic,
+                field,
             )
-            self._service.recover_from_write_failure(topic)
+            self._service.recover_from_write_failure(field)
             changed = True
         if not changed:
             return

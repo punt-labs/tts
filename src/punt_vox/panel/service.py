@@ -106,11 +106,16 @@ class VoxPanelService:
 
     def refresh(self) -> None:
         """Re-read settings from disk and voxd; note staleness if voxd is down."""
-        self._resync(PanelNotice.silent())
+        self._resync(
+            PanelNotice.silent(), on_read_failure=PanelNotice.voxd_unavailable()
+        )
 
     def recover_from_write_failure(self, field: str) -> None:
         """Re-sync from the real settings after a failed persist, and flag the scene."""
-        self._resync(PanelNotice.write_failed(field))
+        self._resync(
+            PanelNotice.write_failed(field),
+            on_read_failure=PanelNotice.write_failed_and_voxd_unavailable(field),
+        )
 
     def apply_event(self, topic: str, payload: Mapping[str, object]) -> bool:
         """Apply one control-topic event; return whether the scene needs a re-push.
@@ -166,16 +171,27 @@ class VoxPanelService:
             return True
         return False
 
-    def _resync(self, notice_on_success: PanelNotice) -> None:
-        """Re-read settings fresh, holding the last-known ones if voxd is down."""
+    def _resync(
+        self, notice_on_success: PanelNotice, *, on_read_failure: PanelNotice
+    ) -> None:
+        """Re-read settings fresh, holding the last-known ones if voxd is down.
+
+        *on_read_failure* is the caller's choice, not a hardcoded
+        ``voxd_unavailable()``: ``recover_from_write_failure`` already has a
+        specific "couldn't save X" notice in flight, and if the resync meant
+        to confirm the reverted value also finds voxd down, that specific
+        notice must not be silently replaced by a generic one blaming an
+        unrelated subsystem -- the caller passes a notice that names both.
+        """
         try:
             fresh = PanelState.read(self._client, self._store)
         except VoxdConnectionError:
             logger.warning(
-                "vox-panel: voxd unreachable; keeping the last known settings"
+                "vox-panel: voxd unreachable during resync: %s",
+                on_read_failure.message,
             )
             with self._lock:
-                self._notice = PanelNotice.voxd_unavailable()
+                self._notice = on_read_failure
             return
         with self._lock:
             self._state = fresh
