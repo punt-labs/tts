@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING, final
 
 import pytest
@@ -196,7 +197,40 @@ class TestApplyEvent:
         service = VoxPanelService(client, _FakeStore(_config()))
         service.prefetch()
         # Must not raise -- a preview failure is logged, never propagated.
-        service.apply_event(PanelTopic.VOICE_PREVIEW, {})
+        changed = service.apply_event(PanelTopic.VOICE_PREVIEW, {})
+        assert changed is True
+        assert service.scene().notice == PanelNotice.voxd_unavailable()
+
+    def test_voice_preview_lets_a_real_bug_propagate(self) -> None:
+        """Only the voxd-unreachable transient is swallowed -- a protocol bug is not."""
+
+        class _MisbehavingClient:
+            def voices(self) -> list[str]:
+                return ["roger"]
+
+            def synthesize(self, *args: object, **kwargs: object) -> object:
+                msg = "unexpected reply"
+                raise VoxdProtocolError(msg)
+
+        service = VoxPanelService(_MisbehavingClient(), _FakeStore(_config()))  # type: ignore[arg-type]
+        service.prefetch()
+        with pytest.raises(VoxdProtocolError):
+            service.apply_event(PanelTopic.VOICE_PREVIEW, {})
+
+    def test_write_failure_propagates_to_the_caller(self) -> None:
+        """A persist failure is never swallowed -- the leg decides how to recover."""
+
+        class _FailingStore:
+            def read(self) -> VoxConfig:
+                return _config()
+
+            def write_field(self, key: str, value: str) -> None:
+                msg = "disk full"
+                raise OSError(msg)
+
+        service = VoxPanelService(_FakeDaemonClient(), _FailingStore())
+        with pytest.raises(OSError, match="disk full"):
+            service.apply_event(PanelTopic.NOTIFY, {"value": 2})
 
     def test_unknown_topic_is_ignored(self) -> None:
         service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
@@ -222,6 +256,78 @@ class TestPushScene:
     def test_luxd_refusal_is_logged_not_raised(self) -> None:
         service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
         service.push_scene(_FakeRest(refuse=True))  # must not raise
+
+
+class TestRefreshAndRecover:
+    def test_refresh_clears_a_stale_notice(self) -> None:
+        # synthesize fails (sets the notice) but voices() still works, so a
+        # later refresh -- e.g. the next click -- can clear it.
+        client = _FakeDaemonClient(raise_on_synth=True)
+        service = VoxPanelService(client, _FakeStore(_config()))
+        service.prefetch()
+        service.apply_event(PanelTopic.VOICE_PREVIEW, {})
+        assert service.scene().notice != PanelNotice.silent()
+
+        service.refresh()
+        assert service.scene().notice == PanelNotice.silent()
+
+    def test_recover_from_write_failure_resyncs_and_flags_the_scene(self) -> None:
+        store = _FakeStore(_config(voice="roger"))
+        service = VoxPanelService(_FakeDaemonClient(), store)
+        service.recover_from_write_failure("notify")
+        scene = service.scene()
+        assert scene.voice == "roger"  # re-read from the real source of truth
+        assert scene.notice == PanelNotice.write_failed("notify")
+
+
+class TestConcurrentApplyEvent:
+    def test_overlapping_events_on_different_fields_both_land(self) -> None:
+        """Two threads writing different fields must not clobber one another."""
+        store = _FakeStore(_config())
+        first_entered = threading.Event()
+        release_first = threading.Event()
+        second_started = threading.Event()
+
+        class _BlockingStore:
+            def read(self) -> VoxConfig:
+                return store.read()
+
+            def write_field(self, key: str, value: str) -> None:
+                if key == "notify":
+                    first_entered.set()
+                    release_first.wait(timeout=2)
+                store.write_field(key, value)
+
+        service = VoxPanelService(_FakeDaemonClient(), _BlockingStore())
+        service.prefetch()
+
+        def apply_notify() -> None:
+            service.apply_event(PanelTopic.NOTIFY, {"value": 2})
+
+        def apply_speak() -> None:
+            second_started.set()
+            service.apply_event(PanelTopic.MIC_MODE, {"value": 0})
+
+        notify_thread = threading.Thread(target=apply_notify)
+        notify_thread.start()
+        assert first_entered.wait(timeout=2)
+
+        speak_thread = threading.Thread(target=apply_speak)
+        speak_thread.start()
+        assert second_started.wait(timeout=2)
+        # The lock must block the second writer while the first still holds
+        # it -- if it raced ahead instead, it would compute from a stale
+        # snapshot and its write would be the one to survive, not both.
+        speak_thread.join(timeout=0.2)
+        assert speak_thread.is_alive(), "a second writer got in mid-update"
+
+        release_first.set()
+        notify_thread.join(timeout=2)
+        speak_thread.join(timeout=2)
+
+        scene = service.scene()
+        assert scene.notify == "c"
+        assert scene.speak == "n"
 
 
 class TestAcknowledgeAndService:

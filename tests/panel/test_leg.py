@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING, cast, final
 
 from punt_lux import HubUnavailableError, OpError
@@ -11,8 +12,9 @@ from punt_vox.panel.leg import VoxPanelLeg
 from punt_vox.panel.topics import PanelTopic
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
+    import pytest
     from punt_lux import RenderRequest, SceneShown
     from punt_lux.domain.hub.client_identity import ClientIdentity
     from punt_lux.hub_client import CallbackHandler, ConnectHandler, EventHandler
@@ -21,6 +23,17 @@ if TYPE_CHECKING:
     from punt_vox.panel.ports import HubListener
 
 _IDENTITY = cast("ClientIdentity", object())
+
+
+async def _wait_until(predicate: Callable[[], bool], *, timeout: float = 2.0) -> None:
+    """Poll *predicate* until it is true -- a ``to_thread`` worker needs real
+    wall-clock time to run, not just an event-loop tick."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not predicate():
+        if asyncio.get_running_loop().time() > deadline:
+            msg = "timed out waiting for the background worker to finish"
+            raise AssertionError(msg)
+        await asyncio.sleep(0.01)
 
 
 @final
@@ -76,7 +89,9 @@ class _FakeRest:
 class _FakeService:
     """A ``VoxPanelService`` double recording its lifecycle calls."""
 
-    def __init__(self, *, raise_on_apply: bool = False) -> None:
+    def __init__(
+        self, *, raise_on_apply: bool = False, raise_on_write: bool = False
+    ) -> None:
         self.callback_id = "vox-panel"
         self.label = "Vox"
         self.prefetch_called = False
@@ -85,7 +100,9 @@ class _FakeService:
         self.applied: list[tuple[str, Mapping[str, object]]] = []
         self.apply_returns = True
         self.raise_on_apply = raise_on_apply
+        self.raise_on_write = raise_on_write
         self.pushed = 0
+        self.recovered: list[str] = []
 
     def prefetch(self) -> None:
         self.prefetch_called = True
@@ -100,11 +117,17 @@ class _FakeService:
         if self.raise_on_apply:
             msg = "bad payload"
             raise TypeError(msg)
+        if self.raise_on_write:
+            msg = "disk full"
+            raise OSError(msg)
         self.applied.append((topic, payload))
         return self.apply_returns
 
     def push_scene(self, client: object) -> None:
         self.pushed += 1
+
+    def recover_from_write_failure(self, field: str) -> None:
+        self.recovered.append(field)
 
 
 class TestListenOnce:
@@ -245,6 +268,96 @@ class TestOnEvent:
         )
         await leg._on_event(PanelTopic.NOTIFY.value, {"value": 0})
         await asyncio.sleep(0)  # must not raise
+
+    async def test_write_failure_is_caught_distinctly_and_corrects_the_scene(
+        self,
+    ) -> None:
+        rest = _FakeRest()
+        service = _FakeService(raise_on_write=True)
+        leg = VoxPanelLeg(
+            _IDENTITY,
+            service,  # type: ignore[arg-type]
+            topics=(),
+            rest_factory=lambda: rest,
+        )
+        await leg._on_event(PanelTopic.NOTIFY.value, {"value": 0})
+        await _wait_until(lambda: service.pushed > 0)  # must not raise
+        assert service.recovered == [PanelTopic.NOTIFY.value]
+        assert service.pushed == 1
+
+    async def test_rejected_payload_does_not_trigger_recovery(self) -> None:
+        service = _FakeService(raise_on_apply=True)
+        leg = VoxPanelLeg(
+            _IDENTITY,
+            service,  # type: ignore[arg-type]
+            topics=(),
+            rest_factory=_FakeRest,
+        )
+        await leg._on_event(PanelTopic.NOTIFY.value, {})
+        await asyncio.sleep(0)
+        assert service.recovered == []
+        assert service.pushed == 0
+
+
+class TestOutageLogging:
+    """Every hub-unavailable retry path routes through the same escalation."""
+
+    async def test_first_unavailable_tick_logs_at_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG, logger="punt_vox.panel.leg")
+
+        def _raise() -> PanelRestClientLike:
+            raise HubUnavailableError("down")
+
+        leg = VoxPanelLeg(
+            _IDENTITY,
+            _FakeService(),  # type: ignore[arg-type]
+            topics=(),
+            rest_factory=_raise,
+        )
+        await leg._listen_once()
+        assert [r.levelno for r in caplog.records] == [logging.WARNING]
+
+    async def test_a_quick_second_tick_stays_at_debug(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG, logger="punt_vox.panel.leg")
+
+        def _raise() -> PanelRestClientLike:
+            raise HubUnavailableError("down")
+
+        leg = VoxPanelLeg(
+            _IDENTITY,
+            _FakeService(),  # type: ignore[arg-type]
+            topics=(),
+            rest_factory=_raise,
+        )
+        await leg._listen_once()
+        await leg._listen_once()
+        assert [r.levelno for r in caplog.records] == [
+            logging.WARNING,
+            logging.DEBUG,
+        ]
+
+    async def test_a_successful_connect_clears_the_outage(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG, logger="punt_vox.panel.leg")
+        rest = _FakeRest()
+        service = _FakeService()
+        leg = VoxPanelLeg(
+            _IDENTITY,
+            service,  # type: ignore[arg-type]
+            topics=(),
+            rest_factory=lambda: rest,
+        )
+        leg._outage.note("simulate an ongoing outage")
+        await leg._register()
+        caplog.clear()
+        # A cleared outage logs at WARNING again, not DEBUG, on the next tick.
+        leg._outage.note("down again")
+        assert [r.levelno for r in caplog.records] == [logging.WARNING]
 
 
 if TYPE_CHECKING:

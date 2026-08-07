@@ -173,9 +173,11 @@ if [ -z "$_repo_root" ]; then
   done
   _repo_root="$_dir"
 fi
-if [ -f "$_repo_root/.punt-labs/vox/enabled" ] && command -v vox-panel >/dev/null 2>&1; then
+if [ -f "$_repo_root/.punt-labs/vox/enabled" ]; then
   PANEL_LOG="${TMPDIR:-/tmp}/vox-panel-$PPID.log"
-  if pgrep -f "vox-panel --session-pid ${PPID}\$" >/dev/null 2>&1; then
+  if ! command -v vox-panel >/dev/null 2>&1; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') session-start: vox-panel not found on PATH; the Vox control panel will not be available this session" >>"$PANEL_LOG"
+  elif pgrep -f "vox-panel --session-pid ${PPID}\$" >/dev/null 2>&1; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') session-start: this session is already served; not spawning another panel" >>"$PANEL_LOG"
   else
     nohup vox-panel --session-pid "$PPID" >>"$PANEL_LOG" 2>&1 &
