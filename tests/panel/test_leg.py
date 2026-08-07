@@ -40,11 +40,14 @@ async def _wait_until(predicate: Callable[[], bool], *, timeout: float = 2.0) ->
 class _FakeListener:
     """A ``HubListener`` double that records subscriptions and never blocks."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, raise_on_subscribe: bool = False) -> None:
         self.subscribed: tuple[str, ...] = ()
         self.listened = False
+        self._raise_on_subscribe = raise_on_subscribe
 
     def subscribe(self, *topics: str) -> None:
+        if self._raise_on_subscribe:
+            raise HubUnavailableError("down")
         self.subscribed = topics
 
     async def listen(self) -> None:
@@ -61,11 +64,19 @@ def _ok() -> Ok:
 class _FakeRest:
     """A ``PanelRestClient`` double: canned register result, records listeners."""
 
-    def __init__(self, *, register_result: Ok | OpError | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        register_result: Ok | OpError | None = None,
+        raise_on_listener: bool = False,
+        raise_on_subscribe: bool = False,
+    ) -> None:
         self.register_result = register_result if register_result is not None else _ok()
         self.registered: list[tuple[str, str]] = []
         self.rendered_count = 0
         self.listener_built: _FakeListener | None = None
+        self._raise_on_listener = raise_on_listener
+        self._raise_on_subscribe = raise_on_subscribe
 
     def render(self, request: RenderRequest) -> SceneShown | OpError:
         self.rendered_count += 1
@@ -82,7 +93,9 @@ class _FakeRest:
         on_event: EventHandler,
         on_connect: ConnectHandler | None = None,
     ) -> HubListener:
-        self.listener_built = _FakeListener()
+        if self._raise_on_listener:
+            raise HubUnavailableError("down")
+        self.listener_built = _FakeListener(raise_on_subscribe=self._raise_on_subscribe)
         return self.listener_built
 
 
@@ -159,6 +172,29 @@ class TestListenOnce:
             rest_factory=_raise,
         )
         await leg._listen_once()
+
+    async def test_hub_unavailable_building_the_listener_is_swallowed(self) -> None:
+        # rest.listener(...) sits between the two calls that were already
+        # guarded (_rest_factory() and listener.listen()) -- luxd dropping in
+        # this exact window is the retry loop's own documented failure mode.
+        rest = _FakeRest(raise_on_listener=True)
+        leg = VoxPanelLeg(
+            _IDENTITY,
+            _FakeService(),  # type: ignore[arg-type]
+            topics=(),
+            rest_factory=lambda: rest,
+        )
+        await leg._listen_once()  # must not raise
+
+    async def test_hub_unavailable_subscribing_is_swallowed(self) -> None:
+        rest = _FakeRest(raise_on_subscribe=True)
+        leg = VoxPanelLeg(
+            _IDENTITY,
+            _FakeService(),  # type: ignore[arg-type]
+            topics=(),
+            rest_factory=lambda: rest,
+        )
+        await leg._listen_once()  # must not raise
 
 
 class TestRegister:
