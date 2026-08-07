@@ -279,6 +279,28 @@ class TestRefreshAndRecover:
         assert scene.voice == "roger"  # re-read from the real source of truth
         assert scene.notice == PanelNotice.write_failed("notify")
 
+    def test_recover_from_write_failure_when_resync_also_fails_composes_both(
+        self,
+    ) -> None:
+        """The specific write-failure notice must not be discarded for a
+        generic voxd-unavailable one when the confirming resync also fails --
+        two unrelated subsystems failed, and the message must say both."""
+
+        class _BrokenClient:
+            def voices(self) -> list[str]:
+                msg = "voxd unreachable"
+                raise VoxdConnectionError(msg)
+
+            def synthesize(self, *args: object, **kwargs: object) -> object:
+                raise NotImplementedError
+
+        service = VoxPanelService(_BrokenClient(), _FakeStore(_config()))  # type: ignore[arg-type]
+        service.recover_from_write_failure("notify")
+        notice = service.scene().notice
+        assert notice == PanelNotice.write_failed_and_voxd_unavailable("notify")
+        assert "notify" in notice.message
+        assert "voxd" in notice.message
+
 
 class TestConcurrentApplyEvent:
     def test_overlapping_events_on_different_fields_both_land(self) -> None:
