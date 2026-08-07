@@ -13,8 +13,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_vox.panel.panel_scene import PanelScene
 
 if TYPE_CHECKING:
-    from punt_vox.client_sync import VoxClientSync
-    from punt_vox.config import ConfigStore
+    from punt_vox.panel.ports import SettingsSource, VoiceRoster
 
 __all__ = ["PanelState"]
 
@@ -35,7 +34,7 @@ class PanelState:
         return cls(notify="n", speak="y", voice=None, roster=())
 
     @classmethod
-    def read(cls, client: VoxClientSync, store: ConfigStore) -> Self:
+    def read(cls, client: VoiceRoster, store: SettingsSource) -> Self:
         """Read the config fields fresh from disk and the voice roster from voxd."""
         cfg = store.read()
         roster = tuple(client.voices())

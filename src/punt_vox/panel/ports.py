@@ -1,9 +1,12 @@
-"""The structural seams :class:`~punt_vox.panel.leg.VoxPanelLeg` depends on.
+"""The structural seams the panel package depends on.
 
-``PanelRestClient`` is the REST surface the leg needs -- render a scene,
-register the menu callback, and build the persistent listener -- so a test
-drives the leg with an in-memory fake instead of a live luxd. The concrete
-``punt_lux.rest_client.LuxRestClient`` satisfies it structurally.
+``PanelRestClient`` is the REST surface :class:`~punt_vox.panel.leg.VoxPanelLeg`
+needs -- render a scene, register the menu callback, and build the persistent
+listener. ``SettingsSource`` and ``VoiceRoster`` are the two reads
+:class:`~punt_vox.panel.state.PanelState` needs -- the config store and the
+daemon's voice list. Each lets a test drive its dependent with an in-memory
+fake; the concrete ``punt_lux.rest_client.LuxRestClient``, ``ConfigStore``, and
+``VoxClientSync`` satisfy them structurally.
 """
 
 from __future__ import annotations
@@ -15,7 +18,9 @@ if TYPE_CHECKING:
     from punt_lux.hub_client import CallbackHandler, ConnectHandler, EventHandler
     from punt_lux.operations import Ok
 
-__all__ = ["HubListener", "PanelRestClient"]
+    from punt_vox.config import VoxConfig
+
+__all__ = ["HubListener", "PanelRestClient", "SettingsSource", "VoiceRoster"]
 
 
 @runtime_checkable
@@ -51,4 +56,22 @@ class PanelRestClient(Protocol):
         on_connect: ConnectHandler | None = None,
     ) -> HubListener:
         """Build the persistent listener sharing this client's identity."""
+        ...
+
+
+@runtime_checkable
+class SettingsSource(Protocol):
+    """The config-store read :class:`~punt_vox.panel.state.PanelState` needs."""
+
+    def read(self) -> VoxConfig:
+        """Return every config field, merging the durable and ephemeral files."""
+        ...
+
+
+@runtime_checkable
+class VoiceRoster(Protocol):
+    """The daemon read :class:`~punt_vox.panel.state.PanelState` needs."""
+
+    def voices(self) -> list[str]:
+        """Return the active provider's available voice names."""
         ...
