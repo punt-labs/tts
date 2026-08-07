@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+_stdin=$(cat)
+if command -v jq >/dev/null 2>&1; then
+  _cwd=$(printf '%s' "$_stdin" | jq -r '.cwd // empty' 2>/dev/null)
+else
+  _cwd=$(printf '%s' "$_stdin" | grep -oE '"cwd"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//;s/"//')
+fi
+[[ -n "$_cwd" ]] || _cwd="$PWD"
+
 PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SETTINGS="$HOME/.claude/settings.json"
 COMMANDS_DIR="$HOME/.claude/commands"
@@ -139,6 +147,39 @@ if [[ ${#ACTIONS[@]} -gt 0 ]]; then
     cat <<ENDJSON
 {"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"$MSG"}}
 ENDJSON
+  fi
+fi
+
+# ── Launch this session's Vox control panel applet ────────────────────
+# The panel is a session-bound program that owns the "Vox" entry in the Lux
+# menu and services its clicks directly, the same way lux's own lux-beads
+# applet does -- voxd cannot do this itself: launchd starts it with no
+# repository working directory. Modeled directly on lux-beads' own
+# session-start block (a pgrep-guard-then-nohup spawn under a session-pid
+# lock), gated additionally on vox's own per-repo enablement marker so an
+# unrelated repo never gets a floating "Vox" menu entry.
+#
+# $PPID is the Claude Code process that ran this hook. The applet watches it
+# and exits when it goes, so it never outlives its session. SessionStart
+# fires more than once for one session -- /resume and /clear both fire it
+# again against the same process -- and the applet refuses a second start
+# itself under its own session-pid lock, so the guard below only saves the
+# pointless respawn.
+_repo_root=$(git -C "$_cwd" rev-parse --show-toplevel 2>/dev/null)
+if [ -z "$_repo_root" ]; then
+  _dir="$_cwd"
+  while [ ! -f "$_dir/.punt-labs/vox/enabled" ] && [ "$_dir" != "/" ]; do
+    _dir=$(dirname "$_dir")
+  done
+  _repo_root="$_dir"
+fi
+if [ -f "$_repo_root/.punt-labs/vox/enabled" ] && command -v vox-panel >/dev/null 2>&1; then
+  PANEL_LOG="${TMPDIR:-/tmp}/vox-panel-$PPID.log"
+  if pgrep -f "vox-panel --session-pid ${PPID}\$" >/dev/null 2>&1; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') session-start: this session is already served; not spawning another panel" >>"$PANEL_LOG"
+  else
+    nohup vox-panel --session-pid "$PPID" >>"$PANEL_LOG" 2>&1 &
+    disown
   fi
 fi
 

@@ -51,6 +51,7 @@ Repository = "https://github.com/punt-labs/vox"
 [project.scripts]
 vox = "punt_vox.__main__:app"
 voxd = "punt_vox.voxd:entrypoint"
+vox-panel = "punt_vox.panel.applet:app"
 
 [dependency-groups]
 dev = [
