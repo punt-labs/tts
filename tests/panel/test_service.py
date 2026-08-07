@@ -1,0 +1,215 @@
+"""Tests for :mod:`punt_vox.panel.service`."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, final
+
+import pytest
+from punt_lux import OpError
+
+from punt_vox.panel.service import VoxPanelService
+from punt_vox.panel.state import PanelState
+from punt_vox.panel.topics import PanelTopic
+from punt_vox.types_synthesis import SynthesisSpec
+
+if TYPE_CHECKING:
+    from punt_lux import RenderRequest, SceneShown
+    from punt_lux.applets import ClickLatency
+    from punt_lux.hub_client import CallbackHandler, ConnectHandler, EventHandler
+    from punt_lux.operations import Ok
+
+    from punt_vox.client import SynthesizeResult
+    from punt_vox.config import VoxConfig
+    from punt_vox.panel.ports import HubListener
+
+
+@final
+class _FakeDaemonClient:
+    """A ``PanelDaemonClient`` double: canned voices, and a raise-toggle synth."""
+
+    def __init__(
+        self, voices: list[str] | None = None, *, raise_on_synth: bool = False
+    ) -> None:
+        self._voices = voices if voices is not None else ["aria", "roger"]
+        self._raise_on_synth = raise_on_synth
+        self.synth_calls: list[tuple[str, SynthesisSpec | None]] = []
+
+    def voices(self) -> list[str]:
+        return self._voices
+
+    def synthesize(
+        self, text: str, spec: SynthesisSpec | None = None, *, once: int | None = None
+    ) -> SynthesizeResult:
+        if self._raise_on_synth:
+            msg = "voxd unreachable"
+            raise ConnectionError(msg)
+        self.synth_calls.append((text, spec))
+        return {}  # type: ignore[return-value]
+
+
+@final
+class _FakeStore:
+    """A ``SettingsStore`` double: an in-memory dict of written fields."""
+
+    def __init__(self, cfg: VoxConfig) -> None:
+        self._cfg = cfg
+        self.written: dict[str, str] = {}
+
+    def read(self) -> VoxConfig:
+        return self._cfg
+
+    def write_field(self, key: str, value: str) -> None:
+        self.written[key] = value
+
+
+@final
+class _FakeRest:
+    """A ``PanelRestClient`` double that only needs ``render`` for these tests."""
+
+    def __init__(self, *, refuse: bool = False) -> None:
+        self._refuse = refuse
+        self.rendered: list[RenderRequest] = []
+
+    def render(self, request: RenderRequest) -> SceneShown | OpError:
+        if self._refuse:
+            return OpError(code="rejected", reason="no display")
+        self.rendered.append(request)
+        return None  # type: ignore[return-value]
+
+    def register_callback(self, callback_id: str, label: str) -> Ok | OpError:
+        raise NotImplementedError
+
+    def listener(
+        self,
+        *,
+        on_callback: CallbackHandler,
+        on_event: EventHandler,
+        on_connect: ConnectHandler | None = None,
+    ) -> HubListener:
+        raise NotImplementedError
+
+
+def _config(voice: str | None = "roger") -> VoxConfig:
+    from punt_vox.config import VoxConfig
+
+    return VoxConfig(
+        notify="y",
+        speak="y",
+        vibe_mode="auto",
+        voice=voice,
+        provider=None,
+        model=None,
+        vibe=None,
+        vibe_tags=None,
+    )
+
+
+class TestPrefetch:
+    def test_reads_settings_into_held_state(self) -> None:
+        service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
+        service.prefetch()
+        assert service.scene().voice == "roger"
+
+    def test_daemon_unavailable_keeps_the_empty_default(self) -> None:
+        class _BrokenClient:
+            def voices(self) -> list[str]:
+                msg = "voxd unreachable"
+                raise ConnectionError(msg)
+
+            def synthesize(self, *args: object, **kwargs: object) -> object:
+                raise NotImplementedError
+
+        service = VoxPanelService(_BrokenClient(), _FakeStore(_config()))  # type: ignore[arg-type]
+        service.prefetch()
+        assert service.scene().voice == PanelState.empty().voice
+
+
+class TestApplyEvent:
+    def test_notify_writes_the_code_and_updates_state(self) -> None:
+        service = VoxPanelService(_FakeDaemonClient(), (store := _FakeStore(_config())))
+        changed = service.apply_event(PanelTopic.NOTIFY, {"value": 2})
+        assert changed is True
+        assert store.written["notify"] == "c"
+        assert service.scene().notify == "c"
+
+    def test_mic_mode_writes_the_code_and_updates_state(self) -> None:
+        service = VoxPanelService(_FakeDaemonClient(), (store := _FakeStore(_config())))
+        service.apply_event(PanelTopic.MIC_MODE, {"value": 0})
+        assert store.written["speak"] == "n"
+        assert service.scene().speak == "n"
+
+    def test_voice_writes_the_name_and_updates_state(self) -> None:
+        service = VoxPanelService(_FakeDaemonClient(), (store := _FakeStore(_config())))
+        service.prefetch()
+        service.apply_event(PanelTopic.VOICE, {"value": 0})
+        assert store.written["voice"] == "aria"
+        assert service.scene().voice == "aria"
+
+    def test_voice_preview_does_not_write_and_reports_no_repush(self) -> None:
+        client = _FakeDaemonClient()
+        service = VoxPanelService(client, _FakeStore(_config()))
+        service.prefetch()
+        changed = service.apply_event(PanelTopic.VOICE_PREVIEW, {})
+        assert changed is False
+        expected = ("This is my voice.", SynthesisSpec(voice="roger"))
+        assert client.synth_calls == [expected]
+
+    def test_voice_preview_with_no_voice_selected_is_a_silent_no_op(self) -> None:
+        client = _FakeDaemonClient()
+        service = VoxPanelService(client, _FakeStore(_config(voice=None)))
+        service.prefetch()
+        service.apply_event(PanelTopic.VOICE_PREVIEW, {})
+        assert client.synth_calls == []
+
+    def test_voice_preview_survives_an_unavailable_voxd(self) -> None:
+        client = _FakeDaemonClient(raise_on_synth=True)
+        service = VoxPanelService(client, _FakeStore(_config()))
+        service.prefetch()
+        # Must not raise -- a preview failure is logged, never propagated.
+        service.apply_event(PanelTopic.VOICE_PREVIEW, {})
+
+    def test_unknown_topic_is_ignored(self) -> None:
+        service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
+        assert service.apply_event("vox.unknown", {}) is False
+
+    @pytest.mark.parametrize("payload", [{}, {"value": "not-an-int"}, {"value": True}])
+    def test_missing_or_wrong_typed_value_raises(
+        self, payload: dict[str, object]
+    ) -> None:
+        service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
+        with pytest.raises(TypeError, match="value"):
+            service.apply_event(PanelTopic.NOTIFY, payload)
+
+
+class TestPushScene:
+    def test_pushes_the_held_scene(self) -> None:
+        service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
+        rest = _FakeRest()
+        service.push_scene(rest)
+        assert len(rest.rendered) == 1
+        assert rest.rendered[0].scene_id == "vox.panel"
+
+    def test_luxd_refusal_is_logged_not_raised(self) -> None:
+        service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
+        service.push_scene(_FakeRest(refuse=True))  # must not raise
+
+
+class TestAcknowledgeAndService:
+    def test_acknowledge_pushes_the_held_scene(self) -> None:
+        from punt_lux.applets import ClickLatency
+
+        service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
+        rest = _FakeRest()
+        service.acknowledge(rest, ClickLatency("vox-panel"))
+        assert len(rest.rendered) == 1
+
+    def test_service_refreshes_then_pushes(self) -> None:
+        from punt_lux.applets import ClickLatency
+
+        store = _FakeStore(_config(voice="aria"))
+        service = VoxPanelService(_FakeDaemonClient(), store)
+        rest = _FakeRest()
+        latency: ClickLatency = ClickLatency("vox-panel")
+        service.service(rest, latency)
+        assert service.scene().voice == "aria"
+        assert len(rest.rendered) == 1

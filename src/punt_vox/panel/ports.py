@@ -18,9 +18,18 @@ if TYPE_CHECKING:
     from punt_lux.hub_client import CallbackHandler, ConnectHandler, EventHandler
     from punt_lux.operations import Ok
 
+    from punt_vox.client import SynthesizeResult
     from punt_vox.config import VoxConfig
+    from punt_vox.types_synthesis import SynthesisSpec
 
-__all__ = ["HubListener", "PanelRestClient", "SettingsSource", "VoiceRoster"]
+__all__ = [
+    "HubListener",
+    "PanelDaemonClient",
+    "PanelRestClient",
+    "SettingsSource",
+    "SettingsStore",
+    "VoiceRoster",
+]
 
 
 @runtime_checkable
@@ -74,4 +83,29 @@ class VoiceRoster(Protocol):
 
     def voices(self) -> list[str]:
         """Return the active provider's available voice names."""
+        ...
+
+
+@runtime_checkable
+class SettingsStore(SettingsSource, Protocol):
+    """The config-store read and write ``VoxPanelService`` needs."""
+
+    def write_field(self, key: str, value: str) -> None:
+        """Write a single config field to the correct file."""
+        ...
+
+
+@runtime_checkable
+class PanelDaemonClient(VoiceRoster, Protocol):
+    """The daemon reads and the preview write ``VoxPanelService`` needs.
+
+    Extends :class:`VoiceRoster` (the roster read) with the one RPC the
+    ▶ preview button uses to play a candidate voice back without committing
+    it to config.
+    """
+
+    def synthesize(
+        self, text: str, spec: SynthesisSpec | None = None, *, once: int | None = None
+    ) -> SynthesizeResult:
+        """Send a synthesize request; audio plays on the daemon host."""
         ...
