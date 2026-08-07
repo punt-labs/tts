@@ -20,6 +20,9 @@ from punt_lux.applets.claim import NoClaim, SessionClaim
 from punt_lux.applets.watch import NoSession, SessionWatch
 from punt_lux.log_level import level_from_env
 
+from punt_vox.client_sync import VoxClientSync
+from punt_vox.config import ConfigStore
+from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.panel.leg import VoxPanelLeg
 from punt_vox.panel.program import VoxPanelProgram
 from punt_vox.panel.service import VoxPanelService
@@ -73,7 +76,9 @@ class VoxPanelApplet:
         """The leg this applet serves on, identified to the Hub by its session."""
         identity = AppletIdentity.for_session(session_pid)
         topics = tuple(topic.value for topic in PanelTopic)
-        return VoxPanelLeg(identity.client, VoxPanelService(), topics=topics)
+        store = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR)
+        service = VoxPanelService(VoxClientSync(), store)
+        return VoxPanelLeg(identity.client, service, topics=topics)
 
     async def run(self) -> None:
         """Run the applet, which is to say run its program."""

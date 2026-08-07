@@ -15,9 +15,6 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_lux import OpError
 
-from punt_vox.client_sync import VoxClientSync
-from punt_vox.config import ConfigStore
-from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.panel.radio_control import MIC_MODE_SPEC, NOTIFY_SPEC
 from punt_vox.panel.state import PanelState
 from punt_vox.panel.topics import PanelTopic
@@ -50,18 +47,10 @@ class VoxPanelService:
     _state: PanelState
     __slots__ = ("_client", "_state", "_store")
 
-    def __new__(
-        cls,
-        client: PanelDaemonClient | None = None,
-        store: SettingsStore | None = None,
-    ) -> Self:
+    def __new__(cls, client: PanelDaemonClient, store: SettingsStore) -> Self:
         self = super().__new__(cls)
-        self._client = client if client is not None else VoxClientSync()
-        self._store = (
-            store
-            if store is not None
-            else ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR)
-        )
+        self._client = client
+        self._store = store
         self._state = PanelState.empty()
         return self
 
