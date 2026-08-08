@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-_stdin=$(cat)
+_stdin=$(cat) || _stdin=""
 if command -v jq >/dev/null 2>&1; then
   _cwd=$(printf '%s' "$_stdin" | jq -r '.cwd // empty' 2>/dev/null) || _cwd=""
 else

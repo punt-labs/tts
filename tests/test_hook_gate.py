@@ -372,6 +372,33 @@ class TestPanelSpawn:
 
         assert result.returncode == 0, "malformed stdin aborted the hook"
 
+    def test_unreadable_stdin_does_not_abort_the_hook(self, tmp_path: Path) -> None:
+        """An unreadable stdin costs the session its panel, not just its cwd.
+
+        `cat` exits non-zero when fd 0 cannot be read from, and under `set -e`
+        the bare assignment on line 1 killed the hook upstream of every other
+        fallback -- the cwd default, command deployment, and the panel spawn
+        alike. A write-only fd reproduces it without the deadlock a *closed*
+        fd 0 causes: bash would hand the command substitution's own pipe to
+        `cat` as its stdin, and `cat` would wait forever on itself.
+        """
+        write_only = os.open(tmp_path / "sink", os.O_WRONLY | os.O_CREAT, 0o600)
+        env = self._base_env(tmp_path)
+        try:
+            result = subprocess.run(
+                ["bash", str(_HOOKS_DIR / "session-start.sh")],
+                stdin=write_only,
+                capture_output=True,
+                text=True,
+                env=env,
+                check=False,
+                timeout=30,
+            )
+        finally:
+            os.close(write_only)
+
+        assert result.returncode == 0, "unreadable stdin aborted the hook"
+
     def test_logs_a_reason_when_vox_panel_is_missing(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
         _mark_enabled(repo)
