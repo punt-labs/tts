@@ -62,7 +62,15 @@ type FailPoint = Literal["listener", "subscribe", "listen"]
 
 # Which call a service double fails, and how: one selector rather than a flag
 # per call, so a test cannot ask for two failures the panel never sees at once.
-type Failure = Literal["", "prefetch", "service", "apply", "write", "preview"]
+# "unexpected" is the odd one out -- not a failure the panel names and guards,
+# but a bug, raised from every call the runner's work makes so each piece can
+# be shown ending inside its own boundary rather than in a task nobody reads.
+type Failure = Literal[
+    "", "prefetch", "service", "apply", "write", "preview", "unexpected"
+]
+
+# What a bug looks like: an exception type no guard and no handler names.
+_BUG = "a failure the panel never planned for"
 
 
 def panel_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
@@ -173,6 +181,8 @@ class FakeService:
     def prefetch(self) -> None:
         if self._raise_on == "prefetch":
             raise VoxdProtocolError(self.refusal)
+        if self._raise_on == "unexpected":
+            raise RuntimeError(_BUG)
         # The timeout is a backstop: a gate left shut must fail its test, never
         # hang the suite on a worker thread nobody can reach.
         self.prefetch_gate.wait(_GATE_SECONDS)
@@ -184,6 +194,8 @@ class FakeService:
     def service(self, client: object, latency: object) -> None:
         if self._raise_on == "service":
             raise VoxdProtocolError(self.refusal)
+        if self._raise_on == "unexpected":
+            raise RuntimeError(_BUG)
         self.serviced += 1
 
     def apply_event(self, topic: str, payload: Mapping[str, object]) -> bool:
@@ -195,6 +207,8 @@ class FakeService:
             raise OSError(msg)
         if self._raise_on == "preview":
             raise VoxdProtocolError(self.refusal)
+        if self._raise_on == "unexpected":
+            raise RuntimeError(_BUG)
         self.applied.append((topic, payload))
         return self.apply_returns
 

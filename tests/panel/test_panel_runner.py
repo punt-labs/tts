@@ -75,6 +75,22 @@ class TestWarmed:
             "vox-panel: voxd refused the settings read on connect"
         ]
 
+    async def test_an_unexpected_warm_up_failure_is_logged_at_error(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        build_runner: Callable[..., PanelRunner],
+    ) -> None:
+        # The guard around the read answers voxd's refusal and nothing else, so
+        # a bug wearing any other exception reaches the warm-up's own boundary
+        # -- the last one there is, since the leg starts this and never awaits
+        # it. No notice either: nothing here is voxd's answer to report.
+        caplog.set_level(logging.DEBUG, logger=PANEL_LOGGER.name)
+        service = FakeService(raise_on="unexpected")
+        await build_runner(service, FakeRest).warmed()  # must not raise
+        assert [r.levelno for r in panel_records(caplog)] == [logging.ERROR]
+        assert panel_records(caplog)[0].exc_info is not None
+        assert service.rejections == []
+
 
 class TestClicked:
     async def test_a_click_acknowledges_then_serves(
@@ -156,6 +172,26 @@ class TestChanged:
         await build_runner(service, lambda: rest).changed(PanelTopic.NOTIFY.value, {})
         assert service.recovered == []
         assert service.pushed == 1
+
+    async def test_an_unexpected_change_failure_is_logged_at_error(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        build_runner: Callable[..., PanelRunner],
+    ) -> None:
+        # Every failure the apply names is answered below it -- a rejected
+        # payload, a write that would not land, a refusal from voxd -- and each
+        # of those re-pushes. A bug names none of them, so it passes every
+        # handler and stops only at the change's own boundary, with no scene
+        # correction to make because nothing was decided about the change.
+        caplog.set_level(logging.DEBUG, logger=PANEL_LOGGER.name)
+        service = FakeService(raise_on="unexpected")
+        await build_runner(service, FakeRest).changed(
+            PanelTopic.NOTIFY.value, {"value": 0}
+        )  # must not raise
+        assert [r.levelno for r in panel_records(caplog)] == [logging.ERROR]
+        assert panel_records(caplog)[0].exc_info is not None
+        assert service.pushed == 0
+        assert service.recovered == []
 
 
 class TestVoxdRejection:
@@ -240,7 +276,9 @@ class TestStartedWork:
     """Nothing awaits this work, so no failure may escape any of it."""
 
     @pytest.mark.parametrize(
-        "failure", ["", "prefetch", "service", "apply", "write", "preview"], ids=str
+        "failure",
+        ["", "prefetch", "service", "apply", "write", "preview", "unexpected"],
+        ids=str,
     )
     async def test_no_failure_escapes_the_work_the_leg_started(
         self, failure: str, build_runner: Callable[..., PanelRunner]
