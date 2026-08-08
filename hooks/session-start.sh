@@ -3,9 +3,9 @@ set -euo pipefail
 
 _stdin=$(cat)
 if command -v jq >/dev/null 2>&1; then
-  _cwd=$(printf '%s' "$_stdin" | jq -r '.cwd // empty' 2>/dev/null)
+  _cwd=$(printf '%s' "$_stdin" | jq -r '.cwd // empty' 2>/dev/null) || _cwd=""
 else
-  _cwd=$(printf '%s' "$_stdin" | grep -oE '"cwd"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//;s/"//')
+  _cwd=$(printf '%s' "$_stdin" | grep -oE '"cwd"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//;s/"//') || _cwd=""
 fi
 [[ -n "$_cwd" ]] || _cwd="$PWD"
 
@@ -165,7 +165,7 @@ fi
 # again against the same process -- and the applet refuses a second start
 # itself under its own session-pid lock, so the guard below only saves the
 # pointless respawn.
-_repo_root=$(git -C "$_cwd" rev-parse --show-toplevel 2>/dev/null)
+_repo_root=$(git -C "$_cwd" rev-parse --show-toplevel 2>/dev/null) || _repo_root=""
 if [ -z "$_repo_root" ]; then
   _dir="$_cwd"
   while [ ! -f "$_dir/.punt-labs/vox/enabled" ] && [ "$_dir" != "/" ]; do

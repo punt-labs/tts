@@ -329,6 +329,49 @@ class TestPanelSpawn:
         log_path = Path(env["TMPDIR"]) / f"vox-panel-{os.getpid()}.log"
         assert "already served" in log_path.read_text(encoding="utf-8")
 
+    def test_spawns_when_cwd_is_not_a_git_working_tree(
+        self, tmp_path: Path, isolated_root: Path
+    ) -> None:
+        """A session started outside any git working tree still gets a panel.
+
+        `git rev-parse` exits non-zero there, and under `set -euo pipefail` a
+        bare assignment from a failing command substitution aborts the whole
+        script -- so every line below it, the spawn included, never ran.
+        """
+        _mark_enabled(isolated_root)
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        sentinel = tmp_path / "sentinel.log"
+        self._write_vox_panel_stub(bin_dir)
+        env = self._base_env(tmp_path)
+        env["PATH"] = f"{bin_dir}{os.pathsep}{os.environ['PATH']}"
+        env["VOX_PANEL_SENTINEL"] = str(sentinel)
+
+        rc = self._run_session_start(isolated_root, env)
+
+        assert rc == 0, "the hook aborted before reaching the panel spawn"
+        _poll_until(sentinel.exists)
+        assert f"--session-pid {os.getpid()}" in sentinel.read_text(encoding="utf-8")
+
+    def test_malformed_stdin_does_not_abort_the_hook(self, tmp_path: Path) -> None:
+        """Non-JSON stdin leaves `$_cwd` unresolvable, not the script dead.
+
+        `jq` (and the jq-less `grep` fallback) exit non-zero on input with no
+        `cwd`; under `set -e` that killed the hook before its command
+        deployment and permission auto-allow ever ran.
+        """
+        env = self._base_env(tmp_path)
+        result = subprocess.run(
+            ["bash", str(_HOOKS_DIR / "session-start.sh")],
+            input="not json at all",
+            text=True,
+            capture_output=True,
+            env=env,
+            check=False,
+        )
+
+        assert result.returncode == 0, "malformed stdin aborted the hook"
+
     def test_logs_a_reason_when_vox_panel_is_missing(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
         _mark_enabled(repo)
