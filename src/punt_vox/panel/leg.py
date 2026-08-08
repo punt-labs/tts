@@ -16,19 +16,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import contextmanager
 from typing import TYPE_CHECKING, Self, final
 
-from punt_lux import HubUnavailableError, OpError
+from punt_lux import OpError
 from punt_lux.applets import ClickLatency
 from punt_lux.rest_client import LuxRestClient
 
-from punt_vox.client_errors import VoxdProtocolError
-from punt_vox.panel.hub_outage_log import HubOutageLog
+from punt_vox.panel.panel_guard import PanelGuard
 from punt_vox.panel.topics import PanelTopic
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Generator, Mapping
+    from collections.abc import Callable, Coroutine, Mapping
 
     from punt_lux.domain.hub.client_identity import ClientIdentity
     from punt_lux.operations import Ok
@@ -53,10 +51,10 @@ class VoxPanelLeg:
     _topics: tuple[str, ...]
     _rest_factory: Callable[[], PanelRestClient]
     _tasks: set[asyncio.Task[None]]
-    _outage: HubOutageLog
+    _guard: PanelGuard
     __slots__ = (
+        "_guard",
         "_identity",
-        "_outage",
         "_rest_factory",
         "_service",
         "_tasks",
@@ -79,7 +77,7 @@ class VoxPanelLeg:
             lambda: LuxRestClient.for_identity(identity)
         )
         self._tasks = set()
-        self._outage = HubOutageLog(logger)
+        self._guard = PanelGuard(service, self._rest_factory, logger)
         return self
 
     async def serve(self) -> None:
@@ -98,7 +96,7 @@ class VoxPanelLeg:
         ``serve()``'s loop and every reconnect with it, for the whole session.
         """
         try:
-            with self._outage_guard(_HUB_UNAVAILABLE_MESSAGE):
+            with self._guard.outage(_HUB_UNAVAILABLE_MESSAGE):
                 rest = self._rest_factory()
                 listener = rest.listener(
                     on_callback=self._on_callback,
@@ -110,44 +108,23 @@ class VoxPanelLeg:
         except Exception:
             logger.exception("the panel's listen leg failed; retrying")
 
-    @contextmanager
-    def _outage_guard(self, message: str) -> Generator[None]:
-        """Swallow luxd being away, noting it as one tick of an ongoing outage."""
-        try:
-            yield
-        except HubUnavailableError:
-            self._outage.note(message)
-
-    @contextmanager
-    def _rejection_guard(self, what: str) -> Generator[None]:
-        """Swallow voxd refusing *what*, correcting the scene to say so instead.
-
-        The opposite of :meth:`_outage_guard`, which swallows a transient the
-        next tick retries away: voxd answering with a refusal is a real
-        failure -- a voice it no longer knows, a reply the client cannot read
-        -- so it is logged loud AND pushed back into the scene, never reduced
-        to a log line by the blanket handler around the caller.
-        """
-        try:
-            yield
-        except VoxdProtocolError as exc:
-            logger.exception("vox-panel: voxd refused %s", what)
-            self._service.note_rejection(str(exc))
-            self._repush()
-
-    def _repush(self) -> None:
-        """Send the held scene back out, letting an absent luxd drop it."""
-        with self._outage_guard("luxd unavailable; dropped the panel re-push"):
-            self._service.push_scene(self._rest_factory())
-
     async def _register(self) -> None:
-        """Put the ``Vox`` entry in the menu and warm the settings cache."""
-        self._outage.clear()
+        """Put the ``Vox`` entry in the menu and warm the settings cache.
+
+        The warm-up reads voxd, so it meets the same refusals a click's read
+        does and is guarded like one. Unguarded, the refusal escapes into the
+        hub client's own ``on_connect`` isolation, which keeps the connection
+        up (good) but logs every failure alike as a callback that failed, and
+        tells the user nothing -- so the one path where a refusal is invisible
+        would be the first read of the session.
+        """
+        self._guard.connected()
         result = await asyncio.to_thread(self._register_now)
         if isinstance(result, OpError):
             logger.error("the panel's menu entry was refused: %s", result.reason)
             return
-        await asyncio.to_thread(self._service.prefetch)
+        with self._guard.offscreen_rejection("the settings read on connect"):
+            await asyncio.to_thread(self._service.prefetch)
 
     def _register_now(self) -> Ok | OpError:
         return self._rest_factory().register_callback(
@@ -162,7 +139,7 @@ class VoxPanelLeg:
 
     async def _clicked(self) -> None:
         try:
-            with self._outage_guard("luxd unavailable; dropped a panel click"):
+            with self._guard.outage("luxd unavailable; dropped a panel click"):
                 await asyncio.to_thread(self._serviced)
         except Exception:
             logger.exception("a panel click could not be served; the leg stays up")
@@ -171,7 +148,7 @@ class VoxPanelLeg:
         latency = ClickLatency(self._service.callback_id)
         rest = self._rest_factory()
         self._service.acknowledge(rest, latency)
-        with self._rejection_guard("the settings read behind a panel click"):
+        with self._guard.rejection("the settings read behind a panel click"):
             self._service.service(rest, latency)
         latency.report()
 
@@ -188,9 +165,9 @@ class VoxPanelLeg:
             )
 
     def _apply(self, topic: str, payload: Mapping[str, object]) -> None:
-        with self._rejection_guard(f"a control change on {topic}"):
+        with self._guard.rejection(f"a control change on {topic}"):
             if self._applied(topic, payload):
-                self._repush()
+                self._guard.repush()
 
     def _applied(self, topic: str, payload: Mapping[str, object]) -> bool:
         """Apply one control event; answer whether the scene needs a re-push.
@@ -198,7 +175,8 @@ class VoxPanelLeg:
         Every failure handled here answers yes: the widget already shows the
         change optimistically, so the still-true held scene has to go back
         out to snap it back. A refusal from voxd is deliberately not handled
-        here -- :meth:`_rejection_guard` around the caller owns that one.
+        here -- the :class:`~punt_vox.panel.panel_guard.PanelGuard` rejection
+        guard around the caller owns that one.
         """
         try:
             return self._service.apply_event(topic, payload)

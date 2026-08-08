@@ -131,9 +131,11 @@ class _FakeService:
         raise_on_write: bool = False,
         raise_on_preview: bool = False,
         raise_on_service: bool = False,
+        raise_on_prefetch: bool = False,
     ) -> None:
         self.callback_id = "vox-panel"
         self.label = "Vox"
+        self.raise_on_prefetch = raise_on_prefetch
         self.prefetch_called = False
         self.acknowledged = 0
         self.serviced = 0
@@ -148,6 +150,8 @@ class _FakeService:
         self.rejections: list[str] = []
 
     def prefetch(self) -> None:
+        if self.raise_on_prefetch:
+            raise VoxdProtocolError(_REFUSAL)
         self.prefetch_called = True
 
     def acknowledge(self, client: object, latency: object) -> None:
@@ -287,6 +291,56 @@ class TestRegister:
         )
         await leg._register()
         assert service.prefetch_called is False
+
+    async def test_a_refused_warm_up_notices_without_opening_the_panel(self) -> None:
+        # The third read voxd can refuse, after the click's and the preview's:
+        # it must reach the user like those two, but as a held notice only --
+        # a push here would open a panel nobody clicked for, showing the
+        # pre-read defaults as if they were the session's real settings.
+        rest = _FakeRest()
+        service = _FakeService(raise_on_prefetch=True)
+        leg = VoxPanelLeg(
+            _IDENTITY,
+            service,  # type: ignore[arg-type]
+            topics=(),
+            rest_factory=lambda: rest,
+        )
+        await leg._register()  # must not raise
+        assert service.rejections == [_REFUSAL]
+        assert service.pushed == 0
+        assert rest.rendered_count == 0
+
+    async def test_a_refused_warm_up_is_logged_at_error_with_a_traceback(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG, logger="punt_vox.panel.leg")
+        leg = VoxPanelLeg(
+            _IDENTITY,
+            _FakeService(raise_on_prefetch=True),  # type: ignore[arg-type]
+            topics=(),
+            rest_factory=_FakeRest,
+        )
+        await leg._register()
+        assert [r.levelno for r in _leg_records(caplog)] == [logging.ERROR]
+        assert _leg_records(caplog)[0].exc_info is not None
+
+    async def test_a_refused_warm_up_is_logged_as_the_refusal_it_is(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Unguarded this escapes into the hub client's own on_connect
+        # isolation, which logs every failure alike as "on_connect callback
+        # failed" -- true, and no help at all in naming what refused.
+        caplog.set_level(logging.DEBUG, logger="punt_vox.panel.leg")
+        leg = VoxPanelLeg(
+            _IDENTITY,
+            _FakeService(raise_on_prefetch=True),  # type: ignore[arg-type]
+            topics=(),
+            rest_factory=_FakeRest,
+        )
+        await leg._register()
+        assert [r.getMessage() for r in _leg_records(caplog)] == [
+            "vox-panel: voxd refused the settings read on connect"
+        ]
 
 
 class TestOnCallback:
@@ -558,21 +612,32 @@ class TestOutageLogging:
     async def test_a_successful_connect_clears_the_outage(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
+        # An outage that ended and one that never stopped read alike in a log
+        # unless the connect that ended it closes the report: the tick after a
+        # good connect must open a fresh outage at WARNING, not restate an old
+        # one at DEBUG.
         caplog.set_level(logging.DEBUG, logger="punt_vox.panel.leg")
         rest = _FakeRest()
-        service = _FakeService()
+        luxd_is_down = True
+
+        def _factory() -> PanelRestClientLike:
+            if luxd_is_down:
+                raise HubUnavailableError("down")
+            return rest
+
         leg = VoxPanelLeg(
             _IDENTITY,
-            service,  # type: ignore[arg-type]
+            _FakeService(),  # type: ignore[arg-type]
             topics=(),
-            rest_factory=lambda: rest,
+            rest_factory=_factory,
         )
-        leg._outage.note("simulate an ongoing outage")
-        await leg._register()
+        await leg._listen_once()  # the outage opens
+        luxd_is_down = False
+        await leg._register()  # luxd answered: the outage is over
         caplog.clear()
-        # A cleared outage logs at WARNING again, not DEBUG, on the next tick.
-        leg._outage.note("down again")
-        assert [r.levelno for r in caplog.records] == [logging.WARNING]
+        luxd_is_down = True
+        await leg._listen_once()
+        assert [r.levelno for r in _leg_records(caplog)] == [logging.WARNING]
 
 
 if TYPE_CHECKING:
