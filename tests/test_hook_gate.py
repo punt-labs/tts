@@ -473,3 +473,25 @@ class TestPanelSpawn:
         assert not list(shared.glob("vox-panel-*.log")), (
             "the hook still writes a predictable name into the shared temp dir"
         )
+
+    def test_unwritable_home_costs_the_log_not_the_hook(self, tmp_path: Path) -> None:
+        """A log path that cannot be created must not abort session startup.
+
+        The `>>` redirects onto the panel log are unguarded, and a failed
+        redirect on a synchronous command aborts under `set -e`. So an
+        unwritable `$HOME` -- where the log directory cannot be created --
+        used to kill the hook on the very line that explains why the panel is
+        missing, taking command deployment and the spawn down with it.
+        """
+        repo = _make_repo(tmp_path)
+        _mark_enabled(repo)
+        env = self._base_env(tmp_path)
+        env["PATH"] = _path_without_vox_panel()
+        home = Path(env["HOME"])
+        home.chmod(0o500)
+        try:
+            rc = self._run_session_start(repo, env)
+        finally:
+            home.chmod(0o700)
+
+        assert rc == 0, "an unwritable log path aborted the hook"

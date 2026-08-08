@@ -190,6 +190,11 @@ if [ -f "$_repo_root/.punt-labs/vox/enabled" ]; then
   # private_state.ensure_private_tree() on the Python side.
   chmod 700 "$HOME/.punt-labs" "$HOME/.punt-labs/vox" "$PANEL_LOG_DIR" 2>/dev/null || true
   PANEL_LOG="$PANEL_LOG_DIR/vox-panel-$PPID.log"
+  # An unwritable log path must cost this session its log, not its panel. The
+  # `>>` redirects below are unguarded, and a failed redirect on a synchronous
+  # command aborts under `set -e` -- so without this fallback an unwritable
+  # $HOME killed the hook on the very line explaining why the panel was absent.
+  touch "$PANEL_LOG" 2>/dev/null || PANEL_LOG=/dev/null
   if ! command -v vox-panel >/dev/null 2>&1; then
     # A log line is the only surface reachable here, deliberately: nothing has
     # connected to voxd or luxd yet at this point in the hook, so there is no
