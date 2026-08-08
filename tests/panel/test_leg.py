@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from typing import TYPE_CHECKING, Literal, cast, final
 
 import pytest
@@ -31,6 +32,15 @@ _FailPoint = Literal["listener", "subscribe", "listen"]
 
 # What voxd says when it refuses -- the text the notice has to carry through.
 _REFUSAL = "unknown voice 'nope'"
+
+# How long a blocked fake waits before giving up: finite so a gate left shut
+# fails its test instead of hanging the suite on an unreachable worker thread.
+_GATE_SECONDS = 5.0
+
+# How long _register may take while a warm-up is blocked. Well under
+# _GATE_SECONDS, so a warm-up that went back to being awaited inline fails
+# here rather than passing slowly.
+_HANDSHAKE_SECONDS = 2.0
 
 
 def _leg_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
@@ -136,6 +146,8 @@ class _FakeService:
         self.callback_id = "vox-panel"
         self.label = "Vox"
         self.raise_on_prefetch = raise_on_prefetch
+        self.prefetch_gate = threading.Event()
+        self.prefetch_gate.set()
         self.prefetch_called = False
         self.acknowledged = 0
         self.serviced = 0
@@ -152,6 +164,10 @@ class _FakeService:
     def prefetch(self) -> None:
         if self.raise_on_prefetch:
             raise VoxdProtocolError(_REFUSAL)
+        # Open unless a test closes it to stand in for a slow voxd. The
+        # timeout is a backstop: a gate left shut must fail its test, never
+        # hang the suite on a worker thread nobody can reach.
+        self.prefetch_gate.wait(_GATE_SECONDS)
         self.prefetch_called = True
 
     def acknowledge(self, client: object, latency: object) -> None:
@@ -278,7 +294,27 @@ class TestRegister:
         )
         await leg._register()
         assert rest.registered == [("vox-panel", "Vox")]
-        assert service.prefetch_called is True
+        await _wait_until(lambda: service.prefetch_called)
+
+    async def test_the_warm_up_never_holds_the_handshake(self) -> None:
+        # on_connect is awaited before the receive loop starts and before the
+        # keepalive that holds this session's lease, so a warm-up awaited
+        # there would hold both for as long as voxd takes -- costing the
+        # session the very menu entry just registered. A voxd that never
+        # answers must therefore not keep _register from returning.
+        service = _FakeService()
+        service.prefetch_gate.clear()
+        leg = VoxPanelLeg(
+            _IDENTITY,
+            service,  # type: ignore[arg-type]
+            topics=(),
+            rest_factory=_FakeRest,
+        )
+        async with asyncio.timeout(_HANDSHAKE_SECONDS):
+            await leg._register()
+        assert service.prefetch_called is False
+        service.prefetch_gate.set()
+        await _wait_until(lambda: service.prefetch_called)
 
     async def test_refusal_skips_prefetch(self) -> None:
         rest = _FakeRest(register_result=OpError(code="rejected", reason="taken"))
@@ -306,6 +342,7 @@ class TestRegister:
             rest_factory=lambda: rest,
         )
         await leg._register()  # must not raise
+        await _wait_until(lambda: bool(service.rejections))
         assert service.rejections == [_REFUSAL]
         assert service.pushed == 0
         assert rest.rendered_count == 0
@@ -321,6 +358,7 @@ class TestRegister:
             rest_factory=_FakeRest,
         )
         await leg._register()
+        await _wait_until(lambda: bool(_leg_records(caplog)))
         assert [r.levelno for r in _leg_records(caplog)] == [logging.ERROR]
         assert _leg_records(caplog)[0].exc_info is not None
 
@@ -338,6 +376,7 @@ class TestRegister:
             rest_factory=_FakeRest,
         )
         await leg._register()
+        await _wait_until(lambda: bool(_leg_records(caplog)))
         assert [r.getMessage() for r in _leg_records(caplog)] == [
             "vox-panel: voxd refused the settings read on connect"
         ]

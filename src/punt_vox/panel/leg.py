@@ -109,22 +109,37 @@ class VoxPanelLeg:
             logger.exception("the panel's listen leg failed; retrying")
 
     async def _register(self) -> None:
-        """Put the ``Vox`` entry in the menu and warm the settings cache.
+        """Put the ``Vox`` entry in the menu, and start the warm-up behind it.
 
-        The warm-up reads voxd, so it meets the same refusals a click's read
-        does and is guarded like one. Unguarded, the refusal escapes into the
-        hub client's own ``on_connect`` isolation, which keeps the connection
-        up (good) but logs every failure alike as a callback that failed, and
-        tells the user nothing -- so the one path where a refusal is invisible
-        would be the first read of the session.
+        The entry is up the moment the registration returns, and the warm-up
+        starts there: an entry nobody can click yet has nothing to prefetch
+        for, and one that was refused never will.
         """
         self._guard.connected()
         result = await asyncio.to_thread(self._register_now)
         if isinstance(result, OpError):
             logger.error("the panel's menu entry was refused: %s", result.reason)
             return
-        with self._guard.offscreen_rejection("the settings read on connect"):
-            await asyncio.to_thread(self._service.prefetch)
+        self._start(self._warmed())
+
+    async def _warmed(self) -> None:
+        """Read the settings once behind the handshake, never inside it.
+
+        ``on_connect`` is awaited before the receive loop starts and before
+        the keepalive that holds this session's lease, so a warm-up awaited
+        there would hold both for as long as voxd takes to answer -- and a
+        voxd slow enough would cost the session the very menu entry just
+        registered. It is started, and the handshake goes on without it.
+
+        Which also means this is its own failure boundary: nothing awaits it,
+        so a refusal answered here reaches the user as a notice, and anything
+        else stops at the log rather than a task nobody reads.
+        """
+        try:
+            with self._guard.offscreen_rejection("the settings read on connect"):
+                await asyncio.to_thread(self._service.prefetch)
+        except Exception:
+            logger.exception("the panel's warm-up failed; the first click waits")
 
     def _register_now(self) -> Ok | OpError:
         return self._rest_factory().register_callback(
