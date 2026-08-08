@@ -178,11 +178,17 @@ if [ -z "$_repo_root" ]; then
   _repo_root="$_dir"
 fi
 if [ -f "$_repo_root/.punt-labs/vox/enabled" ]; then
-  PANEL_LOG="${TMPDIR:-/tmp}/vox-panel-$PPID.log"
+  # ~/.punt-labs/vox/logs is where every other vox process already logs, and
+  # unlike a shared tmp dir it is not writable by other local users -- so a
+  # predictable per-session filename cannot be pre-empted by a symlink planted
+  # at that path. Creating the directory 0700 matches paths.log_dir().
+  PANEL_LOG_DIR="$HOME/.punt-labs/vox/logs"
+  mkdir -p -m 700 "$PANEL_LOG_DIR" 2>/dev/null || true
+  PANEL_LOG="$PANEL_LOG_DIR/vox-panel-$PPID.log"
   if ! command -v vox-panel >/dev/null 2>&1; then
-    # A tmp-dir log line is the only surface reachable here, deliberately:
-    # nothing has connected to voxd or luxd yet at this point in the hook, so
-    # there is no daemon to carry this reason into `vox status`/`vox doctor`.
+    # A log line is the only surface reachable here, deliberately: nothing has
+    # connected to voxd or luxd yet at this point in the hook, so there is no
+    # daemon to carry this reason into `vox status`/`vox doctor`.
     echo "$(date '+%Y-%m-%d %H:%M:%S') session-start: vox-panel not found on PATH; the Vox control panel will not be available this session" >>"$PANEL_LOG"
   elif pgrep -f "vox-panel --session-pid ${PPID}\$" >/dev/null 2>&1; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') session-start: this session is already served; not spawning another panel" >>"$PANEL_LOG"

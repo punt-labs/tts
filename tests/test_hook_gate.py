@@ -279,6 +279,17 @@ class TestPanelSpawn:
         return env
 
     @staticmethod
+    def _panel_log(env: dict[str, str]) -> Path:
+        """Where the hook logs this session's panel reasons.
+
+        Under ``$HOME``, deliberately: a shared tmp directory is writable by
+        every local user, so a predictable per-session filename there can be
+        pre-empted by a symlink planted at that path before the hook runs.
+        """
+        home = Path(env["HOME"])
+        return home / ".punt-labs" / "vox" / "logs" / f"vox-panel-{os.getpid()}.log"
+
+    @staticmethod
     def _run_session_start(cwd: Path, env: dict[str, str]) -> int:
         payload = json.dumps({"cwd": str(cwd)})
         result = subprocess.run(
@@ -326,8 +337,8 @@ class TestPanelSpawn:
 
         lines = sentinel.read_text(encoding="utf-8").strip().splitlines()
         assert len(lines) == 1, "the pgrep guard let a second panel spawn"
-        log_path = Path(env["TMPDIR"]) / f"vox-panel-{os.getpid()}.log"
-        assert "already served" in log_path.read_text(encoding="utf-8")
+        log = self._panel_log(env)
+        assert "already served" in log.read_text(encoding="utf-8")
 
     def test_spawns_when_cwd_is_not_a_git_working_tree(
         self, tmp_path: Path, isolated_root: Path
@@ -435,6 +446,30 @@ class TestPanelSpawn:
         rc = self._run_session_start(repo, env)
 
         assert rc == 0
-        log_path = Path(env["TMPDIR"]) / f"vox-panel-{os.getpid()}.log"
-        assert log_path.exists(), "no reason was logged for the missing vox-panel"
-        assert "not found on PATH" in log_path.read_text(encoding="utf-8")
+        log = self._panel_log(env)
+        assert log.exists(), "no reason was logged for the missing vox-panel"
+        assert "not found on PATH" in log.read_text(encoding="utf-8")
+
+    def test_panel_log_avoids_the_world_writable_temp_dir(self, tmp_path: Path) -> None:
+        """The panel log belongs under `$HOME`, in a 0700 directory.
+
+        A shared temp directory is writable by every local user, so the
+        predictable `vox-panel-<pid>.log` name could be pre-empted there by a
+        symlink planted before the session started, and the hook's appends
+        would land wherever that symlink pointed. Owning the directory removes
+        the race outright -- no other user can create a path inside `$HOME`.
+        """
+        repo = _make_repo(tmp_path)
+        _mark_enabled(repo)
+        env = self._base_env(tmp_path)
+        env["PATH"] = _path_without_vox_panel()
+
+        assert self._run_session_start(repo, env) == 0
+
+        log = self._panel_log(env)
+        assert log.exists()
+        assert stat.S_IMODE(log.parent.stat().st_mode) == 0o700
+        shared = Path(env["TMPDIR"])
+        assert not list(shared.glob("vox-panel-*.log")), (
+            "the hook still writes a predictable name into the shared temp dir"
+        )
