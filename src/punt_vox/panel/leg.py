@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Self, final
 
 from punt_lux import HubUnavailableError, OpError
@@ -26,7 +27,7 @@ from punt_vox.panel.hub_outage_log import HubOutageLog
 from punt_vox.panel.topics import PanelTopic
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Mapping
+    from collections.abc import Callable, Coroutine, Generator, Mapping
 
     from punt_lux.domain.hub.client_identity import ClientIdentity
     from punt_lux.operations import Ok
@@ -89,28 +90,32 @@ class VoxPanelLeg:
     async def _listen_once(self) -> None:
         """Build one connection, subscribe, and listen until it ends; never die.
 
-        luxd can drop between any two of these three calls -- the leg retries
-        every :data:`_HUB_RETRY_SECONDS`, specifically because it expects
-        exactly that -- so all three building steps share one
-        ``HubUnavailableError`` guard, not just the first.
+        luxd can drop between any two of these four calls -- the leg retries
+        every :data:`_HUB_RETRY_SECONDS`, expecting exactly that -- so all
+        four share one outage guard. Anything else escaping them is a bug
+        rather than an outage: unlogged and unswallowed, it would end
+        ``serve()``'s loop and every reconnect with it, for the whole session.
         """
         try:
-            rest = self._rest_factory()
-            listener = rest.listener(
-                on_callback=self._on_callback,
-                on_event=self._on_event,
-                on_connect=self._register,
-            )
-            listener.subscribe(*self._topics)
-        except HubUnavailableError:
-            self._outage.note(_HUB_UNAVAILABLE_MESSAGE)
-            return
-        try:
-            await listener.listen()
-        except HubUnavailableError:
-            self._outage.note(_HUB_UNAVAILABLE_MESSAGE)
+            with self._outage_guard(_HUB_UNAVAILABLE_MESSAGE):
+                rest = self._rest_factory()
+                listener = rest.listener(
+                    on_callback=self._on_callback,
+                    on_event=self._on_event,
+                    on_connect=self._register,
+                )
+                listener.subscribe(*self._topics)
+                await listener.listen()
         except Exception:
             logger.exception("the panel's listen leg failed; retrying")
+
+    @contextmanager
+    def _outage_guard(self, message: str) -> Generator[None]:
+        """Swallow luxd being away, noting it as one tick of an ongoing outage."""
+        try:
+            yield
+        except HubUnavailableError:
+            self._outage.note(message)
 
     async def _register(self) -> None:
         """Put the ``Vox`` entry in the menu and warm the settings cache."""
@@ -134,7 +139,8 @@ class VoxPanelLeg:
 
     async def _clicked(self) -> None:
         try:
-            await asyncio.to_thread(self._serviced)
+            with self._outage_guard("luxd unavailable; dropped a panel click"):
+                await asyncio.to_thread(self._serviced)
         except Exception:
             logger.exception("a panel click could not be served; the leg stays up")
 
@@ -176,14 +182,9 @@ class VoxPanelLeg:
             )
             self._service.recover_from_write_failure(field)
             changed = True
-        if not changed:
-            return
-        try:
-            rest = self._rest_factory()
-        except HubUnavailableError:
-            self._outage.note("luxd unavailable; dropped the panel re-push")
-            return
-        self._service.push_scene(rest)
+        if changed:
+            with self._outage_guard("luxd unavailable; dropped the panel re-push"):
+                self._service.push_scene(self._rest_factory())
 
     def _start(self, work: Coroutine[object, object, None]) -> None:
         """Run *work* on this loop, held so it is never collected mid-run."""
