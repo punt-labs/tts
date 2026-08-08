@@ -179,6 +179,7 @@ Doctor also inspects `~/.config/systemd/user/vox.service` on Linux if it exists.
 - **Audio daemon** --- `voxd` is a system-level audio server that handles synthesis and playback. Deduplicates audio across sessions, serializes playback, caches synthesis results
 - **Background music** --- `/music on` generates a pool of up to 12 distinct instrumental tracks via the ElevenLabs Music API, plays the first at once, and rotates the full pool at zero credits. The agent plays DJ --- vibe-matched pools from a panel with a DJ-booth personality, because vox is partly entertainment by design. Saved pools replay by name and land in `~/Music/vox/<name>/` with ID3 tags. Requires an ElevenLabs paid plan. See [Background Music](#background-music)
 - **Music Player (lux)** --- when [lux](https://github.com/punt-labs/lux) runs on the same machine, voxd projects a visual player of your saved albums to the lux display --- an album list plus transport controls (play/pause, previous, next, stop) you drive by clicking. See [Music Player](#music-player)
+- **Control Panel (lux)** --- a `Vox` menu entry, launched per Claude Code session, for toggling mic mode, notification level, and voice without a slash command. See [Control Panel](#control-panel)
 
 ## Python API
 
@@ -250,6 +251,10 @@ Each pool is saved under `~/Music/vox/<name>/` --- named by `--title`, else the 
 When [lux](https://github.com/punt-labs/lux) is running on the same machine, voxd projects a visual player of your saved music to the lux display. It registers a **voxd ▸ Music** menu entry; opening it shows your saved albums (the pools `/music` generates) as a list, each with a Play control, above a transport bar --- play/pause, previous, next, and stop. Clicking an album plays it through your speakers; the transport controls the now-playing album, and the scene re-renders to show what is playing and its track position (read from the album's ID3 tags).
 
 The player is a thin lux client: voxd talks to the lux Hub through its public client library, registers the menu, and pushes the scene, re-pushing whenever playback changes. It is co-located by design --- vox owns the speakers, lux owns the display --- so it needs lux on the same host. If the lux display or Hub restarts, voxd reconnects and re-registers on its own. Without lux, everything else in vox works unchanged; the player is the one surface that depends on it.
+
+## Control Panel
+
+A `Vox` entry in the Lux menu, launched for the life of your Claude Code session, gives you a settings panel for mic mode (chimes vs. voice), the notification level (off/normal/continuous), and your voice --- with a preview button --- without a slash command. It's a session-scoped Lux applet, the same shape as lux's own `lux-beads`: launched by a `hooks/session-start.sh` block when the repo has vox enabled, not hosted inside `voxd`. Every change goes through the same `notify`/`speak`/`voice` settings the CLI and MCP tool already write, so the panel and the slash commands always agree; if a change can't be saved or `voxd` is unreachable, the panel says so in a status line rather than reverting silently.
 
 ## What It Looks Like
 

@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+_stdin=$(cat) || _stdin=""
+if command -v jq >/dev/null 2>&1; then
+  _cwd=$(printf '%s' "$_stdin" | jq -r '.cwd // empty' 2>/dev/null) || _cwd=""
+else
+  _cwd=$(printf '%s' "$_stdin" | grep -oE '"cwd"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//;s/"//') || _cwd=""
+fi
+[[ -n "$_cwd" ]] || _cwd="$PWD"
+# The parent walk below terminates on "/", which a relative path never reaches:
+# `dirname .` is `.`, so a relative cwd spins there forever -- a hang `set -e`
+# cannot catch.
+_cwd=$(cd "$_cwd" 2>/dev/null && pwd) || _cwd="$PWD"
+
 PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SETTINGS="$HOME/.claude/settings.json"
 COMMANDS_DIR="$HOME/.claude/commands"
@@ -139,6 +151,60 @@ if [[ ${#ACTIONS[@]} -gt 0 ]]; then
     cat <<ENDJSON
 {"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"$MSG"}}
 ENDJSON
+  fi
+fi
+
+# ── Launch this session's Vox control panel applet ────────────────────
+# The panel is a session-bound program that owns the "Vox" entry in the Lux
+# menu and services its clicks directly, the same way lux's own lux-beads
+# applet does -- voxd cannot do this itself: launchd starts it with no
+# repository working directory. Modeled directly on lux-beads' own
+# session-start block (a pgrep-guard-then-nohup spawn under a session-pid
+# lock), gated additionally on vox's own per-repo enablement marker so an
+# unrelated repo never gets a floating "Vox" menu entry.
+#
+# $PPID is the Claude Code process that ran this hook. The applet watches it
+# and exits when it goes, so it never outlives its session. SessionStart
+# fires more than once for one session -- /resume and /clear both fire it
+# again against the same process -- and the applet refuses a second start
+# itself under its own session-pid lock, so the guard below only saves the
+# pointless respawn.
+_repo_root=$(git -C "$_cwd" rev-parse --show-toplevel 2>/dev/null) || _repo_root=""
+if [ -z "$_repo_root" ]; then
+  _dir="$_cwd"
+  while [ ! -f "$_dir/.punt-labs/vox/enabled" ] && [ "$_dir" != "/" ]; do
+    _dir=$(dirname "$_dir")
+  done
+  _repo_root="$_dir"
+fi
+if [ -f "$_repo_root/.punt-labs/vox/enabled" ]; then
+  # ~/.punt-labs/vox/logs is where every other vox process already logs, and
+  # unlike a shared tmp dir it is not writable by other local users -- so a
+  # predictable per-session filename cannot be pre-empted by a symlink planted
+  # at that path. Creating the directory 0700 matches paths.log_dir().
+  PANEL_LOG_DIR="$HOME/.punt-labs/vox/logs"
+  mkdir -p "$PANEL_LOG_DIR" 2>/dev/null || true
+  # Tighten the whole chain, not just the leaf: `mkdir -m` sets the mode only
+  # on the deepest directory and only when it creates it, so a state root left
+  # traversable by a permissive umask stays that way. This mirrors
+  # private_state.ensure_private_tree() on the Python side.
+  chmod 700 "$HOME/.punt-labs" "$HOME/.punt-labs/vox" "$PANEL_LOG_DIR" 2>/dev/null || true
+  PANEL_LOG="$PANEL_LOG_DIR/vox-panel-$PPID.log"
+  # An unwritable log path must cost this session its log, not its panel. The
+  # `>>` redirects below are unguarded, and a failed redirect on a synchronous
+  # command aborts under `set -e` -- so without this fallback an unwritable
+  # $HOME killed the hook on the very line explaining why the panel was absent.
+  touch "$PANEL_LOG" 2>/dev/null || PANEL_LOG=/dev/null
+  if ! command -v vox-panel >/dev/null 2>&1; then
+    # A log line is the only surface reachable here, deliberately: nothing has
+    # connected to voxd or luxd yet at this point in the hook, so there is no
+    # daemon to carry this reason into `vox status`/`vox doctor`.
+    echo "$(date '+%Y-%m-%d %H:%M:%S') session-start: vox-panel not found on PATH; the Vox control panel will not be available this session" >>"$PANEL_LOG"
+  elif pgrep -f "vox-panel --session-pid ${PPID}\$" >/dev/null 2>&1; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') session-start: this session is already served; not spawning another panel" >>"$PANEL_LOG"
+  else
+    nohup vox-panel --session-pid "$PPID" >>"$PANEL_LOG" 2>&1 &
+    disown
   fi
 fi
 
