@@ -19,11 +19,10 @@ import logging
 from typing import TYPE_CHECKING, Self, final
 
 from punt_lux import OpError
-from punt_lux.applets import ClickLatency
 from punt_lux.rest_client import LuxRestClient
 
 from punt_vox.panel.panel_guard import PanelGuard
-from punt_vox.panel.topics import PanelTopic
+from punt_vox.panel.panel_runner import PanelRunner
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Mapping
@@ -52,10 +51,12 @@ class VoxPanelLeg:
     _rest_factory: Callable[[], PanelRestClient]
     _tasks: set[asyncio.Task[None]]
     _guard: PanelGuard
+    _runner: PanelRunner
     __slots__ = (
         "_guard",
         "_identity",
         "_rest_factory",
+        "_runner",
         "_service",
         "_tasks",
         "_topics",
@@ -78,6 +79,7 @@ class VoxPanelLeg:
         )
         self._tasks = set()
         self._guard = PanelGuard(service, self._rest_factory, logger)
+        self._runner = PanelRunner(service, self._rest_factory, self._guard, logger)
         return self
 
     async def serve(self) -> None:
@@ -120,26 +122,7 @@ class VoxPanelLeg:
         if isinstance(result, OpError):
             logger.error("the panel's menu entry was refused: %s", result.reason)
             return
-        self._start(self._warmed())
-
-    async def _warmed(self) -> None:
-        """Read the settings once behind the handshake, never inside it.
-
-        ``on_connect`` is awaited before the receive loop starts and before
-        the keepalive that holds this session's lease, so a warm-up awaited
-        there would hold both for as long as voxd takes to answer -- and a
-        voxd slow enough would cost the session the very menu entry just
-        registered. It is started, and the handshake goes on without it.
-
-        Which also means this is its own failure boundary: nothing awaits it,
-        so a refusal answered here reaches the user as a notice, and anything
-        else stops at the log rather than a task nobody reads.
-        """
-        try:
-            with self._guard.offscreen_rejection("the settings read on connect"):
-                await asyncio.to_thread(self._service.prefetch)
-        except Exception:
-            logger.exception("the panel's warm-up failed; the first click waits")
+        self._start(self._runner.warmed())
 
     def _register_now(self) -> Ok | OpError:
         return self._rest_factory().register_callback(
@@ -150,63 +133,11 @@ class VoxPanelLeg:
         """Answer a menu click: acknowledge instantly, then push the fresh scene."""
         if callback_id != self._service.callback_id:
             return
-        self._start(self._clicked())
-
-    async def _clicked(self) -> None:
-        try:
-            with self._guard.outage("luxd unavailable; dropped a panel click"):
-                await asyncio.to_thread(self._serviced)
-        except Exception:
-            logger.exception("a panel click could not be served; the leg stays up")
-
-    def _serviced(self) -> None:
-        latency = ClickLatency(self._service.callback_id)
-        rest = self._rest_factory()
-        self._service.acknowledge(rest, latency)
-        with self._guard.rejection("the settings read behind a panel click"):
-            self._service.service(rest, latency)
-        latency.report()
+        self._start(self._runner.clicked())
 
     async def _on_event(self, topic: str, payload: Mapping[str, object]) -> None:
         """Apply one subscribed control change, off the loop, and re-push if changed."""
-        self._start(self._changed(topic, payload))
-
-    async def _changed(self, topic: str, payload: Mapping[str, object]) -> None:
-        try:
-            await asyncio.to_thread(self._apply, topic, payload)
-        except Exception:
-            logger.exception(
-                "a panel control event could not be applied: %s %r", topic, payload
-            )
-
-    def _apply(self, topic: str, payload: Mapping[str, object]) -> None:
-        with self._guard.rejection(f"a control change on {topic}"):
-            if self._applied(topic, payload):
-                self._guard.repush()
-
-    def _applied(self, topic: str, payload: Mapping[str, object]) -> bool:
-        """Apply one control event; answer whether the scene needs a re-push.
-
-        Every failure handled here answers yes: the widget already shows the
-        change optimistically, so the still-true held scene has to go back
-        out to snap it back. A refusal from voxd is deliberately not handled
-        here -- the :class:`~punt_vox.panel.panel_guard.PanelGuard` rejection
-        guard around the caller owns that one.
-        """
-        try:
-            return self._service.apply_event(topic, payload)
-        except (TypeError, ValueError):
-            logger.exception(
-                "vox-panel: rejected control event on %s: %r", topic, payload
-            )
-        except OSError:
-            field = PanelTopic(topic).field_name
-            logger.exception(
-                "vox-panel: could not persist the %s change; correcting the scene",
-                field,
-            )
-            self._service.recover_from_write_failure(field)
-        return True
+        self._start(self._runner.changed(topic, payload))
 
     def _start(self, work: Coroutine[object, object, None]) -> None:
         """Run *work* on this loop, held so it is never collected mid-run."""
