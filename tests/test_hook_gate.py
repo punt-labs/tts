@@ -399,6 +399,33 @@ class TestPanelSpawn:
 
         assert result.returncode == 0, "unreadable stdin aborted the hook"
 
+    def test_relative_cwd_does_not_hang_the_parent_walk(self, tmp_path: Path) -> None:
+        """A relative `cwd` in the payload must not spin the marker search.
+
+        The walk up to the enablement marker stops at "/", which a relative
+        path never reaches -- `dirname .` is `.` -- so an unnormalized
+        relative cwd looped forever, hanging session startup outright rather
+        than aborting it. The subprocess is run from a directory with no
+        marker of its own, since a marker at `.` would end the walk on its
+        first step and hide the defect.
+        """
+        env = self._base_env(tmp_path)
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+
+        result = subprocess.run(
+            ["bash", str(_HOOKS_DIR / "session-start.sh")],
+            input=json.dumps({"cwd": "relative/nonexistent/path"}),
+            text=True,
+            capture_output=True,
+            cwd=elsewhere,
+            env=env,
+            check=False,
+            timeout=30,
+        )
+
+        assert result.returncode == 0
+
     def test_logs_a_reason_when_vox_panel_is_missing(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
         _mark_enabled(repo)

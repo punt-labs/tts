@@ -8,6 +8,10 @@ else
   _cwd=$(printf '%s' "$_stdin" | grep -oE '"cwd"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*:[[:space:]]*"//;s/"//') || _cwd=""
 fi
 [[ -n "$_cwd" ]] || _cwd="$PWD"
+# The parent walk below terminates on "/", which a relative path never reaches:
+# `dirname .` is `.`, so a relative cwd spins there forever -- a hang `set -e`
+# cannot catch.
+_cwd=$(cd "$_cwd" 2>/dev/null && pwd) || _cwd="$PWD"
 
 PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SETTINGS="$HOME/.claude/settings.json"
