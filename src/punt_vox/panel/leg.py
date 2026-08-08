@@ -18,9 +18,9 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self, final
 
-from punt_lux import OpError
 from punt_lux.rest_client import LuxRestClient
 
+from punt_vox.panel.menu_entry import PanelMenuEntry
 from punt_vox.panel.panel_guard import PanelGuard
 from punt_vox.panel.panel_runner import PanelRunner
 
@@ -28,7 +28,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Mapping
 
     from punt_lux.domain.hub.client_identity import ClientIdentity
-    from punt_lux.operations import Ok
 
     from punt_vox.panel.ports import PanelRestClient
     from punt_vox.panel.service import VoxPanelService
@@ -45,16 +44,16 @@ _HUB_UNAVAILABLE_MESSAGE = "luxd is not running yet; the panel will retry"
 class VoxPanelLeg:
     """A session's live connection to luxd: menu clicks and subscribed events."""
 
-    _identity: ClientIdentity
     _service: VoxPanelService
     _topics: tuple[str, ...]
     _rest_factory: Callable[[], PanelRestClient]
     _tasks: set[asyncio.Task[None]]
     _guard: PanelGuard
     _runner: PanelRunner
+    _entry: PanelMenuEntry
     __slots__ = (
+        "_entry",
         "_guard",
-        "_identity",
         "_rest_factory",
         "_runner",
         "_service",
@@ -71,7 +70,6 @@ class VoxPanelLeg:
         rest_factory: Callable[[], PanelRestClient] | None = None,
     ) -> Self:
         self = super().__new__(cls)
-        self._identity = identity
         self._service = service
         self._topics = topics
         self._rest_factory = rest_factory or (
@@ -80,6 +78,7 @@ class VoxPanelLeg:
         self._tasks = set()
         self._guard = PanelGuard(service, self._rest_factory, logger)
         self._runner = PanelRunner(service, self._rest_factory, self._guard, logger)
+        self._entry = PanelMenuEntry(service, self._rest_factory, self._guard, logger)
         return self
 
     async def serve(self) -> None:
@@ -111,23 +110,17 @@ class VoxPanelLeg:
             logger.exception("the panel's listen leg failed; retrying")
 
     async def _register(self) -> None:
-        """Put the ``Vox`` entry in the menu, and start the warm-up behind it.
+        """Note that luxd answered, put the menu entry up, and warm up behind it.
 
-        The entry is up the moment the registration returns, and the warm-up
-        starts there: an entry nobody can click yet has nothing to prefetch
-        for, and one that was refused never will.
+        The warm-up starts the moment the entry is up: an entry nobody can
+        click yet has nothing to prefetch for, and one that never went up
+        never will. :class:`~punt_vox.panel.menu_entry.PanelMenuEntry` owns
+        the entry's own failure boundary -- this is ``on_connect``, and the
+        hub client swallows what escapes it under a logger of its own.
         """
         self._guard.connected()
-        result = await asyncio.to_thread(self._register_now)
-        if isinstance(result, OpError):
-            logger.error("the panel's menu entry was refused: %s", result.reason)
-            return
-        self._start(self._runner.warmed())
-
-    def _register_now(self) -> Ok | OpError:
-        return self._rest_factory().register_callback(
-            self._service.callback_id, self._service.label
-        )
+        if await self._entry.registered():
+            self._start(self._runner.warmed())
 
     async def _on_callback(self, callback_id: str) -> None:
         """Answer a menu click: acknowledge instantly, then push the fresh scene."""

@@ -146,6 +146,25 @@ class TestRegister:
         await leg._register()
         assert service.prefetch_called is False
 
+    @pytest.mark.parametrize(
+        "error", [HubUnavailableError("down"), RuntimeError("boom")], ids=type
+    )
+    async def test_a_raising_registration_never_escapes_on_connect(
+        self, error: Exception, build_leg: Callable[..., VoxPanelLeg]
+    ) -> None:
+        # _register IS on_connect, and the hub client awaits it inside a
+        # blanket handler that deliberately leaves the socket up: an escape
+        # here is logged under punt_lux's name and never reaches the panel's
+        # own guard, while serve()'s retry -- which only fires when the
+        # connection ends -- stays unfired. The menu would carry no entry for
+        # the rest of the session with nothing in the panel's log to say why.
+        rest = FakeRest(fail_at="register", error=error)
+        service = FakeService()
+        leg = build_leg(service, lambda: rest)
+        await leg._register()  # must not raise
+        await asyncio.sleep(0)
+        assert service.prefetch_called is False
+
 
 class TestOnCallback:
     async def test_matching_id_starts_the_click(

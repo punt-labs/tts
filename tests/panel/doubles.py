@@ -56,9 +56,11 @@ FAILURE_TEXT = "unknown voice 'nope'"
 # fails its test instead of hanging the suite on an unreachable worker thread.
 _GATE_SECONDS = 5.0
 
-# Where a fake is asked to fail: the three connection-setup calls the leg makes
-# in order, each of which luxd can drop between.
-type FailPoint = Literal["listener", "subscribe", "listen"]
+# Where a fake is asked to fail: the connection-setup calls the leg makes in
+# order, each of which luxd can drop between. "register" is the last of them
+# and the odd one out -- it runs as on_connect, after the handshake, on the
+# far side of the hub client's own blanket handler.
+type FailPoint = Literal["listener", "subscribe", "listen", "register"]
 
 # Which call a service double fails, and how: one selector rather than a flag
 # per call, so a test cannot ask for two failures the panel never sees at once.
@@ -139,6 +141,8 @@ class FakeRest:
         return cast("SceneShown", Ok())
 
     def register_callback(self, callback_id: str, label: str) -> Ok | OpError:
+        if self._fail_at == "register":
+            raise self._error
         self.registered.append((callback_id, label))
         return self.register_result
 

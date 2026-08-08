@@ -1,4 +1,4 @@
-"""Builders for the two subjects the panel tests drive: the leg and the runner.
+"""Builders for the subjects the panel tests drive: the leg, runner, and entry.
 
 Exposed as fixtures (not module imports) so mypy names this ``conftest`` once --
 the repo's tests reach shared builders through fixtures. The doubles they are
@@ -17,6 +17,7 @@ import pytest
 
 from panel.doubles import PANEL_LOGGER
 from punt_vox.panel.leg import VoxPanelLeg
+from punt_vox.panel.menu_entry import PanelMenuEntry
 from punt_vox.panel.panel_guard import PanelGuard
 from punt_vox.panel.panel_runner import PanelRunner
 
@@ -68,5 +69,19 @@ def build_runner() -> Callable[..., PanelRunner]:
         held = cast("VoxPanelService", service)
         guard = PanelGuard(held, rest_factory, PANEL_LOGGER)
         return PanelRunner(held, rest_factory, guard, PANEL_LOGGER)
+
+    return _build
+
+
+@pytest.fixture
+def build_entry() -> Callable[..., PanelMenuEntry]:
+    """Return a factory for a menu entry and the guard it answers failures with."""
+
+    def _build(
+        service: FakeService, rest_factory: Callable[[], PanelRestClient]
+    ) -> PanelMenuEntry:
+        held = cast("VoxPanelService", service)
+        guard = PanelGuard(held, rest_factory, PANEL_LOGGER)
+        return PanelMenuEntry(held, rest_factory, guard, PANEL_LOGGER)
 
     return _build
