@@ -117,6 +117,17 @@ class VoxPanelService:
             on_read_failure=PanelNotice.write_failed_and_voxd_unavailable(field),
         )
 
+    def note_rejection(self, detail: str) -> None:
+        """Flag the scene with voxd's refusal, keeping the last-known settings.
+
+        Unlike :meth:`recover_from_write_failure` this does not re-sync:
+        voxd has just proved it answers this session with a refusal, so a
+        confirming read would either fail the same way or trade this
+        specific reason for a generic one.
+        """
+        with self._lock:
+            self._notice = PanelNotice.voxd_rejected(detail)
+
     def apply_event(self, topic: str, payload: Mapping[str, object]) -> bool:
         """Apply one control-topic event; return whether the scene needs a re-push.
 

@@ -38,6 +38,16 @@ class PanelNotice:
         return cls("⚠ voxd is unreachable -- showing the last known settings")
 
     @classmethod
+    def voxd_rejected(cls, detail: str) -> Self:
+        """Return the warning shown when voxd answered a request with a refusal.
+
+        Distinct from :meth:`voxd_unavailable`: voxd was reached and said no
+        -- an unknown voice, an unreadable reply -- so the next click will not
+        quietly fix it and the reason is worth carrying into the scene.
+        """
+        return cls(f"⚠ voxd rejected the request -- {detail}")
+
+    @classmethod
     def write_failed(cls, field: str) -> Self:
         """Return the warning shown when persisting *field* could not be saved."""
         return cls(f"⚠ couldn't save {field} -- reverted to the last saved value")

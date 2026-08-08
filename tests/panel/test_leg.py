@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Literal, cast, final
 import pytest
 from punt_lux import HubUnavailableError, OpError
 
+from punt_vox.client_errors import VoxdProtocolError
 from punt_vox.panel.leg import VoxPanelLeg
 from punt_vox.panel.topics import PanelTopic
 
@@ -27,6 +28,14 @@ _IDENTITY = cast("ClientIdentity", object())
 # Where a fake is asked to fail: the three connection-setup calls the leg makes
 # in order, each of which luxd can drop between.
 _FailPoint = Literal["listener", "subscribe", "listen"]
+
+# What voxd says when it refuses -- the text the notice has to carry through.
+_REFUSAL = "unknown voice 'nope'"
+
+
+def _leg_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    """Return only the records the leg itself emitted, dropping punt_lux's."""
+    return [r for r in caplog.records if r.name == "punt_vox.panel.leg"]
 
 
 async def _wait_until(predicate: Callable[[], bool], *, timeout: float = 2.0) -> None:
@@ -116,7 +125,12 @@ class _FakeService:
     """A ``VoxPanelService`` double recording its lifecycle calls."""
 
     def __init__(
-        self, *, raise_on_apply: bool = False, raise_on_write: bool = False
+        self,
+        *,
+        raise_on_apply: bool = False,
+        raise_on_write: bool = False,
+        raise_on_preview: bool = False,
+        raise_on_service: bool = False,
     ) -> None:
         self.callback_id = "vox-panel"
         self.label = "Vox"
@@ -127,8 +141,11 @@ class _FakeService:
         self.apply_returns = True
         self.raise_on_apply = raise_on_apply
         self.raise_on_write = raise_on_write
+        self.raise_on_preview = raise_on_preview
+        self.raise_on_service = raise_on_service
         self.pushed = 0
         self.recovered: list[str] = []
+        self.rejections: list[str] = []
 
     def prefetch(self) -> None:
         self.prefetch_called = True
@@ -137,6 +154,8 @@ class _FakeService:
         self.acknowledged += 1
 
     def service(self, client: object, latency: object) -> None:
+        if self.raise_on_service:
+            raise VoxdProtocolError(_REFUSAL)
         self.serviced += 1
 
     def apply_event(self, topic: str, payload: Mapping[str, object]) -> bool:
@@ -146,6 +165,8 @@ class _FakeService:
         if self.raise_on_write:
             msg = "disk full"
             raise OSError(msg)
+        if self.raise_on_preview:
+            raise VoxdProtocolError(_REFUSAL)
         self.applied.append((topic, payload))
         return self.apply_returns
 
@@ -154,6 +175,9 @@ class _FakeService:
 
     def recover_from_write_failure(self, field: str) -> None:
         self.recovered.append(field)
+
+    def note_rejection(self, detail: str) -> None:
+        self.rejections.append(detail)
 
 
 class TestListenOnce:
@@ -395,6 +419,78 @@ class TestOnEvent:
         await _wait_until(lambda: service.pushed > 0)  # must not raise
         assert service.recovered == []
         assert service.pushed == 1
+
+
+class TestVoxdRejection:
+    """voxd answering with a refusal reaches the user, never just the log.
+
+    An unreachable voxd is a transient the next tick retries away; a refusal
+    is a real failure -- so both call paths that can meet one turn it into a
+    notice and a re-push instead of letting the blanket ``except Exception``
+    reduce it to a log line nobody reads.
+    """
+
+    async def test_a_refused_preview_shows_a_notice_and_re_pushes(self) -> None:
+        rest = _FakeRest()
+        service = _FakeService(raise_on_preview=True)
+        leg = VoxPanelLeg(
+            _IDENTITY,
+            service,  # type: ignore[arg-type]
+            topics=(),
+            rest_factory=lambda: rest,
+        )
+        await leg._on_event(PanelTopic.VOICE_PREVIEW.value, {})
+        await _wait_until(lambda: service.pushed > 0)  # must not raise
+        assert service.rejections == [_REFUSAL]
+        assert service.pushed == 1
+
+    async def test_a_refused_preview_is_logged_at_error_with_a_traceback(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG, logger="punt_vox.panel.leg")
+        service = _FakeService(raise_on_preview=True)
+        leg = VoxPanelLeg(
+            _IDENTITY,
+            service,  # type: ignore[arg-type]
+            topics=(),
+            rest_factory=_FakeRest,
+        )
+        await leg._on_event(PanelTopic.VOICE_PREVIEW.value, {})
+        await _wait_until(lambda: service.pushed > 0)
+        assert [r.levelno for r in _leg_records(caplog)] == [logging.ERROR]
+        assert _leg_records(caplog)[0].exc_info is not None
+
+    async def test_a_refused_click_refresh_shows_a_notice_and_re_pushes(self) -> None:
+        # The click's own settings read is the second path a refusal reaches:
+        # acknowledge() already put the stale scene up, so the notice only
+        # becomes visible if the leg pushes again after catching this.
+        rest = _FakeRest()
+        service = _FakeService(raise_on_service=True)
+        leg = VoxPanelLeg(
+            _IDENTITY,
+            service,  # type: ignore[arg-type]
+            topics=(),
+            rest_factory=lambda: rest,
+        )
+        await leg._clicked()  # must not raise
+        assert service.rejections == [_REFUSAL]
+        assert service.pushed == 1
+
+    async def test_a_refused_click_refresh_is_logged_at_error(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG, logger="punt_vox.panel.leg")
+        leg = VoxPanelLeg(
+            _IDENTITY,
+            _FakeService(raise_on_service=True),  # type: ignore[arg-type]
+            topics=(),
+            rest_factory=_FakeRest,
+        )
+        await leg._clicked()
+        # Only the leg's own records: the click also reports its latency, on
+        # punt_lux's logger, and that line is not what this test is about.
+        assert [r.levelno for r in _leg_records(caplog)] == [logging.ERROR]
+        assert _leg_records(caplog)[0].exc_info is not None
 
 
 class TestOutageLogging:

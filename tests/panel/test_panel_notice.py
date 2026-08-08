@@ -21,6 +21,19 @@ class TestVoxdUnavailable:
         assert PanelNotice.voxd_unavailable() != PanelNotice.silent()
 
 
+class TestVoxdRejected:
+    def test_message_carries_the_reason_voxd_gave(self) -> None:
+        assert "no such voice" in PanelNotice.voxd_rejected("no such voice").message
+
+    def test_distinct_from_the_unreachable_warning(self) -> None:
+        # Reached-and-refused is a different failure from never-reached, and
+        # the scene must not blame the wrong one.
+        assert PanelNotice.voxd_rejected("boom") != PanelNotice.voxd_unavailable()
+
+    def test_distinct_from_silent(self) -> None:
+        assert PanelNotice.voxd_rejected("boom") != PanelNotice.silent()
+
+
 class TestWriteFailed:
     def test_message_names_the_field(self) -> None:
         assert "voice" in PanelNotice.write_failed("voice").message

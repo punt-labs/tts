@@ -36,8 +36,10 @@ class _FakeDaemonClient:
         self._voices = voices if voices is not None else ["aria", "roger"]
         self._raise_on_synth = raise_on_synth
         self.synth_calls: list[tuple[str, SynthesisSpec | None]] = []
+        self.roster_reads = 0
 
     def voices(self) -> list[str]:
+        self.roster_reads += 1
         return self._voices
 
     def synthesize(
@@ -300,6 +302,27 @@ class TestRefreshAndRecover:
         assert notice == PanelNotice.write_failed_and_voxd_unavailable("notify")
         assert "notify" in notice.message
         assert "voxd" in notice.message
+
+
+class TestNoteRejection:
+    def test_flags_the_scene_with_the_reason_voxd_gave(self) -> None:
+        service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
+        service.note_rejection("unknown voice 'nope'")
+        notice = service.scene().notice
+        assert notice == PanelNotice.voxd_rejected("unknown voice 'nope'")
+        assert "unknown voice 'nope'" in notice.message
+
+    def test_does_not_re_read_and_keeps_the_last_known_settings(self) -> None:
+        """A refusal means voxd answers this session with no -- a confirming
+        read would fail the same way, or trade this reason for a generic one."""
+        client = _FakeDaemonClient()
+        service = VoxPanelService(client, _FakeStore(_config(voice="roger")))
+        service.prefetch()
+        reads_before = client.roster_reads
+
+        service.note_rejection("unexpected reply")
+        assert client.roster_reads == reads_before
+        assert service.scene().voice == "roger"
 
 
 class TestConcurrentApplyEvent:
