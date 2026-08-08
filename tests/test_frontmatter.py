@@ -135,6 +135,32 @@ class TestWrite:
         assert Frontmatter(path).read_field("voice") == "fin"
         assert "some prose below" in path.read_text()
 
+    def test_a_rule_in_the_prose_does_not_take_the_new_field(
+        self, tmp_path: Path
+    ) -> None:
+        """A new field lands in the frontmatter, never above a body rule."""
+        path = tmp_path / "vox.md"
+        path.write_text('---\nvoice: "charlie"\n---\n\n# Notes\n\n---\n\ntail\n')
+        Frontmatter(path).write_field("notify", "y")
+        assert path.read_text() == (
+            '---\nvoice: "charlie"\nnotify: "y"\n---\n\n# Notes\n\n---\n\ntail\n'
+        )
+
+    def test_an_unfenced_file_with_a_rule_is_rewritten_with_a_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Prose carrying a ``---`` rule is not frontmatter to edit in place.
+
+        Reading that rule as a closing fence would insert the field into the
+        middle of the body, where no reader of the frontmatter would find it.
+        """
+        path = tmp_path / "vox.md"
+        path.write_text("# Notes\n\nabove\n\n---\n\nbelow\n")
+        with caplog.at_level(logging.WARNING, logger="punt_vox.frontmatter"):
+            Frontmatter(path).write_field("voice", "fin")
+        assert path.read_text() == '---\nvoice: "fin"\n---\n'
+        assert any("Malformed config" in r.getMessage() for r in caplog.records)
+
     def test_write_fields_validates_before_touching_file(self, tmp_path: Path) -> None:
         """A corrupting value is rejected and no file is created."""
         path = tmp_path / "vox.md"

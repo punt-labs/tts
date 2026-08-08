@@ -6,15 +6,19 @@ from punt_vox.panel.panel_notice import PanelNotice
 from punt_vox.panel.panel_scene import PanelScene
 
 
-def _scene(**overrides: object) -> PanelScene:
-    fields: dict[str, object] = {
-        "notify": "y",
-        "speak": "n",
-        "voice": "aria",
-        "roster": ("aria", "roger"),
-    }
-    fields.update(overrides)
-    return PanelScene(**fields)  # type: ignore[arg-type]
+def _scene(notice: PanelNotice | None = None) -> PanelScene:
+    """Return the reference scene, optionally carrying *notice*.
+
+    ``None`` means "no notice given", which the scene renders as its own
+    silent default -- not a notice that failed to be produced.
+    """
+    return PanelScene(
+        notify="y",
+        speak="n",
+        voice="aria",
+        roster=("aria", "roger"),
+        notice=notice if notice is not None else PanelNotice.silent(),
+    )
 
 
 class TestFrame:
@@ -27,7 +31,9 @@ class TestFrame:
     def test_size_is_within_the_confirmed_range(self) -> None:
         request = _scene().render_request()
         assert request.frame is not None
-        width, height = request.frame.size  # type: ignore[misc]
+        size = request.frame.size
+        assert size is not None
+        width, height = size
         assert 330 <= width <= 350
         assert 220 <= height <= 260
 

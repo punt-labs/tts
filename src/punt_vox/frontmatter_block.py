@@ -13,7 +13,12 @@ if TYPE_CHECKING:
 __all__ = ["FrontmatterBlock"]
 
 _FIELD_RE = re.compile(r'^([a-z_]+):\s*"?([^"\n]*)"?\s*$', re.MULTILINE)
-_CLOSING_FENCE_RE = re.compile(r"\n---\s*$", re.MULTILINE)
+# A fence is a `---` line; it only opens a block on the file's very first line,
+# and only then does a later one close it. Without the opening anchor a
+# markdown horizontal rule buried in prose reads as a closing fence, and an
+# inserted field lands above that rule instead of in the frontmatter.
+_OPENING_FENCE_RE = re.compile(r"\A---[ \t]*\n")
+_FENCE_LINE_RE = re.compile(r"\n---[ \t]*$", re.MULTILINE)
 
 
 @final
@@ -96,7 +101,7 @@ class FrontmatterBlock:
         frontmatter this can edit, and the caller rebuilds it whole rather
         than appending fields below prose where no reader would find them.
         """
-        if _CLOSING_FENCE_RE.search(self._text):
+        if self._closing_fence(self._text) is not None:
             return True
         return all(self._field_re(key).search(self._text) for key in keys)
 
@@ -107,13 +112,39 @@ class FrontmatterBlock:
         """
         text = self._text
         for key, value in updates.items():
-            replacement = f'{key}: "{value}"'
+            line = f'{key}: "{value}"'
             field_re = self._field_re(key)
+            # Each insert shifts the fence, so it is found afresh per key.
             if field_re.search(text):
-                text = field_re.sub(replacement, text)
+                text = field_re.sub(line, text)
             else:
-                text = _CLOSING_FENCE_RE.sub(f"\n{replacement}\n---", text, count=1)
+                text = self._inserted(text, line)
         return type(self)(text)
+
+    @classmethod
+    def _inserted(cls, text: str, line: str) -> str:
+        """Return *text* with *line* written above its closing fence."""
+        fence = cls._closing_fence(text)
+        if fence is None:
+            msg = f"no closing fence to insert {line!r} above"
+            raise ValueError(msg)
+        cut = fence.start() + 1  # just past the newline that opens the fence line
+        return f"{text[:cut]}{line}\n{text[cut:]}"
+
+    @staticmethod
+    def _closing_fence(text: str) -> re.Match[str] | None:
+        """Return the fence closing *text*'s frontmatter, if it has one.
+
+        ``None`` is the documented contract for "this is not a fenced block":
+        a fence closes only what an opening fence on the first line began, so
+        a ``---`` horizontal rule sitting in prose answers nothing. The search
+        starts on the opening fence's own newline, so an empty block --
+        ``---\\n---\\n`` -- still finds its closing line.
+        """
+        opening = _OPENING_FENCE_RE.match(text)
+        if opening is None:
+            return None
+        return _FENCE_LINE_RE.search(text, opening.end() - 1)
 
     @staticmethod
     def _field_re(key: str) -> re.Pattern[str]:

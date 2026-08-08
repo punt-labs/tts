@@ -32,21 +32,19 @@ class _FakeClient:
         return self._voices
 
 
-def _config(**overrides: object) -> VoxConfig:
+def _config() -> VoxConfig:
     from punt_vox.config import VoxConfig
 
-    fields: dict[str, object] = {
-        "notify": "y",
-        "speak": "y",
-        "vibe_mode": "auto",
-        "voice": "roger",
-        "provider": None,
-        "model": None,
-        "vibe": None,
-        "vibe_tags": None,
-    }
-    fields.update(overrides)
-    return VoxConfig(**fields)  # type: ignore[arg-type]
+    return VoxConfig(
+        notify="y",
+        speak="y",
+        vibe_mode="auto",
+        voice="roger",
+        provider=None,
+        model=None,
+        vibe=None,
+        vibe_tags=None,
+    )
 
 
 class TestEmpty:
