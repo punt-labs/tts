@@ -22,6 +22,7 @@ from punt_lux import HubUnavailableError
 from punt_lux.operations import Ok
 
 from punt_vox.client_errors import VoxdProtocolError
+from punt_vox.types_errors import ConfigValueError
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -64,11 +65,14 @@ type FailPoint = Literal["listener", "subscribe", "listen", "register"]
 
 # Which call a service double fails, and how: one selector rather than a flag
 # per call, so a test cannot ask for two failures the panel never sees at once.
-# "unexpected" is the odd one out -- not a failure the panel names and guards,
-# but a bug, raised from every call the runner's work makes so each piece can
-# be shown ending inside its own boundary rather than in a task nobody reads.
+# "apply" and "refused" are the pair worth keeping straight: a malformed
+# payload with no change behind it, versus a real change the config store
+# will not store. "unexpected" is the odd one out -- not a failure the panel
+# names and guards, but a bug, raised from every call the runner's work makes
+# so each piece can be shown ending inside its own boundary rather than in a
+# task nobody reads.
 type Failure = Literal[
-    "", "prefetch", "service", "apply", "write", "preview", "unexpected"
+    "", "prefetch", "service", "apply", "refused", "write", "preview", "unexpected"
 ]
 
 # What a bug looks like: an exception type no guard and no handler names.
@@ -206,6 +210,12 @@ class FakeService:
         if self._raise_on == "apply":
             msg = "bad payload"
             raise TypeError(msg)
+        if self._raise_on == "refused":
+            # The value, not the payload: a real selection the config store
+            # will not serialize. A ValueError subclass, so a handler that
+            # catches ValueError first would swallow it as a bad payload.
+            msg = "config values must not contain double-quotes, got: 'a \"b\"'"
+            raise ConfigValueError(msg)
         if self._raise_on == "write":
             msg = "disk full"
             raise OSError(msg)

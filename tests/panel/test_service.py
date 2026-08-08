@@ -13,6 +13,7 @@ from punt_vox.panel.panel_notice import PanelNotice
 from punt_vox.panel.service import VoxPanelService
 from punt_vox.panel.state import PanelState
 from punt_vox.panel.topics import PanelTopic
+from punt_vox.types_errors import ConfigValueError
 from punt_vox.types_synthesis import SynthesisSpec
 
 if TYPE_CHECKING:
@@ -232,6 +233,26 @@ class TestApplyEvent:
 
         service = VoxPanelService(_FakeDaemonClient(), _FailingStore())
         with pytest.raises(OSError, match="disk full"):
+            service.apply_event(PanelTopic.NOTIFY, {"value": 2})
+
+    def test_a_refused_value_propagates_as_its_own_type(self) -> None:
+        """A value the store will not serialize is not a malformed payload.
+
+        Both are ``ValueError``s, and the runner tells them apart only by the
+        subclass -- so this must reach it wearing that type, not flattened
+        into the bare ``ValueError`` a bad payload raises.
+        """
+
+        class _RefusingStore:
+            def read(self) -> VoxConfig:
+                return _config()
+
+            def write_field(self, key: str, value: str) -> None:
+                msg = "config values must not contain double-quotes"
+                raise ConfigValueError(msg)
+
+        service = VoxPanelService(_FakeDaemonClient(), _RefusingStore())
+        with pytest.raises(ConfigValueError, match="double-quotes"):
             service.apply_event(PanelTopic.NOTIFY, {"value": 2})
 
     def test_unknown_topic_is_ignored(self) -> None:

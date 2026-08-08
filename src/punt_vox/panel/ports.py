@@ -91,7 +91,7 @@ class SettingsStore(SettingsSource, Protocol):
     """The config-store read and write ``VoxPanelService`` needs."""
 
     def write_field(self, key: str, value: str) -> None:
-        """Write a single config field to the correct file."""
+        """Write one config field, raising on a value it cannot store or a bad write."""
         ...
 
 

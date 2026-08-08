@@ -164,6 +164,37 @@ class TestChanged:
         assert service.recovered == ["notify"]
         assert service.pushed == 1
 
+    async def test_a_refused_value_is_corrected_like_a_write_that_would_not_land(
+        self, build_runner: Callable[..., PanelRunner]
+    ) -> None:
+        # A real selection the config store will not serialize -- a voice whose
+        # name carries a quote, say. The payload was fine and the user really
+        # chose something, so this owes the same on-screen correction a failed
+        # write does. It is a ValueError subclass, so catching it after the
+        # bare (TypeError, ValueError) bucket would file it as a bad payload
+        # and revert the widget with nothing on screen saying why.
+        rest = FakeRest()
+        service = FakeService(raise_on="refused")
+        await build_runner(service, lambda: rest).changed(
+            PanelTopic.VOICE.value, {"value": 0}
+        )  # must not raise
+        assert service.recovered == ["voice"]
+        assert service.pushed == 1
+
+    async def test_a_refused_value_is_logged_at_error_with_a_traceback(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        build_runner: Callable[..., PanelRunner],
+    ) -> None:
+        caplog.set_level(logging.DEBUG, logger=PANEL_LOGGER.name)
+        service = FakeService(raise_on="refused")
+        await build_runner(service, FakeRest).changed(
+            PanelTopic.VOICE.value, {"value": 0}
+        )
+        assert [r.levelno for r in panel_records(caplog)] == [logging.ERROR]
+        assert panel_records(caplog)[0].exc_info is not None
+        assert "voice" in panel_records(caplog)[0].getMessage()
+
     async def test_a_rejected_payload_re_pushes_but_does_not_recover(
         self, build_runner: Callable[..., PanelRunner]
     ) -> None:
@@ -277,7 +308,16 @@ class TestStartedWork:
 
     @pytest.mark.parametrize(
         "failure",
-        ["", "prefetch", "service", "apply", "write", "preview", "unexpected"],
+        [
+            "",
+            "prefetch",
+            "service",
+            "apply",
+            "refused",
+            "write",
+            "preview",
+            "unexpected",
+        ],
         ids=str,
     )
     async def test_no_failure_escapes_the_work_the_leg_started(

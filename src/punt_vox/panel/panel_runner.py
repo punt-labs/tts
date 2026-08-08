@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_lux.applets import ClickLatency
 
 from punt_vox.panel.topics import PanelTopic
+from punt_vox.types_errors import ConfigValueError
 
 if TYPE_CHECKING:
     import logging
@@ -120,18 +121,21 @@ class PanelRunner:
         out to snap it back. A refusal from voxd is deliberately not handled
         here -- the :class:`~punt_vox.panel.panel_guard.PanelGuard` rejection
         guard around the caller owns that one.
+
+        Order matters between the two buckets: ``ConfigValueError`` is a
+        ``ValueError``, so catching it second would file a change the user
+        really chose as a malformed event and revert it with no notice.
         """
         try:
             return self._service.apply_event(topic, payload)
+        except (ConfigValueError, OSError):
+            field = PanelTopic(topic).field_name
+            self._logger.exception(
+                "vox-panel: the %s change did not stick; correcting the scene", field
+            )
+            self._service.recover_from_write_failure(field)
         except (TypeError, ValueError):
             self._logger.exception(
                 "vox-panel: rejected control event on %s: %r", topic, payload
             )
-        except OSError:
-            field = PanelTopic(topic).field_name
-            self._logger.exception(
-                "vox-panel: could not persist the %s change; correcting the scene",
-                field,
-            )
-            self._service.recover_from_write_failure(field)
         return True

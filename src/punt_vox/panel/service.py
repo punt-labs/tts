@@ -131,10 +131,10 @@ class VoxPanelService:
     def apply_event(self, topic: str, payload: Mapping[str, object]) -> bool:
         """Apply one control-topic event; return whether the scene needs a re-push.
 
-        A payload rejection (``TypeError``/``ValueError``) and a config-write
-        failure (``OSError``) both propagate to the caller -- this method
-        never swallows either, so :class:`~punt_vox.panel.leg.VoxPanelLeg` can
-        tell the two apart and log, and recover, distinctly.
+        A payload rejection (``TypeError``/``ValueError``), a value the store
+        will not serialize (``ConfigValueError``), and a config-write failure
+        (``OSError``) all propagate -- this method swallows none of them, so
+        :class:`~punt_vox.panel.panel_runner.PanelRunner` can answer each.
         """
         if topic == PanelTopic.NOTIFY:
             code = NOTIFY_SPEC.code_for_index(self._index(payload))

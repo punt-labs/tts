@@ -5,8 +5,21 @@ from __future__ import annotations
 from typing import Self
 
 __all__ = [
+    "ConfigValueError",
     "VoiceNotFoundError",
 ]
+
+
+class ConfigValueError(ValueError):
+    """Raised when a value cannot be stored in a config file's frontmatter.
+
+    A ``ValueError`` subclass because the value is what is invalid, but its
+    own type so a caller can tell it from the other ``ValueError`` its call
+    might raise. That distinction is the difference between a caller's
+    mistake -- an out-of-range index, an unroutable key -- and a real value
+    that simply cannot be serialized: the first is a bug to log, the second
+    is a failure the user asked for and must see answered.
+    """
 
 
 class VoiceNotFoundError(ValueError):
