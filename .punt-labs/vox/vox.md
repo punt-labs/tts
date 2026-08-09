@@ -1,5 +1,5 @@
 ---
 notify: "y"
-speak: "n"
-voice: "roger"
+speak: "y"
+voice: "benno"
 ---

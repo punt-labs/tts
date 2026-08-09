@@ -111,3 +111,22 @@ MagicMock/
 .punt-labs/local/ethos/sessions/**/audit.jsonl
 .punt-labs/local/ethos/sessions/**/*.audit.jsonl
 .punt-labs/local/ethos/sessions/**/*.lock
+
+# Ethos writes the same per-session churn under the missions/ sibling:
+# .punt-labs/local/ethos/missions/<mission-id>/<session-uuid>.{log.jsonl,lock}
+# Note the extension is .log.jsonl here, not the .audit.jsonl the sessions
+# block above matches -- mirroring that block literally would match nothing.
+# The DURABLE mission record (contract.yaml, results.yaml, reflections.yaml,
+# delegations/) lives under .punt-labs/ethos/missions/ and stays tracked; only
+# this machine-local counterpart is ignored.
+.punt-labs/local/ethos/missions/*.audit.jsonl
+.punt-labs/local/ethos/missions/*.log.jsonl
+.punt-labs/local/ethos/missions/*.lock
+.punt-labs/local/ethos/missions/**/audit.jsonl
+.punt-labs/local/ethos/missions/**/*.audit.jsonl
+.punt-labs/local/ethos/missions/**/*.log.jsonl
+.punt-labs/local/ethos/missions/**/*.lock
+
+# Per-mission runtime lock in the durable tree. .create.lock (above) covers the
+# registry-wide lock; this covers the one ethos takes on an individual mission.
+.punt-labs/ethos/missions/*/.lock

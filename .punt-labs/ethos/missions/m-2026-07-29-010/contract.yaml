@@ -1,0 +1,46 @@
+mission_id: m-2026-07-29-010
+status: closed
+type: implement
+created_at: "2026-07-29T05:49:34Z"
+updated_at: "2026-07-29T06:05:00Z"
+closed_at: "2026-07-29T06:05:00Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: bwk
+    pinned_at: "2026-07-29T05:49:34Z"
+    hash: b106f88d6d76d24f00c3960e9b2b7a7dbc94e7ef98c1036ccd20074c9e9bf944
+inputs: {}
+write_set:
+    - docs/
+success_criteria:
+    - 'Produce docs/vox-music-player.md — the design for the voxd Music Player, a headless app inside voxd that drives a lux scene. Cover the architecture, the vox-side decomposition (YOU decide the modules — the design''s output IS the write-set), the playback state model, and the two-phase split. DESIGN ONLY: no implementation code, no prescribed write-set into existing modules.'
+    - 'Architecture is SETTLED cross-repo with the lux agent — do NOT relitigate it. voxd holds lux''s PUBLIC LuxRestClient (NEVER DisplayClient: that is lux''s Hub-internal renderer client, guard-enforced, being deprecated for apps — a DisplayClient player renders but every click dispatches into a void; z-spec already hit this). voxd pushes the album-list scene via PUT /scenes/vox.music and re-pushes on state change. Receive leg is PUB-SUB: in-scene Play/Stop ButtonElements whose Hub-side handlers publish music.play {album_id} / music.stop; voxd subscribes via the persistent LuxRestClient extension over WebSocket (luxd serves WS alongside REST on one port). Identity is kind=app, automatic via LuxRestClient. Public LuxRestClient (raw REST is forbidden — Jim''s ruling: validation/typing).'
+    - 'Playback state model — the real substance. Design voxd''s play / stop / now-playing state over the SAVED-ALBUM CATALOG (the mic:music catalog). voxd today has `music play <album>` but NO stop, now-playing, or queue. State the invariants (e.g. at most one album playing; now-playing present iff playing; stop returns to idle). Keep the daemon the audio host: voxd owns BOTH playback and the lux connection.'
+    - 'Two-phase split, each independently shippable. PHASE 1 = catalog + album-list scene push/re-push against public LuxRestClient (the half the lux agent calls stable today; starts when lux''s public export / PR-3 merges — they ping us). PHASE 2 = interactive: the ''Music'' menu callback (session-callback, ~30s lease renewed by contact) + the WS subscribe loop for music.play/music.stop + the play-state machine (gated on lux''s menu + persistent-extension PRs).'
+    - 'Stateful-audio z-spec gate (docs/WORKFLOW.md): assess whether the playback state machine and the phase-2 connection/subscribe/lease lifecycle qualify (3+ modes + invariants across transitions). If yes, a Z model (docs/vox-music-player.tex, `fuzz -t` clean) is REQUIRED before the matching implementation. The phase-2 subscribe/lease transitions depend on lux''s not-yet-pinned subscribe API — model what is stable (the playback state machine) now, and flag the phase-2 lifecycle as pending the lux API pin. State clearly which parts need the model and when.'
+    - Deliver docs/vox-music-player.md (+ docs/vox-music-player.tex if the gate fires for the stable playback state machine), committed on branch feat/vox-music-player. Cite the OO rules for any proposed types. Commit incrementally — one commit per logical step, each passing make check (docs/markdownlint). Do NOT write implementation code, do NOT push, do NOT open a PR. Submit via ethos mission result. Flag any substantive design fork for the leader to escalate to Jim.
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 1
+context: |
+    New feature (bead vox-efa6): the voxd Music Player. A SIMPLE collection player —
+    browse vox's saved album catalog, play/stop a saved album, GNOME-Music-plain.
+    vox = speakers, lux = display, CO-LOCATED on the user's machine (local only).
+    Architecture-first; richer transport (pause/next/prev/queue) layers on later
+    with zero architectural change. Keep it simple.
+
+    The cross-repo architecture is SETTLED with the lux agent (claude:tty21) and is
+    captured in the success criteria — do not reopen it. The lux side ships in PRs:
+    public LuxRestClient (identity PR-3, in flight), the menu model, and the
+    persistent WebSocket subscribe extension. vox implementation is GATED on those;
+    the DESIGN proceeds now so we can dispatch implementation the moment the public
+    export merges.
+
+    You are DESIGNING, not building. Read docs/WORKFLOW.md (the three loops + the
+    stateful-audio z-spec gate) and ../punt-kit/standards/architecture.md. Decide
+    the vox-side decomposition yourself; extract new modules where the design calls
+    for it rather than stuffing logic into existing files. The visual (album-list
+    scene) is thin — the weight is the voxd playback-state model and the LuxRestClient
+    connection/subscribe lifecycle.

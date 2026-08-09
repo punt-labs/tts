@@ -98,8 +98,12 @@ Guidance:
 - **Never name an artist, band, composer, or copyrighted work.** ElevenLabs
   rejects those (`bad_prompt`) — describe the music itself instead.
 - Music needs an ElevenLabs paid plan (~2,000 credits per ~3-minute track).
-- Control actions produce no agent text: `on`, `stop`, `next`, `prev`, `pause`,
-  and `resume` are fire-and-forget. Only `status` and `list` return data to report.
+- Control actions are silent on success: `on`, `stop`, `play`, `next`, `prev`,
+  `pause`, and `resume` are fire-and-forget — the ♪ audio panel is the whole
+  response, so add no text after the call. `list`, `new`, `get`, and `remove`
+  return data for you to report. An `{"error": ...}` reply is always yours to
+  report, whichever the subcommand — a bare `play` with nothing played yet
+  returns one, listing the saved albums to pick from.
 
 Catalog verbs (address a saved album by the id `list` prints):
 

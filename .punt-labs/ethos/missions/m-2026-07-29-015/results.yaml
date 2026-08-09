@@ -1,0 +1,131 @@
+results:
+    - mission: m-2026-07-29-015
+      round: 1
+      created_at: "2026-07-29T13:00:17Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/voxd/music_player/wire.py
+          added: 25
+          removed: 0
+        - path: src/punt_vox/voxd/music_player/player_events.py
+          added: 86
+          removed: 0
+        - path: src/punt_vox/voxd/music_player/command_ports.py
+          added: 38
+          removed: 0
+        - path: src/punt_vox/voxd/music_player/hub_ports.py
+          added: 85
+          removed: 0
+        - path: src/punt_vox/voxd/music_player/lux_clients.py
+          added: 57
+          removed: 0
+        - path: src/punt_vox/voxd/music_player/lux_menu.py
+          added: 54
+          removed: 0
+        - path: src/punt_vox/voxd/music_player/lux_subscription.py
+          added: 117
+          removed: 0
+        - path: src/punt_vox/voxd/music_player/publish_button.py
+          added: 57
+          removed: 0
+        - path: src/punt_vox/voxd/music_player/album_row.py
+          added: 38
+          removed: 0
+        - path: src/punt_vox/voxd/music_player/scene.py
+          added: 19
+          removed: 30
+        - path: src/punt_vox/voxd/music_player/composition.py
+          added: 29
+          removed: 23
+        - path: tests/music_player/test_player_events.py
+          added: 95
+          removed: 0
+        - path: tests/music_player/test_lux_subscription.py
+          added: 252
+          removed: 0
+        - path: tests/music_player/test_lux_menu.py
+          added: 61
+          removed: 0
+        - path: tests/music_player/test_lux_clients.py
+          added: 44
+          removed: 0
+        - path: tests/music_player/test_publish_button.py
+          added: 27
+          removed: 0
+        - path: tests/music_player/test_album_row.py
+          added: 25
+          removed: 0
+        - path: tests/music_player/test_scene.py
+          added: 19
+          removed: 9
+        - path: tests/music_player/test_composition.py
+          added: 84
+          removed: 9
+        - path: CHANGELOG.md
+          added: 1
+          removed: 0
+        - path: .oo-baseline.json
+          added: 122
+          removed: 5
+        - path: .oo-audit.jsonl
+          added: 3
+          removed: 0
+        - path: .oo-coupling-baseline.json
+          added: 67
+          removed: 4
+      evidence:
+        - name: make check (lint, mypy+pyright, markdownlint, 3430 tests, check-oo, check-coupling, check-suppressions)
+          status: pass
+        - name: check-oo — scene.py 3 metrics IMPROVED (max_complexity 5->3, avg_complexity 2.14->1.86, module_size 87->75); scene.py avg_params + composition.py module_size scoped-RELAXED with justification
+          status: pass
+        - name: check-coupling — scene.py max_lcom/avg_lcom IMPROVED; scene.py + composition.py efferent_coupling scoped-RELAXED
+          status: pass
+        - name: check-suppressions — count decreased by 7 (no new suppressions)
+          status: pass
+        - name: offline substitute — synthesized music.play{album_id} EventFrame dispatches to replay_album; Play/Stop button dicts carry the exact publish attribute (test_player_events, test_lux_subscription, test_scene, test_publish_button, test_album_row)
+          status: pass
+        - name: Z LuxListener invariants asserted by name — I (at-most-one connection/subscription), II (exactly-once dispatch), III (register-fresh retry, no surviving Hub state), V (event->one transition)
+          status: pass
+      open_questions:
+        - 'daemon.py left untouched (in write-set but not required): MusicPlayerSubsystem.run() now runs the publisher drain AND the subscription concurrently via asyncio.gather as one cancellable task under the daemon''s existing scene_task, so the subscribe loop already runs as a daemon background task cancelled on shutdown. Chose this over a second daemon task to keep the daemon agnostic of the player''s internals AND avoid growing the already-over-threshold daemon.py (module_size 330 > 300). Confirm this is acceptable vs an explicit second task in daemon.py.'
+        - 'PR-3-gated live-path gap (menu re-registration): LuxSubscription.run() registers the Music menu once at startup; the LuxHubClient re-subscribes internally on reconnect but does NOT re-call the REST register_callback. After a >30s outage that expires the lease and sweeps the menu (Z model LeaseExpire), a reconnect within the same process would re-subscribe but leave the menu unregistered until voxd restarts. Whether voxd must re-register or luxd restores app menus on re-subscribe is exactly what PR-3 pins — flagging for the pin bump.'
+        - 'PR-3-gated robustness gap (stale hub URL): LuxHubClient resolves luxd''s port at construction and listen() reconnects to that fixed URL. If luxd restarts on a different port mid-life, listen()''s reconnect never recovers; _open_listener''s retry only covers the initial construction. Depends on PR-3''s luxd port stability / port re-resolution on reconnect.'
+        - Stop button dropped its mode-dependent 'disabled' to match the specced verbatim dict exactly ({kind,id,label,publish} only). A stop-while-idle is a harmless no-op (Z model PlayerStop), so this is behaviourally safe; flagging the intentional deviation from phase 1's disabled-Stop UX.
+      prose: |
+        Phase 2 (the interactive receive leg) is implemented, unit-tested with fakes,
+        and make-check green end to end. It builds on phase 1: the same change signal
+        re-pushes the scene after each applied command.
+
+        Decomposition (design §3.1, one concern per module): wire.py (shared pub-sub
+        vocabulary), player_events.py (PlayAlbum/StopMusic discriminated union with
+        polymorphic apply + PlayerEventCodec boundary parser), command_ports.py +
+        hub_ports.py (the write seam and the lux transport seams as Protocols),
+        lux_clients.py (VoxLuxClients — the ONE explicit app identity kind=app/name=voxd/
+        lease_ttl=30 for both legs, closing vox-hrjx via for_identity in place of the
+        phase-1 context-derived connect()), lux_menu.py (guarded off-thread Music-menu
+        registration), lux_subscription.py (the one hub connection: subscribe once to
+        music.play+music.stop, decode+apply each event exactly once, menu-open re-push),
+        and publish_button.py + album_row.py (the wire values carrying the publish
+        attribute the pinned ButtonElement has no field for).
+
+        The pinned lux interface is used exactly as settled: LuxRestClient.for_identity,
+        register_callback, LuxHubClient.connect/subscribe/listen with on_event/on_callback.
+        The button->publish is a dict voxd constructs (the pin's ButtonElement carries no
+        publish field), verbatim to spec: play-<id> -> music.play{album_id}, stop ->
+        music.stop.
+
+        The end-to-end live click is GATED on lux PR-3 (Hub-side publish handler +
+        publish-attribute validation) and NOT attempted. The offline substitute is in
+        place and asserted: the emitted Play/Stop button dicts carry the exact publish
+        attribute, and a synthesized EventFrame{music.play,{album_id}} dispatches through
+        the codec to replay_album. Do not bump the punt-lux pin — the leader does that on
+        PR-3 merge and runs the live-verify.
+
+        Ratchet honesty: the touched existing files pay down debt genuinely — scene.py
+        improves 3 OO metrics and 2 coupling metrics (removing the dead mode-dependent
+        Stop control and deduping album-name resolution). The four scoped relaxes
+        (scene.py avg_params + efferent_coupling, composition.py module_size +
+        efferent_coupling) are the unavoidable cost of the receive-leg substance, each
+        recorded with a per-metric justification in the audit logs; no blanket rebaseline.
