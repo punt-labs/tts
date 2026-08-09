@@ -101,6 +101,30 @@ class ProgramStatus:
         """Return whether a Part is audibly playing (the single audible gate)."""
         return self.mode.status is PlaybackStatus.PLAYING
 
+    def summary(self) -> str:
+        """Return the human render of this status: a headline plus any failures.
+
+        Every surface that reports music state in prose -- the ``music`` MCP
+        tool's ``status`` verb and ``vox music status`` -- prints this, so a
+        caller who reads one is never told a different story by the other.
+        """
+        if self.name is None:
+            return "Nothing playing."
+        head = f"{self.name.value} [{self.format.label}]"
+        return "\n".join(
+            [
+                f"{head} — {self._transport} ({self.mode.value})",
+                *self.generation.error_lines(),
+                *(part.line() for part in self.failed_parts),
+            ]
+        )
+
+    @property
+    def _transport(self) -> str:
+        """Return the transport phrase -- a position, or ``stopped`` when silent."""
+        now = self.now_playing
+        return "stopped" if now is None else now.position(paused=self.paused)
+
     def to_dict(self) -> dict[str, object]:
         """Return the JSON object form -- the wire shape every client reads.
 

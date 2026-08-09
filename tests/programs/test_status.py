@@ -10,11 +10,13 @@ authoritative state rather than a log.
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 
 import pytest
 
 from punt_vox.types_programs import Format, Mode, ProgramName, ProgramStatus, Reason
 from punt_vox.types_programs.playback_fault import PlaybackFault, PlaybackFaultKind
+from punt_vox.types_programs.status_views import NowPlaying
 from punt_vox.types_programs.wire import JsonObject
 from punt_vox.voxd.programs import Part, Program, ProgramState
 
@@ -192,6 +194,67 @@ def test_healthy_player_has_no_playback_error() -> None:
 
     assert status.playback_error is None
     assert status.to_dict()["playback_error"] is None
+
+
+def test_now_playing_renders_its_own_transport_phrase() -> None:
+    assert NowPlaying(index=2, of=5).position(paused=False) == "playing 2 of 5"
+    assert NowPlaying(index=2, of=5).position(paused=True) == "paused 2 of 5"
+
+
+def test_summary_of_an_idle_daemon_says_nothing_is_playing() -> None:
+    assert ProgramStatus.idle().summary() == "Nothing playing."
+
+
+def test_summary_names_the_program_its_position_and_its_mode() -> None:
+    program = Program(ProgramState.initial(), AvoidRepeatPolicy())
+    program.turn_on()
+    program.first_track_ok(Part("id001", 1))
+
+    summary = program.to_status(ProgramName("ambient_techno")).summary()
+
+    assert "ambient_techno" in summary
+    assert "playing 1 of 1" in summary
+    assert Mode.PLAYING_FILLING.value in summary
+
+
+def test_summary_says_paused_for_a_suspended_source() -> None:
+    """A held source must not read as "playing" -- it has stopped advancing."""
+    program = build_rotating(AvoidRepeatPolicy())
+    status = replace(program.to_status(ProgramName("r")), paused=True)
+
+    summary = status.summary()
+
+    assert "paused" in summary
+    assert "playing " not in summary
+
+
+def test_summary_of_an_off_pool_reports_stopped() -> None:
+    """An off Program over a saved pool is named, but nothing is playing."""
+    summary = _restored(1, 2).to_status(ProgramName("saved")).summary()
+
+    assert "saved" in summary
+    assert "stopped" in summary
+
+
+def test_summary_carries_both_failure_surfaces() -> None:
+    program = Program(ProgramState.initial(), AvoidRepeatPolicy())
+    program.turn_on()
+    program.first_track_ok(Part("id001", 1))
+    program.fill_bad_part(Part("id002", 2), Reason("ToS violation"))
+
+    summary = program.to_status(ProgramName("ambient_techno")).summary()
+
+    assert "part 2 failed: ToS violation" in summary
+
+
+def test_summary_carries_the_program_level_error() -> None:
+    program = Program(ProgramState.initial(), AvoidRepeatPolicy())
+    program.turn_on()
+    program.first_track_bad_prompt(Part("id001", 1), Reason("bad_prompt: nope"))
+
+    summary = program.to_status(ProgramName("ambient_techno")).summary()
+
+    assert "error: bad_prompt: nope" in summary
 
 
 def test_wire_round_trips_failed_parts() -> None:

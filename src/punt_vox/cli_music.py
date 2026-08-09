@@ -33,7 +33,6 @@ from punt_vox.types_programs.control import (
     StartRequest,
 )
 from punt_vox.types_programs.prompts import PromptSet
-from punt_vox.types_programs.status import ProgramStatus
 
 __all__ = ["MusicCli", "build_music_app"]
 
@@ -455,34 +454,7 @@ class MusicCli:
         """Show the active source's authoritative status."""
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         report = self._guard(lambda: self._gateway_factory().status())
-        self._formatter.emit(report.to_dict(), self._render_status(report))
-
-    @staticmethod
-    def _render_status(status: ProgramStatus) -> str:
-        """Render a ProgramStatus as a short human block for the CLI."""
-        if status.is_idle:
-            return "Nothing playing."
-        where = MusicCli._position(status)
-        head = status.name.value if status.name is not None else status.format.label
-        lines = [f"{head} [{status.format.label}] — {where} ({status.mode.value})"]
-        if status.generation.last_error is not None:
-            lines.append(f"  error: {status.generation.last_error}")
-        lines += [f"  part {f.index} failed: {f.reason}" for f in status.failed_parts]
-        return "\n".join(lines)
-
-    @staticmethod
-    def _position(status: ProgramStatus) -> str:
-        """Return the transport phrase: ``paused``/``playing N of M``, or ``stopped``.
-
-        The wire status carries ``paused`` (the transport suspension), so a held
-        source reads "paused N of M" rather than the misleading "playing N of M" a
-        client would otherwise print for a source that is not advancing.
-        """
-        now = status.now_playing
-        if now is None:
-            return "stopped"
-        verb = "paused" if status.paused else "playing"
-        return f"{verb} {now.index} of {now.of}"
+        self._formatter.emit(report.to_dict(), report.summary())
 
 
 def build_music_app(formatter: OutputFormatter, flags: OutputFlags) -> typer.Typer:
