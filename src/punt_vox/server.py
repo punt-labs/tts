@@ -13,7 +13,7 @@ import random
 import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, final
+from typing import TYPE_CHECKING, Any, Literal, final
 
 from mcp.server.fastmcp import FastMCP
 from websockets.exceptions import WebSocketException
@@ -602,32 +602,26 @@ def who() -> str:
 
 @mcp.tool()
 def notify(
-    mode: str,
+    mode: Literal["y", "c"],
     voice: str | None = None,
 ) -> str:
     """Set notification mode and optionally the session voice.
 
-    Controls whether vox sends notification events. Whether notifications
-    are heard as chimes or TTS speech is controlled by the separate
-    ``speak`` field (see the ``speak`` tool).
+    Whether notifications are chimes or TTS speech is controlled by the
+    separate ``speak`` field (see the ``speak`` tool). Enabling initializes
+    speak to "y" the first time; a later ``/mute`` or ``/unmute`` sticks.
 
-    When enabling notifications (mode "y" or "c"), initializes speak to
-    "y" (voice) if the user has not yet made an explicit speak choice.
-    Once the user has set speak via ``/mute`` or ``/unmute``, enabling
-    notifications preserves that choice.
+    Route "off" through ``mic:enablement action="disable"`` -- disablement
+    is the enablement channel, not a notify level (tool-enable-disable.md 2.3).
 
     Args:
-        mode: Notification mode -- "y" (notifications on), "n" (off),
-            or "c" (continuous with real-time signal announcements).
-        voice: Optional session voice to set (e.g. "matilda", "roger").
+        mode: "y" (on) or "c" (continuous, adds real-time signals).
+        voice: Optional session voice (e.g. "matilda", "roger").
 
     Returns:
         JSON string with the updated config fields.
     """
     _session.refresh_from_config()
-    if mode not in _VALID_NOTIFY_MODES:
-        return _error(f"Invalid mode '{mode}'. Use y/n/c.")
-
     updates: dict[str, str] = {"notify": mode}
     _session.set_notify(mode)
 

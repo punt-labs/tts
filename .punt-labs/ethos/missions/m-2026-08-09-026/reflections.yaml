@@ -1,0 +1,20 @@
+reflections:
+    - mission: m-2026-08-09-026
+      round: 1
+      created_at: "2026-08-09T16:07:22Z"
+      author: mdm
+      converging: true
+      signals:
+        - CLI/MCP INPUT surface now agrees at the boundary -- vox notify has no off, mic:notify has no n; both route off through disable per tool-enable-disable.md 2.3
+        - server.py notify mode is Literal[y, c]; the FastMCP schema advertises exactly enum=[y,c] (verified by TestNotifySchemaRejectsOff.test_schema_enum_is_exactly_y_and_c)
+        - dispatch of mode=n is rejected by pydantic literal validation before the handler runs (TestNotifySchemaRejectsOff.test_dispatch_rejects_mode_n asserts literal_error naming input n) -- cleanest possible LLM-caller signal
+        - dead 'if mode not in _VALID_NOTIFY_MODES' guard in notify() correctly removed per PL-PP-1; _VALID_NOTIFY_MODES and SessionConfig.set_notify's guard kept for the internal state model (fresh SessionConfig default + config load), matching the contract INTENT clause
+        - docstring accurately cites tool-enable-disable.md 2.3 and names mic:enablement action=disable as the off channel; no stray n (off) prose left
+        - deposited guide (src/punt_vox/assets/global-guidance.md) reads y or c only for mic:notify and points at mic:enablement for the off path; wording matches the standard vocabulary
+        - test reframing is sound -- TestVoxOff Z-spec operation VoxOff was retired by the standard, so P7-P10 correctly become nOff-state coexistence checks; TestRejectedInputs.test_notify_invalid_mode is subsumed by the schema test (stronger, boundary-level)
+        - write-set compliance clean -- every edit inside the six declared paths; no touch to CHANGELOG.md, README.md, DESIGN.md, cli.py, cli_enablement.py; the mission-log jsonl is ethos machinery, not worker output
+        - results.yaml accurately reflects the landed work (two commits 648e192 and 1e036f3, files_changed line counts match git diff --stat exactly, evidence enumerated)
+        - non-blocking note -- P40 middle step is weakened; the old form exercised notify(y) then notify(n) then notify(y) and asserted sVoice preservation across the round-trip. The new form uses _set_state to install nOff mid-sequence, which no longer tests a user-observable transition into nOff, only that a directly-installed nOff state does not clobber sVoice on the subsequent VoxOn. Acceptable at this scope because no user path now transitions into nOff via a tool call; flagged for the epic follow-up (enablement then disable then nOff state coverage lives outside this write set)
+        - scope note (not this mission) -- CLI verb space is normal/continuous while MCP tool advertises y/c; the INPUT contract is closed for off, but the value-space asymmetry remains a latent divergence for a later vox-0rp9 task
+      recommendation: stop
+      reason: Round 1 satisfies the mission contract. Schema change lands at the FastMCP boundary (Literal y/c), dead guard removed, docstring and deposited guide updated with the correct 2.3 citation, test suite reframed rather than merely stripped, write set respected, and results.yaml matches the diff. The one weakening (P40 middle step) is a consequence of retiring the VoxOff operation itself and is acceptable at this scope; no user-facing flow lost coverage that this mission write set could have covered. The value-space asymmetry between vox notify normal/continuous and mic:notify y/c is a separate epic task. Recommend closing the mission and letting the leader take it to review.
