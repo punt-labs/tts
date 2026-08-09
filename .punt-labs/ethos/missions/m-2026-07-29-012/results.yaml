@@ -1,0 +1,160 @@
+results:
+    - mission: m-2026-07-29-012
+      round: 1
+      created_at: "2026-07-29T08:40:04Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/voxd/music_player/__init__.py
+          added: 14
+          removed: 0
+        - path: src/punt_vox/voxd/music_player/ports.py
+          added: 56
+          removed: 0
+        - path: src/punt_vox/voxd/music_player/player_view.py
+          added: 98
+          removed: 0
+        - path: src/punt_vox/voxd/music_player/scene.py
+          added: 108
+          removed: 0
+        - path: src/punt_vox/voxd/music_player/scene_mailbox.py
+          added: 48
+          removed: 0
+        - path: src/punt_vox/voxd/music_player/lux_scene_publisher.py
+          added: 86
+          removed: 0
+        - path: src/punt_vox/voxd/music_player/player.py
+          added: 46
+          removed: 0
+        - path: src/punt_vox/voxd/music_player/composition.py
+          added: 53
+          removed: 0
+        - path: src/punt_vox/voxd/programs/change_listener.py
+          added: 22
+          removed: 0
+        - path: src/punt_vox/voxd/programs/change_signal.py
+          added: 49
+          removed: 0
+        - path: src/punt_vox/voxd/programs/mode_transition_log.py
+          added: 52
+          removed: 0
+        - path: src/punt_vox/voxd/programs/control_channel.py
+          added: 21
+          removed: 23
+        - path: src/punt_vox/voxd/programs/catalog.py
+          added: 15
+          removed: 1
+        - path: src/punt_vox/voxd/programs/service.py
+          added: 13
+          removed: 0
+        - path: src/punt_vox/voxd/daemon.py
+          added: 9
+          removed: 3
+        - path: pyproject.toml
+          added: 5
+          removed: 8
+        - path: CHANGELOG.md
+          added: 4
+          removed: 0
+        - path: tests/music_player/conftest.py
+          added: 96
+          removed: 0
+        - path: tests/music_player/test_player_view.py
+          added: 86
+          removed: 0
+        - path: tests/music_player/test_scene.py
+          added: 87
+          removed: 0
+        - path: tests/music_player/test_scene_mailbox.py
+          added: 44
+          removed: 0
+        - path: tests/music_player/test_lux_scene_publisher.py
+          added: 137
+          removed: 0
+        - path: tests/music_player/test_player.py
+          added: 69
+          removed: 0
+        - path: tests/music_player/test_composition.py
+          added: 106
+          removed: 0
+        - path: tests/programs/test_change_signal.py
+          added: 67
+          removed: 0
+        - path: tests/programs/test_mode_transition_log.py
+          added: 74
+          removed: 0
+        - path: tests/programs/test_catalog.py
+          added: 40
+          removed: 0
+        - path: tests/programs/test_control_channel.py
+          added: 27
+          removed: 22
+        - path: .oo-baseline.json
+          added: 151
+          removed: 8
+        - path: .oo-audit.jsonl
+          added: 8
+          removed: 0
+        - path: .oo-coupling-baseline.json
+          added: 85
+          removed: 8
+      evidence:
+        - name: make check (lint + mypy/pyright strict + docs + 3403 tests + check-oo + check-coupling + check-suppressions)
+          status: pass
+        - name: LIVE-VERIFY — PUT vox.music to running luxd (port 8430) via the real AlbumListScene->LuxRestClient.render path returned SceneShown(kind=ok)
+          status: pass
+        - name: LIVE-VERIFY — inspect_scene (GET /scenes/vox.music?want_mirror=true) showed the display-rendered tree with correct data
+          status: pass
+        - name: I1/I2/I3 asserted by name (tests/music_player/test_player_view.py)
+          status: pass
+        - name: non-blocking re-push proven (slow/down luxd never stalls the single-writer or the event loop)
+          status: pass
+      open_questions:
+        - 'punt-lux git pin is interim (commit c1370c3, lux PR #292) per coordinator guidance; moves to punt-lux>=0.22.0 (bead vox-hnfr) when lux releases. Must not survive into a vox release.'
+        - 'PlayerView radio semantics: a multi-album tag-radio (status handle ''radio'', not a single album locator) reads as IDLE in the player view, to keep I2/I3 clean (the player scene models single-album playback). Confirm this is the intended UX vs. showing the tag-radio as playing.'
+        - 'Identity: LuxRestClient.connect resolves identity from context (LUX_CLIENT / git repo / headless), not a literal kind=app name=voxd. The daemon''s pushes are attributed to the resolving identity. If a fixed voxd app identity is required, that needs a LUX_CLIENT override or a lux-side change.'
+        - 'Six scoped ratchet relaxations (each justified in the audit logs), all genuine feature substance vs origin/main: OO module_size on catalog.py/service.py/daemon.py (the change-signal seam + drain-task wiring) and OO+coupling on the two new music_player files ports.py/lux_scene_publisher.py (the LuxRenderer Protocol, which are new vs origin/main so not real regressions). The genuine paydown is control_channel.py: extracting ModeTransitionLog dropped its max_complexity 4->3 and its LCOM.'
+      prose: |
+        Phase 1 of the voxd music player, push-only, against the merged design. The
+        player is a projection of voxd's one active source onto the vox.music lux
+        scene, plus a voxd-internal change signal that keeps it truthful.
+
+        New package src/punt_vox/voxd/music_player/: PlayerView (the Z-modelled
+        projection; I1/I2/I3 enforced in its constructor so an inconsistent view
+        cannot be built), AlbumListScene (pure (albums, view) -> RenderRequest, no
+        I/O), SceneMailbox (latest-wins one-slot), LuxScenePublisher (drains the
+        mailbox and renders off-thread via asyncio.to_thread so a slow luxd never
+        stalls the event loop; HubUnavailable/OpError logged and dropped, never
+        raised), MusicPlayer (the ChangeListener), MusicPlayerSubsystem (composition),
+        and ports.py (PlayerService / ScenePublisher / LuxRenderer Protocols so the
+        player and publisher are tested with fakes and the final LuxRestClient stays
+        out of the publisher's contract).
+
+        Change signal (programs/): ChangeListener Protocol + ChangeSignal PubSub.
+        ProgramService owns one ChangeSignal and attaches it to the control channel
+        (fires after each applied command, inside the single-writer, serialized with
+        the state it reports) and the catalog (fires after each new/remove). The
+        MANDATORY non-blocking property holds: _notify_change only builds the scene
+        and submits it to the latest-wins mailbox; the blocking PUT runs on the
+        publisher's own task. Proven by tests (a down/slow renderer never blocks the
+        emit path or the event loop) and by the live-verify.
+
+        Genuine OO paydown on a touched file: the generate-Program mode-transition
+        logging was extracted from ControlChannel into a cohesive ModeTransitionLog,
+        dropping the channel's max_complexity 4->3 and its LCOM while it took on the
+        change-signal emit.
+
+        Reused voxd's existing playback primitives entirely (replay_album/off/status/
+        catalog_albums, the remove guard) — the player owns no new playback machinery.
+        No phase-2 code (no player_events, no lux_subscription, no menu callback, no
+        subscribe loop).
+
+        Live-verify against a running luxd (port 8430, a display connected): the real
+        projection path pushed vox.music and returned SceneShown(kind=ok); inspect_scene
+        (GET /scenes/vox.music) reported the display-rendered tree — header "## Music",
+        now-line "▶ Techno Mix — 2 of 3", Stop control, and two rows
+        (music.row.aa11bb marked "▶ Techno Mix" as playing; music.row.cc22dd
+        "Ambient Drift" unmarked), each with its Play button (music.play.<id>).
+
+        Not pushed, no PR opened, per instruction.

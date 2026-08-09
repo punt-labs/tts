@@ -1,0 +1,33 @@
+mission_id: m-2026-08-07-009
+status: closed
+type: implement
+created_at: "2026-08-07T14:55:15Z"
+updated_at: "2026-08-07T19:01:47Z"
+closed_at: "2026-08-07T19:01:47Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: mdm
+    pinned_at: "2026-08-07T14:55:15Z"
+    hash: cfb39e35cedde7372a1f0b92ae7c2d4b25a2db5ec0c3e44760ce00d094133a04
+inputs:
+    ticket: vox-mhwj
+write_set:
+    - pyproject.toml
+    - hooks/session-start.sh
+extract_into:
+    - src/punt_vox
+    - tests
+success_criteria:
+    - 'Build the vox-panel applet exactly per docs/vox-control-panel-ui.md: a Notifications radio (Off/Normal/Continuous, mirrors mic:notify), a Mic Mode radio (Chimes only/Voice, mirrors mic:speak), and a Voice combo from mic:who''s roster paired inline (group/layout=columns) with a glyph-only ▶ button (no text label, tooltip ''Preview'') that previews the selected voice before committing'
+    - Use punt_lux.applets (AppletProgram, AppletService, SessionClaim, AppletLeg, SessionWatch, AppletIdentity) as a library dependency, mirroring the shape of lux's own applets/beads.py, per DES-063 point 3. Do not add or modify anything in the lux repo
+    - voxd stays untouched -- no new wire method, no daemon-side lux client change. All reads/writes go through the existing VoxClientSync RPCs (notify/speak/voice) the CLI and MCP tool already call
+    - In-scene control changes are received via LuxHubClient.subscribe(*topics) called before listen() on the same leg that serves the AppletService menu callback -- confirmed there is no separate scene-interaction channel to open
+    - Add a new console-script entry point (e.g. vox-panel) registered in pyproject.toml, and a new hooks/session-start.sh block that spawns it, modeled directly on lux's own lux-beads pgrep-guard-then-nohup pattern, additionally gated on the existing .punt-labs/vox/enabled marker check
+    - Full type annotations and OO standards (the python-*.md rules under .claude/rules) on every new module; tests for each new module mirroring source structure, covering both the happy path and a rejected/unavailable-voxd path
+    - Commit incrementally -- one commit per logical step (file group, single concern, or single PR-equivalent slice). Each commit must pass make check. Do not accumulate more than 30 minutes of uncommitted changes
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 2
+context: 'Full design (ASCII mockup, architecture, all cross-repo confirmations with the lux agent) is in docs/vox-control-panel-ui.md -- read it end to end before starting. It is settled: no operator decision is pending. Known non-blocking issue: the design-review mockup''s frame doesn''t auto-fit width (a lux-side stretch-to-content bug, tracked as lux-sv4x); does not block this build.'

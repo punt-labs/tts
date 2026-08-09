@@ -1,0 +1,240 @@
+results:
+    - mission: m-2026-08-07-009
+      round: 1
+      created_at: "2026-08-07T16:12:43Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.85
+      files_changed:
+        - path: hooks/session-start.sh
+          added: 41
+          removed: 0
+        - path: pyproject.toml
+          added: 1
+          removed: 0
+      evidence:
+        - name: uv run ruff check . && uv run ruff format --check .
+          status: pass
+        - name: uv run mypy src/ tests/
+          status: pass
+        - name: uv run pyright src/ tests/
+          status: pass
+        - name: uv run pytest tests/panel/
+          status: pass
+        - name: make check-oo
+          status: pass
+        - name: make check-coupling
+          status: pass
+      prose: |
+        Files created under extract_into (src/punt_vox, tests) -- not declared in
+        files_changed above because that field validates only against write_set:
+
+          src/punt_vox/panel/__init__.py        +12
+          src/punt_vox/panel/applet.py          +111
+          src/punt_vox/panel/leg.py             +161
+          src/punt_vox/panel/panel_scene.py     +52
+          src/punt_vox/panel/ports.py           +111
+          src/punt_vox/panel/program.py         +56
+          src/punt_vox/panel/radio_control.py   +85
+          src/punt_vox/panel/service.py         +144
+          src/punt_vox/panel/state.py           +59
+          src/punt_vox/panel/topics.py          +30
+          src/punt_vox/panel/voice_control.py   +71
+          tests/panel/__init__.py               +0
+          tests/panel/test_leg.py               +251
+          tests/panel/test_program.py           +66
+          tests/panel/test_radio_control.py     +42
+          tests/panel/test_service.py           +215
+          tests/panel/test_state.py             +93
+          tests/panel/test_voice_control.py     +56
+
+        Built the vox-panel applet as a new src/punt_vox/panel package: topics.py
+        (PanelTopic StrEnum), radio_control.py (RadioSpec/RadioControl for the
+        Notifications and Mic Mode radios), voice_control.py (combo + glyph-only
+        preview button, grouped columns), panel_scene.py (assembles the RenderRequest
+        with auto_resize framing), state.py (PanelState, reads via VoiceRoster/
+        SettingsSource protocols), service.py (VoxPanelService -- applies control
+        events through the existing ConfigStore.write_field and VoxClientSync
+        RPCs the CLI/MCP tool already use), leg.py (VoxPanelLeg), program.py
+        (VoxPanelProgram), and applet.py (VoxPanelApplet + the vox-panel Typer
+        entry point). ports.py defines the Protocols (HubListener, PanelRestClient,
+        SettingsSource, VoiceRoster, SettingsStore, PanelDaemonClient) that make
+        every collaborator swappable in tests.
+
+        Two design deviations from the literal contract wording, both necessary
+        and documented in code:
+
+        1. punt_lux.applets' AppletLeg is @final with no subscribe() hook --
+           it only dispatches menu-callback clicks over its own private
+           LuxHubClient, and AppletProgram is typed against the concrete AppletLeg,
+           not a Protocol. Reusing it literally was impossible without modifying
+           lux (out of scope). VoxPanelLeg is built from the same public primitives
+           AppletLeg itself composes (LuxRestClient.for_identity + .listener()),
+           with subscribe(*topics) called before listen() on the identical leg
+           that serves the menu callback, per the confirmed single-channel design.
+           VoxPanelProgram mirrors AppletProgram's run() logic exactly, typed
+           against the punt_lux.applets.claim.AppletClaim and
+           punt_lux.applets.watch.SessionEnd Protocols so real SessionClaim/
+           SessionWatch/NoClaim/NoSession instances satisfy it structurally.
+
+        2. "existing VoxClientSync RPCs (notify/speak/voice)" -- notify, speak,
+           and voice are durable ConfigStore fields (DURABLE_KEYS), not daemon
+           RPCs; VoxClientSync only exposes voices() and synthesize() as real
+           RPCs. VoxPanelService writes notify/speak/voice via
+           SettingsStore.write_field (the same path the CLI and MCP tool use)
+           and calls VoxClientSync.synthesize() only for the voice preview
+           button and .voices() for the roster -- this is what "the existing
+           RPCs the CLI and MCP tool already use" actually resolves to in the
+           codebase.
+
+        The preview button commits nothing itself: ButtonClicked events carry no
+        payload, so it replays the currently-held (already-committed) voice via
+        synthesize() rather than an unsaved combo selection.
+
+        Coupling: VoxPanelService originally defaulted its client/store
+        constructor arguments internally (VoxClientSync()/ConfigStore(...)),
+        pushing its efferent coupling to 8 internal modules over the PL-CU-1
+        guideline of 7. Made both parameters mandatory and moved the default
+        construction to applet.py's _leg_for (the composition root), cutting
+        service.py to 5. applet.py's small resulting complexity/size growth
+        (max_complexity 2->3, module_size 85->90) is scoped-relaxed in
+        .oo-baseline.json with an inline justification per the ratchet policy;
+        it remains well under all absolute thresholds.
+
+        make check-oo and make check-coupling both pass directly. Note: make
+        check's dependency chain (lint type docs test check-oo check-coupling
+        check-suppressions) never reaches check-oo/check-coupling in this repo
+        right now because `uv run pytest` fails on one test unrelated to this
+        mission: tests/test_hook_gate.py::TestHookGate::
+        test_git_unavailable_and_no_marker_is_silent. It fails because an
+        untracked .punt-labs/vox/enabled marker (dated before this mission,
+        outside my write-set/extract_into) sits in a parent directory of the
+        test's TMPDIR-rooted sandbox, so the test's "no marker in any parent"
+        scenario finds a real marker. Reproduces identically with none of my
+        changes present; not touched, not in scope.
+
+        Commits landed on local main (not a feature branch) per the mission-loop
+        split -- branch creation, PR, and push are the leader's responsibility,
+        not the worker's.
+    - mission: m-2026-08-07-009
+      round: 2
+      created_at: "2026-08-07T18:58:18Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.85
+      files_changed:
+        - path: hooks/session-start.sh
+          added: 4
+          removed: 2
+      evidence:
+        - name: uv run ruff check . && uv run ruff format --check .
+          status: pass
+        - name: uv run mypy src/ tests/
+          status: pass
+        - name: uv run pyright src/ tests/
+          status: pass
+        - name: uv run pytest tests/panel/ (89 tests)
+          status: pass
+        - name: uv run pytest (full suite)
+          status: pass
+        - name: make check-oo
+          status: pass
+        - name: make check-coupling
+          status: pass
+        - name: manual session-start.sh simulation (enabled + vox-panel missing -> logs reason; not-enabled -> zero log noise)
+          status: pass
+      prose: |
+        Files changed under extract_into (src/punt_vox, tests) -- not declared in
+        files_changed above because that field validates only against write_set:
+
+          src/punt_vox/panel/hub_outage_log.py    +57 (new)
+          src/punt_vox/panel/leg.py               +23 -4
+          src/punt_vox/panel/panel_notice.py      +43 (new)
+          src/punt_vox/panel/panel_scene.py       +32 -12
+          src/punt_vox/panel/service.py           +80 -33
+          tests/panel/test_hub_outage_log.py      +50 (new)
+          tests/panel/test_leg.py                 +115 -2
+          tests/panel/test_panel_notice.py        +29 (new)
+          tests/panel/test_panel_scene.py         +61 (new)
+          tests/panel/test_service.py             +139 -3
+
+        All five round-2 findings addressed:
+
+        1. CRITICAL frame sizing -- panel_scene.py drops frame.flags.auto_resize
+           for an explicit FrameSpec(size=(340, 240)), within the confirmed
+           330-350 x 220-260 range. Docstring rewritten to explain why (the
+           section labels render as ImGui separator_text, which always spans the
+           full available width by design, defeating auto_resize's width
+           computation). tests/panel/test_panel_scene.py added: asserts frame.
+           flags is None, frame.size is set and within range, and the status
+           line renders the same shape whether silent or carrying a notice.
+
+        2. CRITICAL concurrency race -- VoxPanelService gained a threading.Lock
+           guarding every _state/_notice read-modify-write (_commit, refresh,
+           recover_from_write_failure, _preview's failure path, and scene()'s
+           read). tests/panel/test_service.py::TestConcurrentApplyEvent proves
+           it: one thread is parked mid-write via a blocking store double, a
+           second thread's write on a DIFFERENT field is shown to block (not
+           race ahead) while the first holds the lock, and after both finish the
+           final state carries BOTH updates.
+
+        3. CRITICAL silent config-write failure -- VoxPanelService.apply_event
+           no longer swallows OSError; it propagates to the caller so a write
+           failure is never confused with a payload-validation failure.
+           leg.py's _apply now has two distinct except clauses -- (TypeError,
+           ValueError) logs "rejected control event" and drops the change;
+           OSError logs "could not persist the %s change; correcting the scene"
+           and calls the service's new recover_from_write_failure(field), which
+           re-reads the real settings from disk/voxd and sets a PanelNotice so
+           the re-pushed scene both reverts to the true value and tells the user
+           why. Covered by test_leg.py's write-failure test and test_service.py's
+           recover_from_write_failure/propagation tests.
+
+        4. HIGH invisible outages -- new HubOutageLog class turns leg.py's every-
+           2-second hub-retry tick from all-DEBUG into WARNING on the first tick
+           of an outage, INFO restatement every 30s while it continues, and DEBUG
+           for every other tick; a successful connect clears it so the next
+           outage logs at WARNING again. Wired into both HubUnavailableError
+           sites in _listen_once and the re-push site in _apply.
+           test_hub_outage_log.py covers the escalation directly;
+           test_leg.py::TestOutageLogging covers it wired into the leg via caplog.
+
+        5. HIGH preview/refresh swallow everything identically -- VoxPanelService
+           narrowed _preview()'s and the new _resync() helper's except clause
+           from bare Exception to VoxdConnectionError (the actual voxd-down
+           exception type; VoxdProtocolError and any other bug now propagate to
+           the outer ERROR-logging boundary in leg.py). PanelScene gained a
+           status/notice TextElement (PanelNotice, a Null Object mirroring the
+           existing PlaybackNotice pattern in music_player) so stale/failed
+           state is visually distinct from live. Covered by
+           test_service.py::test_voice_preview_lets_a_real_bug_propagate,
+           test_a_real_bug_in_the_roster_read_propagates, and the panel_notice/
+           panel_scene tests.
+
+        MEDIUM (distinct log messages) -- done as part of item 3: the two except
+        clauses in leg.py's _apply now have distinct, accurate messages
+        ("rejected control event" vs "could not persist the ... change;
+        correcting the scene").
+
+        6. HIGH silent hook skip -- hooks/session-start.sh's vox-panel spawn
+           block restructured so entering it depends only on the enabled marker;
+           inside, a missing vox-panel on PATH now writes a line to the same
+           PANEL_LOG the spawn/reuse paths already use, instead of silently
+           doing nothing. Verified live: an enabled repo with vox-panel removed
+           from PATH produces a log line naming the reason; a non-enabled repo
+           still produces zero log noise (unchanged).
+
+        OO/coupling: two files exceeded their existing baseline on unavoidable,
+        review-mandated growth (leg.py's new HubOutageLog wiring and distinct
+        except clauses; service.py's lock, PanelNotice, and the refresh/recover
+        split). Both scoped-relaxed in .oo-baseline.json with inline
+        justifications citing the specific finding driving the growth; all
+        metrics remain far under their absolute thresholds. panel_scene.py's
+        module_size similarly relaxed for the mandated status-line addition.
+        make check-oo and make check-coupling both pass cleanly after the
+        relax + update-oo.
+
+        Commits landed on branch feat/vox-panel (created by the leader between
+        round 1 and round 2), two commits for this round: one for the five
+        source-level fixes, one for the session-start.sh fix and all new/updated
+        tests. I did not push or open a PR, per the mission instructions.

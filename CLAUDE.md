@@ -247,3 +247,4 @@ Release scripts: `scripts/release-plugin.sh` (swap `vox-dev` → `vox`), `script
 - `prfaq.tex` → `prfaq.pdf` — product direction
 - `docs/vox-notify.tex` — Z specification for notification system
 @.punt-labs/ethos/CLAUDE.md
+@.punt-labs/vox/CLAUDE.md

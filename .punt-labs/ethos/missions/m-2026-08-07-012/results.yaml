@@ -1,0 +1,107 @@
+results:
+    - mission: m-2026-08-07-012
+      round: 1
+      created_at: "2026-08-07T20:11:36Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.85
+      files_changed:
+        - path: hooks/session-start.sh
+          added: 3
+          removed: 0
+      evidence:
+        - name: uv run ruff check . && uv run ruff format --check .
+          status: pass
+        - name: uv run mypy src/ tests/
+          status: pass
+        - name: uv run pyright src/ tests/
+          status: pass
+        - name: uv run pytest tests/panel/ tests/test_hook_gate.py
+          status: pass
+        - name: uv run pytest (full suite, exit 0)
+          status: pass
+        - name: make check-oo
+          status: pass
+        - name: make check-coupling
+          status: pass
+        - name: TestPanelSpawn run 3x directly to confirm no flakiness
+          status: pass
+      prose: |
+        Files changed under extract_into (src/punt_vox/panel, tests) -- not
+        declared in files_changed above because that field validates only
+        against write_set:
+
+          src/punt_vox/panel/hub_outage_log.py   +28 -14
+          src/punt_vox/panel/leg.py              +8 -3
+          src/punt_vox/panel/panel_notice.py     +7 (new constructor)
+          src/punt_vox/panel/service.py          +22 -6
+          src/punt_vox/panel/topics.py           +20 (new property)
+          tests/panel/test_hub_outage_log.py     +42
+          tests/panel/test_leg.py                +8 -5
+          tests/panel/test_service.py            +22
+          tests/panel/test_topics.py             +30 (new file)
+          tests/test_hook_gate.py                +127 -1
+
+        All six round-3 findings addressed:
+
+        1. Field-name leak -- PanelTopic gained a `field_name` property mapping
+           each write topic to its config field name (NOTIFY->"notify",
+           MIC_MODE->"speak", VOICE->"voice"; VOICE_PREVIEW raises KeyError,
+           since it writes nothing). leg.py's OSError branch now calls
+           `PanelTopic(topic).field_name` before logging/recovering, so the
+           user-facing message reads "couldn't save notify", not "couldn't
+           save vox.notify". Fixed the wrong assertion in test_leg.py
+           (`PanelTopic.NOTIFY.value` -> `"notify"`) and added test_topics.py
+           covering the mapping and the VOICE_PREVIEW KeyError.
+
+        2. HubOutageLog had zero synchronization -- added a threading.Lock
+           around note()/clear()'s read-modify-write, mirroring
+           VoxPanelService's pattern from round 2. Added a concurrent-call
+           regression test (test_hub_outage_log.py::TestConcurrency): a second
+           caller is proven to block on the lock (not race) while the first
+           holds it, and only one WARNING fires for what should be one
+           continuing outage.
+
+        3. _resync unconditionally overwrote a caller-supplied failure notice
+           with a generic voxd_unavailable() when the resync's own read also
+           failed -- silently discarding recover_from_write_failure's specific
+           "couldn't save {field}" message in favor of one blaming voxd, an
+           unrelated subsystem. _resync now takes an explicit
+           `on_read_failure` notice from its caller; recover_from_write_failure
+           passes a new `PanelNotice.write_failed_and_voxd_unavailable(field)`
+           that names both problems. Added the resync-also-fails test
+           (only the resync-succeeds path was covered before).
+
+        4. The (TypeError, ValueError) branch in leg.py's _apply logged and
+           returned with no scene correction, contradicting apply_event's own
+           docstring claim that both failure classes "recover, distinctly."
+           It now falls through to the same re-push the OSError branch takes
+           (correcting any value the Lux widget may have shown optimistically
+           for a rejected click), without calling recover_from_write_failure
+           since no state changed. Updated the affected test to assert a
+           re-push now happens (renamed to
+           test_rejected_payload_repushes_the_held_scene_but_does_not_recover).
+
+        5. hooks/session-start.sh's vox-panel block had zero test coverage.
+           Added tests/test_hook_gate.py::TestPanelSpawn, following the file's
+           existing subprocess-based pattern (isolating HOME to a scratch dir,
+           since this hook also provisions permissions/commands unlike the
+           simple gated hooks already covered): spawn-on-enabled-and-present,
+           the pgrep guard skipping a second spawn, and the missing-vox-panel
+           log line. Needed one extra piece of test infrastructure beyond the
+           existing pattern: an autouse fixture that kills any stub process a
+           test spawned, because every test in the class shares one pgrep
+           pattern (this pytest process's own $PPID, fixed for the whole run)
+           -- without it, a slow 3-second sleeper left over from one test could
+           satisfy the *next* test's pgrep guard check and make a real spawn
+           look like a skip. Verified by running the class 3x directly with no
+           failures.
+
+        6. Added the requested inline comment above the "vox-panel not found"
+           log line explaining that a tmp-dir log is the only reachable
+           surface at that point in the hook, since nothing has connected to
+           voxd or luxd yet.
+
+        Commits landed on branch feat/vox-panel (two commits: source fixes,
+        then tests/hooks). Did not push, open a PR, or touch branch/PR
+        mechanics, per the mission's worker/leader split.
