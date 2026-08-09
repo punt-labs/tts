@@ -38,8 +38,9 @@ if [[ "$DEV_MODE" == "false" ]]; then
   CLEANED=()
   for name in "${RETIRED[@]}"; do
     dest="$COMMANDS_DIR/$name"
-    if [[ -f "$dest" ]]; then
-      rm "$dest"
+    # `-f` passing doesn't guarantee $COMMANDS_DIR is writable -- an rm that
+    # fails here must not take the rest of the hook down with it under `set -e`.
+    if [[ -f "$dest" ]] && rm "$dest" 2>/dev/null; then
       CLEANED+=("/${name%.md}")
     fi
   done
@@ -55,18 +56,24 @@ if [[ "$DEV_MODE" == "false" ]]; then
   DEPLOYED=()
   # A bare `mkdir -p` here would abort the whole hook under `set -e` if
   # $HOME is unwritable -- same failure mode the panel log below guards
-  # against. Skip deployment silently rather than take session startup
-  # down with it.
+  # against. `mkdir -p` returns 0 for an ALREADY-existing directory
+  # regardless of its write permission, so the guard alone doesn't cover
+  # an existing-but-now-unwritable $COMMANDS_DIR -- `cp` below is guarded
+  # too. Report the failure via ACTIONS (the settings.json block below
+  # does the same on its identical failure class) instead of aborting or
+  # skipping silently -- the agent's additionalContext is the only
+  # channel this hook has to say why commands never showed up.
   if mkdir -p "$COMMANDS_DIR" 2>/dev/null; then
     for cmd_file in "$PLUGIN_ROOT/commands/"*.md; do
       name="$(basename "$cmd_file")"
       [[ "$name" == *-dev.md ]] && continue
       dest="$COMMANDS_DIR/$name"
       if [[ ! -f "$dest" ]] || ! diff -q "$cmd_file" "$dest" >/dev/null 2>&1; then
-        cp "$cmd_file" "$dest"
-        DEPLOYED+=("/${name%.md}")
+        cp "$cmd_file" "$dest" 2>/dev/null && DEPLOYED+=("/${name%.md}")
       fi
     done
+  else
+    ACTIONS+=("Failed to create $COMMANDS_DIR — skipping command deployment")
   fi
   if [[ ${#DEPLOYED[@]} -gt 0 ]]; then
     ACTIONS+=("Deployed commands: ${DEPLOYED[*]}")
