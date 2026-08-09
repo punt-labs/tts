@@ -35,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **`cryptography` bumped `49.0.0` → `50.0.0` (GHSA-g6cj-pr64-35w5 / CVE-2026-69247, high severity, vox-2q3i).** A transitive dependency (`punt-lux` → `fastmcp` → `authlib`/`joserfc`, and `mcp[crypto]` → `pyjwt[crypto]`), not imported directly by vox. The vulnerable range (`>=44.0.0,<50.0.0`) exposed a Bleichenbacher oracle in PKCS#7 `EnvelopedData` decryption through distinguishable errors and timing. No source change required — every parent dependency already accepted the newer version; the resolved lock is the whole fix.
 - **The persistent mpv is spawned with `--ytdl=no` alongside `--no-config`**, so a crafted media path cannot trigger network or script fetching through mpv's youtube-dl integration.
 - **The now-playing album title is markdown-escaped** before it reaches the scene's heading element — a curated album name is trimmed but was not previously escaped for markdown/HTML metacharacters.
 - **`MpvProgramPlayer.play` validates the resolved part path is a regular file contained in its album directory before `loadfile`**, matching the containment check the `music get`/fetch path already applies — a hostile on-disk manifest `file` field can no longer make `loadfile` open a path outside the album directory.
