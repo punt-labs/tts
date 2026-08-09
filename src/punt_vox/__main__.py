@@ -26,11 +26,15 @@ from punt_vox.config import ConfigStore
 from punt_vox.desktop_install import DesktopInstaller
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, default_output_dir, find_config_dir
 from punt_vox.hooks import hook_app
+from punt_vox.models import MODEL_TABLE, resolve_model
 from punt_vox.output_formatter import OutputFormatter
+from punt_vox.server_switches import PROVIDER_NAMES
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe import VibeChange
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     # Annotation-only; keeps `client` off __main__'s runtime import graph.
     from punt_vox.client import SynthesizeResult
 
@@ -465,58 +469,146 @@ def log_cmd(
 
 
 # ---------------------------------------------------------------------------
-# voice — set session voice
+# model / provider / voice -- switch tools (vox-0rp9). Each takes an optional
+# positional NAME: no arg lists (marking the current selection); NAME given
+# writes to the same ConfigStore field the MCP tools write, so the CLI and
+# the mic:{model,provider,voice} tools share one write path.
 # ---------------------------------------------------------------------------
+
+
+_ModelName = Annotated[
+    str | None,
+    typer.Argument(
+        help=(
+            "Model name (e.g. eleven_v3, tts-1) or an elevenlabs shorthand "
+            "(v3, flash, turbo, multilingual). Omit to list."
+        ),
+        show_default=False,
+    ),
+]
+_ProviderName = Annotated[
+    str | None,
+    typer.Argument(
+        help="One of elevenlabs, openai, polly, say, espeak. Omit to list.",
+        show_default=False,
+    ),
+]
+_VoiceName = Annotated[
+    str | None,
+    typer.Argument(
+        help="Voice name (e.g. matilda, roger). Omit to list.",
+        show_default=False,
+    ),
+]
+
+
+def _render_list(names: Sequence[str], current: str | None) -> str:
+    """Render a switch-tool list for humans, marking the current entry."""
+    return "\n".join(f"{n} (current)" if n == current else n for n in names)
+
+
+@app.command("model")
+def model_cmd(  # pyright: ignore[reportUnusedFunction]
+    name: _ModelName = None,
+    *,
+    json_output: JsonOutput = False,
+    verbose: Verbose = False,
+    quiet: Quiet = False,
+) -> None:
+    """List or set the TTS model for the current provider.
+
+    ``vox model`` lists the models the current provider offers, marking the
+    current selection. ``vox model <name>`` resolves elevenlabs shorthand
+    (``v3`` -> ``eleven_v3``, etc.) and writes it to ``.punt-labs/vox/vox.md``.
+    """
+    _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+    store = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR)
+    provider = store.read().provider or "elevenlabs"
+
+    if name is None:
+        names = list(MODEL_TABLE.available(provider))
+        current = store.read().model
+        _formatter.emit(
+            {"names": names, "current": current},
+            _render_list(names, current) if names else "No models for this provider.",
+        )
+        return
+
+    try:
+        resolved = resolve_model(name, provider)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    store.write_field("model", resolved)
+    _formatter.emit({"model": resolved}, f"Model: {resolved}")
+
+
+@app.command("provider")
+def provider_cmd(  # pyright: ignore[reportUnusedFunction]
+    name: _ProviderName = None,
+    *,
+    json_output: JsonOutput = False,
+    verbose: Verbose = False,
+    quiet: Quiet = False,
+) -> None:
+    """List or set the TTS provider.
+
+    ``vox provider`` lists the five providers, marking the current selection.
+    ``vox provider <name>`` writes to ``.punt-labs/vox/vox.md``.
+    """
+    _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+    store = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR)
+
+    if name is None:
+        current = store.read().provider
+        names = list(PROVIDER_NAMES)
+        _formatter.emit(
+            {"names": names, "current": current},
+            _render_list(names, current),
+        )
+        return
+
+    if name not in PROVIDER_NAMES:
+        allowed = ", ".join(PROVIDER_NAMES)
+        raise typer.BadParameter(f"unknown provider {name!r}. Allowed: {allowed}")
+    store.write_field("provider", name)
+    _formatter.emit({"provider": name}, f"Provider: {name}")
 
 
 @app.command("voice")
 def voice_cmd(  # pyright: ignore[reportUnusedFunction]
-    name: Annotated[str, typer.Argument(help="Voice name (e.g. matilda, roger).")],
-) -> None:
-    """Set the session voice, tolerating a stray leading '@' sigil."""
-    voice = SynthesisSpec.normalize_voice(name)
-    if voice is None:
-        raise typer.BadParameter("voice name is empty")
-    ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).write_field("voice", voice)
-    _formatter.emit({"voice": voice}, f"{voice}'s here.")
-
-
-# ---------------------------------------------------------------------------
-# voices — list available voices
-# ---------------------------------------------------------------------------
-
-
-@app.command("voices")
-def voices_cmd(  # pyright: ignore[reportUnusedFunction]
+    name: _VoiceName = None,
     provider: ProviderOpt = None,
     *,
     json_output: JsonOutput = False,
     verbose: Verbose = False,
     quiet: Quiet = False,
 ) -> None:
-    """List the voices the active (or given) provider offers.
+    """List or set the session voice for the active (or given) provider.
 
-    Human output lists the voice names one per line, with the current session
-    voice marked ``(current)``. ``--json`` emits both the full list and the
-    current voice as one object for machine consumers.
+    ``vox voice`` lists the roster; ``vox voice <name>`` writes to
+    ``.punt-labs/vox/vox.md`` (a stray leading ``@`` is stripped).
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-    current = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read().voice or None
-    try:
-        names = VoxClientSync().voices(provider)
-    except (VoxdConnectionError, VoxdProtocolError) as exc:
-        _formatter.error(str(exc), f"Error: {exc}")
-        raise typer.Exit(code=1) from exc
+    store = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR)
 
-    payload: dict[str, object] = {"voices": names, "current": current}
-    if provider is not None:
-        payload["provider"] = provider
-    _formatter.emit(payload, _voices_text(names, current))
+    if name is None:
+        try:
+            names = VoxClientSync().voices(provider)
+        except (VoxdConnectionError, VoxdProtocolError) as exc:
+            _formatter.error(str(exc), f"Error: {exc}")
+            raise typer.Exit(code=1) from exc
+        current = store.read().voice
+        payload: dict[str, object] = {"names": names, "current": current}
+        if provider is not None:
+            payload["provider"] = provider
+        _formatter.emit(payload, _render_list(names, current))
+        return
 
-
-def _voices_text(names: list[str], current: str | None) -> str:
-    """Render the voice list for humans, marking the current session voice."""
-    return "\n".join(f"{n} (current)" if n == current else n for n in names)
+    voice = SynthesisSpec.normalize_voice(name)
+    if voice is None:
+        raise typer.BadParameter("voice name is empty")
+    store.write_field("voice", voice)
+    _formatter.emit({"voice": voice}, f"{voice}'s here.")
 
 
 # ---------------------------------------------------------------------------

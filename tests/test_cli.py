@@ -984,7 +984,14 @@ class TestLogCommand:
 
 
 class TestVoiceCommand:
-    def test_voice(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
+    """Tests for the extended ``vox voice`` switch command (vox-0rp9.3).
+
+    No arg lists the roster (folding in the retired ``vox voices``); a name
+    writes to the same ``voice`` field the MCP tool writes, so both surfaces
+    agree.
+    """
+
+    def test_voice_set(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         import punt_vox.config as cfg
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
@@ -995,65 +1002,35 @@ class TestVoiceCommand:
         assert result.exit_code == 0
         assert "matilda" in result.output.lower()
 
+    def test_voice_empty_name_is_bad_parameter(
+        self, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        """A lone ``@`` (blank after normalization) is a BadParameter, not a crash."""
+        import punt_vox.config as cfg
 
-# ---------------------------------------------------------------------------
-# voices tests
-# ---------------------------------------------------------------------------
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
 
+        runner = CliRunner()
+        result = runner.invoke(app, ["voice", "@"])
+        assert result.exit_code != 0
 
-class TestVoicesCommand:
     @patch(f"{_CLI}.VoxClientSync")
-    def test_voices_lists_names(
+    def test_voice_no_arg_lists_the_roster(
         self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
     ) -> None:
         monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
         mock_client_cls.return_value.voices.return_value = ["matilda", "roger"]
 
         runner = CliRunner()
-        result = runner.invoke(app, ["voices"])
+        result = runner.invoke(app, ["voice"])
 
         assert result.exit_code == 0
         assert "matilda" in result.output
         assert "roger" in result.output
 
     @patch(f"{_CLI}.VoxClientSync")
-    def test_voices_passes_provider(
-        self,
-        mock_client_cls: MagicMock,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
-        monkeypatch.delenv("TTS_PROVIDER", raising=False)
-        mock_client_cls.return_value.voices.return_value = ["joanna"]
-
-        runner = CliRunner()
-        result = runner.invoke(app, ["voices", "--provider", "polly"])
-
-        assert result.exit_code == 0
-        mock_client_cls.return_value.voices.assert_called_once_with("polly")
-
-    @patch(f"{_CLI}.VoxClientSync")
-    def test_voices_json_includes_current(
-        self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
-    ) -> None:
-        import punt_vox.config as cfg
-
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
-        (tmp_path / "vox.md").write_text('---\nvoice: "matilda"\n---\n')
-        mock_client_cls.return_value.voices.return_value = ["matilda", "roger"]
-
-        runner = CliRunner()
-        result = runner.invoke(app, ["voices", "--json"])
-
-        assert result.exit_code == 0
-        data = json.loads(result.output)
-        assert data["voices"] == ["matilda", "roger"]
-        assert data["current"] == "matilda"
-
-    @patch(f"{_CLI}.VoxClientSync")
-    def test_voices_marks_current_voice(
+    def test_voice_no_arg_marks_current(
         self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
     ) -> None:
         import punt_vox.config as cfg
@@ -1064,13 +1041,49 @@ class TestVoicesCommand:
         mock_client_cls.return_value.voices.return_value = ["matilda", "roger"]
 
         runner = CliRunner()
-        result = runner.invoke(app, ["voices"])
+        result = runner.invoke(app, ["voice"])
 
         assert result.exit_code == 0
         assert "roger (current)" in result.output
 
     @patch(f"{_CLI}.VoxClientSync")
-    def test_voices_connection_error(
+    def test_voice_no_arg_passes_provider(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        monkeypatch.delenv("TTS_PROVIDER", raising=False)
+        mock_client_cls.return_value.voices.return_value = ["joanna"]
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["voice", "--provider", "polly"])
+
+        assert result.exit_code == 0
+        mock_client_cls.return_value.voices.assert_called_once_with("polly")
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_voice_no_arg_json_carries_names_and_current(
+        self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
+    ) -> None:
+        import punt_vox.config as cfg
+
+        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        (tmp_path / "vox.md").write_text('---\nvoice: "matilda"\n---\n')
+        mock_client_cls.return_value.voices.return_value = ["matilda", "roger"]
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["voice", "--json"])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["names"] == ["matilda", "roger"]
+        assert data["current"] == "matilda"
+
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_voice_no_arg_reports_connection_error(
         self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
     ) -> None:
         from punt_vox.client_errors import VoxdConnectionError
@@ -1079,10 +1092,20 @@ class TestVoicesCommand:
         mock_client_cls.return_value.voices.side_effect = VoxdConnectionError("nope")
 
         runner = CliRunner()
-        result = runner.invoke(app, ["voices"])
+        result = runner.invoke(app, ["voice"])
 
         assert result.exit_code == 1
         assert "nope" in result.output
+
+
+class TestVoicesCommandRetired:
+    """The retired ``vox voices`` command must be absent (vox-0rp9.3)."""
+
+    def test_voices_command_is_absent(self) -> None:
+        runner = CliRunner()
+        result = runner.invoke(app, ["voices"])
+        # typer returns 2 for an unknown command.
+        assert result.exit_code == 2
 
 
 # ---------------------------------------------------------------------------

@@ -15,10 +15,10 @@
   "src/punt_vox/__main__.py": {
     "method_ratio": 0.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.88,
+    "avg_params": 2.12,
     "max_complexity": 10.0,
-    "avg_complexity": 3.12,
-    "module_size": 813.0,
+    "avg_complexity": 3.27,
+    "module_size": 895.0,
     "classes_per_module": 0.0,
     "class_to_func_ratio": 0.0,
     "init_violations": 0.0,
@@ -1230,6 +1230,19 @@
     "module_size": 61.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
+  "src/punt_vox/server_switches.py": {
+    "method_ratio": 0.875,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.5,
+    "max_complexity": 7.0,
+    "avg_complexity": 2.5,
+    "module_size": 227.0,
+    "classes_per_module": 3.0,
+    "class_to_func_ratio": 0.75,
     "init_violations": 0.0,
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
