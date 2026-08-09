@@ -1,0 +1,39 @@
+results:
+    - mission: m-2026-07-29-010
+      round: 1
+      created_at: "2026-07-29T05:59:21Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.86
+      files_changed:
+        - path: docs/vox-music-player.md
+          added: 351
+          removed: 0
+        - path: docs/vox-music-player.tex
+          added: 282
+          removed: 0
+      evidence:
+        - name: docs/vox-music-player.md — architecture, vox-side decomposition, playback state model, two-phase split, z-spec assessment, write-set, rejected alternatives
+          status: pass
+        - name: docs/vox-music-player.tex — PlayerView Z model; `fuzz -t docs/vox-music-player.tex` exits 0 (type-checks state + PlayerInit + 5 operation schemas), invariants I1/I2/I3 preserved across every transition
+          status: pass
+        - name: make docs (markdownlint-cli2, 50 files) reports 0 errors
+          status: pass
+        - name: Grounded on existing voxd primitives (replay_album/off/status/catalog_albums, SelectionPlayback.rotate, MusicTool, daemon _lifespan); confirmed no lux integration exists yet (grep src → greenfield)
+          status: pass
+        - name: Reused proven Radio/off/rotate/MusicRemove machine in audio-programs.tex rather than re-modelling it; new .tex pins only the player-view invariants
+          status: pass
+      open_questions:
+        - 'Scope (recommend ratify): playback primitives already exist (replay_album/off/status/catalog_albums + remove-guard); the new work is the lux scene projection, the pub-sub receive leg, and a voxd-internal ProgramService change signal. Scope the implementation mission to those three, not a rebuild of play/stop/now-playing. Corrects the contract''s ''the playback state model is the real substance'' framing.'
+        - 'One shared audio slot (recommend accept): the player reuses voxd''s one active source, so playing a saved album and running the generative program (mic:music on) are mutually exclusive and the lux Stop stops whichever is playing. Only coherent design with one audio device; confirm.'
+        - 'Z-spec scoping (recommend ratify): modelled the PlayerView invariants now (fuzz-clean); reuse audio-programs.tex for the proven Radio transitions; defer the phase-2 connection/subscribe/lease lifecycle model until lux pins its subscribe API. See design sections 6 and 8; confirm or override.'
+      prose: |
+        Design-only mission, docs/ write-set. Two artifacts on branch
+        feat/vox-music-player, committed incrementally (c1f7b3f the design .md, fe0c83d
+        the Z model .tex), each passing its gate. The Music Player is a projection of
+        voxd's one active source onto a lux scene plus a command translator back --
+        not new playback machinery. Cross-repo architecture (public LuxRestClient,
+        never DisplayClient; PUT /scenes/vox.music; pub-sub receive of
+        music.play/music.stop) is restated as settled, not reopened. Three decisions
+        are flagged for the leader to ratify or escalate to Jim before the
+        implementation mission dispatches (see open_questions).

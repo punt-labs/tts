@@ -1,0 +1,26 @@
+mission_id: m-2026-08-07-013
+status: closed
+type: implement
+created_at: "2026-08-07T20:23:36Z"
+updated_at: "2026-08-07T20:56:38Z"
+closed_at: "2026-08-07T20:56:38Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: mdm
+    pinned_at: "2026-08-07T20:23:36Z"
+    hash: cfb39e35cedde7372a1f0b92ae7c2d4b25a2db5ec0c3e44760ce00d094133a04
+inputs:
+    ticket: vox-mhwj
+write_set:
+    - src/punt_vox/panel
+    - tests/panel
+success_criteria:
+    - 'CRITICAL: leg.py''s _listen_once has an unguarded window between two HubUnavailableError-guarded calls to the exact same exception from the exact same failure domain (luxd down). rest.listener(...) and listener.subscribe(...) sit between the try/except around self._rest_factory() and the try/except around listener.listen() -- both of which explicitly catch HubUnavailableError -- but rest.listener()/subscribe() are not covered. Since the retry loop runs every 2 seconds specifically because luxd can go up/down between ticks, luxd dropping in this narrow window is not a contrived edge case, it is the loop''s own documented failure mode hitting the one unguarded call in the middle. When it fires, the exception propagates out of _listen_once, out of serve()''s bare while True loop (no try/except there either), permanently killing the leg''s asyncio.Task for the rest of the session -- with zero trace, since HubOutageLog''s escalating logging is entirely bypassed by this path. Fix: widen the guarded block to cover rest.listener(...) and listener.subscribe(...) alongside self._rest_factory(), so all three (which together are ''build one connection, subscribe'' per the method''s own docstring) share the same HubUnavailableError handling. Add a test that makes rest.listener(...) raise HubUnavailableError and asserts _listen_once returns cleanly (does not propagate)'
+    - 'HIGH: VoxPanelProgram.run() discards the leg task''s terminal exception unconditionally via asyncio.gather(leg, return_exceptions=True) in its finally block, with no logging of what the exception was. This is the safety net that should have caught the CRITICAL finding above (or any FUTURE bug that manages to escape serve()''s own except Exception net) but currently swallows it with zero trace instead. Fix: inspect the gather result; if the leg''s task ended with a real exception (not asyncio.CancelledError, which is the expected shutdown path), log it at ERROR with logger.exception or equivalent before returning. Add a test asserting a genuine leg failure is logged, not silently discarded'
+    - Commit incrementally -- one commit per logical step, each passing make check. Do not accumulate more than 30 minutes of uncommitted changes
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+context: 'Fourth fix round on feat/vox-panel. A third full-diff review found ONE new CRITICAL issue in the core listen loop (leg.py/program.py) -- code none of the prior three rounds touched. Leader verified it directly against the code before writing this contract. This is expected to be the last round: the finding is narrow and localized to two specific gaps.'

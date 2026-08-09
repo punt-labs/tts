@@ -1,3 +1,0 @@
-{"ts":"2026-07-23T04:53:52.69997Z","event":"create","actor":"claude","details":{"evaluator":"rmh","ticket":"","worker":"jms"}}
-{"ts":"2026-07-23T05:45:39.354836Z","event":"result","actor":"claude","details":{"confidence":0.85,"evidence_entries":6,"files_changed":2,"round":1,"verdict":"pass"}}
-{"ts":"2026-07-23T05:45:39.383347Z","event":"close","actor":"claude","details":{"round":1,"status":"closed","verdict":"pass"}}
