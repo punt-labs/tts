@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import typing
 from pathlib import Path
 from typing import Any, NoReturn, cast, final
 from unittest.mock import MagicMock
@@ -35,7 +34,6 @@ from punt_vox.server import (
     status,
     unmute,
     vibe,
-    who,
 )
 from punt_vox.server_music_tool import MusicSubcommand
 from punt_vox.types import VoiceNotFoundError
@@ -841,131 +839,6 @@ class TestVibeToolMusicHint:
         vibe(mood="wired", mode="manual")
 
         assert fake.verbs() == ["status"]
-
-
-# ---------------------------------------------------------------------------
-# who tool tests
-# ---------------------------------------------------------------------------
-
-
-class TestWho:
-    """Tests for the who MCP tool."""
-
-    _VOICE_LIST: typing.ClassVar[list[str]] = [
-        "aria",
-        "callum",
-        "charlie",
-        "drew",
-        "george",
-        "jessica",
-        "laura",
-        "lily",
-        "matilda",
-        "river",
-        "roger",
-        "sarah",
-    ]
-
-    def test_returns_provider_and_voices(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import punt_vox.server as srv
-
-        srv._session.provider = "elevenlabs"
-
-        mock_client = MagicMock()
-        mock_client.voices.return_value = self._VOICE_LIST
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(who())
-        assert result["provider"] == "elevenlabs"
-        assert isinstance(result["all"], list)
-        assert len(result["all"]) == 12
-        assert isinstance(result["featured"], list)
-
-    def test_featured_includes_blurbs(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import punt_vox.server as srv
-
-        srv._session.provider = "elevenlabs"
-
-        mock_client = MagicMock()
-        mock_client.voices.return_value = self._VOICE_LIST
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(who())
-        for entry in result["featured"]:
-            assert "name" in entry
-            assert "blurb" in entry
-            assert len(entry["blurb"]) > 0
-
-    def test_featured_capped_at_six(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import punt_vox.server as srv
-
-        srv._session.provider = "elevenlabs"
-
-        mock_client = MagicMock()
-        mock_client.voices.return_value = self._VOICE_LIST
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(who())
-        assert len(result["featured"]) <= 6
-
-    def test_current_voice_included(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import punt_vox.server as srv
-
-        srv._session.voice = "aria"
-        srv._session.provider = "elevenlabs"
-
-        mock_client = MagicMock()
-        mock_client.voices.return_value = self._VOICE_LIST
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(who())
-        assert result["current"] == "aria"
-
-    def test_no_current_voice(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        mock_client = MagicMock()
-        mock_client.voices.return_value = self._VOICE_LIST
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(who())
-        assert result["current"] is None
-
-    def test_exposes_no_filter_argument(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import inspect
-
-        # The tool advertises no filter -- an agent reading the schema must not
-        # be offered a language argument the body would silently ignore.
-        assert list(inspect.signature(who).parameters) == []
-
-        mock_client = MagicMock()
-        mock_client.voices.return_value = []
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-        assert "all" in json.loads(who())
-
-    def test_provider_without_blurbs_returns_empty_featured(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import punt_vox.server as srv
-
-        srv._session.provider = "say"
-
-        mock_client = MagicMock()
-        mock_client.voices.return_value = ["samantha", "alex"]
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(who())
-        assert result["provider"] == "say"
-        assert result["featured"] == []
-        assert result["all"] == ["samantha", "alex"]
-
-    def test_voxd_connection_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from punt_vox.client_errors import VoxdConnectionError
-
-        mock_client = MagicMock()
-        mock_client.voices.side_effect = VoxdConnectionError("not running")
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        result = json.loads(who())
-        assert "error" in result
 
 
 # ---------------------------------------------------------------------------
@@ -2179,9 +2052,11 @@ class TestPerToolLogging:
         import punt_vox.server as srv
 
         tools = await srv.mcp.list_tools()
-        # 6 session/synthesis tools (unmute, vibe, who, notify, speak, status) +
-        # the single `music` tool + the single `rec` tool + the `enablement` tool.
-        assert len(tools) == 9  # schema intact, no tool lost to wrapping
+        # 5 session/synthesis tools (unmute, vibe, notify, speak, status) + 3
+        # switch tools (model, provider, voice) + the single `music` tool + the
+        # single `rec` tool + the `enablement` tool. mic:who is retired; its
+        # list capability lives on ``mic:voice`` no-arg (vox-0rp9).
+        assert len(tools) == 11  # schema intact, no tool lost to wrapping
         with caplog.at_level(logging.INFO, logger="punt_vox.server"):
             await srv.mcp.call_tool("status", {})
         named = [

@@ -1157,14 +1157,14 @@
     "public_attr_violations": 0.0
   },
   "src/punt_vox/server.py": {
-    "method_ratio": 0.676,
+    "method_ratio": 0.697,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.09,
+    "avg_params": 1.12,
     "max_complexity": 9.0,
-    "avg_complexity": 2.37,
-    "module_size": 599.0,
+    "avg_complexity": 2.24,
+    "module_size": 576.0,
     "classes_per_module": 2.0,
-    "class_to_func_ratio": 0.154,
+    "class_to_func_ratio": 0.167,
     "init_violations": 0.0,
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
