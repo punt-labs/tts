@@ -19,10 +19,8 @@ import json
 import logging
 from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, Self, final
 
-from websockets.exceptions import WebSocketException
-
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.music_args import MusicArgs
+from punt_vox.music_faults import DAEMON_ERRORS, MusicFault
 from punt_vox.music_phrases import MusicMarquee
 from punt_vox.music_state_view import MusicStateView
 from punt_vox.types_programs.control import SelectionRequest, StartRequest
@@ -54,15 +52,6 @@ MusicSubcommand = Literal[
     "get",
     "remove",
 ]
-
-# The daemon-transport faults every subcommand funnels to a JSON _error; named
-# once so the whole tool shares one contract, mirroring server.py/server_audio_tools.
-_DAEMON_ERRORS = (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError)
-
-
-def _error(message: str) -> str:
-    """Return a JSON error string."""
-    return json.dumps({"error": message})
 
 
 class MusicSession(Protocol):
@@ -179,7 +168,7 @@ class MusicTool:
         )
         handler = self._HANDLERS.get(subcommand)
         if handler is None:
-            return _error(f"unknown music subcommand: {subcommand!r}")
+            return MusicFault.rejecting(f"unknown music subcommand: {subcommand!r}")
         return handler(self, args)
 
     def _on(self, args: MusicArgs) -> str:
@@ -202,8 +191,8 @@ class MusicTool:
                 outcome, style, session.vibe, authored=args.authored
             )
             message = f"♪ {outcome.display(self._marquee.generating(style))}"
-        except (ValueError, *_DAEMON_ERRORS) as exc:  # malformed prompt or fault
-            return _error(str(exc))
+        except (ValueError, *DAEMON_ERRORS) as exc:  # malformed prompt or fault
+            return MusicFault.of(exc)
         return json.dumps({"message": message, "applied": outcome.applied})
 
     def _stop(self, _args: MusicArgs) -> str:
@@ -212,8 +201,8 @@ class MusicTool:
             outcome = self._program_factory().stop()
             self._pref_provider().confirm_stopped(outcome)
             message = f"♪ {outcome.display(self._marquee.stopped())}"
-        except _DAEMON_ERRORS as exc:
-            return _error(str(exc))
+        except DAEMON_ERRORS as exc:
+            return MusicFault.of(exc)
         return json.dumps({"message": message, "applied": outcome.applied})
 
     def _play(self, args: MusicArgs) -> str:
@@ -231,17 +220,17 @@ class MusicTool:
         gateway = self._program_factory()
         try:
             outcome = gateway.select(request)
-        except (ValueError, *_DAEMON_ERRORS) as exc:  # bad id / no match, or fault
+        except (ValueError, *DAEMON_ERRORS) as exc:  # bad id / no match, or fault
             if request.is_empty:
                 return self._no_history(str(exc), gateway)
-            return _error(str(exc))
+            return MusicFault.of(exc)
         # Name the re-pool genre from the live catalog on an applied replay; a
         # catalog fault falls back to None, never failing the applied replay.
         resolved_style: str | None = None
         if outcome.applied:
             try:
                 resolved_style = request.resolved_style(gateway.catalog())
-            except _DAEMON_ERRORS as exc:
+            except DAEMON_ERRORS as exc:
                 # Best-effort: a fault here never fails the applied replay, but
                 # log it so the dropped re-pool style is traceable, not silent.
                 logger.warning("music play: re-pool genre lookup failed: %s", exc)
@@ -260,13 +249,13 @@ class MusicTool:
         """
         try:
             summaries = gateway.catalog()
-        except _DAEMON_ERRORS:
-            return _error(message)
+        except DAEMON_ERRORS:
+            return MusicFault.rejecting(message)
         if not summaries:
-            return _error(message)
+            return MusicFault.rejecting(message)
         lines = [message, "saved albums:"]
         lines.extend(f"  {summary.display_line()}" for summary in summaries)
-        return _error("\n".join(lines))
+        return MusicFault.rejecting("\n".join(lines))
 
     def _advance(self, _args: MusicArgs) -> str:
         """User transport next -- step the replay cursor forward, or skip a Program."""
@@ -293,8 +282,8 @@ class MusicTool:
         """
         try:
             outcome = op()
-        except _DAEMON_ERRORS as exc:
-            return _error(str(exc))
+        except DAEMON_ERRORS as exc:
+            return MusicFault.of(exc)
         return json.dumps(
             {"message": f"♪ {outcome.display(phrase)}", "applied": outcome.applied}
         )
@@ -303,8 +292,8 @@ class MusicTool:
         """List saved albums with their tags and ready/total part counts."""
         try:
             summaries = self._program_factory().catalog()
-        except _DAEMON_ERRORS as exc:
-            return _error(str(exc))
+        except DAEMON_ERRORS as exc:
+            return MusicFault.of(exc)
         if not summaries:
             message = "♪ No saved albums."
         else:
@@ -339,40 +328,40 @@ class MusicTool:
         """
         try:
             report = self._program_factory().status()
-        except _DAEMON_ERRORS as exc:
-            return _error(str(exc))
+        except DAEMON_ERRORS as exc:
+            return MusicFault.of(exc)
         state = MusicStateView.of(report).to_dict()
         return json.dumps({"message": f"♪ {report.summary()}", **state})
 
     def _new(self, args: MusicArgs) -> str:
         """Author one verbatim-prompt track into a fresh catalog album."""
         if args.base_prompt is None:
-            return _error("music new requires base_prompt")
+            return MusicFault.rejecting("music new requires base_prompt")
         try:
             prompts = PromptSet.single(args.base_prompt)
             album_id = self._catalog_factory().new(prompts, args.canonical_title)
-        except (ValueError, *_DAEMON_ERRORS) as exc:
-            return _error(str(exc))
+        except (ValueError, *DAEMON_ERRORS) as exc:
+            return MusicFault.of(exc)
         return json.dumps({"album_id": album_id})
 
     def _get(self, args: MusicArgs) -> str:
         """Export a saved album into *dest*; return the written locator."""
         if args.album_id is None or args.dest is None:
-            return _error("music get requires album_id and dest")
+            return MusicFault.rejecting("music get requires album_id and dest")
         try:
             target = self._catalog_factory().get(args.album_id, args.dest)
-        except (ValueError, *_DAEMON_ERRORS) as exc:
-            return _error(str(exc))
+        except (ValueError, *DAEMON_ERRORS) as exc:
+            return MusicFault.of(exc)
         return json.dumps({"album_id": args.album_id, "path": target})
 
     def _remove(self, args: MusicArgs) -> str:
         """Delete a saved album by id (a playing album is refused)."""
         if args.album_id is None:
-            return _error("music remove requires album_id")
+            return MusicFault.rejecting("music remove requires album_id")
         try:
             self._catalog_factory().remove(args.album_id)
-        except (ValueError, *_DAEMON_ERRORS) as exc:
-            return _error(str(exc))
+        except (ValueError, *DAEMON_ERRORS) as exc:
+            return MusicFault.of(exc)
         return json.dumps({"removed": args.album_id})
 
     # The subcommand -> handler map: an explicit literal of the class's own
