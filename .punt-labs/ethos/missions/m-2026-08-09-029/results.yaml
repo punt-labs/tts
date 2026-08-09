@@ -1,0 +1,50 @@
+results:
+    - mission: m-2026-08-09-029
+      round: 1
+      created_at: "2026-08-09T17:05:53Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: docs/vox-0rp9-model-provider-voice.md
+          added: 797
+          removed: 0
+      evidence:
+        - name: 'commit 3562eb5 — docs(vox-0rp9): design for model/provider/voice + mic:unmute strip'
+          status: pass
+        - name: make check (3915 tests pass, docs lint 0 errors, OO/coupling ratchets green, suppression ratchet dropped 2)
+          status: pass
+      prose: |
+        Design shape — one document, four beads. docs/vox-0rp9-model-provider-voice.md
+        covers vox-0rp9.1 (add mic:model, /vox:model, vox model), vox-0rp9.2 (add
+        mic:provider, /vox:provider, vox provider), vox-0rp9.3 (add mic:voice,
+        /vox:voice, vox voice — extended to list on no-arg; retire mic:who and vox
+        voices), and vox-0rp9.4 (strip provider=/model=/voice-only overloads from
+        mic:unmute; strip voice= overload from mic:notify and mic:speak) as one
+        architectural change. Every switch tool is one MCP tool per concern with
+        name?: str as the discriminator — no-arg returns {available, current}, arg
+        writes and returns {"<concern>": "<resolved>"} — matching the mic:enablement
+        / mic:speak / mic:music shape already in-tree. The CLI keeps single-verb
+        subcommands (cli.md §Subcommand naming: presence-of-argument disambiguates,
+        not verb spelling). Slash no-arg opens an AskUserQuestion picker with the
+        current selection marked; the dialog structure (question text, header,
+        multiSelect=false, options per concern) is fully specified. Model shorthand
+        resolution moves out of the slash-command markdown into a new punt_vox.models
+        module so both surfaces share one code path.
+
+        Sequencing — two PRs, not four. Unit A (vox-0rp9.1 + .2 + .3) is one PR
+        because the three tools share server_switches.py, one parity-test file
+        (mirroring tests/test_music_surface_parity.py), one schema-introspection
+        file, and one deposited-guide rewrite; splitting would triple the
+        scaffolding or leave two units half-written. Unit B (vox-0rp9.4) is a
+        second PR — the schema strip is the only rollback-risky part (a text=
+        regression would take synthesis down), so it isolates from the additive
+        work. Both dispatch after PR #396 (vox-0rp9.5) merges. The retirement
+        inventory lists every retired form (six slash/CLI/MCP verbs, six
+        overload paths, four guide bullets) with the exact file:line deleted and
+        the replacement path — deletion travels in the same commit as the
+        replacement lands, per PL-PP-1 (no shim, no alias). The one state semantic
+        that shifts (session-voice writes leaving mic:unmute for mic:voice) is
+        called out in decision (d) — no z-spec warranted because the field, the
+        setter (SessionConfig.set_voice), and the invariants are unchanged; only
+        the caller changes.
