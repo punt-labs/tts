@@ -130,3 +130,15 @@ MagicMock/
 # Per-mission runtime lock in the durable tree. .create.lock (above) covers the
 # registry-wide lock; this covers the one ethos takes on an individual mission.
 .punt-labs/ethos/missions/*/.lock
+
+# Ethos's flock on a vendored identity file, taken while it rewrites one.
+# Same convention as SiblingLock below, but written by ethos, not by vox.
+.punt-labs/ethos/identities/*.lock
+
+# SiblingLock (src/punt_vox/sibling_lock.py) guards a read-modify-write of a
+# host file by flocking a sibling named .<host>.punt-import.lock. It releases
+# the flock on exit but never unlinks the file, so a zero-byte lock is left
+# behind next to every host it has ever guarded -- CLAUDE.md, .claude/
+# settings.json, and any future host. Unanchored so it matches at any depth,
+# including worktrees under .claude/worktrees/ and pytest temp roots.
+*.punt-import.lock
