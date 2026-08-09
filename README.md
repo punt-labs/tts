@@ -506,11 +506,13 @@ vox cache status                               # Show synthesis cache entries, s
 vox cache clear                                # Delete all cached MP3 files
 vox install                                    # Install Claude Code plugin + register usage guide
 vox uninstall                                  # Remove the Claude Code plugin + usage guide
-vox install-desktop                            # Register the MCP server with Claude Desktop
+vox desktop install                            # Register the MCP server with Claude Desktop
+vox desktop uninstall                          # Remove the MCP server registration
 vox mcp                                        # Start MCP server (stdio)
 voxd                                           # Start audio daemon
 vox daemon install                             # Register voxd as system service + write API keys (prompts once for sudo)
 vox daemon uninstall                           # Remove the voxd system service
+vox daemon status --json                       # Daemon health as JSON (mic:status daemon block shape)
 vox daemon status                              # Check if daemon is running
 ```
 

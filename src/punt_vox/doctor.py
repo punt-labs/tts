@@ -334,7 +334,7 @@ class DoctorCheck:
             results.append(
                 _result(
                     _OPTIONAL,
-                    "Claude Desktop MCP: not registered (run 'vox install-desktop')",
+                    "Claude Desktop MCP: not registered (run 'vox desktop install')",
                     required=False,
                 )
             )
@@ -360,7 +360,7 @@ class DoctorCheck:
                     _result(
                         _OPTIONAL,
                         "Claude Desktop MCP: not registered"
-                        " (run 'vox install-desktop')",
+                        " (run 'vox desktop install')",
                         required=False,
                     )
                 )

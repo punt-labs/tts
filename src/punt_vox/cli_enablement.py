@@ -44,7 +44,12 @@ _PurgeFlag = Annotated[
 ]
 _NotifyMode = Annotated[
     str,
-    typer.Argument(help="Notification level: normal or continuous."),
+    typer.Argument(
+        help=(
+            "'normal' fires on task completion + permission prompts; "
+            "'continuous' also announces real-time signals."
+        ),
+    ),
 ]
 _VoiceOpt = Annotated[
     str | None,
@@ -129,10 +134,18 @@ class EnablementCli:
         verbose: _Verbose = False,
         quiet: _Quiet = False,
     ) -> None:
-        """Set the per-repo notification level (normal or continuous).
+        """Set the per-repo notification level within "on" (normal or continuous).
 
-        The level within "on" -- distinct from the enablement marker. ``off`` is
-        no longer a level; use ``vox disable`` to turn vox off for the repo.
+        Distinct from the enablement marker: ``off`` is no longer a level; use
+        ``vox disable`` to turn vox off for the repo. ``continuous`` implies
+        speech (sets ``speak=y``); ``normal`` leaves ``speak`` alone after the
+        first init.
+
+        Example: vox notify normal
+        Example: vox notify continuous --voice matilda
+
+        See also: vox enable/disable (enablement marker), vox speak (voice on/off),
+        mic:notify (MCP peer).
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         if mode not in self._NOTIFY_VALUES:
