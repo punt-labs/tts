@@ -18,7 +18,7 @@ from punt_vox import __version__
 from punt_vox.api_key_resolver import ApiKeyResolver
 from punt_vox.cli_enablement import build_enablement_commands
 from punt_vox.cli_io import OutputFlags, TextInput
-from punt_vox.cli_music import build_music_app
+from punt_vox.cli_music import MusicCli
 from punt_vox.cli_rec import build_rec_app
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
@@ -883,7 +883,7 @@ def mcp() -> None:
 # music subcommand group (consume-only; implementation in cli_music)
 # ---------------------------------------------------------------------------
 
-app.add_typer(build_music_app(_formatter, _flags), name="music")
+app.add_typer(MusicCli.build_app(_formatter, _flags), name="music")
 
 
 # ---------------------------------------------------------------------------

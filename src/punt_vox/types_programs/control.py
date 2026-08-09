@@ -32,14 +32,26 @@ class StartRequest:
     name: str | None = None
     prompts: PromptSet | None = None
 
+    def __post_init__(self) -> None:
+        """Trim every tag, so no request can carry a blank one.
+
+        Canonicalisation belongs to the request, not to each surface that builds
+        one: a caller that trimmed its own tags was one edit away from
+        forgetting, and a forgotten trim is a CLI/MCP divergence no type check
+        catches. Doing it here makes the blank tag unrepresentable instead.
+        """
+        object.__setattr__(self, "style", self.canonical_tag(self.style))
+        object.__setattr__(self, "vibe", self.canonical_tag(self.vibe))
+        object.__setattr__(self, "name", self.canonical_tag(self.name))
+
     @staticmethod
     def canonical_tag(value: str | None) -> str | None:
         """Return a trimmed tag, or ``None`` when it is absent or blank.
 
-        The one boundary normaliser both surfaces apply to a style/name/vibe tag
-        before building a request, so a whitespace-only tag is treated as absent
-        by both -- never an explicit ``""`` the daemon stores while the panel
-        reads it as no tag, and never a source of CLI/MCP divergence.
+        The one boundary normaliser every request applies to a style/name/vibe
+        tag, so a whitespace-only tag is treated as absent everywhere -- never an
+        explicit ``""`` the daemon stores while the panel reads it as no tag, and
+        never a source of CLI/MCP divergence.
         """
         return (value or "").strip() or None
 
@@ -59,6 +71,20 @@ class SelectionRequest:
     vibe: str | None = None
     name: str | None = None
     id: str | None = None  # specific album, resolved id-or-name; never a tag axis
+
+    def __post_init__(self) -> None:
+        """Trim every axis, ``id`` included, so no request can carry a blank one.
+
+        The ``id`` axis is trimmed with the tag axes so a whitespace-only
+        argument is absent rather than an album handle that matches nothing:
+        ``play "  "`` is the bare replay-last, the same call ``play`` with no
+        argument makes, and :attr:`is_empty` can be trusted to mean it.
+        """
+        canonical = StartRequest.canonical_tag  # the one normaliser, shared
+        object.__setattr__(self, "style", canonical(self.style))
+        object.__setattr__(self, "vibe", canonical(self.vibe))
+        object.__setattr__(self, "name", canonical(self.name))
+        object.__setattr__(self, "id", canonical(self.id))
 
     @property
     def is_empty(self) -> bool:
