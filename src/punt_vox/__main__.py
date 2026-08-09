@@ -10,7 +10,7 @@ import platform
 import shutil
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import typer
 
@@ -151,7 +151,7 @@ LanguageOpt = Annotated[
 ]
 RateOpt = Annotated[
     int,
-    typer.Option("--rate", help="Speech rate as percentage (e.g. 90 = 90%% speed)."),
+    typer.Option("--rate", help="Speech rate as percentage (e.g. 90 = 90% speed)."),
 ]
 OutputDirOpt = Annotated[
     Path | None,
@@ -330,8 +330,7 @@ def say(  # pyright: ignore[reportUnusedFunction]
             "--once must be a non-negative integer (seconds). "
             "Use 0 or omit the flag to disable dedup."
         )
-    if once == 0:
-        once = None
+    once = once or None
 
     # Empty string from ``VOX_API_KEY=""`` or a literal ``--api-key ""``
     # is normalized to ``None`` so it does not shadow the mutual
@@ -345,8 +344,7 @@ def say(  # pyright: ignore[reportUnusedFunction]
     # still reject their own empty content with their own BadParameter
     # messages, so there is no silent fall-through for paths where
     # emptiness is actually a user error.
-    if api_key == "":
-        api_key = None
+    api_key = api_key or None
 
     # Resolve the per-call API key from exactly one of the four
     # supported sources (file, stdin, env var, argv) and fire a
@@ -356,7 +354,6 @@ def say(  # pyright: ignore[reportUnusedFunction]
         ctx, api_key, api_key_file, api_key_stdin=api_key_stdin
     ).resolve()
 
-    boost = speaker_boost if speaker_boost else None
     spec = _validated_spec(
         SynthesisSpec(
             voice=voice,
@@ -367,7 +364,7 @@ def say(  # pyright: ignore[reportUnusedFunction]
             stability=stability,
             similarity=similarity,
             style=style,
-            speaker_boost=boost,
+            speaker_boost=speaker_boost or None,
             api_key=resolved_api_key,
         )
     )
@@ -848,6 +845,25 @@ def register_guidance(
 # ---------------------------------------------------------------------------
 
 
+def _load_desktop_config(config_path: Path) -> dict[str, Any]:
+    """Read a Claude Desktop config JSON object, or `{}` if absent.
+
+    A non-object top level (list/string) would crash deep inside the caller's
+    `setdefault` merge; rejected here with a clean Typer error.
+    """
+    if not config_path.exists():
+        return {}
+    try:
+        parsed = json.loads(config_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        typer.echo(f"Error: Could not read {config_path}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    if not isinstance(parsed, dict):
+        typer.echo(f"Error: {config_path} must be a JSON object.", err=True)
+        raise typer.Exit(code=1)
+    return cast("dict[str, Any]", parsed)
+
+
 @app.command("install-desktop")
 def install_desktop(
     output_dir: OutputDirOpt = None,
@@ -889,32 +905,18 @@ def install_desktop(
     config_path = claude_desktop_config_path()
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if config_path.exists():
-        try:
-            data = json.loads(config_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as e:
-            typer.echo(f"Error: Could not read {config_path}: {e}", err=True)
-            raise typer.Exit(code=1) from e
-    else:
-        data = {}
-
-    if "mcpServers" not in data:
-        data["mcpServers"] = {}
-
-    overwriting = "vox" in data["mcpServers"]
-
-    data["mcpServers"]["vox"] = {
+    data = _load_desktop_config(config_path)
+    servers = data.setdefault("mcpServers", {})
+    overwriting = "vox" in servers
+    servers["vox"] = {
         "command": uvx,
         "args": ["--from", "punt-vox", "vox", "mcp"],
         "env": installer.server_env(),
     }
-
     config_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-
-    if overwriting:
-        typer.echo("Updated existing vox entry.")
-    else:
-        typer.echo("Registered vox MCP server.")
+    typer.echo(
+        "Updated existing vox entry." if overwriting else "Registered vox MCP server."
+    )
 
     typer.echo(f"Provider: {installer.provider}")
     typer.echo(f"Config: {config_path}")

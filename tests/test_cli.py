@@ -77,6 +77,14 @@ class TestSayCommand:
         result = runner.invoke(app, ["say"])
         assert result.exit_code != 0
 
+    def test_say_help_no_percent_escape_leak(self) -> None:
+        # Regression: `--rate` help text once carried a Click printf-style `%%`
+        # escape that leaked as a literal double-percent in rendered help.
+        runner = CliRunner()
+        result = runner.invoke(app, ["say", "--help"])
+        assert result.exit_code == 0
+        assert "%%" not in result.output
+
     @patch(f"{_CLI}.VoxClientSync")
     def test_say_connection_error(
         self,
