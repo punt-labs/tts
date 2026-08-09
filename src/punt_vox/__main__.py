@@ -567,7 +567,15 @@ def provider_cmd(  # pyright: ignore[reportUnusedFunction]
     if name not in PROVIDER_NAMES:
         allowed = ", ".join(PROVIDER_NAMES)
         raise typer.BadParameter(f"unknown provider {name!r}. Allowed: {allowed}")
-    store.write_field("provider", name)
+    # Clear the stale model on a genuine provider change -- model names are
+    # provider-scoped, so `eleven_v3` reaching an OpenAI request is an invalid
+    # API call. `mic:provider` (server_switches.ProviderTool) applies the same
+    # write; both surfaces must agree.
+    previous = store.read().provider
+    updates: dict[str, str] = {"provider": name}
+    if previous != name:
+        updates["model"] = ""
+    store.write_fields(updates)
     _formatter.emit({"provider": name}, f"Provider: {name}")
 
 

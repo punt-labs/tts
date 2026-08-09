@@ -55,26 +55,28 @@ class ConfigWriter:
         self._config_dir_finder = config_dir_finder
         return self
 
-    @classmethod
-    def refresh(cls, session: SessionConfig) -> str | None:
+    def refresh(self, session: SessionConfig) -> str | None:
         """Refresh *session* from disk; return an error envelope, or None on success."""
-        try:
-            session.refresh_from_config()
-        except _CONFIG_IO_ERRORS as exc:
-            logger.exception("Config refresh failed")
-            return cls._error(str(exc))
-        return None
+        return self._guarded(session.refresh_from_config)
 
     def write(self, field: str, value: str) -> str | None:
         """Persist *field* to disk; return an error envelope, or None on success."""
-        try:
-            ConfigStore(self._config_dir_finder()).write_field(field, value)
-        except _CONFIG_IO_ERRORS as exc:
-            logger.exception("Config write failed for %s", field)
-            return self._error(str(exc))
-        return None
+        return self._guarded(
+            lambda: ConfigStore(self._config_dir_finder()).write_field(field, value)
+        )
+
+    def write_fields(self, updates: dict[str, str]) -> str | None:
+        """Persist *updates* in one write; return an error envelope, or None."""
+        return self._guarded(
+            lambda: ConfigStore(self._config_dir_finder()).write_fields(updates)
+        )
 
     @staticmethod
-    def _error(message: str) -> str:
-        """Return a JSON error string matching the switch-tool envelope shape."""
-        return json.dumps({"error": message})
+    def _guarded(action: Callable[[], None]) -> str | None:
+        """Run *action*, funnelling filesystem/config faults to a JSON envelope."""
+        try:
+            action()
+        except _CONFIG_IO_ERRORS as exc:
+            logger.exception("Config I/O failed")
+            return json.dumps({"error": str(exc)})
+        return None

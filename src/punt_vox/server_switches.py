@@ -83,13 +83,14 @@ class ModelTool:
     """List or set the TTS model for the current provider (``mic:model``).
 
     ``dispatch(None)`` returns ``{"available", "current"}`` for the current
-    session provider; ``dispatch("<name>")`` resolves shorthand via
+    session provider -- a modelless provider still lists (``available`` is
+    ``[]``), never errors. ``dispatch("<name>")`` resolves shorthand via
     :func:`resolve_model`, writes to the session and to
-    ``.punt-labs/vox/vox.md``, and returns ``{"model": "<full-name>"}``.
-    A provider with no user-selectable model returns an ``{"error": ...}``
-    envelope on either path. A filesystem or config fault at refresh or write
-    returns an ``{"error": ...}`` envelope through :class:`ConfigWriter` --
-    the tool never raises across the MCP boundary.
+    ``.punt-labs/vox/vox.md``, and returns ``{"model": "<full-name>"}``; a
+    write against a modelless provider returns an ``{"error": ...}`` envelope.
+    A filesystem or config fault at refresh or write returns an
+    ``{"error": ...}`` envelope through :class:`ConfigWriter` -- the tool
+    never raises across the MCP boundary.
     """
 
     __slots__ = ("_config", "_session_provider")
@@ -185,7 +186,10 @@ class ProviderTool:
             JSON string. No arg: ``{"available": [...], "current": "..."}``
             (``current`` may be ``null`` when nothing has been set yet).
             Name given: ``{"provider": "<name>"}``. A filesystem or config
-            fault at refresh or write: ``{"error": "..."}``.
+            fault at refresh or write: ``{"error": "..."}``. On a genuine
+            provider change the stale model is cleared in the same write --
+            model names are provider-scoped, so ``eleven_v3`` reaching an
+            OpenAI request is an invalid API call.
         """
         session = self._session_provider()
         err = self._config.refresh(session)
@@ -200,10 +204,16 @@ class ProviderTool:
                 }
             )
 
-        write_err = self._config.write("provider", name)
+        previous = session.provider
+        updates: dict[str, str] = {"provider": name}
+        if previous != name:
+            updates["model"] = ""
+        write_err = self._config.write_fields(updates)
         if write_err is not None:
             return write_err
         session.provider = name
+        if previous != name:
+            session.model = None
         return json.dumps({"provider": name})
 
 

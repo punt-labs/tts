@@ -239,6 +239,40 @@ def test_provider_dispatch_refreshes_the_session(tmp_path: Path) -> None:
     assert session.refreshes == 1
 
 
+def test_provider_switch_clears_the_stale_model(tmp_path: Path) -> None:
+    """A genuine provider change wipes the previously-stored model.
+
+    Model names are provider-scoped -- ``eleven_v3`` reaching an OpenAI request
+    is an invalid API call, so persisting the old model across a switch is a
+    footgun. Verified through the ConfigStore choke-point both surfaces write
+    to.
+    """
+    ConfigStore(tmp_path).write_fields({"provider": "elevenlabs", "model": "eleven_v3"})
+    session = _FakeSession(provider="elevenlabs", model="eleven_v3")
+    _, provider, _ = _tools(session, tmp_path)
+
+    provider.dispatch("openai")
+
+    assert session.provider == "openai"
+    assert session.model is None
+    assert ConfigStore(tmp_path).read_field("provider") == "openai"
+    # Empty string writes clear the field (frontmatter treats "" as absent);
+    # the important invariant is that the stale model is not readable.
+    assert not ConfigStore(tmp_path).read_field("model")
+
+
+def test_provider_same_write_keeps_the_model(tmp_path: Path) -> None:
+    """Writing the same provider again is a no-op on the stored model."""
+    ConfigStore(tmp_path).write_fields({"provider": "elevenlabs", "model": "eleven_v3"})
+    session = _FakeSession(provider="elevenlabs", model="eleven_v3")
+    _, provider, _ = _tools(session, tmp_path)
+
+    provider.dispatch("elevenlabs")
+
+    assert session.model == "eleven_v3"
+    assert ConfigStore(tmp_path).read_field("model") == "eleven_v3"
+
+
 # ---------------------------------------------------------------------------
 # VoiceTool
 # ---------------------------------------------------------------------------
@@ -382,7 +416,9 @@ def test_provider_call_does_not_touch_voice_roster(tmp_path: Path) -> None:
     assert client.voices.call_count == 0
 
 
-@pytest.mark.parametrize("provider_name", ["elevenlabs", "openai", "polly", "say"])
+@pytest.mark.parametrize(
+    "provider_name", ["elevenlabs", "openai", "polly", "say", "espeak"]
+)
 def test_voice_carries_provider_name_from_session(
     tmp_path: Path, provider_name: str
 ) -> None:
