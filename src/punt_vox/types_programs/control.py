@@ -63,8 +63,8 @@ class SelectionRequest:
 
     ``id`` is the *specific-album* axis -- resolved id-or-name like the positional
     play path, distinct from the ``style``/``vibe``/``name`` tag axes and never
-    folded into the tag filter. All fields optional: an all-``None`` request
-    replays every album (the cross-genre radio).
+    folded into the tag filter. All fields optional: an all-``None`` request is
+    the replay-last request (see :attr:`is_empty`), not an all-wildcard union.
     """
 
     style: str | None = None
