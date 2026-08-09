@@ -34,7 +34,7 @@ vox is usable in three ways, all driving the same `voxd` audio daemon --- so it 
 ## Quick Start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/e5b0eab/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/2ed73ee/install.sh | sh
 ```
 
 Restart Claude Code, then:
@@ -50,10 +50,10 @@ Install the `vox` CLI without the Claude Code plugin — for a non-Claude harnes
 
 ```bash
 # Flag form
-curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/e5b0eab/install.sh | sh -s -- --no-plugin
+curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/2ed73ee/install.sh | sh -s -- --no-plugin
 
 # Environment form (for argument-hostile contexts — CI templates, proxies)
-curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/e5b0eab/install.sh | VOX_NO_PLUGIN=1 sh
+curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/2ed73ee/install.sh | VOX_NO_PLUGIN=1 sh
 ```
 
 `VOX_NO_PLUGIN` skips the plugin only when set to exactly `1`; any other value is ignored. The plugin also auto-skips when `claude` or `git` is absent.
@@ -73,7 +73,7 @@ vox doctor
 <summary>Verify before running</summary>
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/e5b0eab/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/punt-labs/vox/2ed73ee/install.sh -o install.sh
 shasum -a 256 install.sh
 cat install.sh
 sh install.sh
