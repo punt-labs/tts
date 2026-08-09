@@ -37,8 +37,9 @@ committed the `.punt-labs/vox/enabled` marker.
 - `mic:speak` — toggle spoken notifications: `mode="y"` (voice) or
   `mode="n"` (chimes only).
 - `mic:notify` — set the notification level: `"y"` (on task completion +
-  permission prompts), `"n"` (off), `"c"` (continuous — also announces
-  real-time signals).
+  permission prompts) or `"c"` (continuous — also announces real-time
+  signals). Off is routed through `mic:enablement action="disable"`, not
+  a `mic:notify` level (tool-enable-disable.md §2.3).
 - `mic:who` — list voices for the current provider (featured + full roster).
 - `mic:status` — current provider, voice, notify/vibe state, and the
   authoritative music Program (read fresh from the daemon).
