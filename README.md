@@ -136,7 +136,7 @@ Run it as your normal user, **not** under `sudo`. On **macOS** this is fully sud
 
 ```bash
 vox doctor                         # report system checks and the daemon's active provider
-vox voices                         # list the voices your provider offers
+vox voice                          # list the voices your provider offers (marks current)
 vox say "hello from vox"           # speak through the default provider
 echo "piped too" | vox say         # ...or read the text from stdin
 ```
@@ -304,10 +304,10 @@ Chimes are two short notification tones — one for task completion, one for a p
 |---------|---------|
 | `/enable` | Turn vox on for this repo |
 | `/disable` | Turn vox off for this repo |
-| `/vox model <name>` | Switch TTS model mid-session |
-| `/vox provider <name>` | Switch TTS provider mid-session |
-| `/unmute` | Enable voice mode (spoken notifications), browse the roster |
-| `/unmute matilda` | Set session voice + enable voice |
+| `/vox:model [<name>]` | Switch TTS model (no arg opens a picker) |
+| `/vox:provider [<name>]` | Switch TTS provider (no arg opens a picker) |
+| `/vox:voice [<name>]` | Set session voice (no arg opens a picker) |
+| `/unmute` | Enable voice mode (spoken notifications) |
 | `/mute` | Chimes only --- no voice |
 | `/recap` | Spoken summary of Claude's last response |
 | `/vibe <mood>` | Set session mood --- voice adapts to match |
@@ -474,7 +474,12 @@ vox vibe excited                               # Set session mood
 vox notify normal                              # Normal notifications (task completion + prompts)
 vox notify continuous                          # Continuous --- also announces real-time signals
 vox speak n                                    # Chimes only
-vox voice matilda                              # Set session voice
+vox model                                      # List models the current provider offers
+vox model v3                                   # Set the TTS model (shorthand OK: v3, flash, turbo, ...)
+vox provider                                   # List the five providers (marks current)
+vox provider openai                            # Set the TTS provider
+vox voice                                      # List the roster for the active provider
+vox voice matilda                              # Set the session voice
 vox enable                                     # Turn vox on for this repo
 vox disable                                    # Turn vox off for this repo
 vox music play --style techno                  # Start a style radio (generates a fresh pool)
@@ -529,11 +534,11 @@ Provider API keys (`ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AWS_*`) live in `~/.
 
 ### Shipped
 
-- **Mic API**: unified `unmute`/`vibe`/`who` plus one `rec` and one `music` tool (subcommand-dispatched) for the store & catalog, with segment-based input
+- **Mic API**: unified `unmute`/`vibe` plus the three switch tools (`mic:model`, `mic:provider`, `mic:voice`, one MCP tool per concern), one `rec` and one `music` tool (subcommand-dispatched) for the store & catalog, with segment-based input
 - Notification layer: `/enable`, `/disable`, `vox notify normal|continuous`, `/mute`, `/unmute`, `/recap`, Stop + Notification hooks
 - Multi-provider TTS engine: ElevenLabs, AWS Polly, OpenAI, macOS `say`, Linux `espeak-ng`
 - Claude Code plugin: marketplace install, MCP server, slash commands
-- CLI: say, voices, rec, music, vibe, notify, mute, version, status, doctor
+- CLI: say, model, provider, voice, rec, music, vibe, notify, mute, version, status, doctor
 - Two-channel display: `♪` panel summaries with voice/provider context
 - ElevenLabs streaming API for lower time-to-first-audio
 - `/vibe` with auto, manual, and off modes --- ElevenLabs expressive tags color every utterance
