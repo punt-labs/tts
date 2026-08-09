@@ -174,18 +174,24 @@ one action argument, one return shape).
 `mic:voice`).**
 
 - `name=None` (or omitted): return a JSON list
-  `{"available": ["a", "b", ...], "current": "b"}`. For `mic:voice` this
-  is the shape `mic:who` returns today (server.py:592–600) minus the
-  `featured` blurb subset (blurbs remain in the reply so the slash-command
-  picker can render them; see §4c). For `mic:model` and `mic:provider`,
-  `available` is the enum authored server-side (§3.1, §3.2).
+  `{"available": ["a", "b", ...], "current": "b"}`. For `mic:voice`, the
+  reply carries the shape §3.3 specifies — the four fields `provider`,
+  `current`, `available`, `featured` (the current `mic:who` payload with
+  `all` renamed `available` for uniformity with the two new tools;
+  `featured` is retained because the slash-command picker uses it, see
+  §4c). For `mic:model` and `mic:provider`, `available` is the enum
+  authored server-side (§3.1, §3.2).
 - `name="<name>"`: resolve any shorthand (model only), write to the
   session (and to `.punt-labs/vox/vox.md` via `ConfigStore.write_field`,
   the same choke-point the CLI uses at `__main__.py:480`), and return
-  `{"<concern>": "<resolved-name>"}`. On an unknown name for
-  `mic:provider` (a closed enum, §3.2), return the daemon-standard error
-  envelope `{"error": "..."}` — never raise across the tool boundary,
-  matching every other tool's contract (server.py:364–366).
+  `{"<concern>": "<resolved-name>"}`. For `mic:provider` (a closed enum,
+  §3.2) the `Literal[...]` schema rejects an unknown name at the FastMCP
+  boundary before the handler runs — the daemon-standard error envelope
+  `{"error": "..."}` is not reachable on the input path. For `mic:model`,
+  the runtime lookup `resolve_model(name, provider)` can still yield
+  "provider has no user-selectable model" or "unknown shorthand for
+  provider X"; that path returns `{"error": "..."}` per every other
+  tool's contract (server.py:364–366).
 
 ### 2.3 Return-shape parity
 
