@@ -15,9 +15,9 @@
   "src/punt_vox/__main__.py": {
     "method_ratio": 0.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.88,
-    "max_complexity": 10.0,
-    "avg_complexity": 3.12,
+    "avg_params": 1.85,
+    "max_complexity": 8.0,
+    "avg_complexity": 3.0,
     "module_size": 813.0,
     "classes_per_module": 0.0,
     "class_to_func_ratio": 0.0,
