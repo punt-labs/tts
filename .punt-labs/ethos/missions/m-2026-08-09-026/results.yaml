@@ -1,0 +1,100 @@
+results:
+    - mission: m-2026-08-09-026
+      round: 1
+      created_at: "2026-08-09T16:01:12Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.95
+      files_changed:
+        - path: src/punt_vox/server.py
+          added: 9
+          removed: 15
+        - path: src/punt_vox/assets/global-guidance.md
+          added: 3
+          removed: 2
+        - path: tests/test_server.py
+          added: 27
+          removed: 10
+        - path: tests/test_server_partition.py
+          added: 36
+          removed: 36
+        - path: .oo-baseline.json
+          added: 2
+          removed: 2
+        - path: .oo-audit.jsonl
+          added: 1
+          removed: 0
+      evidence:
+        - name: make check
+          status: pass
+        - name: uv run python tools/oo_score.py src/punt_vox/ --check --base-ref $(git merge-base origin/main HEAD) --require-base
+          status: pass
+        - name: mcp.call_tool notify mode=n (FastMCP schema rejection verified)
+          status: pass
+        - name: tests/test_server.py::TestNotifySchemaRejectsOff (2 new schema tests)
+          status: pass
+      prose: |
+        Closed the CLI/MCP disagreement on notify per tool-enable-disable.md 2.3.
+
+        Commits:
+          648e192  fix(server): retire mic:notify mode="n" per tool-enable-disable.md 2.3 (vox-0rp9.5)
+          1e036f3  docs(guide): mic:notify accepts y/c only; off is enablement (vox-0rp9.5)
+
+        Raw merge-base OO ratchet exit: 0
+          server.py: avg_complexity 2.400 -> 2.370 IMPROVED, module_size 604 -> 599 IMPROVED.
+
+        Schema change (server.py, notify tool):
+        - mode parameter is Literal["y", "c"] so FastMCP raises ToolError before
+          dispatch when a caller sends mode="n" -- verified via
+          srv.mcp.call_tool("notify", {"mode": "n"}) raising with literal_error
+          on input 'n'.
+        - Deleted the now-unreachable `if mode not in _VALID_NOTIFY_MODES` guard
+          in notify() per PL-PP-1 forward integration.
+        - Kept _VALID_NOTIFY_MODES and SessionConfig.set_notify()'s internal
+          guard alone -- those guard the internal `_notify: str = "n"` default
+          and the config-load path, as the contract specifies.
+        - Tightened the notify docstring: removed "n (off)" language, states
+          that off routes through `mic:enablement action="disable"` and cites
+          tool-enable-disable.md 2.3.
+
+        Guide (global-guidance.md):
+        - mic:notify bullet advertises "y" or "c" only and names
+          mic:enablement action="disable" as the off path.
+
+        Test audit:
+        - Added TestNotifySchemaRejectsOff (test_server.py) with two async tests:
+          (a) inspects srv.mcp.list_tools() and asserts mode.enum == ["y", "c"];
+          (b) asserts mcp.call_tool("notify", {"mode": "n"}) raises with
+          literal_error naming input 'n'. Positive schema test per contract.
+        - Removed TestNotifyTool.test_set_mode_n (asserted the retired
+          Python-level bypass) and test_invalid_mode (retired guard test);
+          replacement is the schema test above (stronger, boundary-level).
+        - Renamed TestVoxOff -> TestNotifyOffState and rewrote P7-P10 as
+          state-model invariants constructed via _set_state. The Z spec's
+          VoxOff operation is retired (tool no longer offers "n"; nOff is
+          reachable only via SessionConfig default / config load, and
+          enablement disable is a repo file operation that does not mutate
+          session state per the contract's INTENT clause). Every removed
+          assertion has an equivalent on the new path:
+            P7 nOff/sVoice/{v}, P8 nOff/sChime, P9 nOff/sUnset via
+            _set_state, P10 nOff/sUnset via fresh SessionConfig default.
+        - Rewrote P40 middle step: replaced notify(mode="n") with
+          _set_state(notify_mode="n", speak_mode="y", speak_explicit=True),
+          preserving the sticky-sVoice invariant on the new path.
+        - Removed TestRejectedInputs.test_notify_invalid_mode; replacement is
+          TestNotifySchemaRejectsOff. Kept test_speak_invalid_mode -- the
+          speak tool's guard remains authoritative.
+
+        Baselines:
+        - .oo-baseline.json / .oo-audit.jsonl refreshed via `make update-oo`
+          after ratchet showed improvements; only src/punt_vox/server.py
+          entries changed (avg_complexity, module_size).
+        - .oo-coupling-baseline.json not touched -- check-coupling reported
+          "all metrics unchanged".
+
+        Deviations from the write set: none. All edits inside the six declared
+        paths. No touch to CHANGELOG.md, README.md, DESIGN.md, cli.py,
+        cli_enablement.py, or .oo-coupling-baseline.json.
+
+        Not pushed, no PR opened, no `make install`, no daemon restart --
+        per contract those are the leader's job after review.

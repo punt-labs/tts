@@ -142,51 +142,50 @@ class TestVoxOn:
 
 
 # ---------------------------------------------------------------------------
-# VoxOff -- the notify tool called with mode "n"
-# Z spec: notify -> nOff; speak and voice unchanged
+# nOff state -- the retired VoxOff partitions, re-framed as state-model
+# invariants after tool-enable-disable.md §2.3 retired "n" as a notify input.
+# The user-facing "turn off" flow is now ``mic:enablement action="disable"``,
+# which is a repo file operation and does not mutate session state; nOff
+# itself is reachable only via the SessionConfig default and config-file
+# load, so these tests assert the state model represents nOff coherently
+# with every (speak, voice) frame the retired transition used to preserve.
 # ---------------------------------------------------------------------------
 
 
-class TestVoxOff:
-    """Partitions 7-10: VoxOff operation (/vox n)."""
+class TestNotifyOffState:
+    """Partitions 7-10: nOff coexists with any (speak, voice) frame."""
 
-    def test_partition_7_off_from_non_svoice(self) -> None:
-        """P7: nOn/sVoice/{v1} -> nOff/sVoice/{v1} -- speak and voice preserved."""
+    def test_partition_7_off_frame_svoice_voice(self) -> None:
+        """P7: nOff/sVoice/{v1} -- notify, speak, voice are independent fields."""
         _set_state(
-            notify_mode="y", speak_mode="y", speak_explicit=True, voice="matilda"
+            notify_mode="n", speak_mode="y", speak_explicit=True, voice="matilda"
         )
-        notify(mode="n")
         state = _read_state()
         assert state["notify"] == "n"
         assert state["speak"] == "y"
         assert state["voice"] == "matilda"
 
-    def test_partition_8_off_from_ncont_schime(self) -> None:
-        """P8: nCont/sChime/empty -> nOff/sChime/empty -- speak kept."""
-        _set_state(notify_mode="c", speak_mode="n", speak_explicit=True)
-        notify(mode="n")
+    def test_partition_8_off_frame_schime(self) -> None:
+        """P8: nOff/sChime -- an explicit-chime user coexists with nOff."""
+        _set_state(notify_mode="n", speak_mode="n", speak_explicit=True)
         state = _read_state()
         assert state["notify"] == "n"
         assert state["speak"] == "n"
+        assert state["speak_explicit"] is True
 
-    def test_partition_9_off_from_noff_sunset(self) -> None:
-        """P9: nOff/sUnset/empty -> nOff/sUnset/empty -- idempotent from Init."""
+    def test_partition_9_off_frame_sunset(self) -> None:
+        """P9: nOff/sUnset is the loaded-config shape -- speak stays at default."""
         _set_state(notify_mode="n")
-        # speak not set = sUnset
-        notify(mode="n")
         state = _read_state()
         assert state["notify"] == "n"
-        # sUnset: speak is at default "n" with speak_explicit False
         assert state["speak"] == "n"
         assert state["speak_explicit"] is False
 
-    def test_partition_10_off_preserves_sunset(self) -> None:
-        """P10: VoxOff does not touch sUnset -- it remains absent."""
-        # Fresh session
-        notify(mode="n")
+    def test_partition_10_off_is_the_fresh_session_default(self) -> None:
+        """P10: a fresh SessionConfig is nOff/sUnset -- no tool call required."""
+        # The _fresh_session autouse fixture installs a fresh SessionConfig.
         state = _read_state()
         assert state["notify"] == "n"
-        # sUnset preserved: speak still at default
         assert state["speak"] == "n"
         assert state["speak_explicit"] is False
 
@@ -475,18 +474,21 @@ class TestInvariantPreservation:
         # Only one voice, not both
 
     def test_partition_40_sunset_one_way(self) -> None:
-        """P40: sUnset -> sVoice is one-way; VoxOff+VoxOn keeps sVoice."""
-        # Step 1: VoxOn from Init (sUnset -> sVoice)
+        """P40: sUnset -> sVoice is one-way; nOff+VoxOn keeps sVoice."""
+        # Step 1: VoxOn from Init (sUnset -> sVoice).
         notify(mode="y")
         state = _read_state()
         assert state["speak"] == "y"  # sVoice
 
-        # Step 2: VoxOff (speak preserved)
-        notify(mode="n")
+        # Step 2: notify field lands back at nOff (via config load or default),
+        # speak preserved because it was explicitly set in step 1. Constructed
+        # via _set_state -- the notify tool no longer offers "n" as an input
+        # per tool-enable-disable.md §2.3.
+        _set_state(notify_mode="n", speak_mode="y", speak_explicit=True)
         state = _read_state()
         assert state["speak"] == "y"  # Still sVoice, NOT sUnset
 
-        # Step 3: VoxOn again (speak still sVoice, not re-initialized)
+        # Step 3: VoxOn again (speak still sVoice, not re-initialized).
         result = json.loads(notify(mode="y"))
         assert "speak" not in result["notify"]  # No init needed
         state = _read_state()
@@ -512,16 +514,14 @@ class TestInvariantPreservation:
 
 
 class TestRejectedInputs:
-    """Additional rejected partition for notify tool."""
+    """Additional rejected partition for the speak tool.
 
-    def test_notify_invalid_mode(self) -> None:
-        """Notify rejects invalid mode values."""
-        _set_state(notify_mode="y", speak_mode="y", speak_explicit=True)
-        result = json.loads(notify(mode="x"))
-        assert "error" in result
-        # State unchanged
-        state = _read_state()
-        assert state["notify"] == "y"
+    Notify's own rejected-inputs partition moved to
+    :class:`test_server.TestNotifySchemaRejectsOff`: the notify tool's
+    ``mode`` is now ``Literal["y", "c"]``, so FastMCP rejects any other
+    input at the schema level before dispatch -- a stronger contract than
+    the retired ``return _error(...)`` guard used to enforce.
+    """
 
     def test_speak_invalid_mode(self) -> None:
         """Speak rejects invalid mode values."""

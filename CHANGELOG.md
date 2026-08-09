@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`mic:notify mode="n"` retired — off is routed through `mic:enablement action="disable"` (vox-0rp9.5).** The MCP tool's `mode` argument was `str`, guarded at runtime for `{"y", "n", "c"}` — while the CLI's `vox notify` had accepted only `normal|continuous` since the tool-enable-disable standard (§2.3) retired the `y|n` vocabulary for enablement and moved off to `vox disable`. That divergence let a caller turn spoken notifications off through the wrong channel — via `mic:notify` — bypassing the marker-based enablement contract §2.3 mandates as the sole enable/disable path. `mode` is now `Literal["y", "c"]`, so FastMCP rejects an `"n"` call at the schema layer before dispatch (a stronger boundary than the runtime guard it replaces), with the docstring pointing callers at `mic:enablement action="disable"` for the off path. The internal state can still be `"n"` (from config load, from a disable) — the change is only at the tool INPUT boundary, not the state model. First task delivered under epic **vox-0rp9** (vox surface consistency — split model/provider/voice out of `/vox`, close CLI/MCP parity gaps).
+
 ## [4.17.0] - 2026-08-09
 
 ### Added

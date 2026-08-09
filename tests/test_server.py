@@ -983,13 +983,6 @@ class TestNotifyTool:
         assert result["notify"]["notify"] == "y"
         assert srv._session._notify == "y"
 
-    def test_set_mode_n(self) -> None:
-        import punt_vox.server as srv
-
-        result = json.loads(notify(mode="n"))
-        assert result["notify"]["notify"] == "n"
-        assert srv._session._notify == "n"
-
     def test_speak_unset_c_inits_voice(self) -> None:
         """speak not yet set — mode=c should initialize it to y."""
         import punt_vox.server as srv
@@ -1047,9 +1040,52 @@ class TestNotifyTool:
         assert result["notify"]["voice"] == "sarah"
         assert srv._session.voice == "sarah"
 
-    def test_invalid_mode(self) -> None:
-        result = json.loads(notify(mode="x"))
-        assert "error" in result
+
+class TestNotifySchemaRejectsOff:
+    """The notify schema advertises y/c only — n is the retired vocabulary.
+
+    Off is routed through ``mic:enablement action="disable"`` per
+    tool-enable-disable.md §2.3; the notify tool must not offer the LLM an
+    "n" input that would disable through the wrong channel.
+    """
+
+    @pytest.mark.asyncio
+    async def test_schema_enum_is_exactly_y_and_c(self) -> None:
+        """The advertised enum is exactly {y, c} — no third state, no n."""
+        import punt_vox.server as srv
+
+        tools = await srv.mcp.list_tools()
+        schema = next(t for t in tools if t.name == "notify").inputSchema
+        assert schema["properties"]["mode"]["enum"] == ["y", "c"]
+
+    @pytest.mark.asyncio
+    async def test_dispatch_rejects_mode_n(self) -> None:
+        """FastMCP raises before the handler when the caller sends mode=n."""
+        import punt_vox.server as srv
+
+        with pytest.raises(Exception, match="literal_error") as exc:
+            await srv.mcp.call_tool("notify", {"mode": "n"})
+        # The failed validation names the offending input value.
+        assert "'n'" in str(exc.value)
+
+
+class TestSessionSetNotifyGuard:
+    """SessionConfig.set_notify's ValueError guard survives the schema tightening.
+
+    The MCP boundary now Literal-restricts the mode input, so the tool-side
+    runtime guard is unreachable and was retired. The internal state-transition
+    guard on ``SessionConfig.set_notify`` is the surviving load-bearing check --
+    it protects any non-MCP caller (tests, hooks, future in-process paths). A
+    future regression that silently swallowed an unknown mode would corrupt
+    session state, so the guard is asserted here.
+    """
+
+    def test_set_notify_rejects_unknown_mode(self) -> None:
+        """set_notify raises ValueError naming the offending mode."""
+        import punt_vox.server as srv
+
+        with pytest.raises(ValueError, match="invalid notify mode: 'x'"):
+            srv._session.set_notify("x")
 
 
 # ---------------------------------------------------------------------------

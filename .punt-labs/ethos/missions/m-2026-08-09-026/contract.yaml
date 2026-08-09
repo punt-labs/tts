@@ -1,0 +1,57 @@
+mission_id: m-2026-08-09-026
+status: closed
+type: implement
+created_at: "2026-08-09T15:19:48Z"
+updated_at: "2026-08-09T16:27:41Z"
+closed_at: "2026-08-09T16:27:41Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: mdm
+    pinned_at: "2026-08-09T15:19:48Z"
+    hash: cfb39e35cedde7372a1f0b92ae7c2d4b25a2db5ec0c3e44760ce00d094133a04
+inputs: {}
+write_set:
+    - src/punt_vox/server.py
+    - src/punt_vox/assets/global-guidance.md
+    - tests/test_server.py
+    - tests/test_server_partition.py
+    - .oo-baseline.json
+    - .oo-audit.jsonl
+    - .oo-coupling-baseline.json
+success_criteria:
+    - 'Bead: vox-0rp9.5 (parent epic vox-0rp9). Branch: fix/vox-0rp9.5-notify-state-parity (already exists, checked out on main). Do NOT push, open a PR, run make install, or restart the daemon — that is the leader''s job after review.'
+    - 'INTENT: close the CLI/MCP disagreement on `notify`. The CLI (`vox notify`) accepts only `normal|continuous` — the `n`/off state was retired per tool-enable-disable.md §2.3 (y/n vocabulary retired for enablement, off moved to `vox disable`). The MCP tool `mic:notify` still accepts `mode="n"`, which lets a caller turn spoken notifications off through the wrong channel — bypassing the marker-based enablement contract §2.3 mandates as the sole enable/disable path. Fix: `mic:notify` no longer accepts `mode="n"` as an INPUT. The internal `_notify: str = "n"` default and the internal state after `mic:enablement action="disable"` stay as-is — the change is at the schema/input boundary, not the state model.'
+    - 'SCHEMA CHANGE (src/punt_vox/server.py line ~603): the `notify` MCP tool''s `mode` argument becomes `mode: Literal["y", "c"]` (not a bare `str`, per oo.md illegal-states-unrepresentable) so the FastMCP schema shows the LLM only the allowed values. This is a breaking change to the MCP tool contract; forward integration (PL-PP-1), no shim, no legacy "n" accepted.'
+    - 'REJECTION SEMANTICS: because the Literal narrows accepted inputs to y/c, an "n" call is rejected by FastMCP before dispatch. That is the correct behavior — no runtime `if mode == "n": return _error(...)` needed. Delete the now-dead `mode not in _VALID_NOTIFY_MODES` guard in `notify()` (line ~628) since the Literal makes it unreachable for the argument path. Keep `_VALID_NOTIFY_MODES` and `set_notify()`''s guard alone — that guards internal state transitions, which still legitimately accept "n" (from disable, from config load).'
+    - 'DOCSTRING UPDATE (server.py `notify` tool): remove the "n (off)" language from the Args section and the tool description. State that off is routed through `mic:enablement action="disable"` and cross-reference the tool by name. Keep the description tight — the standard says the tool schema is an agent interface, not human docs (cli.md §Help text).'
+    - 'DEPOSITED GUIDE UPDATE (src/punt_vox/assets/global-guidance.md): find the mic:notify description (search "notify"). Update it to say "y" or "c" only, and add one line pointing at mic:enablement for the off path. Keep the existing description shape.'
+    - 'TESTS: (a) add a positive test asserting mic:notify with `mode="n"` is rejected by the schema — FastMCP raises before the handler runs; if that''s not directly testable at the Python level then assert against the tool''s introspection schema (the Literal type on `mode`). (b) Audit tests/test_server_partition.py: lines 158, 167, 176, 186 all call `notify(mode="n")` — these were the old "user turns notifications off" flow. Rewrite each: if the test is about internal state transitions from n, use `_set_state(notify_mode="n", ...)` directly (already the pattern on lines 101, 110, 119, 137, 174) rather than calling the tool. If the test is about the user-facing "turn off" flow, rewrite to call `enablement(action="disable")` instead (that is the new correct path). Do not delete tests without a replacement; every removed assertion gets an equivalent or stronger one on the new path.'
+    - 'QUALITY: `make check` green on every commit; the raw merge-base OO ratchet exits 0 with a genuine improvement — run `uv run python tools/oo_score.py src/punt_vox/ --check --base-ref $(git merge-base origin/main HEAD) --require-base; echo $?` prints 0. If check-oo asks for baseline refresh, run `make update-oo` after green and stage `.oo-baseline.json` + `.oo-audit.jsonl` (and `.oo-coupling-baseline.json` if coupling changed). Follow the OO rules in ../.claude/rules/python-*.md throughout.'
+    - NO WORK OUTSIDE THE WRITE SET. Do NOT touch CHANGELOG.md, README.md, or DESIGN.md — the leader owns those doc updates after review. Do NOT touch cli.py / cli_enablement.py — the CLI `vox notify` is already correct.
+    - Commit incrementally — one logical step per commit (schema change, docstring update, guide update, test audit), each passing make check; do not accumulate more than 30 minutes of uncommitted changes. Submit via `ethos mission result` with the commit SHAs and the raw ratchet exit code.
+budget:
+    rounds: 2
+    reflection_after_each: false
+current_round: 1
+context: |-
+    This is the first implementation unit of the vox-0rp9 surface-consistency epic
+    (12 tasks; this is a small independent one, chosen as the first PR to prove the
+    end-to-end workflow). The fix stands alone — no dependencies on the other tasks.
+
+    Read the tool-enable-disable standard §2.3 for the vocabulary rationale
+    (punt-kit/standards/tool-enable-disable.md, "Vocabulary is enable / disable — y / n
+    is retired") — it names exactly this class of divergence as the reason the y/n
+    vocabulary was retired for enablement. The MCP tool has been out of compliance
+    since that standard was accepted.
+
+    The design surface here is small. The bead description
+    (`bd show vox-0rp9.5`) contains the full spec — including the alternatives
+    rejected (aliasing n→disable internally: silent surface-crossing side effect,
+    worse; adding off back to the CLI: reverses §2.3, forbidden; documenting the
+    divergence: violates cli.md §Core Principle). No z-spec needed (schema
+    constraint change, not a stateful subsystem change).
+
+    You are the MCP-server-tool-surface specialist per the vox delegation table.
+    mdm is the CLI-author evaluator, chosen because this touches the CLI/MCP parity
+    boundary.
