@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [4.17.0] - 2026-08-09
 
+## [4.17.0] - 2026-08-09
+
 ### Added
 
 - **The Vox Control Panel — a session-scoped Lux applet for mic mode, notifications, and voice (vox-mhwj).** A `Vox` menu entry, launched per Claude Code session (mirroring lux's own `lux-beads` applet, spawned by a `hooks/session-start.sh` block gated on `.punt-labs/vox/enabled`) rather than hosted inside `voxd` like the Music Player. Opening it shows a Notifications radio (Off/Normal/Continuous, mirrors `mic:notify`), a Mic Mode radio (Chimes only/Voice, mirrors `mic:speak`), and a Voice combo populated from the roster with a `▶` preview button. Changes apply immediately through the same `notify`/`speak`/`voice` settings the CLI and MCP tool already write; a failed write or an unreachable `voxd` is shown in the panel itself (a transient status line), never only in a log. The new `vox-panel` console script and a new `src/punt_vox/panel/` package (`punt_lux.applets`-style session claim, Lux leg, and settings service) are `voxd`-independent — the daemon has no new wire method and no daemon-side lux client for this feature.
