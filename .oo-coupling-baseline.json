@@ -307,6 +307,13 @@
     "max_lcom": 0.0,
     "public_names": 1.0
   },
+  "src/punt_vox/music_state_view.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
   "src/punt_vox/normalize.py": {
     "efferent_coupling": 0.0,
     "public_names": 3.0,

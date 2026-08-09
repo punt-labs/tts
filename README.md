@@ -238,6 +238,7 @@ You author the tracks: vox is a pipe to the ElevenLabs Music API and never decid
 /music play focus-beats        # replay a saved pool by name --- zero credits
 /music play                    # replay the last-played album (no argument)
 /music list                    # list saved pools
+/music status                  # show current music state (same as bare /music)
 /music                         # show current music state
 /music stop                    # stop
 ```
@@ -318,6 +319,7 @@ Chimes are two short notification tones — one for task completion, one for a p
 | `/music play <name>` | Replay a saved pool by name (zero credits) |
 | `/music play` | Replay the last-played album (no argument) |
 | `/music list` | List saved pools |
+| `/music status` | Show the current music state |
 | `/music stop` | Stop background music |
 
 ## Providers

@@ -83,7 +83,8 @@ exactly 12 genre-accurate `variations`, one per pool slot, and pass a human
 - `mic:music subcommand="pause"` — suspend the current album in place.
 - `mic:music subcommand="resume"` — resume the suspended album in place.
 - `mic:music subcommand="list"` — list saved albums.
-- `mic:music subcommand="status"` — current music state.
+- `mic:music subcommand="status"` — current music state: the daemon's
+  authoritative `program` block, a coarse `music_mode`, and a one-line summary.
 
 Guidance:
 
