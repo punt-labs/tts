@@ -34,7 +34,7 @@ ACTIONS=()
 
 # ── Clean up retired commands ─────────────────────────────────────────
 if [[ "$DEV_MODE" == "false" ]]; then
-  RETIRED=(say.md speak.md notify.md voice.md vox-on.md vox-off.md enable.md disable.md)
+  RETIRED=(say.md speak.md notify.md vox-on.md vox-off.md enable.md disable.md)
   CLEANED=()
   FAILED_CLEAN=0
   for name in "${RETIRED[@]}"; do
