@@ -36,15 +36,24 @@ ACTIONS=()
 if [[ "$DEV_MODE" == "false" ]]; then
   RETIRED=(say.md speak.md notify.md voice.md vox-on.md vox-off.md enable.md disable.md)
   CLEANED=()
+  FAILED_CLEAN=0
   for name in "${RETIRED[@]}"; do
     dest="$COMMANDS_DIR/$name"
+    # `-f` passing doesn't guarantee $COMMANDS_DIR is writable -- an rm that
+    # fails here must not take the rest of the hook down with it under `set -e`.
     if [[ -f "$dest" ]]; then
-      rm "$dest"
-      CLEANED+=("/${name%.md}")
+      if rm "$dest" 2>/dev/null; then
+        CLEANED+=("/${name%.md}")
+      else
+        FAILED_CLEAN=$((FAILED_CLEAN + 1))
+      fi
     fi
   done
   if [[ ${#CLEANED[@]} -gt 0 ]]; then
     ACTIONS+=("Cleaned retired commands: ${CLEANED[*]}")
+  fi
+  if [[ $FAILED_CLEAN -gt 0 ]]; then
+    ACTIONS+=("Failed to remove $FAILED_CLEAN retired command(s) from ~/.claude/commands")
   fi
 fi
 
@@ -53,18 +62,40 @@ fi
 # Skip *-dev.md files — dev commands use plugin namespace (vox-dev:say-dev)
 if [[ "$DEV_MODE" == "false" ]]; then
   DEPLOYED=()
-  for cmd_file in "$PLUGIN_ROOT/commands/"*.md; do
-    name="$(basename "$cmd_file")"
-    [[ "$name" == *-dev.md ]] && continue
-    dest="$COMMANDS_DIR/$name"
-    mkdir -p "$COMMANDS_DIR"
-    if [[ ! -f "$dest" ]] || ! diff -q "$cmd_file" "$dest" >/dev/null 2>&1; then
-      cp "$cmd_file" "$dest"
-      DEPLOYED+=("/${name%.md}")
-    fi
-  done
+  FAILED_DEPLOY=0
+  # A bare `mkdir -p` here would abort the whole hook under `set -e` if
+  # $HOME is unwritable -- same failure mode the panel log below guards
+  # against. `mkdir -p` returns 0 for an ALREADY-existing directory
+  # regardless of its write permission, so the guard alone doesn't cover
+  # an existing-but-now-unwritable $COMMANDS_DIR -- `cp` below is guarded
+  # too. Report every failure via ACTIONS (the settings.json block below
+  # does the same on its identical failure class) instead of aborting or
+  # skipping silently -- the agent's additionalContext is the only
+  # channel this hook has to say why commands never showed up. ACTIONS
+  # messages are ASCII literals for the no-jq heredoc fallback below, so
+  # this reports the fixed path "~/.claude/commands", never $COMMANDS_DIR
+  # (which could carry a quote or backslash from an unusual $HOME).
+  if mkdir -p "$COMMANDS_DIR" 2>/dev/null; then
+    for cmd_file in "$PLUGIN_ROOT/commands/"*.md; do
+      name="$(basename "$cmd_file")"
+      [[ "$name" == *-dev.md ]] && continue
+      dest="$COMMANDS_DIR/$name"
+      if [[ ! -f "$dest" ]] || ! diff -q "$cmd_file" "$dest" >/dev/null 2>&1; then
+        if cp "$cmd_file" "$dest" 2>/dev/null; then
+          DEPLOYED+=("/${name%.md}")
+        else
+          FAILED_DEPLOY=$((FAILED_DEPLOY + 1))
+        fi
+      fi
+    done
+  else
+    ACTIONS+=("Failed to create ~/.claude/commands — skipping command deployment")
+  fi
   if [[ ${#DEPLOYED[@]} -gt 0 ]]; then
     ACTIONS+=("Deployed commands: ${DEPLOYED[*]}")
+  fi
+  if [[ $FAILED_DEPLOY -gt 0 ]]; then
+    ACTIONS+=("Failed to deploy $FAILED_DEPLOY command(s) to ~/.claude/commands")
   fi
 fi
 
