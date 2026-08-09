@@ -1,0 +1,3 @@
+{"ts":"2026-08-07T19:09:09.153205Z","event":"create","actor":"claude","details":{"evaluator":"mdm","ticket":"vox-mhwj","worker":"rmh"}}
+{"ts":"2026-08-07T20:11:36.109884Z","event":"result","actor":"rmh","details":{"confidence":0.85,"evidence_entries":8,"files_changed":1,"round":1,"verdict":"pass"}}
+{"ts":"2026-08-07T20:16:17.70003Z","event":"close","actor":"claude","details":{"round":1,"status":"closed","verdict":"pass"}}

@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING, ClassVar, Literal, Self, final
 from punt_vox.music_args import MusicArgs
 from punt_vox.music_faults import DAEMON_ERRORS, MusicFault
 from punt_vox.music_phrases import MusicMarquee
-from punt_vox.music_session import MusicSession
 from punt_vox.music_state_view import MusicStateView
 from punt_vox.server_music_catalog import CatalogVerbs, SavedAlbums
 from punt_vox.server_music_transport import TransportVerbs
@@ -33,6 +32,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from punt_vox.catalog_gateway import CatalogGateway
+    from punt_vox.music_session import MusicSession
     from punt_vox.program_gateway import ProgramGateway
     from punt_vox.vibe_command import MusicPreference
 
