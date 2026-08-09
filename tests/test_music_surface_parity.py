@@ -321,12 +321,17 @@ def test_a_blank_play_tag_is_absent_on_both_surfaces(blank: str) -> None:
 
 def test_a_blank_play_id_replays_the_last_played_on_both_surfaces() -> None:
     """``play "  "`` carries no axis, so it is the bare replay-last request."""
+    cli_gateway = FakeProgramGateway()
+    cli, _ = _cli(cli_gateway)
+    cli.play("   ")
+
     tool_gateway = FakeProgramGateway()
     _tool(tool_gateway).dispatch("play", album_id="   ")
 
-    selection = tool_gateway.calls[0].selection
-    assert selection is not None
-    assert selection.is_empty
+    for gateway in (cli_gateway, tool_gateway):
+        selection = gateway.calls[0].selection
+        assert selection is not None
+        assert selection.is_empty
 
 
 @pytest.mark.parametrize("blank", ["", "   "])
