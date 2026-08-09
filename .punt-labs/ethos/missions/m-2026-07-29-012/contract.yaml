@@ -1,0 +1,51 @@
+mission_id: m-2026-07-29-012
+status: closed
+type: implement
+created_at: "2026-07-29T06:34:23Z"
+updated_at: "2026-07-29T08:51:06Z"
+closed_at: "2026-07-29T08:51:06Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: bwk
+    pinned_at: "2026-07-29T06:34:23Z"
+    hash: b106f88d6d76d24f00c3960e9b2b7a7dbc94e7ef98c1036ccd20074c9e9bf944
+inputs: {}
+write_set:
+    - src/punt_vox/voxd/music_player/
+    - src/punt_vox/voxd/programs/
+    - src/punt_vox/voxd/daemon.py
+    - pyproject.toml
+    - tests/
+    - CHANGELOG.md
+    - .oo-baseline.json
+    - .oo-audit.jsonl
+    - .oo-coupling-baseline.json
+success_criteria:
+    - 'Implement PHASE 1 of the voxd Music Player per the MERGED design docs/vox-music-player.md — §3.1 the new music_player package (player.py, player_view.py, scene.py, lux_scene_publisher.py), §3.2 the ProgramService ChangeListener PubSub seam + _notify_change firings, §3.3 wiring, §5 (phase 1). The design''s write-set (§9 phase 1) is your guide. NO phase-2 code: no player_events.py, no lux_subscription.py, no menu callback, no subscribe loop.'
+    - 'Build against the now-PUBLIC LuxRestClient — `from punt_lux import LuxRestClient` (merged to lux main, lux PR #292; also RenderRequest/RenderTableRequest/SceneShown/Pong/OpError/HubUnavailableError; no display extras). Resolve the punt-lux dependency in pyproject.toml to the version/source that actually exports LuxRestClient — a released punt-lux if one has it, else a git pin to lux main until lux cuts a release. Verify `from punt_lux import LuxRestClient` imports in the vox venv; if only a git-main pin works, use it and flag it. Identity is built-in (kind=app, name=voxd) — no identity handling. Never raw REST.'
+    - 'MANDATORY async re-push (design §3.2, the evaluator''s refinement): _notify_change() fires inside the ControlChannel single-writer, so it must NOT perform the lux PUT synchronously — a slow or unreachable luxd must never stall the playback control loop. _notify_change only BUILDS the scene and hands it to an async publish task via a latest-wins one-slot mailbox (coalesce to newest); LuxScenePublisher drains it on its own task, where a lux timeout / HubUnavailable is logged and dropped, never propagated into audio control. Prove it with a test: a down or slow lux client does not block the single-writer / control loop.'
+    - 'Change-signal keeps the scene truthful: _notify_change fires after each applied command (in the single-writer, serialized with the state it reports), after auto-advance on track-end (the playback loop), and after a catalog mutation (new/remove). MusicPlayer registers one ChangeListener; on notify it reads status() + catalog_albums(), builds PlayerView + AlbumListScene, and enqueues the push. AlbumListScene is a pure (albums, view) -> Scene projection with no I/O.'
+    - 'TDD, and assert the modeled invariants BY NAME from docs/vox-music-player.tex: I1 (at most one album playing), I2 (now-playing present iff playing), I3 (a played album is catalogued / a playing album cannot be removed). Also test: the scene projection (element tree for a known catalog + view), the change-signal firing on each surface, and the non-blocking re-push. Tests mirror each new module (PL-BS-6). The player owns NO new playback machinery — reuse ProgramService.replay_album/off/status/catalog_albums (do not reimplement).'
+    - 'LIVE-VERIFY before submitting (WORKFLOW.md audio/visual gate): lux is agent-verifiable by design. With a running luxd, drive the real path — the daemon pushes the vox.music scene — and confirm via lux introspection (the lux scene inspector / inspect_scene) that the album-list + now-playing rendered with the correct data (correct albums, correct now-playing). Paste the introspection evidence in your result. If luxd cannot be run in your environment, say so explicitly and provide the strongest substitute (a captured SceneMessage asserted against the expected element tree).'
+    - make check green (incl. check-oo, check-coupling, check-suppressions). After the LAST commit that adds any new file, run make update-oo + make update-coupling, confirm the new modules are in both baselines, then make check on a CLEAN tree (git stash unrelated dirt) exits 0. Commit incrementally — one commit per logical step, each passing make check; never more than 30 minutes uncommitted. Add a CHANGELOG [Unreleased] entry. Do NOT push, do NOT open a PR. Submit via ethos mission result; flag any design gap or fork for the leader.
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 1
+context: |
+    Phase 1 of the voxd Music Player (bead vox-efa6), against the MERGED design
+    (PR #379). Read docs/vox-music-player.md (the design — your spec, especially
+    §1, §3, §5-phase-1), docs/vox-music-player.tex (the PlayerView invariants), and
+    docs/WORKFLOW.md (the three loops + the live-verify gate). You are on branch
+    feat/vox-music-player-phase1 (already checked out).
+
+    Ping #1 from the lux agent just landed: the public LuxRestClient is merged to
+    lux main (lux PR #292), so phase 1 is unblocked. Phase 2 (the interactive layer
+    — the WS subscribe loop for music.play/music.stop + the "Music" menu callback)
+    is SEPARATE and gated on lux's NEXT PRs (ping #2) — do NOT build any of it now.
+
+    The architecture is settled and the design is merged — do not reopen it. This
+    is IMPLEMENTATION of phase 1: the scene projection, the change-signal, the async
+    re-push, and the wiring. Follow the merged design's decomposition; the write-set
+    above matches its §9.

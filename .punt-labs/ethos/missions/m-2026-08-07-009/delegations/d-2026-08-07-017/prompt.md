@@ -1,0 +1,5 @@
+You have an ethos mission contract waiting: run `ethos mission show m-2026-08-07-009` in <repo> to read it in full, then execute it.
+
+Summary for context: build a new vox Lux applet — a menu-launched "Vox Control Panel" (Notifications radio, Mic Mode radio, Voice combo + preview button) modeled on lux's `lux-beads` applet pattern (session-scoped, spawned by a session-start hook, NOT hosted inside voxd like the Music Player). The full design — ASCII mockup, architecture, and everything confirmed cross-repo with the lux agent — is in `docs/vox-control-panel-ui.md`. Read that document in full before writing any code; it is settled, no operator decision is pending on it.
+
+Your write-set and success criteria are in the mission contract (`ethos mission show m-2026-08-07-009`) — follow them exactly, including the commit-per-step discipline (one commit per logical step, `make check` green on each, never more than 30 minutes of uncommitted work). Submit your result via `ethos mission result` when done. Do not push or open a PR — that's the leader's job.

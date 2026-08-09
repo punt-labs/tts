@@ -1,0 +1,32 @@
+mission_id: m-2026-08-07-012
+status: closed
+type: implement
+created_at: "2026-08-07T19:09:09Z"
+updated_at: "2026-08-07T20:16:17Z"
+closed_at: "2026-08-07T20:16:17Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: mdm
+    pinned_at: "2026-08-07T19:09:09Z"
+    hash: cfb39e35cedde7372a1f0b92ae7c2d4b25a2db5ec0c3e44760ce00d094133a04
+inputs:
+    ticket: vox-mhwj
+write_set:
+    - src/punt_vox/panel
+    - tests/panel
+    - hooks/session-start.sh
+    - tests/test_hook_gate.py
+success_criteria:
+    - 'recover_from_write_failure receives the wire topic (e.g. ''vox.notify''), not the field name (''notify'') -- leg.py''s OSError handler calls self._service.recover_from_write_failure(topic) where topic is the raw PanelTopic wire value. The user-facing message ends up as literally ''couldn''t save vox.notify'' instead of ''couldn''t save notify''. Fix: translate topic to its field name before calling recover_from_write_failure (e.g. a PanelTopic.field_name property mapping NOTIFY->''notify'', SPEAK->''speak'', VOICE->''voice''), fix the baked-in wrong assertion in tests/panel/test_leg.py, add/adjust a test asserting the correct field name reaches the notice'
+    - 'HubOutageLog (hub_outage_log.py) has zero synchronization despite note()/clear() being called from both the event-loop coroutine (_listen_once) and a thread-pool worker thread (_apply, via asyncio.to_thread) on the same instance -- the exact concurrent-mutation bug class already fixed with a lock in VoxPanelService this same round, reintroduced in a new class that didn''t get the same treatment. A race can corrupt the elapsed-time bookkeeping or, worse, raise inside note() when clear() nulls _started_at mid-computation on another thread, which can propagate uncaught out of the leg''s unguarded serve() loop and silently and permanently kill hub reconnection for the rest of the session. Fix: add a threading.Lock around the read-modify-write in note()/clear(), mirroring VoxPanelService''s pattern. Add a regression test exercising concurrent note()/clear() calls'
+    - 'VoxPanelService._resync unconditionally overwrites whatever notice its caller intended with a generic voxd_unavailable() notice if the resync''s own PanelState.read() raises VoxdConnectionError -- so recover_from_write_failure(field)''s specific write_failed(field) notice (naming the field that failed to persist, a LOCAL disk/permission failure) gets silently replaced by a message blaming voxd (a DIFFERENT, unrelated subsystem) if voxd also happens to be unreachable at that moment. This is actively misleading, not just less informative. Fix: when _resync is called with a caller-supplied failure notice and the resync''s own read then also fails, compose both into one message (e.g. "couldn''t save {field}, and voxd is unreachable too") rather than silently discarding the more specific one. Add a test for the resync-also-fails path (only the resync-succeeds path is currently tested)'
+    - 'The (TypeError, ValueError) branch in leg.py''s _apply logs and returns with no scene correction at all, contradicting apply_event''s own docstring claim that VoxPanelLeg can ''log, and recover, distinctly'' for both failure classes -- only the OSError branch actually recovers today. A rejected/malformed control payload leaves whatever the Lux client may have already shown optimistically uncorrected. Fix: push the currently-held (unchanged) scene on a payload rejection too, the same way the OSError branch corrects and re-pushes, OR if a re-push is genuinely not warranted here, correct the docstring to stop claiming both branches recover and explain why only one does'
+    - 'LOW: hooks/session-start.sh''s new vox-panel spawn block (including the ''not found -> log a reason'' fix from the prior round) has zero test coverage, unlike every other change in this feature. Add coverage in tests/test_hook_gate.py or a new test module following that file''s existing subprocess-based testing pattern, covering at minimum: the spawn happens when enabled+vox-panel present, the pgrep guard skips a second spawn, and the reason is logged when vox-panel is absent'
+    - 'LOW: document (a short inline comment, not a redesign) why the session-start.sh ''vox-panel not found'' failure can only reach a tmp-dir log file and not a status surface like vox status/vox doctor -- no daemon/display connection exists yet at that point in the hook''s execution. State it as a deliberate, understood tradeoff rather than leaving it implicit'
+    - Commit incrementally -- one commit per logical step (file group, single concern, or single PR-equivalent slice). Each commit must pass make check. Do not accumulate more than 30 minutes of uncommitted changes
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+context: Third fix round on the vox-panel feature (feat/vox-panel). Two independent full-diff review passes (code-reviewer + silent-failure-hunter) both flagged the same gap in this round's own new code (HubOutageLog), plus each found one more distinct issue. Leader verified the field-name bug and the missing lock directly in the code before writing this contract.
