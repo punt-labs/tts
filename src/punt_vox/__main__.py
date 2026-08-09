@@ -10,7 +10,7 @@ import platform
 import shutil
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, cast
 
 import typer
 
@@ -753,19 +753,23 @@ def register_guidance(
 # ---------------------------------------------------------------------------
 
 
-def _load_desktop_config(config_path: Path) -> Any:
-    """Read a Claude Desktop config file, or return an empty dict if absent.
+def _load_desktop_config(config_path: Path) -> dict[str, Any]:
+    """Read a Claude Desktop config JSON object, or `{}` if absent.
 
-    Exits with code 1 on unreadable or malformed JSON. Returns the parsed JSON
-    tree (typed ``Any`` because the file's shape is not ours to constrain).
+    A non-object top level (list/string) would crash deep inside the caller's
+    `setdefault` merge; rejected here with a clean Typer error.
     """
     if not config_path.exists():
         return {}
     try:
-        return json.loads(config_path.read_text(encoding="utf-8"))
+        parsed = json.loads(config_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
         typer.echo(f"Error: Could not read {config_path}: {exc}", err=True)
         raise typer.Exit(code=1) from exc
+    if not isinstance(parsed, dict):
+        typer.echo(f"Error: {config_path} must be a JSON object.", err=True)
+        raise typer.Exit(code=1)
+    return cast("dict[str, Any]", parsed)
 
 
 @app.command("install-desktop")
