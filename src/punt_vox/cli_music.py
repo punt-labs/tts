@@ -225,7 +225,9 @@ class MusicCli:
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         albums = SavedAlbums(self._guard.run(lambda: self._gateway_factory().catalog()))
-        self._formatter.emit({"programs": albums.to_wire()}, albums.announced())
+        summary = albums.announced()
+        payload = {"message": summary, "programs": albums.to_wire()}
+        self._formatter.emit(payload, summary)
 
     def play(
         self,

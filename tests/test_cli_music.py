@@ -119,7 +119,7 @@ def test_list_empty() -> None:
     cli.list_programs()
 
     payload, text = _emitted(formatter)
-    assert payload == {"programs": []}
+    assert payload == {"message": "No saved albums.", "programs": []}
     assert "No saved albums" in text
 
 
@@ -353,7 +353,7 @@ def test_list_accepts_json_flag_after_the_subcommand() -> None:
     result = CliRunner().invoke(app, ["list", "--json"])
 
     assert result.exit_code == 0
-    assert json.loads(result.stdout) == {"programs": []}
+    assert json.loads(result.stdout) == {"message": "No saved albums.", "programs": []}
 
 
 # ---------------------------------------------------------------------------

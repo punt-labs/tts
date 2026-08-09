@@ -174,8 +174,10 @@ def test_list_reports_the_same_album_records() -> None:
     tool_result = _tool_payload(
         _tool(FakeProgramGateway(catalog=catalog)).dispatch("list")
     )
+    cli_result = _cli_payload(formatter)
 
-    assert _cli_payload(formatter)["programs"] == tool_result["programs"]
+    assert cli_result["programs"] == tool_result["programs"]
+    assert set(cli_result) == set(tool_result)
 
 
 def test_list_reports_the_format_of_every_album() -> None:
