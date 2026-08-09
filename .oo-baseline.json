@@ -1053,17 +1053,17 @@
     "public_attr_violations": 0.0
   },
   "src/punt_vox/server.py": {
-    "avg_complexity": 2.4,
-    "avg_params": 1.09,
-    "class_to_func_ratio": 0.154,
-    "classes_per_module": 2.0,
-    "encapsulation_ratio": 1.0,
-    "future_annotations": 1.0,
-    "init_violations": 0.0,
-    "max_complexity": 9.0,
     "method_ratio": 0.676,
-    "module_size": 609.0,
-    "public_attr_violations": 0.0
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.09,
+    "max_complexity": 9.0,
+    "avg_complexity": 2.4,
+    "module_size": 604.0,
+    "classes_per_module": 2.0,
+    "class_to_func_ratio": 0.154,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
   },
   "src/punt_vox/server_audio_tools.py": {
     "avg_complexity": 2.14,
@@ -1092,12 +1092,12 @@
     "public_attr_violations": 0.0
   },
   "src/punt_vox/server_music_tool.py": {
-    "method_ratio": 0.944,
+    "method_ratio": 0.947,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.61,
+    "avg_params": 1.58,
     "max_complexity": 5.0,
-    "avg_complexity": 2.22,
-    "module_size": 325.0,
+    "avg_complexity": 2.21,
+    "module_size": 341.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 0.5,
     "init_violations": 0.0,

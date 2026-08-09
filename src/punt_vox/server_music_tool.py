@@ -24,6 +24,7 @@ from websockets.exceptions import WebSocketException
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.music_args import MusicArgs
 from punt_vox.music_phrases import MusicMarquee
+from punt_vox.music_state_view import MusicStateView
 from punt_vox.types_programs.control import SelectionRequest, StartRequest
 from punt_vox.types_programs.prompts import PromptSet
 
@@ -49,6 +50,7 @@ MusicSubcommand = Literal[
     "resume",
     "new",
     "list",
+    "status",
     "get",
     "remove",
 ]
@@ -142,7 +144,7 @@ class MusicTool:
         Args:
             subcommand: The verb -- ``on``/``stop``/``play``/``next`` drive the
                 running Program; ``new``/``get``/``remove`` mutate the saved
-                catalog; ``list`` shows it.
+                catalog; ``list`` shows it and ``status`` reports what is playing.
             style: Style tag; persists across calls for ``on``/``play``.
             vibe: Vibe tag radio for ``play``.
             name: Existing album handle ``play`` replays by name.
@@ -157,7 +159,8 @@ class MusicTool:
 
         Returns:
             JSON string: ``{"message", "applied"}`` for the control/playback
-            verbs, ``{"message", "programs"}`` for ``list``, ``{"album_id"}``/
+            verbs, ``{"message", "programs"}`` for ``list``,
+            ``{"message", "program", "music_mode"}`` for ``status``, ``{"album_id"}``/
             ``{"album_id", "path"}``/``{"removed"}`` for the catalog verbs, and
             an ``{"error": ...}`` envelope on a daemon fault or malformed prompt.
             Control actions emit no agent prose; the JSON drives the panel only.
@@ -322,6 +325,20 @@ class MusicTool:
         ]
         return json.dumps({"message": message, "programs": programs})
 
+    def _status(self, _args: MusicArgs) -> str:
+        """Report what the daemon is playing, read fresh on every call.
+
+        A query verb, not a control action: the caller gets the same
+        :class:`MusicStateView` fields the ``status`` tool reports, plus the
+        one-line summary :class:`ProgramStatus` renders for every surface.
+        """
+        try:
+            report = self._program_factory().status()
+        except _DAEMON_ERRORS as exc:
+            return _error(str(exc))
+        state = MusicStateView.of(report).to_dict()
+        return json.dumps({"message": f"♪ {report.summary()}", **state})
+
     def _new(self, args: MusicArgs) -> str:
         """Author one verbatim-prompt track into a fresh catalog album."""
         if args.base_prompt is None:
@@ -364,6 +381,7 @@ class MusicTool:
         "pause": _pause,
         "resume": _resume,
         "list": _list,
+        "status": _status,
         "new": _new,
         "get": _get,
         "remove": _remove,

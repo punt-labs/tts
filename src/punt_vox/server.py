@@ -29,11 +29,11 @@ from punt_vox.logging_config import (
     log_health,
     reapply_client_log_level,
 )
+from punt_vox.music_state_view import MusicStateView
 from punt_vox.server_audio_tools import RecTool
 from punt_vox.server_enablement import EnablementTool
 from punt_vox.server_music_tool import MusicTool
 from punt_vox.synthesis_batch import SegmentBatch
-from punt_vox.types_programs.mode import Mode
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe_command import MusicPreference, VibeCommand
 from punt_vox.vibe_trace import VibeTraceLog
@@ -686,11 +686,10 @@ def status() -> str:
 
     Both the ``program`` block and the ``music_mode`` label are the daemon's
     *authoritative* Program status, read fresh from ``voxd`` on every call --
-    never a server-side cache, which could serve a stale music shadow:
-    ``music_mode`` is derived from ``program.mode`` here,
-    so another client stopping or starting music can never leave the two fields
-    contradicting each other. When ``voxd`` is unreachable the block carries an
-    ``error`` and ``music_mode`` reports ``off`` (nothing can be confirmed playing).
+    never a server-side cache, which could serve a stale music shadow. The two
+    fields come from one :class:`MusicStateView`, the same projection
+    ``music`` with ``subcommand="status"`` reports, so no two surfaces can tell a
+    caller a different music state.
 
     Returns:
         JSON string with the session display fields plus the authoritative
@@ -711,14 +710,10 @@ def status() -> str:
         "log_level": ConfigStore.resolve_log_level(),
     }
     try:
-        program_status = _program_tools.status()
+        view = MusicStateView.of(_program_tools.status())
     except _DAEMON_ERRORS as exc:
-        payload["program"] = {"error": str(exc)}
-        payload["music_mode"] = "off"
-    else:
-        payload["program"] = program_status.to_dict()
-        payload["music_mode"] = "off" if program_status.mode is Mode.OFF else "on"
-    return json.dumps(payload)
+        view = MusicStateView.unavailable(str(exc))
+    return json.dumps(payload | view.to_dict())
 
 
 # ---------------------------------------------------------------------------
