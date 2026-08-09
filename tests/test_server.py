@@ -1069,6 +1069,25 @@ class TestNotifySchemaRejectsOff:
         assert "'n'" in str(exc.value)
 
 
+class TestSessionSetNotifyGuard:
+    """SessionConfig.set_notify's ValueError guard survives the schema tightening.
+
+    The MCP boundary now Literal-restricts the mode input, so the tool-side
+    runtime guard is unreachable and was retired. The internal state-transition
+    guard on ``SessionConfig.set_notify`` is the surviving load-bearing check --
+    it protects any non-MCP caller (tests, hooks, future in-process paths). A
+    future regression that silently swallowed an unknown mode would corrupt
+    session state, so the guard is asserted here.
+    """
+
+    def test_set_notify_rejects_unknown_mode(self) -> None:
+        """set_notify raises ValueError naming the offending mode."""
+        import punt_vox.server as srv
+
+        with pytest.raises(ValueError, match="invalid notify mode: 'x'"):
+            srv._session.set_notify("x")
+
+
 # ---------------------------------------------------------------------------
 # speak tool tests
 # ---------------------------------------------------------------------------
