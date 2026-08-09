@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Final, Literal, Self, final
 from websockets.exceptions import WebSocketException
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
-from punt_vox.config import ConfigStore
+from punt_vox.config_writer import ConfigWriter
 from punt_vox.models import MODEL_TABLE, resolve_model
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voices import VOICE_BLURBS
@@ -87,12 +87,14 @@ class ModelTool:
     :func:`resolve_model`, writes to the session and to
     ``.punt-labs/vox/vox.md``, and returns ``{"model": "<full-name>"}``.
     A provider with no user-selectable model returns an ``{"error": ...}``
-    envelope on either path.
+    envelope on either path. A filesystem or config fault at refresh or write
+    returns an ``{"error": ...}`` envelope through :class:`ConfigWriter` --
+    the tool never raises across the MCP boundary.
     """
 
-    __slots__ = ("_config_dir_finder", "_session_provider")
+    __slots__ = ("_config", "_session_provider")
     _session_provider: Callable[[], SessionConfig]
-    _config_dir_finder: Callable[[], Path | None]
+    _config: ConfigWriter
 
     def __new__(
         cls,
@@ -101,7 +103,7 @@ class ModelTool:
     ) -> Self:
         self = super().__new__(cls)
         self._session_provider = session_provider
-        self._config_dir_finder = config_dir_finder
+        self._config = ConfigWriter(config_dir_finder)
         return self
 
     def dispatch(self, name: str | None = None) -> str:
@@ -117,10 +119,13 @@ class ModelTool:
             the current session provider (``available`` may be ``[]`` for a
             modelless provider, ``current`` may be ``null``). Name given:
             ``{"model": "<resolved-full-name>"}``. On an unknown name or a
-            modelless provider: ``{"error": "..."}``.
+            modelless provider: ``{"error": "..."}``. A filesystem or config
+            fault at refresh or write: ``{"error": "..."}``.
         """
         session = self._session_provider()
-        session.refresh_from_config()
+        err = self._config.refresh(session)
+        if err is not None:
+            return err
         provider = session.provider or "elevenlabs"
 
         if name is None:
@@ -136,8 +141,10 @@ class ModelTool:
         except ValueError as exc:
             return _error(str(exc))
 
+        write_err = self._config.write("model", resolved)
+        if write_err is not None:
+            return write_err
         session.model = resolved
-        ConfigStore(self._config_dir_finder()).write_field("model", resolved)
         return json.dumps({"model": resolved})
 
 
@@ -149,11 +156,13 @@ class ProviderTool:
     selection; ``dispatch("<name>")`` writes to the session and to
     ``.punt-labs/vox/vox.md``. The ``Literal`` schema (§3.2) means FastMCP
     rejects an unknown name at the tool boundary before this handler runs.
+    A filesystem or config fault at refresh or write returns an
+    ``{"error": ...}`` envelope through :class:`ConfigWriter`.
     """
 
-    __slots__ = ("_config_dir_finder", "_session_provider")
+    __slots__ = ("_config", "_session_provider")
     _session_provider: Callable[[], SessionConfig]
-    _config_dir_finder: Callable[[], Path | None]
+    _config: ConfigWriter
 
     def __new__(
         cls,
@@ -162,7 +171,7 @@ class ProviderTool:
     ) -> Self:
         self = super().__new__(cls)
         self._session_provider = session_provider
-        self._config_dir_finder = config_dir_finder
+        self._config = ConfigWriter(config_dir_finder)
         return self
 
     def dispatch(self, name: ProviderName | None = None) -> str:
@@ -175,10 +184,13 @@ class ProviderTool:
         Returns:
             JSON string. No arg: ``{"available": [...], "current": "..."}``
             (``current`` may be ``null`` when nothing has been set yet).
-            Name given: ``{"provider": "<name>"}``.
+            Name given: ``{"provider": "<name>"}``. A filesystem or config
+            fault at refresh or write: ``{"error": "..."}``.
         """
         session = self._session_provider()
-        session.refresh_from_config()
+        err = self._config.refresh(session)
+        if err is not None:
+            return err
 
         if name is None:
             return json.dumps(
@@ -188,8 +200,10 @@ class ProviderTool:
                 }
             )
 
+        write_err = self._config.write("provider", name)
+        if write_err is not None:
+            return write_err
         session.provider = name
-        ConfigStore(self._config_dir_finder()).write_field("provider", name)
         return json.dumps({"provider": name})
 
 
@@ -201,13 +215,14 @@ class VoiceTool:
     with featured-voice blurbs; ``dispatch("<name>")`` strips a stray leading
     ``@`` sigil via :meth:`SynthesisSpec.normalize_voice`, writes to the
     session and to ``.punt-labs/vox/vox.md``, and returns
-    ``{"voice": "<normalized-name>"}``. A daemon fault on the roster path
-    returns ``{"error": ...}``.
+    ``{"voice": "<normalized-name>"}``. A daemon fault on the roster path,
+    or a filesystem/config fault at refresh or write, returns
+    ``{"error": ...}`` -- the tool never raises across the MCP boundary.
     """
 
-    __slots__ = ("_client_factory", "_config_dir_finder", "_session_provider")
+    __slots__ = ("_client_factory", "_config", "_session_provider")
     _session_provider: Callable[[], SessionConfig]
-    _config_dir_finder: Callable[[], Path | None]
+    _config: ConfigWriter
     _client_factory: Callable[[], VoxClientSync]
 
     def __new__(
@@ -218,7 +233,7 @@ class VoiceTool:
     ) -> Self:
         self = super().__new__(cls)
         self._session_provider = session_provider
-        self._config_dir_finder = config_dir_finder
+        self._config = ConfigWriter(config_dir_finder)
         self._client_factory = client_factory
         return self
 
@@ -236,10 +251,13 @@ class VoiceTool:
             renamed to ``available``; ``featured`` carries the blurbs).
             Name given: ``{"voice": "<normalized-name>"}``. A daemon fault on
             the roster returns ``{"error": ...}``; a blank/lone-``@`` write
-            returns ``{"error": "voice name is empty"}``.
+            returns ``{"error": "voice name is empty"}``; a filesystem or
+            config fault at refresh or write returns ``{"error": ...}``.
         """
         session = self._session_provider()
-        session.refresh_from_config()
+        err = self._config.refresh(session)
+        if err is not None:
+            return err
 
         if name is None:
             return self._list(session)
@@ -248,8 +266,10 @@ class VoiceTool:
         if normalized is None:
             return _error("voice name is empty")
 
+        write_err = self._config.write("voice", normalized)
+        if write_err is not None:
+            return write_err
         session.voice = normalized
-        ConfigStore(self._config_dir_finder()).write_field("voice", normalized)
         return json.dumps({"voice": normalized})
 
     def _list(self, session: SessionConfig) -> str:
