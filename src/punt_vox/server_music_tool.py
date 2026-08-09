@@ -330,7 +330,12 @@ class MusicTool:
 
         A query verb, not a control action: the caller gets the same
         :class:`MusicStateView` fields the ``status`` tool reports, plus the
-        one-line summary :class:`ProgramStatus` renders for every surface.
+        human summary :class:`ProgramStatus` renders for every surface -- a
+        headline line that grows an indented ``error:`` line on a generation
+        failure and one line per permanently failed part. The panel formatter
+        shows only the first line, so the failure lines reach the agent through
+        the result rather than the panel. A daemon fault returns the
+        ``{"error": ...}`` envelope instead, carrying no ``message``.
         """
         try:
             report = self._program_factory().status()

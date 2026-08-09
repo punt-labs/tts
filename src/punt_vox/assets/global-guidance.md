@@ -84,7 +84,12 @@ exactly 12 genre-accurate `variations`, one per pool slot, and pass a human
 - `mic:music subcommand="resume"` — resume the suspended album in place.
 - `mic:music subcommand="list"` — list saved albums.
 - `mic:music subcommand="status"` — current music state: the daemon's
-  authoritative `program` block, a coarse `music_mode`, and a one-line summary.
+  authoritative `program` block, a coarse `music_mode`, and a human `message`
+  summary. The `message` is a headline line, plus an indented `error:` line when
+  generation failed and one line per permanently failed part. The panel shows
+  only the first line; the whole `message` reaches you in the tool result, so
+  report the failure lines when they are there. A daemon fault returns an
+  `{"error": ...}` envelope instead.
 
 Guidance:
 
