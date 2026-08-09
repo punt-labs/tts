@@ -17,13 +17,15 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, Self, final
+from typing import TYPE_CHECKING, ClassVar, Literal, Self, final
 
 from punt_vox.music_args import MusicArgs
 from punt_vox.music_faults import DAEMON_ERRORS, MusicFault
 from punt_vox.music_phrases import MusicMarquee
+from punt_vox.music_session import MusicSession
 from punt_vox.music_state_view import MusicStateView
-from punt_vox.server_music_catalog import CatalogVerbs
+from punt_vox.server_music_catalog import CatalogVerbs, SavedAlbums
+from punt_vox.server_music_transport import TransportVerbs
 from punt_vox.types_programs.control import SelectionRequest, StartRequest
 from punt_vox.types_programs.prompts import PromptSet
 
@@ -32,7 +34,6 @@ if TYPE_CHECKING:
 
     from punt_vox.catalog_gateway import CatalogGateway
     from punt_vox.program_gateway import ProgramGateway
-    from punt_vox.types_programs.control import CommandOutcome
     from punt_vox.vibe_command import MusicPreference
 
 __all__ = ["MusicSubcommand", "MusicTool"]
@@ -55,22 +56,6 @@ MusicSubcommand = Literal[
 ]
 
 
-class MusicSession(Protocol):
-    """The session surface :class:`MusicTool` reads for the ``on`` request.
-
-    A structural view (PY-TS-6) of :class:`~punt_vox.server.SessionConfig`, so
-    this module never imports the presentation-layer session -- the dependency
-    arrow keeps pointing inward.
-    """
-
-    @property
-    def vibe(self) -> str | None:
-        """Return the session mood tag, or None when it is cleared."""
-
-    def refresh_from_config(self) -> None:
-        """Re-read the config files so the yielded mood is current."""
-
-
 @final
 class MusicTool:
     """Dispatch one ``music`` subcommand to its playback or catalog handler.
@@ -88,9 +73,11 @@ class MusicTool:
         "_pref_provider",
         "_program_factory",
         "_session_provider",
+        "_transport",
     )
     _program_factory: Callable[[], ProgramGateway]
     _catalog: CatalogVerbs
+    _transport: TransportVerbs
     _session_provider: Callable[[], MusicSession]
     _pref_provider: Callable[[], MusicPreference]
     _marquee: MusicMarquee
@@ -108,6 +95,7 @@ class MusicTool:
         self._session_provider = session_provider
         self._pref_provider = pref_provider
         self._marquee = MusicMarquee()
+        self._transport = TransportVerbs(program_factory, self._marquee)
         return self
 
     def dispatch(
@@ -252,42 +240,23 @@ class MusicTool:
             summaries = gateway.catalog()
         except DAEMON_ERRORS:
             return MusicFault.rejecting(message)
-        if not summaries:
-            return MusicFault.rejecting(message)
-        lines = [message, "saved albums:"]
-        lines.extend(f"  {summary.display_line()}" for summary in summaries)
-        return MusicFault.rejecting("\n".join(lines))
+        return MusicFault.rejecting(SavedAlbums(summaries).appended_to(message))
 
     def _advance(self, _args: MusicArgs) -> str:
         """User transport next -- step the replay cursor forward, or skip a Program."""
-        return self._transport(self._program_factory().advance, self._marquee.skip())
+        return self._transport.advance()
 
     def _prev(self, _args: MusicArgs) -> str:
         """User transport prev -- step the replay cursor back one part."""
-        return self._transport(self._program_factory().prev, "Previous part.")
+        return self._transport.prev()
 
     def _pause(self, _args: MusicArgs) -> str:
         """Suspend the active source in place (transport pause)."""
-        return self._transport(self._program_factory().pause, "Paused.")
+        return self._transport.pause()
 
     def _resume(self, _args: MusicArgs) -> str:
         """Continue a suspended source (transport resume)."""
-        return self._transport(self._program_factory().resume, "Resumed.")
-
-    def _transport(self, op: Callable[[], CommandOutcome], phrase: str) -> str:
-        """Run a transport command ``op`` and render its outcome (one shared path).
-
-        The four transport verbs (next/prev/pause/resume) differ only in the daemon
-        call and the marquee phrase, so they share this render-and-error path -- a
-        daemon fault funnels to the same JSON ``_error`` envelope as every verb.
-        """
-        try:
-            outcome = op()
-        except DAEMON_ERRORS as exc:
-            return MusicFault.of(exc)
-        return json.dumps(
-            {"message": f"♪ {outcome.display(phrase)}", "applied": outcome.applied}
-        )
+        return self._transport.resume()
 
     def _list(self, _args: MusicArgs) -> str:
         """List saved albums with their tags and ready/total part counts."""
@@ -295,25 +264,8 @@ class MusicTool:
             summaries = self._program_factory().catalog()
         except DAEMON_ERRORS as exc:
             return MusicFault.of(exc)
-        if not summaries:
-            message = "♪ No saved albums."
-        else:
-            lines = [f"♪ {len(summaries)} saved album(s):"]
-            lines.extend(f"  ♪ {summary.display_line()}" for summary in summaries)
-            message = "\n".join(lines)
-        programs = [
-            {
-                "id": s.id,
-                "style": s.style,
-                "vibe": s.vibe,
-                "name": s.name,
-                "format": s.format,
-                "ready": s.ready,
-                "total": s.total,
-            }
-            for s in summaries
-        ]
-        return json.dumps({"message": message, "programs": programs})
+        albums = SavedAlbums(summaries)
+        return json.dumps({"message": albums.announced(), "programs": albums.to_wire()})
 
     def _status(self, _args: MusicArgs) -> str:
         """Report what the daemon is playing, read fresh on every call.

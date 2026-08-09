@@ -20,12 +20,67 @@ from punt_vox.music_faults import DAEMON_ERRORS, MusicFault
 from punt_vox.types_programs.prompts import PromptSet
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
     from punt_vox.catalog_gateway import CatalogGateway
     from punt_vox.music_args import MusicArgs
+    from punt_vox.types_programs.control import ProgramSummary
 
-__all__ = ["CatalogVerbs"]
+__all__ = ["CatalogVerbs", "SavedAlbums"]
+
+
+@final
+class SavedAlbums:
+    """The albums on disk, rendered however a caller needs to see them.
+
+    Two verbs show the crate -- ``list`` announces it, and a bare ``play`` with
+    no history appends it to the reject so the caller has something to pick --
+    and both used to build the lines themselves. Rendering lives here instead,
+    so the crate cannot read one way in one verb and another way in the next.
+    """
+
+    __slots__ = ("_summaries",)
+    _summaries: tuple[ProgramSummary, ...]
+
+    def __new__(cls, summaries: Iterable[ProgramSummary]) -> Self:
+        self = super().__new__(cls)
+        self._summaries = tuple(summaries)
+        return self
+
+    def announced(self) -> str:
+        """Return the crate as the ``music`` tool announces it, marquee-marked."""
+        if not self._summaries:
+            return "♪ No saved albums."
+        lines = [f"♪ {len(self._summaries)} saved album(s):"]
+        lines.extend(f"  ♪ {album.display_line()}" for album in self._summaries)
+        return "\n".join(lines)
+
+    def appended_to(self, message: str) -> str:
+        """Return *message* with the crate listed beneath it, or bare if empty.
+
+        An empty crate leaves the message untouched: a caller told "nothing has
+        played yet" is not helped by an empty list under it.
+        """
+        if not self._summaries:
+            return message
+        lines = [message, "saved albums:"]
+        lines.extend(f"  {album.display_line()}" for album in self._summaries)
+        return "\n".join(lines)
+
+    def to_wire(self) -> list[dict[str, object]]:
+        """Return the album records the ``programs`` field of a reply carries."""
+        return [
+            {
+                "id": album.id,
+                "style": album.style,
+                "vibe": album.vibe,
+                "name": album.name,
+                "format": album.format,
+                "ready": album.ready,
+                "total": album.total,
+            }
+            for album in self._summaries
+        ]
 
 
 @final

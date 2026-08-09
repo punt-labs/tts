@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from punt_vox.catalog_gateway import CatalogGateway
-    from punt_vox.server_music_tool import MusicSession
+    from punt_vox.music_session import MusicSession
 
 
 @final
