@@ -9,8 +9,9 @@ the whole response. Only the music-control subcommands and vibe qualify: on
 success ``music`` with ``subcommand`` ``on``/``off``/``play``/``next`` and
 ``vibe`` put a terminal stop-narration directive in ``additionalContext``
 instead of the result JSON. Every other action keeps its RESULT so the flow that
-needs it can reply — the ``rec`` verbs and the ``music`` catalog/list
-subcommands return ids, paths, and bytes the agent addresses later, ``unmute``
+needs it can reply — the ``rec`` verbs and the ``music`` catalog/list/status
+subcommands return ids, paths, bytes, and program state the agent addresses
+later, ``unmute``
 drives ``/vox model|provider``, ``speak`` drives ``/mute``, ``notify`` drives
 ``/vox c``, and the query subcommands report data. On any tool error the failure
 must still reach ``additionalContext``.
@@ -316,6 +317,46 @@ class TestQueryToolsKeepData:
         assert "Matilda" in out["additionalContext"]
         assert _STOP_MARK not in out["additionalContext"]
         assert out["updatedMCPToolOutput"] == "♪ Matilda · notify=y"
+
+    def test_music_status_context_carries_the_data(self) -> None:
+        """``status`` is a query verb and must not fall through the control catch-all.
+
+        Every unlisted subcommand takes the ``*`` branch, which swaps the payload
+        for the stop-narration directive -- correct for a fire-and-forget control
+        action, exactly wrong for a verb whose whole purpose is to hand the agent
+        the program state to report.
+        """
+        out = _run_hook(
+            "music",
+            {
+                "message": "♪ focus-beats [music] — playing 2 of 5 (playing_rotating)",
+                "program": {"mode": "playing_rotating", "name": "focus-beats"},
+                "music_mode": "on",
+            },
+            subcommand="status",
+        )
+        assert "playing_rotating" in out["additionalContext"]
+        assert "music_mode" in out["additionalContext"]
+        assert _STOP_MARK not in out["additionalContext"]
+        assert (
+            out["updatedMCPToolOutput"]
+            == "♪ focus-beats [music] — playing 2 of 5 (playing_rotating)"
+        )
+
+    def test_music_status_panel_takes_only_the_first_line(self) -> None:
+        # A failing part adds lines to the summary; the compact channel takes one.
+        head = "♪ focus-beats [music] — stopped (failed)"
+        out = _run_hook(
+            "music",
+            {
+                "message": f"{head}\n  error: bad_prompt",
+                "program": {"mode": "failed"},
+                "music_mode": "on",
+            },
+            subcommand="status",
+        )
+        assert out["updatedMCPToolOutput"] == head
+        assert "bad_prompt" in out["additionalContext"]
 
     def test_music_list_context_carries_the_data(self) -> None:
         # music list returns {"message", "programs"} — the panel counts programs.

@@ -31,6 +31,15 @@ class NowPlaying:
     index: int  # 1-based position of the playing Part in the ordered pool
     of: int  # total Parts currently in the pool (the "M" in "N of M")
 
+    def position(self, *, paused: bool) -> str:
+        """Return ``playing N of M``, or ``paused N of M`` while held.
+
+        A suspended source is not advancing, so reporting it as playing would
+        tell a caller the wrong story about a Program that has stopped moving.
+        """
+        verb = "paused" if paused else "playing"
+        return f"{verb} {self.index} of {self.of}"
+
     def to_dict(self) -> dict[str, object]:
         """Return the JSON object form."""
         return {"index": self.index, "of": self.of}
@@ -56,6 +65,12 @@ class GenerationStatus:
     attempts: int  # transient retries in flight (0 unless retrying)
     last_error: str | None = None  # program-level error text; None when healthy
 
+    def error_lines(self) -> tuple[str, ...]:
+        """Return the indented error line for a human summary, empty when healthy."""
+        if self.last_error is None:
+            return ()
+        return (f"  error: {self.last_error}",)
+
     def to_dict(self) -> dict[str, object]:
         """Return the JSON object form, omitting an absent error."""
         record: dict[str, object] = {"filling": self.filling, "attempts": self.attempts}
@@ -80,6 +95,10 @@ class FailedPartView:
 
     index: int  # the intrinsic index of a Part that hit a permanent error
     reason: str  # the human-readable failure diagnostic
+
+    def line(self) -> str:
+        """Return the indented failure line for a human summary."""
+        return f"  part {self.index} failed: {self.reason}"
 
     def to_dict(self) -> dict[str, object]:
         """Return the JSON object form."""

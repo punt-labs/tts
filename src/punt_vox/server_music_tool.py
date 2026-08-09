@@ -17,13 +17,14 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, Self, final
+from typing import TYPE_CHECKING, ClassVar, Literal, Self, final
 
-from websockets.exceptions import WebSocketException
-
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.music_args import MusicArgs
+from punt_vox.music_faults import DAEMON_ERRORS, MusicFault
 from punt_vox.music_phrases import MusicMarquee
+from punt_vox.music_state_view import MusicStateView
+from punt_vox.server_music_catalog import CatalogVerbs, SavedAlbums
+from punt_vox.server_music_transport import TransportVerbs
 from punt_vox.types_programs.control import SelectionRequest, StartRequest
 from punt_vox.types_programs.prompts import PromptSet
 
@@ -31,8 +32,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from punt_vox.catalog_gateway import CatalogGateway
+    from punt_vox.music_session import MusicSession
     from punt_vox.program_gateway import ProgramGateway
-    from punt_vox.types_programs.control import CommandOutcome
     from punt_vox.vibe_command import MusicPreference
 
 __all__ = ["MusicSubcommand", "MusicTool"]
@@ -49,34 +50,10 @@ MusicSubcommand = Literal[
     "resume",
     "new",
     "list",
+    "status",
     "get",
     "remove",
 ]
-
-# The daemon-transport faults every subcommand funnels to a JSON _error; named
-# once so the whole tool shares one contract, mirroring server.py/server_audio_tools.
-_DAEMON_ERRORS = (VoxdConnectionError, VoxdProtocolError, WebSocketException, OSError)
-
-
-def _error(message: str) -> str:
-    """Return a JSON error string."""
-    return json.dumps({"error": message})
-
-
-class MusicSession(Protocol):
-    """The session surface :class:`MusicTool` reads for the ``on`` request.
-
-    A structural view (PY-TS-6) of :class:`~punt_vox.server.SessionConfig`, so
-    this module never imports the presentation-layer session -- the dependency
-    arrow keeps pointing inward.
-    """
-
-    @property
-    def vibe(self) -> str | None:
-        """Return the session mood tag, or None when it is cleared."""
-
-    def refresh_from_config(self) -> None:
-        """Re-read the config files so the yielded mood is current."""
 
 
 @final
@@ -91,14 +68,16 @@ class MusicTool:
     """
 
     __slots__ = (
-        "_catalog_factory",
+        "_catalog",
         "_marquee",
         "_pref_provider",
         "_program_factory",
         "_session_provider",
+        "_transport",
     )
     _program_factory: Callable[[], ProgramGateway]
-    _catalog_factory: Callable[[], CatalogGateway]
+    _catalog: CatalogVerbs
+    _transport: TransportVerbs
     _session_provider: Callable[[], MusicSession]
     _pref_provider: Callable[[], MusicPreference]
     _marquee: MusicMarquee
@@ -112,10 +91,11 @@ class MusicTool:
     ) -> Self:
         self = super().__new__(cls)
         self._program_factory = program_factory
-        self._catalog_factory = catalog_factory
+        self._catalog = CatalogVerbs(catalog_factory)
         self._session_provider = session_provider
         self._pref_provider = pref_provider
         self._marquee = MusicMarquee()
+        self._transport = TransportVerbs(program_factory, self._marquee)
         return self
 
     def dispatch(
@@ -142,7 +122,7 @@ class MusicTool:
         Args:
             subcommand: The verb -- ``on``/``stop``/``play``/``next`` drive the
                 running Program; ``new``/``get``/``remove`` mutate the saved
-                catalog; ``list`` shows it.
+                catalog; ``list`` shows it and ``status`` reports what is playing.
             style: Style tag; persists across calls for ``on``/``play``.
             vibe: Vibe tag radio for ``play``.
             name: Existing album handle ``play`` replays by name.
@@ -157,7 +137,8 @@ class MusicTool:
 
         Returns:
             JSON string: ``{"message", "applied"}`` for the control/playback
-            verbs, ``{"message", "programs"}`` for ``list``, ``{"album_id"}``/
+            verbs, ``{"message", "programs"}`` for ``list``,
+            ``{"message", "program", "music_mode"}`` for ``status``, ``{"album_id"}``/
             ``{"album_id", "path"}``/``{"removed"}`` for the catalog verbs, and
             an ``{"error": ...}`` envelope on a daemon fault or malformed prompt.
             Control actions emit no agent prose; the JSON drives the panel only.
@@ -176,7 +157,7 @@ class MusicTool:
         )
         handler = self._HANDLERS.get(subcommand)
         if handler is None:
-            return _error(f"unknown music subcommand: {subcommand!r}")
+            return MusicFault.rejecting(f"unknown music subcommand: {subcommand!r}")
         return handler(self, args)
 
     def _on(self, args: MusicArgs) -> str:
@@ -199,8 +180,8 @@ class MusicTool:
                 outcome, style, session.vibe, authored=args.authored
             )
             message = f"♪ {outcome.display(self._marquee.generating(style))}"
-        except (ValueError, *_DAEMON_ERRORS) as exc:  # malformed prompt or fault
-            return _error(str(exc))
+        except (ValueError, *DAEMON_ERRORS) as exc:  # malformed prompt or fault
+            return MusicFault.of(exc)
         return json.dumps({"message": message, "applied": outcome.applied})
 
     def _stop(self, _args: MusicArgs) -> str:
@@ -209,8 +190,8 @@ class MusicTool:
             outcome = self._program_factory().stop()
             self._pref_provider().confirm_stopped(outcome)
             message = f"♪ {outcome.display(self._marquee.stopped())}"
-        except _DAEMON_ERRORS as exc:
-            return _error(str(exc))
+        except DAEMON_ERRORS as exc:
+            return MusicFault.of(exc)
         return json.dumps({"message": message, "applied": outcome.applied})
 
     def _play(self, args: MusicArgs) -> str:
@@ -228,17 +209,17 @@ class MusicTool:
         gateway = self._program_factory()
         try:
             outcome = gateway.select(request)
-        except (ValueError, *_DAEMON_ERRORS) as exc:  # bad id / no match, or fault
+        except (ValueError, *DAEMON_ERRORS) as exc:  # bad id / no match, or fault
             if request.is_empty:
                 return self._no_history(str(exc), gateway)
-            return _error(str(exc))
+            return MusicFault.of(exc)
         # Name the re-pool genre from the live catalog on an applied replay; a
         # catalog fault falls back to None, never failing the applied replay.
         resolved_style: str | None = None
         if outcome.applied:
             try:
                 resolved_style = request.resolved_style(gateway.catalog())
-            except _DAEMON_ERRORS as exc:
+            except DAEMON_ERRORS as exc:
                 # Best-effort: a fault here never fails the applied replay, but
                 # log it so the dropped re-pool style is traceable, not silent.
                 logger.warning("music play: re-pool genre lookup failed: %s", exc)
@@ -257,101 +238,65 @@ class MusicTool:
         """
         try:
             summaries = gateway.catalog()
-        except _DAEMON_ERRORS:
-            return _error(message)
-        if not summaries:
-            return _error(message)
-        lines = [message, "saved albums:"]
-        lines.extend(f"  {summary.display_line()}" for summary in summaries)
-        return _error("\n".join(lines))
+        except DAEMON_ERRORS:
+            return MusicFault.rejecting(message)
+        return MusicFault.rejecting(SavedAlbums(summaries).appended_to(message))
 
     def _advance(self, _args: MusicArgs) -> str:
         """User transport next -- step the replay cursor forward, or skip a Program."""
-        return self._transport(self._program_factory().advance, self._marquee.skip())
+        return self._transport.advance()
 
     def _prev(self, _args: MusicArgs) -> str:
         """User transport prev -- step the replay cursor back one part."""
-        return self._transport(self._program_factory().prev, "Previous part.")
+        return self._transport.prev()
 
     def _pause(self, _args: MusicArgs) -> str:
         """Suspend the active source in place (transport pause)."""
-        return self._transport(self._program_factory().pause, "Paused.")
+        return self._transport.pause()
 
     def _resume(self, _args: MusicArgs) -> str:
         """Continue a suspended source (transport resume)."""
-        return self._transport(self._program_factory().resume, "Resumed.")
-
-    def _transport(self, op: Callable[[], CommandOutcome], phrase: str) -> str:
-        """Run a transport command ``op`` and render its outcome (one shared path).
-
-        The four transport verbs (next/prev/pause/resume) differ only in the daemon
-        call and the marquee phrase, so they share this render-and-error path -- a
-        daemon fault funnels to the same JSON ``_error`` envelope as every verb.
-        """
-        try:
-            outcome = op()
-        except _DAEMON_ERRORS as exc:
-            return _error(str(exc))
-        return json.dumps(
-            {"message": f"♪ {outcome.display(phrase)}", "applied": outcome.applied}
-        )
+        return self._transport.resume()
 
     def _list(self, _args: MusicArgs) -> str:
         """List saved albums with their tags and ready/total part counts."""
         try:
             summaries = self._program_factory().catalog()
-        except _DAEMON_ERRORS as exc:
-            return _error(str(exc))
-        if not summaries:
-            message = "♪ No saved albums."
-        else:
-            lines = [f"♪ {len(summaries)} saved album(s):"]
-            lines.extend(f"  ♪ {summary.display_line()}" for summary in summaries)
-            message = "\n".join(lines)
-        programs = [
-            {
-                "id": s.id,
-                "style": s.style,
-                "vibe": s.vibe,
-                "name": s.name,
-                "format": s.format,
-                "ready": s.ready,
-                "total": s.total,
-            }
-            for s in summaries
-        ]
-        return json.dumps({"message": message, "programs": programs})
+        except DAEMON_ERRORS as exc:
+            return MusicFault.of(exc)
+        albums = SavedAlbums(summaries)
+        return json.dumps({"message": albums.announced(), "programs": albums.to_wire()})
+
+    def _status(self, _args: MusicArgs) -> str:
+        """Report what the daemon is playing, read fresh on every call.
+
+        A query verb, not a control action: the caller gets the same
+        :class:`MusicStateView` fields the ``status`` tool reports, plus the
+        human summary :class:`ProgramStatus` renders for every surface -- a
+        headline line that grows an indented ``error:`` line on a generation
+        failure and one line per permanently failed part. The panel formatter
+        shows only the first line, so the failure lines reach the agent through
+        the result rather than the panel. A daemon fault returns the
+        ``{"error": ...}`` envelope instead, carrying no ``message``.
+        """
+        try:
+            report = self._program_factory().status()
+        except DAEMON_ERRORS as exc:
+            return MusicFault.of(exc)
+        state = MusicStateView.of(report).to_dict()
+        return json.dumps({"message": f"♪ {report.summary()}", **state})
 
     def _new(self, args: MusicArgs) -> str:
         """Author one verbatim-prompt track into a fresh catalog album."""
-        if args.base_prompt is None:
-            return _error("music new requires base_prompt")
-        try:
-            prompts = PromptSet.single(args.base_prompt)
-            album_id = self._catalog_factory().new(prompts, args.canonical_title)
-        except (ValueError, *_DAEMON_ERRORS) as exc:
-            return _error(str(exc))
-        return json.dumps({"album_id": album_id})
+        return self._catalog.new(args)
 
     def _get(self, args: MusicArgs) -> str:
         """Export a saved album into *dest*; return the written locator."""
-        if args.album_id is None or args.dest is None:
-            return _error("music get requires album_id and dest")
-        try:
-            target = self._catalog_factory().get(args.album_id, args.dest)
-        except (ValueError, *_DAEMON_ERRORS) as exc:
-            return _error(str(exc))
-        return json.dumps({"album_id": args.album_id, "path": target})
+        return self._catalog.get(args)
 
     def _remove(self, args: MusicArgs) -> str:
         """Delete a saved album by id (a playing album is refused)."""
-        if args.album_id is None:
-            return _error("music remove requires album_id")
-        try:
-            self._catalog_factory().remove(args.album_id)
-        except (ValueError, *_DAEMON_ERRORS) as exc:
-            return _error(str(exc))
-        return json.dumps({"removed": args.album_id})
+        return self._catalog.remove(args)
 
     # The subcommand -> handler map: an explicit literal of the class's own
     # methods, never getattr-by-name (PY-TS-11 forbids introspective dispatch).
@@ -364,6 +309,7 @@ class MusicTool:
         "pause": _pause,
         "resume": _resume,
         "list": _list,
+        "status": _status,
         "new": _new,
         "get": _get,
         "remove": _remove,

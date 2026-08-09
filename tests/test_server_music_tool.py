@@ -11,20 +11,23 @@ asserted directly.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Self, cast, final
+from typing import TYPE_CHECKING, Self, cast, final, get_args
 
+import pytest
 from _program_fakes import FakeProgramGateway
 
 from punt_vox.server_music_tool import MusicSubcommand, MusicTool
+from punt_vox.types_programs import ProgramName, ProgramStatus
 from punt_vox.types_programs.control import ProgramSummary
 from punt_vox.types_programs.prompts import POOL_SIZE, PromptSet
+from punt_vox.types_programs.status_views import NowPlaying
 from punt_vox.vibe_command import MusicPreference
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from punt_vox.catalog_gateway import CatalogGateway
-    from punt_vox.server_music_tool import MusicSession
+    from punt_vox.music_session import MusicSession
 
 
 @final
@@ -99,6 +102,11 @@ def _tool(
 
 def _pool() -> list[str]:
     return [f"variation {i}" for i in range(POOL_SIZE)]
+
+
+def _rotating_status() -> ProgramStatus:
+    """A replay in progress -- the simplest non-idle status a client can read."""
+    return ProgramStatus.radio(ProgramName("ambient_techno"), NowPlaying(index=1, of=3))
 
 
 # ---------------------------------------------------------------------------
@@ -244,6 +252,41 @@ def test_list_routes_to_program_catalog() -> None:
     assert "a3f1c9" in result["message"]
 
 
+def test_status_routes_to_program_status() -> None:
+    program = FakeProgramGateway()
+    result = json.loads(_tool(program=program).dispatch("status"))
+
+    assert program.verbs() == ["status"]
+    assert result["music_mode"] == "off"
+    assert result["program"] == ProgramStatus.idle().to_dict()
+    assert result["message"] == "♪ Nothing playing."
+
+
+def test_status_reports_the_daemons_authoritative_state() -> None:
+    """The reported fields are the ones the daemon handed back, not a cache."""
+    program = FakeProgramGateway(status=_rotating_status())
+    result = json.loads(_tool(program=program).dispatch("status"))
+
+    assert result["music_mode"] == "on"
+    assert result["program"]["mode"] == "playing_rotating"
+    assert "ambient_techno" in result["message"]
+
+
+def test_status_is_a_query_and_never_disturbs_playback() -> None:
+    program = FakeProgramGateway(status=_rotating_status())
+    _tool(program=program).dispatch("status")
+
+    assert program.verbs() == ["status"]  # no start/stop/select/advance
+
+
+def test_status_reports_an_unreachable_daemon_as_an_error() -> None:
+    """A daemon fault reaches the caller through the payload, never only a log."""
+    program = FakeProgramGateway(status_error="voxd unreachable")
+    result = json.loads(_tool(program=program).dispatch("status"))
+
+    assert result["error"] == "voxd unreachable"
+
+
 # ---------------------------------------------------------------------------
 # catalog verbs -- new/get/remove reach the catalog gateway
 # ---------------------------------------------------------------------------
@@ -357,6 +400,19 @@ def test_playback_verbs_never_touch_the_catalog_gateway() -> None:
 def test_unknown_subcommand_returns_an_error() -> None:
     result = json.loads(_tool().dispatch(cast("MusicSubcommand", "sideways")))
     assert "error" in result
+
+
+@pytest.mark.parametrize("subcommand", get_args(MusicSubcommand))
+def test_every_advertised_subcommand_is_dispatchable(subcommand: str) -> None:
+    """A verb in the Literal but not the handler table is documented yet unreachable.
+
+    FastMCP builds the tool schema from :data:`MusicSubcommand` and validates the
+    argument against it before dispatch, so the two sides must stay in step: a
+    verb missing from either is a call that can never succeed.
+    """
+    result = json.loads(_tool().dispatch(cast("MusicSubcommand", subcommand)))
+
+    assert result.get("error") != f"unknown music subcommand: {subcommand!r}"
 
 
 def test_blank_style_on_reaches_the_daemon_as_none() -> None:

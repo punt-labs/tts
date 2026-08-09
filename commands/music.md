@@ -1,7 +1,7 @@
 ---
 description: "Control background music generation"
 argument-hint: "on [--title ...] [style ...] | stop | next | prev | pause | resume | play [<name>] | list | status"
-allowed-tools: ["mcp__plugin_vox_mic__music", "mcp__plugin_vox_mic__status"]
+allowed-tools: ["mcp__plugin_vox_mic__music"]
 ---
 
 # /music command
@@ -122,7 +122,16 @@ Call `music` with `subcommand="list"` and display the album library.
 
 ### `status` (or no argument)
 
-Call `music` with `subcommand="status"` and report current music state.
+Call `music` with `subcommand="status"` and report current music state. It
+returns the daemon's authoritative `program` block, the coarse `music_mode`
+label, and a human `message` summary — the same music state the `status` tool
+reports inside its wider session payload. The `message` is a headline line
+(name, format, transport position), and it grows extra lines when there is
+something wrong: an indented `error:` line when generation failed, plus one
+line per permanently failed part while the Program plays on. The panel shows
+only the first line, but the whole `message` reaches you in the tool result —
+report the failure lines when they are there. A daemon fault returns an
+`{"error": ...}` envelope instead, with no `message` or `program` block.
 
 ## Authoring prompts
 

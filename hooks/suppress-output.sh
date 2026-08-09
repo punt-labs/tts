@@ -12,7 +12,7 @@ INPUT=$(cat)
 TOOL=$(printf '%s' "$INPUT" | jq -r '.tool_name')
 TOOL_NAME="${TOOL##*__}"
 # The single `music` tool routes on its subcommand argument (on/off/play/next/
-# list/new/get/remove); read it from the tool input to pick the panel form.
+# list/status/new/get/remove); read it from the tool input to pick the panel form.
 SUBCOMMAND=$(printf '%s' "$INPUT" | jq -r '.tool_input.subcommand // empty')
 RESULT=$(printf '%s' "$INPUT" | jq -r '
   def unpack: if type == "string" then (fromjson? // .) else . end;
@@ -244,10 +244,16 @@ fi
 # (on/off/play/next) are fire-and-forget: they author their own DJ-flavored ♪
 # .message line server-side (see MusicMarquee) and get the terminal
 # stop-narration directive, so the panel is the whole response. The query/catalog
-# verbs (list/new/get/remove) keep the RESULT for the agent to act on -- a saved
-# album id, an export path -- exactly as the old separate tools did.
+# verbs (list/status/new/get/remove) keep the RESULT for the agent to act on -- a
+# saved album id, an export path, the program state -- exactly as the old
+# separate tools did.
 if [[ "$TOOL_NAME" == "music" ]]; then
   case "$SUBCOMMAND" in
+    status)
+      # A query, not a control action: the agent reports what is playing, so it
+      # must get the program block back rather than the stay-silent directive.
+      emit "$(message_line "$RESULT")" "$RESULT"
+      ;;
     list)
       COUNT=$(printf '%s' "$RESULT" | jq -r '.programs | length' 2>/dev/null || echo "?")
       PHRASES=("♪ ${COUNT} album(s) in the crate" "♪ your crate: ${COUNT} album(s)")

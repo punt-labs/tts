@@ -37,7 +37,15 @@ class GatewayCall:
 class FakeProgramGateway:
     """A stateful, filesystem-free ``ProgramGateway`` for surface tests."""
 
-    __slots__ = ("_applied", "_catalog", "_reason", "_select_error", "_status", "calls")
+    __slots__ = (
+        "_applied",
+        "_catalog",
+        "_reason",
+        "_select_error",
+        "_status",
+        "_status_error",
+        "calls",
+    )
     _status: ProgramStatus
     _catalog: tuple[ProgramSummary, ...]
     _applied: bool
@@ -45,6 +53,9 @@ class FakeProgramGateway:
     # When set, :meth:`select` raises this as a daemon reject -- the empty-request
     # "no album played yet" path the bare-``play`` surfaces render with the list.
     _select_error: str | None
+    # When set, :meth:`status` raises it -- an unreachable daemon, the fault a
+    # status surface must report rather than swallow.
+    _status_error: str | None
     calls: list[GatewayCall]
 
     def __new__(
@@ -55,6 +66,7 @@ class FakeProgramGateway:
         applied: bool = True,
         reason: str | None = None,
         select_error: str | None = None,
+        status_error: str | None = None,
     ) -> Self:
         self = super().__new__(cls)
         self._status = status if status is not None else ProgramStatus.idle()
@@ -62,6 +74,7 @@ class FakeProgramGateway:
         self._applied = applied
         self._reason = reason
         self._select_error = select_error
+        self._status_error = status_error
         self.calls = []
         return self
 
@@ -85,6 +98,8 @@ class FakeProgramGateway:
 
     def status(self) -> ProgramStatus:
         self.calls.append(GatewayCall("status"))
+        if self._status_error is not None:
+            raise VoxdProtocolError(self._status_error)
         return self._status
 
     def start(self, request: StartRequest) -> CommandOutcome:
