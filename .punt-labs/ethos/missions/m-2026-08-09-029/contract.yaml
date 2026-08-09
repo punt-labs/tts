@@ -1,0 +1,49 @@
+mission_id: m-2026-08-09-029
+status: closed
+type: design
+created_at: "2026-08-09T16:42:07Z"
+updated_at: "2026-08-09T17:07:48Z"
+closed_at: "2026-08-09T17:07:48Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: mdm
+    pinned_at: "2026-08-09T16:42:07Z"
+    hash: cfb39e35cedde7372a1f0b92ae7c2d4b25a2db5ec0c3e44760ce00d094133a04
+inputs: {}
+write_set:
+    - docs/vox-0rp9-model-provider-voice.md
+success_criteria:
+    - 'Beads: vox-0rp9.1 (model), vox-0rp9.2 (provider), vox-0rp9.3 (voice), vox-0rp9.4 (strip mic:unmute overloads). Parent epic: vox-0rp9. Branch: design/vox-0rp9-model-provider-voice (already exists, checked out on main). Type: DESIGN — produce a single design doc; implementation missions land off this doc AFTER unit 1 (PR #396) merges to main. No implementation code in this mission.'
+    - 'READ FIRST (all listed in vox-0rp9''s epic description): the four sibling bead descriptions (`bd show vox-0rp9.1|2|3|4`), the epic description (`bd show vox-0rp9`), the vox surface-consistency epic''s end-state table (which enumerates the target for every surface), punt-kit/standards/cli.md §Core Principle / §Subcommand naming / §Projection Strategy, punt-kit/standards/tool-enable-disable.md §2.14 (why enable/disable stays under /vox and model/provider/voice do NOT get colon-namespaced under it — the standard mandates /<tool> enable exactly, so /vox:model IS the correct namespaced form for a non-enablement verb), the current commands/vox.md and commands/*.md, server.py''s mic:unmute + mic:who + notify tools for the overload pattern being retired, cli.py/__main__.py''s vox voice + vox voices for the current inconsistency (voice errors on no arg; voices is a separate command), and the mic:unmute tool schema.'
+    - 'DELIVERABLE: docs/vox-0rp9-model-provider-voice.md — one design doc covering the four beads as one architectural change. Sections REQUIRED: (1) Problem — the current three-surface inconsistencies for model/provider/voice + the mic:unmute overload pattern; (2) End-state per surface — a table like the epic''s with slash/CLI/MCP columns and each verb''s exact contract (arguments, return shape, no-argument behavior for list = AskUserQuestion picker in slash, plain-text or --json list in CLI, JSON list in MCP); (3) File-level write-set for each of the four implementation units (which files each unit creates/edits/deletes, so the implementation missions can be dispatched with airtight write sets); (4) Retirement inventory — every retired form (`/vox model`, `/vox provider`, `/unmute [voice]`, `mic:unmute` overloads, `vox voices`, `mic:who`) with the replacement path, per PL-PP-1 forward integration (no shims); (5) Test strategy — the parity-test pattern from tests/test_music_surface_parity.py adapted to the model/provider/voice verbs (drive both surfaces against one fake, compare full key sets), plus schema-introspection tests for the new Literal enums; (6) Sequencing — units 2 and 3 can land in parallel or serial (both touch server.py, so probably serial; state your recommendation with reason); unit 4 is hard-blocked on 2+3; document the dependency graph. NO implementation code, NO test code — just the design.'
+    - 'DECISIONS you MUST resolve in the design (do not defer to implementation): (a) Does mic:model / mic:provider / mic:voice accept the switch-and-list overload on a single tool (no-arg = list) or split into two tools per concern (list_models + set_model)? The epic''s target is one tool per concern with no-arg = list. Reaffirm and justify in the design; (b) For the CLI, is `vox model` a single-verb subcommand or does it get a `set`/`list` sub-subcommand? Standard says single verbs (cli.md §Subcommand naming); reaffirm; (c) For no-argument slash behavior: does /vox:model open an AskUserQuestion dialog with all models listed, or emit the list as text? The user established (in the epic conversation) that "when in claude code, the user should get a choice dialog"; specify the dialog structure (question text, options, header, multiSelect=false); (d) mic:unmute after stripping — its `voice` parameter should remain as a per-call voice override (not a session voice switch, which belongs on mic:voice); state this explicitly and describe the failure mode when only `voice=` is passed with no text (currently a session-voice-switch side effect — now: reject cleanly, since mic:voice is the correct call); (e) Deposited guide (assets/global-guidance.md) rewrites: list every section that needs updating and the exact new content it should carry.'
+    - 'CONSTRAINTS: no migration/compat/shim/version-bridge code anywhere in the design — the leader will STRIKE any such element per the vox CLAUDE.md hard-gate rule ("No migration, backwards-compatibility, shim, or version-compat code — ever"). No Z-spec required — this is a surface/schema change, not a stateful subsystem change; but if any part of the design touches state semantics (e.g. session voice), call that out and the leader will decide whether z-spec is warranted. Every retired form gets deleted in the same commit as its replacement (PY-RF-6 forward integration).'
+    - 'FORMAT: markdown, standard docs/ADR-adjacent shape. Include a preamble noting this design covers four beads, the parent epic, and that implementation missions land AFTER PR #396 merges. Every claim about existing behavior should cite a file:line — grep the source, do not remember. Every constraint from a standard should cite the standard section (cli.md §Foo, python.md Rule N).'
+    - 'COMMIT DISCIPLINE: one commit with the finished doc, or up to three logical steps (problem/end-state, write-sets/decisions, test-strategy/sequencing). Each commit passes `make check`. Do NOT push, do NOT open a PR — the leader reviews the design in place, files any amendments as follow-up commits on the same branch, then dispatches implementation missions off the reviewed design.'
+    - Submit via `ethos mission result` with the commit SHAs and a two-paragraph summary of the design shape.
+budget:
+    rounds: 2
+    reflection_after_each: false
+current_round: 1
+context: |-
+    Design mission for the model+provider+voice+mic:unmute-cleanup bundle of the
+    vox-0rp9 surface-consistency epic. Runs in parallel with PR #396 (unit 1,
+    mic:notify state parity) which is in its review/merge cycle right now.
+
+    The four sibling beads (vox-0rp9.1, .2, .3, .4) touch the same surface files
+    (server.py, commands/, cli.py/__main__.py, assets/global-guidance.md, tests/),
+    so bundling their DESIGN into one doc is the right shape; the IMPLEMENTATION
+    missions can then land as one PR or split into 2-3 rollback-coherent PRs
+    depending on your sequencing recommendation.
+
+    You are the Python-core / MCP-server-tool-surface specialist per the vox
+    delegation table. mdm is the evaluator (CLI-author lens, chosen because the
+    slash/CLI decisions in this design are the load-bearing ones).
+
+    The epic''s end-state table (`bd show vox-0rp9`) is the authoritative target
+    — don''t redesign it, formalize it into a file-level implementation-ready
+    document. The leader will strike any migration/compat element AT DESIGN
+    REVIEW, before dispatching implementation. So keep the design ruthlessly
+    forward-integrated: every retired form is DELETED in the same commit as its
+    replacement lands.
