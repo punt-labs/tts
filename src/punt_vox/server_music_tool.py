@@ -23,6 +23,7 @@ from punt_vox.music_args import MusicArgs
 from punt_vox.music_faults import DAEMON_ERRORS, MusicFault
 from punt_vox.music_phrases import MusicMarquee
 from punt_vox.music_state_view import MusicStateView
+from punt_vox.server_music_catalog import CatalogVerbs
 from punt_vox.types_programs.control import SelectionRequest, StartRequest
 from punt_vox.types_programs.prompts import PromptSet
 
@@ -82,14 +83,14 @@ class MusicTool:
     """
 
     __slots__ = (
-        "_catalog_factory",
+        "_catalog",
         "_marquee",
         "_pref_provider",
         "_program_factory",
         "_session_provider",
     )
     _program_factory: Callable[[], ProgramGateway]
-    _catalog_factory: Callable[[], CatalogGateway]
+    _catalog: CatalogVerbs
     _session_provider: Callable[[], MusicSession]
     _pref_provider: Callable[[], MusicPreference]
     _marquee: MusicMarquee
@@ -103,7 +104,7 @@ class MusicTool:
     ) -> Self:
         self = super().__new__(cls)
         self._program_factory = program_factory
-        self._catalog_factory = catalog_factory
+        self._catalog = CatalogVerbs(catalog_factory)
         self._session_provider = session_provider
         self._pref_provider = pref_provider
         self._marquee = MusicMarquee()
@@ -335,34 +336,15 @@ class MusicTool:
 
     def _new(self, args: MusicArgs) -> str:
         """Author one verbatim-prompt track into a fresh catalog album."""
-        if args.base_prompt is None:
-            return MusicFault.rejecting("music new requires base_prompt")
-        try:
-            prompts = PromptSet.single(args.base_prompt)
-            album_id = self._catalog_factory().new(prompts, args.canonical_title)
-        except (ValueError, *DAEMON_ERRORS) as exc:
-            return MusicFault.of(exc)
-        return json.dumps({"album_id": album_id})
+        return self._catalog.new(args)
 
     def _get(self, args: MusicArgs) -> str:
         """Export a saved album into *dest*; return the written locator."""
-        if args.album_id is None or args.dest is None:
-            return MusicFault.rejecting("music get requires album_id and dest")
-        try:
-            target = self._catalog_factory().get(args.album_id, args.dest)
-        except (ValueError, *DAEMON_ERRORS) as exc:
-            return MusicFault.of(exc)
-        return json.dumps({"album_id": args.album_id, "path": target})
+        return self._catalog.get(args)
 
     def _remove(self, args: MusicArgs) -> str:
         """Delete a saved album by id (a playing album is refused)."""
-        if args.album_id is None:
-            return MusicFault.rejecting("music remove requires album_id")
-        try:
-            self._catalog_factory().remove(args.album_id)
-        except (ValueError, *DAEMON_ERRORS) as exc:
-            return MusicFault.of(exc)
-        return json.dumps({"removed": args.album_id})
+        return self._catalog.remove(args)
 
     # The subcommand -> handler map: an explicit literal of the class's own
     # methods, never getattr-by-name (PY-TS-11 forbids introspective dispatch).
