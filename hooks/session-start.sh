@@ -53,16 +53,21 @@ fi
 # Skip *-dev.md files — dev commands use plugin namespace (vox-dev:say-dev)
 if [[ "$DEV_MODE" == "false" ]]; then
   DEPLOYED=()
-  for cmd_file in "$PLUGIN_ROOT/commands/"*.md; do
-    name="$(basename "$cmd_file")"
-    [[ "$name" == *-dev.md ]] && continue
-    dest="$COMMANDS_DIR/$name"
-    mkdir -p "$COMMANDS_DIR"
-    if [[ ! -f "$dest" ]] || ! diff -q "$cmd_file" "$dest" >/dev/null 2>&1; then
-      cp "$cmd_file" "$dest"
-      DEPLOYED+=("/${name%.md}")
-    fi
-  done
+  # A bare `mkdir -p` here would abort the whole hook under `set -e` if
+  # $HOME is unwritable -- same failure mode the panel log below guards
+  # against. Skip deployment silently rather than take session startup
+  # down with it.
+  if mkdir -p "$COMMANDS_DIR" 2>/dev/null; then
+    for cmd_file in "$PLUGIN_ROOT/commands/"*.md; do
+      name="$(basename "$cmd_file")"
+      [[ "$name" == *-dev.md ]] && continue
+      dest="$COMMANDS_DIR/$name"
+      if [[ ! -f "$dest" ]] || ! diff -q "$cmd_file" "$dest" >/dev/null 2>&1; then
+        cp "$cmd_file" "$dest"
+        DEPLOYED+=("/${name%.md}")
+      fi
+    done
+  fi
   if [[ ${#DEPLOYED[@]} -gt 0 ]]; then
     ACTIONS+=("Deployed commands: ${DEPLOYED[*]}")
   fi
