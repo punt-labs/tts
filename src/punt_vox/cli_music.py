@@ -11,20 +11,20 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Callable, Mapping
-from pathlib import Path
 from typing import Annotated, NoReturn, Self, cast, final
 
 import typer
-from websockets.exceptions import WebSocketException
 
-from punt_vox.catalog_gateway import CatalogGateway
+from punt_vox import music_control_verb as control
+from punt_vox.cli_guard import GATEWAY_ERRORS, CliGuard
 from punt_vox.cli_io import OutputFlags
-from punt_vox.client_catalog_gateway import ClientCatalogGateway
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.cli_music_catalog import CatalogCli
 from punt_vox.client_gateway import ClientProgramGateway
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import ConfigStore
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
+from punt_vox.music_catalog_view import SavedAlbums
+from punt_vox.music_state_view import MusicStateView
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.program_gateway import ProgramGateway
 from punt_vox.types_programs.control import (
@@ -34,17 +34,7 @@ from punt_vox.types_programs.control import (
 )
 from punt_vox.types_programs.prompts import PromptSet
 
-__all__ = ["MusicCli", "build_music_app"]
-
-# A client error, a raw WebSocket failure (stale-token handshake / mid-request
-# close, matching the MCP tools), or a bad name (ValueError) fails cleanly.
-_GATEWAY_ERRORS = (
-    VoxdConnectionError,
-    VoxdProtocolError,
-    WebSocketException,
-    OSError,
-    ValueError,
-)
+__all__ = ["MusicCli"]
 
 # The three output flags, redeclared on every verb so ``--json`` parses AFTER
 # the subcommand (``vox music list --json``), not only before it (vox-cnak). The
@@ -60,35 +50,33 @@ _Quiet = Annotated[
 
 @final
 class MusicCli:
-    """The music commands: playback verbs plus catalog authoring (new/get/remove)."""
+    """The playback verbs of ``vox music``: on, stop, play, transport, and status.
 
-    __slots__ = (
-        "_catalog_factory",
-        "_flags",
-        "_formatter",
-        "_gateway_factory",
-        "_vibe_source",
-    )
+    The catalog-authoring verbs live in :class:`CatalogCli`; :meth:`build_app`
+    registers both into one Typer group. The split follows the seam the MCP
+    surface already draws between ``MusicTool`` and ``CatalogVerbs``.
+    """
+
+    __slots__ = ("_flags", "_formatter", "_gateway_factory", "_guard", "_vibe_source")
     _formatter: OutputFormatter
     _gateway_factory: Callable[[], ProgramGateway]
-    _catalog_factory: Callable[[], CatalogGateway]
     _flags: OutputFlags
     _vibe_source: Callable[[], str | None]
+    _guard: CliGuard
 
     def __new__(
         cls,
         formatter: OutputFormatter,
         gateway_factory: Callable[[], ProgramGateway] | None = None,
-        catalog_factory: Callable[[], CatalogGateway] | None = None,
         flags: OutputFlags | None = None,
         vibe_source: Callable[[], str | None] | None = None,
     ) -> Self:
         self = super().__new__(cls)
         self._formatter = formatter
         self._gateway_factory = gateway_factory or cls._default_gateway
-        self._catalog_factory = catalog_factory or cls._default_catalog
         self._flags = flags if flags is not None else OutputFlags(formatter)
         self._vibe_source = vibe_source or cls._default_vibe
+        self._guard = CliGuard(formatter)
         return self
 
     @staticmethod
@@ -106,27 +94,48 @@ class MusicCli:
         return ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read().vibe
 
     @staticmethod
-    def _default_catalog() -> CatalogGateway:
-        """Build the production catalog gateway -- a fresh client per command."""
-        return ClientCatalogGateway(VoxClientSync())
+    def build_app(formatter: OutputFormatter, flags: OutputFlags) -> typer.Typer:
+        """Return the ``vox music`` Typer group with bound methods (no wrappers).
 
-    @staticmethod
-    def _fail(message: str) -> NoReturn:
-        """Print an error to stderr and exit non-zero -- a clean CLI failure."""
-        typer.echo(f"Error: {message}", err=True)
-        raise typer.Exit(code=1)
-
-    def _guard[T](self, op: Callable[[], T]) -> T:
-        """Run daemon call *op*, mapping any gateway fault to a clean CLI exit.
-
-        The single place a ``voxd`` error becomes a ``typer.Exit``: every verb
-        runs its gateway/catalog call through here instead of repeating the
-        try/except, so the error-presentation policy lives in one method.
+        The playback verbs come from :class:`MusicCli` and the authoring verbs
+        from :class:`CatalogCli`; the caller sees one group either way. The verb
+        set must match the MCP tool's subcommands exactly -- asserted in the
+        parity tests.
         """
-        try:
-            return op()
-        except _GATEWAY_ERRORS as exc:
-            self._fail(str(exc))
+        cli = MusicCli(formatter, flags=flags)
+        catalog = CatalogCli(formatter, flags=flags)
+        app = typer.Typer(
+            help="Start, play, and author background music.",
+            no_args_is_help=True,
+        )
+        app.command("on")(cli.on)
+        app.command("new")(catalog.new)
+        app.command("list")(cli.list_programs)
+        app.command("play")(cli.play)
+        app.command("stop")(cli.stop)
+        app.command("get")(catalog.get)
+        app.command("remove")(catalog.remove)
+        app.command("next")(cli.advance)
+        app.command("prev")(cli.prev)
+        app.command("pause")(cli.pause)
+        app.command("resume")(cli.resume)
+        app.command("status")(cli.status)
+        return app
+
+    def _command(
+        self, verb: control.ControlVerb, op: Callable[[ProgramGateway], CommandOutcome]
+    ) -> None:
+        """Run control verb *op* against the daemon and report its outcome.
+
+        The one body every control verb shares -- on, stop, play, and the four
+        transport steps -- so a new verb is a two-line method rather than another
+        copy of the guard-and-render shape.
+        """
+        self._report(verb, self._guard.run(lambda: op(self._gateway_factory())))
+
+    def _report(self, verb: control.ControlVerb, outcome: CommandOutcome) -> None:
+        """Emit *outcome* on both channels, as the verb reports itself."""
+        self._formatter.emit(*verb.payload(outcome))
 
     def on(
         self,
@@ -151,19 +160,11 @@ class MusicCli:
         CLI and the ``music`` tool start a Program with the same mood contract.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        prompts = self._guard(self._read_pool)
-        # Canonicalise tags as the MCP tool does, so both surfaces build one request.
+        prompts = self._guard.run(self._read_pool)
         request = StartRequest(
-            style=StartRequest.canonical_tag(style),
-            vibe=self._vibe_source(),
-            name=StartRequest.canonical_tag(title),
-            prompts=prompts,
+            style=style, vibe=self._vibe_source(), name=title, prompts=prompts
         )
-        outcome = self._guard(lambda: self._gateway_factory().start(request))
-        self._formatter.emit(
-            {"music": "on", "applied": outcome.applied},
-            outcome.display("Generating music."),
-        )
+        self._command(control.ON, lambda g: g.start(request))
 
     @staticmethod
     def _read_pool() -> PromptSet | None:
@@ -216,27 +217,17 @@ class MusicCli:
         verbose: _Verbose = False,
         quiet: _Quiet = False,
     ) -> None:
-        """List catalog albums via the daemon, with their ready/total counts."""
+        """List catalog albums via the daemon, with their ready/total counts.
+
+        The records go out through the one :class:`SavedAlbums` projection the
+        ``music`` MCP tool reports, so neither surface can describe an album with
+        a field the other omits.
+        """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        albums = self._guard(lambda: self._gateway_factory().catalog())
-        if not albums:
-            self._formatter.emit({"programs": []}, "No saved albums.")
-            return
-        entries = [
-            {
-                "id": a.id,
-                "style": a.style,
-                "vibe": a.vibe,
-                "name": a.name,
-                "ready": a.ready,
-                "total": a.total,
-            }
-            for a in albums
-        ]
-        listing = "\n".join(f"  {a.display_line()}" for a in albums)
-        self._formatter.emit(
-            {"programs": entries}, f"{len(albums)} saved album(s):\n{listing}"
-        )
+        albums = SavedAlbums(self._guard.run(lambda: self._gateway_factory().catalog()))
+        summary = albums.announced()
+        payload = {"message": summary, "programs": albums.to_wire()}
+        self._formatter.emit(payload, summary)
 
     def play(
         self,
@@ -269,8 +260,7 @@ class MusicCli:
         if request.is_empty:
             self._replay_last(request)
             return
-        outcome = self._guard(lambda: self._gateway_factory().select(request))
-        self._emit_play(outcome)
+        self._command(control.PLAY, lambda g: g.select(request))
 
     def _replay_last(self, request: SelectionRequest) -> None:
         """Replay the last-played album; with no history, list the catalog and fail.
@@ -283,9 +273,9 @@ class MusicCli:
         gateway = self._gateway_factory()
         try:
             outcome = gateway.select(request)
-        except _GATEWAY_ERRORS as exc:
+        except GATEWAY_ERRORS as exc:
             self._fail_with_catalog(str(exc), gateway)
-        self._emit_play(outcome)
+        self._report(control.PLAY, outcome)
 
     def _fail_with_catalog(self, message: str, gateway: ProgramGateway) -> NoReturn:
         """Fail with *message* and the saved-album list, when the daemon is reachable.
@@ -296,73 +286,9 @@ class MusicCli:
         """
         try:
             albums = gateway.catalog()
-        except _GATEWAY_ERRORS:
-            self._fail(message)
-        if not albums:
-            self._fail(message)
-        listing = "\n".join(f"  {a.display_line()}" for a in albums)
-        self._fail(f"{message}\nsaved albums:\n{listing}")
-
-    def _emit_play(self, outcome: CommandOutcome) -> None:
-        """Emit the play outcome (the one place both play paths render)."""
-        self._formatter.emit(
-            {"music": "play", "applied": outcome.applied},
-            outcome.display("Playing selection."),
-        )
-
-    def new(
-        self,
-        prompt: Annotated[
-            str, typer.Argument(help="Verbatim ElevenLabs descriptive prompt.")
-        ],
-        title: Annotated[
-            str | None, typer.Option("--title", help="Human album title.")
-        ] = None,
-        *,
-        json_output: _JsonOutput = False,
-        verbose: _Verbose = False,
-        quiet: _Quiet = False,
-    ) -> None:
-        """Generate one track into a fresh catalog album; print its bare id.
-
-        The prompt is wrapped as a single-track :class:`PromptSet` -- the same
-        authored-input object the MCP tool builds -- and passed to the daemon
-        verbatim (no LLM expansion). This parks a track in the catalog and leaves
-        the active Program untouched. A blank prompt is a clean CLI error via the
-        gateway guard (``PromptSet.single`` raises ``ValueError``).
-        """
-        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        prompts = self._guard(lambda: PromptSet.single(prompt))
-        album_id = self._guard(lambda: self._catalog_factory().new(prompts, title))
-        self._formatter.emit({"album_id": album_id}, album_id)
-
-    def get(
-        self,
-        album_id: Annotated[str, typer.Argument(help="Album id to copy out.")],
-        *,
-        json_output: _JsonOutput = False,
-        verbose: _Verbose = False,
-        quiet: _Quiet = False,
-    ) -> None:
-        """Copy an album into the current directory as a directory of its parts."""
-        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        target = self._guard(
-            lambda: self._catalog_factory().get(album_id, str(Path.cwd()))
-        )
-        self._formatter.emit({"path": target}, target)
-
-    def remove(
-        self,
-        album_id: Annotated[str, typer.Argument(help="Album id to delete.")],
-        *,
-        json_output: _JsonOutput = False,
-        verbose: _Verbose = False,
-        quiet: _Quiet = False,
-    ) -> None:
-        """Delete a saved album by id; a playing album is refused."""
-        self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        self._guard(lambda: self._catalog_factory().remove(album_id))
-        self._formatter.emit({"removed": album_id}, f"removed {album_id}")
+        except GATEWAY_ERRORS:
+            self._guard.fail(message)
+        self._guard.fail(SavedAlbums(albums).appended_to(message))
 
     def stop(
         self,
@@ -378,11 +304,7 @@ class MusicCli:
         idempotent -- the daemon acks and the CLI prints a clean confirmation.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        outcome = self._guard(lambda: self._gateway_factory().stop())
-        self._formatter.emit(
-            {"music": "stop", "applied": outcome.applied},
-            outcome.display("Music stopped."),
-        )
+        self._command(control.STOP, lambda g: g.stop())
 
     def advance(
         self,
@@ -393,11 +315,7 @@ class MusicCli:
     ) -> None:
         """Step the active source forward one part (transport next)."""
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        outcome = self._guard(lambda: self._gateway_factory().advance())
-        self._formatter.emit(
-            {"music": "next", "applied": outcome.applied},
-            outcome.display("Advancing to another part."),
-        )
+        self._command(control.STEP, lambda g: g.advance())
 
     def prev(
         self,
@@ -408,11 +326,7 @@ class MusicCli:
     ) -> None:
         """Step the active source back one part (transport prev)."""
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        outcome = self._guard(lambda: self._gateway_factory().prev())
-        self._formatter.emit(
-            {"music": "prev", "applied": outcome.applied},
-            outcome.display("Stepping to the previous part."),
-        )
+        self._command(control.PREV, lambda g: g.prev())
 
     def pause(
         self,
@@ -423,11 +337,7 @@ class MusicCli:
     ) -> None:
         """Suspend the active source in place (transport pause)."""
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        outcome = self._guard(lambda: self._gateway_factory().pause())
-        self._formatter.emit(
-            {"music": "pause", "applied": outcome.applied},
-            outcome.display("Paused."),
-        )
+        self._command(control.PAUSE, lambda g: g.pause())
 
     def resume(
         self,
@@ -438,11 +348,7 @@ class MusicCli:
     ) -> None:
         """Continue a suspended source (transport resume)."""
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        outcome = self._guard(lambda: self._gateway_factory().resume())
-        self._formatter.emit(
-            {"music": "resume", "applied": outcome.applied},
-            outcome.display("Resumed."),
-        )
+        self._command(control.RESUME, lambda g: g.resume())
 
     def status(
         self,
@@ -451,29 +357,14 @@ class MusicCli:
         verbose: _Verbose = False,
         quiet: _Quiet = False,
     ) -> None:
-        """Show the active source's authoritative status."""
+        """Show the active source's authoritative status.
+
+        Reports the same ``message``/``program``/``music_mode`` fields
+        ``mic:music status`` returns, through the one :class:`MusicStateView`
+        projection, so no surface can tell a caller a different music state.
+        """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        report = self._guard(lambda: self._gateway_factory().status())
-        self._formatter.emit(report.to_dict(), report.summary())
-
-
-def build_music_app(formatter: OutputFormatter, flags: OutputFlags) -> typer.Typer:
-    """Return the ``vox music`` Typer group with bound methods (no wrappers)."""
-    cli = MusicCli(formatter, flags=flags)
-    app = typer.Typer(
-        help="Start, play, and author background music.",
-        no_args_is_help=True,
-    )
-    app.command("on")(cli.on)
-    app.command("new")(cli.new)
-    app.command("list")(cli.list_programs)
-    app.command("play")(cli.play)
-    app.command("stop")(cli.stop)
-    app.command("get")(cli.get)
-    app.command("remove")(cli.remove)
-    app.command("next")(cli.advance)
-    app.command("prev")(cli.prev)
-    app.command("pause")(cli.pause)
-    app.command("resume")(cli.resume)
-    app.command("status")(cli.status)
-    return app
+        report = self._guard.run(lambda: self._gateway_factory().status())
+        summary = report.summary()
+        state = MusicStateView.of(report).to_dict()
+        self._formatter.emit({"message": summary, **state}, summary)

@@ -1,10 +1,10 @@
 """Tests for the ``vox music`` CLI (cli_music.MusicCli).
 
-MusicCli is a humble object: each command method is driven directly with an
+MusicCli is a humble object: each playback verb is driven directly with an
 in-memory FakeProgramGateway and a mock formatter -- no daemon, no store -- so
 the surface behaviour (album list via the gateway, tag/id replay, next/status,
 and the F7 applied/rejected result) is asserted without a wire. A couple of
-CliRunner smoke tests confirm build_music_app wires the Typer group.
+CliRunner smoke tests confirm MusicCli.build_app wires the Typer group.
 """
 
 from __future__ import annotations
@@ -13,8 +13,6 @@ import io
 import json
 import re
 from dataclasses import replace
-from pathlib import Path
-from typing import Self, final
 from unittest.mock import MagicMock
 
 import pytest
@@ -25,13 +23,11 @@ from typer.testing import CliRunner
 from websockets.exceptions import WebSocketException
 
 from punt_vox.cli_io import OutputFlags
-from punt_vox.cli_music import MusicCli, build_music_app
-from punt_vox.client_errors import VoxdProtocolError
+from punt_vox.cli_music import MusicCli
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.types_programs import Reason
 from punt_vox.types_programs.control import ProgramSummary
 from punt_vox.types_programs.identifiers import ProgramName
-from punt_vox.types_programs.prompts import PromptSet
 from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.voxd.programs import Part, Program, ProgramState
 from punt_vox.voxd.programs.playback_policy import Advance, AdvanceResult
@@ -64,180 +60,7 @@ def _emitted(formatter: MagicMock) -> tuple[object, str]:
 def _build_music_app() -> typer.Typer:
     """Build the music Typer group with a formatter and its OutputFlags."""
     fmt = OutputFormatter()
-    return build_music_app(fmt, OutputFlags(fmt))
-
-
-@final
-class InMemoryCatalogGateway:
-    """A filesystem-backed ``CatalogGateway`` fake for the authoring verbs."""
-
-    __slots__ = ("_albums", "_calls", "_playing")
-    _albums: dict[str, str]
-    _playing: set[str]
-    _calls: list[tuple[str, str]]
-
-    def __new__(
-        cls,
-        albums: dict[str, str] | None = None,
-        playing: set[str] | None = None,
-    ) -> Self:
-        self = super().__new__(cls)
-        self._albums = dict(albums) if albums is not None else {}
-        self._playing = set(playing) if playing is not None else set()
-        self._calls = []
-        return self
-
-    @property
-    def calls(self) -> list[tuple[str, str]]:
-        """Return the recorded ``(verb, arg)`` calls for assertions."""
-        return self._calls
-
-    def new(self, prompts: PromptSet, name: str | None) -> str:
-        self._calls.append(("new", prompts.base))
-        album_id = name or f"{len(self._albums):06x}"
-        self._albums[album_id] = f"album-{album_id}"
-        return album_id
-
-    def get(self, album_id: str, dest_dir: str) -> str:
-        self._calls.append(("get", album_id))
-        if album_id not in self._albums:
-            raise VoxdProtocolError(f"no album named '{album_id}'")
-        target = Path(dest_dir) / self._albums[album_id]
-        target.mkdir(parents=True)  # exist_ok=False -> collision raises (D-1)
-        return str(target)
-
-    def remove(self, album_id: str) -> None:
-        self.calls.append(("remove", album_id))
-        if album_id not in self._albums:
-            raise VoxdProtocolError(f"no album named '{album_id}'")
-        if album_id in self._playing:
-            raise VoxdProtocolError(f"album {album_id} is playing; stop it first")
-        del self._albums[album_id]
-
-
-def _cli_catalog(
-    catalog: InMemoryCatalogGateway,
-    program: FakeProgramGateway | None = None,
-) -> tuple[MusicCli, MagicMock]:
-    formatter = MagicMock(spec=OutputFormatter)
-    prog = program if program is not None else FakeProgramGateway()
-    return MusicCli(formatter, lambda: prog, lambda: catalog), formatter
-
-
-# ---------------------------------------------------------------------------
-# new -- catalog authoring (verbatim prompt, bare id, program untouched)
-# ---------------------------------------------------------------------------
-
-
-def test_new_passes_prompt_verbatim_and_prints_bare_id() -> None:
-    catalog = InMemoryCatalogGateway()
-    cli, formatter = _cli_catalog(catalog)
-
-    cli.new("warm analog pads, slow, D minor, instrumental, loopable")
-
-    assert catalog.calls == [
-        ("new", "warm analog pads, slow, D minor, instrumental, loopable")
-    ]
-    payload, text = _emitted(formatter)
-    assert payload == {"album_id": text}  # human text is exactly the bare id
-
-
-def test_new_forwards_the_title_as_the_album_name() -> None:
-    """``vox music new --title`` hands the title to the catalog as the name."""
-    catalog = InMemoryCatalogGateway()
-    cli, formatter = _cli_catalog(catalog)
-
-    cli.new("warm pads", title="Warm Pads")
-
-    payload, _ = _emitted(formatter)
-    # The fake keys the album on the name it was handed; the CLI prints that id.
-    assert payload == {"album_id": "Warm Pads"}
-
-
-def test_new_does_not_touch_the_active_program() -> None:
-    """music new parks a track in the catalog; the Program is untouched (D-5)."""
-    program = FakeProgramGateway()
-    cli, _ = _cli_catalog(InMemoryCatalogGateway(), program)
-
-    cli.new("ambient drone")
-
-    assert program.calls == []  # no select/status/advance -- program untouched
-
-
-def test_new_bad_prompt_is_clean_error() -> None:
-    gateway = MagicMock()
-    gateway.new.side_effect = VoxdProtocolError("bad_prompt")
-    cli = MusicCli(MagicMock(spec=OutputFormatter), FakeProgramGateway, lambda: gateway)
-
-    with pytest.raises(typer.Exit):
-        cli.new("copyrighted work")
-
-
-# ---------------------------------------------------------------------------
-# get -- copy an album directory into the CWD, refuse collision (D-1)
-# ---------------------------------------------------------------------------
-
-
-def test_get_creates_album_directory_in_cwd(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    catalog = InMemoryCatalogGateway({"7f3a91": "warm-pads-7f3a91"})
-    cli, formatter = _cli_catalog(catalog)
-
-    cli.get("7f3a91")
-
-    written = tmp_path / "warm-pads-7f3a91"
-    assert written.is_dir()
-    _, text = _emitted(formatter)
-    assert text == str(written)
-
-
-def test_get_collision_is_clean_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "warm-pads-7f3a91").mkdir()
-    catalog = InMemoryCatalogGateway({"7f3a91": "warm-pads-7f3a91"})
-    cli, _ = _cli_catalog(catalog)
-
-    with pytest.raises(typer.Exit):
-        cli.get("7f3a91")
-
-
-def test_get_unknown_album_is_clean_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    cli, _ = _cli_catalog(InMemoryCatalogGateway())
-
-    with pytest.raises(typer.Exit):
-        cli.get("missing")
-
-
-# ---------------------------------------------------------------------------
-# remove -- delete an idle album, refuse a playing one (D-2)
-# ---------------------------------------------------------------------------
-
-
-def test_remove_deletes_idle_album() -> None:
-    catalog = InMemoryCatalogGateway({"7f3a91": "warm-pads-7f3a91"})
-    cli, formatter = _cli_catalog(catalog)
-
-    cli.remove("7f3a91")
-
-    assert ("remove", "7f3a91") in catalog.calls
-    payload, text = _emitted(formatter)
-    assert payload == {"removed": "7f3a91"}
-    assert text == "removed 7f3a91"
-
-
-def test_remove_refuses_playing_album() -> None:
-    catalog = InMemoryCatalogGateway({"7f3a91": "warm-pads-7f3a91"}, playing={"7f3a91"})
-    cli, _ = _cli_catalog(catalog)
-
-    with pytest.raises(typer.Exit):
-        cli.remove("7f3a91")
+    return MusicCli.build_app(fmt, OutputFlags(fmt))
 
 
 def test_music_group_exposes_the_unified_verb_set() -> None:
@@ -296,7 +119,7 @@ def test_list_empty() -> None:
     cli.list_programs()
 
     payload, text = _emitted(formatter)
-    assert payload == {"programs": []}
+    assert payload == {"message": "No saved albums.", "programs": []}
     assert "No saved albums" in text
 
 
@@ -361,7 +184,11 @@ def test_play_no_argument_replays_the_last_played() -> None:
     assert fake.calls[0].selection is not None
     assert fake.calls[0].selection.is_empty
     payload, _ = _emitted(formatter)
-    assert payload == {"music": "play", "applied": True}
+    assert payload == {
+        "music": "play",
+        "applied": True,
+        "message": "Playing selection.",
+    }
 
 
 def test_play_no_argument_without_history_errors_and_lists(
@@ -372,7 +199,7 @@ def test_play_no_argument_without_history_errors_and_lists(
         catalog=(_summary("a3f1c9", "trance", "calm", 3),),
         select_error="no album played yet; specify an album by id, name, or style/vibe",
     )
-    cli = MusicCli(MagicMock(spec=OutputFormatter), lambda: fake)
+    cli = MusicCli(OutputFormatter(), lambda: fake)
 
     with pytest.raises(typer.Exit):
         cli.play()
@@ -407,7 +234,7 @@ def test_stop_invokes_the_program_stop_op() -> None:
 
     assert fake.verbs() == ["stop"]
     payload, text = _emitted(formatter)
-    assert payload == {"music": "stop", "applied": True}
+    assert payload == {"music": "stop", "applied": True, "message": "Music stopped."}
     assert text == "Music stopped."
 
 
@@ -500,7 +327,7 @@ def test_status_idle() -> None:
 
 
 # ---------------------------------------------------------------------------
-# build_music_app wiring (CliRunner smoke)
+# MusicCli.build_app wiring (CliRunner smoke)
 # ---------------------------------------------------------------------------
 
 
@@ -526,7 +353,7 @@ def test_list_accepts_json_flag_after_the_subcommand() -> None:
     result = CliRunner().invoke(app, ["list", "--json"])
 
     assert result.exit_code == 0
-    assert json.loads(result.stdout) == {"programs": []}
+    assert json.loads(result.stdout) == {"message": "No saved albums.", "programs": []}
 
 
 # ---------------------------------------------------------------------------

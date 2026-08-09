@@ -1603,10 +1603,10 @@ class TestMusicPlayTool:
 
         assert srv._music_pref.style == "trance"
 
-    def test_play_union_across_genres_clears_the_style(
+    def test_play_replay_last_clears_the_style(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A genre-spanning union replay has no single style, so the register clears."""
+        """A bare replay-last request has no single style, so the register clears."""
         import punt_vox.server as srv
 
         srv._music_pref.started("flamenco")
@@ -1620,7 +1620,7 @@ class TestMusicPlayTool:
         )
         _install_fake(monkeypatch, FakeProgramGateway(catalog=catalog))
 
-        music_play()  # all-None replays every album, across genres
+        music_play()  # all-None is the bare replay-last request, no style axis
 
         assert srv._music_pref.style is None
 

@@ -20,10 +20,11 @@ import logging
 from typing import TYPE_CHECKING, ClassVar, Literal, Self, final
 
 from punt_vox.music_args import MusicArgs
+from punt_vox.music_catalog_view import SavedAlbums
 from punt_vox.music_faults import DAEMON_ERRORS, MusicFault
 from punt_vox.music_phrases import MusicMarquee
 from punt_vox.music_state_view import MusicStateView
-from punt_vox.server_music_catalog import CatalogVerbs, SavedAlbums
+from punt_vox.server_music_catalog import CatalogVerbs
 from punt_vox.server_music_transport import TransportVerbs
 from punt_vox.types_programs.control import SelectionRequest, StartRequest
 from punt_vox.types_programs.prompts import PromptSet
@@ -201,11 +202,10 @@ class MusicTool:
         the last-played album, and with none played yet the reject is rendered with
         the saved-album list (:meth:`_no_history`) rather than an arbitrary album.
         """
-        vibe = args.canonical_vibe
-        name = args.canonical_name
         request = SelectionRequest(
-            style=args.canonical_style, vibe=vibe, name=name, id=args.album_id
+            style=args.style, vibe=args.vibe, name=args.name, id=args.album_id
         )
+        vibe, name = request.vibe, request.name
         gateway = self._program_factory()
         try:
             outcome = gateway.select(request)
@@ -264,7 +264,7 @@ class MusicTool:
             summaries = self._program_factory().catalog()
         except DAEMON_ERRORS as exc:
             return MusicFault.of(exc)
-        albums = SavedAlbums(summaries)
+        albums = SavedAlbums.marked(summaries)
         return json.dumps({"message": albums.announced(), "programs": albums.to_wire()})
 
     def _status(self, _args: MusicArgs) -> str:

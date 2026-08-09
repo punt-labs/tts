@@ -490,6 +490,7 @@ vox music play                                 # Replay the last-played album (n
 vox music list                                 # List saved albums
 vox music new "warm analog pads, D minor" --title night-pads  # Generate one track (verbatim prompt) into the catalog
 vox music get 7f3a91                           # Materialize an album into the CWD
+vox music get 7f3a91 --dest ~/Music             # ...or into a directory you name
 vox music remove 7f3a91                        # Delete an album from the catalog
 vox music stop                                 # Stop background music
 vox status                                     # Current state

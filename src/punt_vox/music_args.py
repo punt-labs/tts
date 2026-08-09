@@ -49,16 +49,6 @@ class MusicArgs:
         return StartRequest.canonical_tag(self.style)
 
     @property
-    def canonical_vibe(self) -> str | None:
-        """Return the vibe tag trimmed, or None when blank/absent."""
-        return StartRequest.canonical_tag(self.vibe)
-
-    @property
-    def canonical_name(self) -> str | None:
-        """Return the name tag trimmed, or None when blank/absent."""
-        return StartRequest.canonical_tag(self.name)
-
-    @property
     def canonical_title(self) -> str | None:
         """Return the authored album title trimmed, or None when blank/absent.
 
