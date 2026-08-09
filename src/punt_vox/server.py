@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-import random
 import uuid
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -33,11 +32,11 @@ from punt_vox.music_state_view import MusicStateView
 from punt_vox.server_audio_tools import RecTool
 from punt_vox.server_enablement import EnablementTool
 from punt_vox.server_music_tool import MusicTool
+from punt_vox.server_switches import ModelTool, ProviderTool, VoiceTool
 from punt_vox.synthesis_batch import SegmentBatch
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe_command import MusicPreference, VibeCommand
 from punt_vox.vibe_trace import VibeTraceLog
-from punt_vox.voices import VOICE_BLURBS
 
 if TYPE_CHECKING:  # annotation-only -- kept off the runtime import graph (PY-TS-7)
     from collections.abc import Sequence
@@ -559,45 +558,18 @@ _enablement_tool = EnablementTool()
 mcp.tool(name="enablement")(_enablement_tool.dispatch)
 
 
-@mcp.tool()
-def who() -> str:
-    """List available voices for the current provider.
+# The three switch tools -- one MCP tool per engine capability (§4a). Each
+# holds call-time providers so a test patching the server's module globals is
+# honoured on the next call, and each writes through the same
+# ``ConfigStore.write_field`` choke-point the CLI uses. mic:who is retired;
+# its list capability lives on ``mic:voice`` (no arg).
+_model_tool = ModelTool(lambda: _session, _find_config_dir)
+_provider_tool = ProviderTool(lambda: _session, _find_config_dir)
+_voice_tool = VoiceTool(lambda: _session, _find_config_dir, _voxd_client)
 
-    Returns the voice roster with personality blurbs, the full list
-    of available voices, and the current session voice.
-
-    Returns:
-        JSON string with provider, current voice, featured voices,
-        and full voice list.
-    """
-    _session.refresh_from_config()
-    client = _voxd_client()
-
-    try:
-        all_voices = client.voices(provider=_session.provider)
-    except VoxdConnectionError as exc:
-        return _error(str(exc))
-    except (VoxdProtocolError, WebSocketException, OSError, ValueError) as exc:
-        logger.exception("Voice listing failed")
-        return _error(str(exc))
-
-    # Determine effective provider name for blurb lookup.
-    provider_name = _session.provider or "elevenlabs"
-
-    featured = [
-        {"name": name, "blurb": blurb}
-        for (prov, name), blurb in VOICE_BLURBS.items()
-        if prov == provider_name and name in all_voices
-    ]
-
-    return json.dumps(
-        {
-            "provider": provider_name,
-            "current": _session.voice,
-            "featured": random.sample(featured, min(6, len(featured))),
-            "all": all_voices,
-        }
-    )
+mcp.tool(name="model")(_model_tool.dispatch)
+mcp.tool(name="provider")(_provider_tool.dispatch)
+mcp.tool(name="voice")(_voice_tool.dispatch)
 
 
 @mcp.tool()

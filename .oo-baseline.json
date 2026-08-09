@@ -15,10 +15,10 @@
   "src/punt_vox/__main__.py": {
     "method_ratio": 0.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.85,
+    "avg_params": 2.07,
     "max_complexity": 8.0,
-    "avg_complexity": 3.04,
-    "module_size": 817.0,
+    "avg_complexity": 3.22,
+    "module_size": 907.0,
     "classes_per_module": 0.0,
     "class_to_func_ratio": 0.0,
     "init_violations": 0.0,
@@ -311,6 +311,19 @@
     "module_size": 224.0,
     "public_attr_violations": 0.0
   },
+  "src/punt_vox/config_writer.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.2,
+    "max_complexity": 2.0,
+    "avg_complexity": 1.2,
+    "module_size": 64.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/core.py": {
     "avg_complexity": 3.77,
     "avg_params": 2.77,
@@ -557,6 +570,19 @@
     "method_ratio": 1.0,
     "module_size": 146.0,
     "public_attr_violations": 0.0
+  },
+  "src/punt_vox/models.py": {
+    "method_ratio": 0.857,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.14,
+    "max_complexity": 4.0,
+    "avg_complexity": 1.71,
+    "module_size": 118.0,
+    "classes_per_module": 2.0,
+    "class_to_func_ratio": 0.667,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
   },
   "src/punt_vox/music_args.py": {
     "method_ratio": 1.0,
@@ -1144,14 +1170,14 @@
     "public_attr_violations": 0.0
   },
   "src/punt_vox/server.py": {
-    "method_ratio": 0.676,
+    "method_ratio": 0.697,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.09,
+    "avg_params": 1.12,
     "max_complexity": 9.0,
-    "avg_complexity": 2.37,
-    "module_size": 599.0,
+    "avg_complexity": 2.24,
+    "module_size": 576.0,
     "classes_per_module": 2.0,
-    "class_to_func_ratio": 0.154,
+    "class_to_func_ratio": 0.167,
     "init_violations": 0.0,
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
@@ -1217,6 +1243,19 @@
     "module_size": 61.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
+  "src/punt_vox/server_switches.py": {
+    "method_ratio": 0.875,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.5,
+    "max_complexity": 7.0,
+    "avg_complexity": 3.5,
+    "module_size": 257.0,
+    "classes_per_module": 3.0,
+    "class_to_func_ratio": 0.75,
     "init_violations": 0.0,
     "public_attr_violations": 0.0,
     "future_annotations": 1.0

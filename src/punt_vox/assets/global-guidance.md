@@ -34,13 +34,19 @@ committed the `.punt-labs/vox/enabled` marker.
 - `mic:unmute` — synthesize and play text. Pass `text` (or a `segments`
   list for multi-voice). Mood tags are resolved from config; do not pass
   `vibe_tags` yourself unless the user asked for a specific delivery.
+- `mic:model [name]` — switch TTS model (no arg lists available for the
+  current provider; elevenlabs shorthand `v3`/`flash`/`turbo`/`multilingual`
+  resolves server-side).
+- `mic:provider [name]` — switch TTS provider (no arg lists the closed
+  five-provider set: `elevenlabs`, `openai`, `polly`, `say`, `espeak`).
+- `mic:voice [name]` — set the session voice (no arg lists the roster,
+  current marked).
 - `mic:speak` — toggle spoken notifications: `mode="y"` (voice) or
   `mode="n"` (chimes only).
 - `mic:notify` — set the notification level: `"y"` (on task completion +
   permission prompts) or `"c"` (continuous — also announces real-time
   signals). Off is routed through `mic:enablement action="disable"`, not
   a `mic:notify` level (tool-enable-disable.md §2.3).
-- `mic:who` — list voices for the current provider (featured + full roster).
 - `mic:status` — current provider, voice, notify/vibe state, and the
   authoritative music Program (read fresh from the daemon).
 
@@ -117,9 +123,10 @@ Catalog verbs (address a saved album by the id `list` prints):
 ## Slash commands
 
 - `/vox enable` — turn vox on for this repo; `/vox disable` — turn it off.
-- `/vox model <name>` / `/vox provider <name>` — switch TTS engine mid-session.
-- `/unmute [voice]` — enable voice mode, optionally set the session voice;
-  `/unmute` (no argument) browses the roster.
+- `/vox:model [<name>]` — switch TTS model (no arg picker).
+- `/vox:provider [<name>]` — switch TTS provider (no arg picker).
+- `/vox:voice [<name>]` — set session voice (no arg picker).
+- `/unmute` — enable voice mode (spoken notifications).
 - `/mute` — chimes only (spoken notifications off).
 - `/vibe <mood>|auto|off` — set session mood.
 - `/music on|stop|next|prev|pause|resume|play [<name>]|list|status` — background music.
@@ -136,7 +143,8 @@ a plugin-less agent can drive vox with no MCP surface at all.
   `--rate` refine it; text can also arrive on stdin.
 - `vox notify normal|continuous` — set the per-repo notification level (normal is
   task-completion + permission prompts; continuous also announces signals).
-- `vox voice <name>` — set the session voice; `vox voices` — list the roster.
+- `vox model [<name>]`, `vox provider [<name>]`, `vox voice [<name>]` — switch
+  TTS model/provider/voice; no arg lists (`--json` for machine consumers).
 - `vox vibe <mood>|auto|off` — set the session mood (same director role as
   `mic:vibe`).
 - `vox music on|stop|next|prev|pause|resume|play [<name>]|list|status` — background music.

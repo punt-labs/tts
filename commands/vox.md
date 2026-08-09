@@ -1,43 +1,26 @@
 ---
-description: "Switch TTS model/provider, or enable/disable vox in this repo"
-argument-hint: "model <name> | provider <name> | enable | disable"
-allowed-tools: ["mcp__plugin_vox_mic__unmute", "mcp__plugin_vox_mic__enablement"]
+description: "Enable or disable vox in this repo"
+argument-hint: "enable | disable"
+allowed-tools: ["mcp__plugin_vox_mic__enablement"]
 ---
 
 # /vox command
 
-Switch the TTS model or provider mid-session, or turn vox on/off for the repo.
-The notification level (task-completion vs continuous) is a per-repo config, set
-with `vox notify normal|continuous` from a shell.
+Turn vox on or off for the current repository. The three mid-session switches
+— model, provider, and voice — each live on their own top-level slash
+command now (`/vox:model`, `/vox:provider`, `/vox:voice`), so `/vox` is
+reserved for enablement. The notification level (task-completion vs
+continuous) is a per-repo config, set with `vox notify normal|continuous`
+from a shell.
 
 ## Usage
 
-- `/vox model <name>` — switch TTS model (e.g. `v3`, `flash`, `turbo`)
-- `/vox provider <name>` — switch TTS provider (e.g. `elevenlabs`, `openai`, `polly`, `say`)
 - `/vox enable` — turn vox on for this repo
 - `/vox disable` — turn vox off for this repo
 
 ## Implementation
 
 Parse `$ARGUMENTS`:
-
-### `model <name>`
-
-Resolve the model shorthand to full model ID:
-
-- `v3` → `eleven_v3`
-- `flash` → `eleven_flash_v2_5`
-- `turbo` → `eleven_turbo_v2_5`
-- `multilingual` → `eleven_multilingual_v2`
-- Anything else → pass through as-is (e.g. `tts-1`, `tts-1-hd`)
-
-Call the `unmute` MCP tool with only the `model` parameter (no text). Confirm: "Switched model to `<full_id>`."
-
-### `provider <name>`
-
-Call the `unmute` MCP tool with only the `provider` parameter (no text). When switching providers, also pass `model` as empty string to clear the previous provider's model from config. Confirm: "Switched provider to `<name>`."
-
-Valid providers: `elevenlabs`, `openai`, `polly`, `say`, `espeak`.
 
 ### `enable`
 
@@ -63,4 +46,4 @@ edit — remind the user to commit it via a PR.
 
 ### No argument or unrecognized
 
-Tell user: "Usage: `/vox model <name>`, `/vox provider <name>`, `/vox enable`, or `/vox disable`; for the notification level use `vox notify normal|continuous`."
+Tell user: "Usage: `/vox enable` or `/vox disable`. To switch model, provider, or voice mid-session, use `/vox:model`, `/vox:provider`, or `/vox:voice`. For the notification level use `vox notify normal|continuous`."

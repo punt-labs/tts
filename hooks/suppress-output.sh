@@ -230,16 +230,6 @@ if [[ "$TOOL_NAME" == "status" ]]; then
   exit 0
 fi
 
-if [[ "$TOOL_NAME" == "who" ]]; then
-  COUNT=$(printf '%s' "$RESULT" | jq -r '.all | length' 2>/dev/null || echo "?")
-  PHRASES=(
-    "♪ ${COUNT} agents standing by"
-    "♪ here's who's around"
-  )
-  emit "$(pick_random "${PHRASES[@]}")" "$RESULT"
-  exit 0
-fi
-
 # The single `music` tool routes on its subcommand. The playback verbs
 # (on/off/play/next) are fire-and-forget: they author their own DJ-flavored ♪
 # .message line server-side (see MusicMarquee) and get the terminal

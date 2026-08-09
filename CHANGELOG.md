@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **One MCP tool and one CLI subcommand per switch: `model`, `provider`, `voice` (vox-0rp9.1 + .2 + .3).** The three mid-session switches -- TTS model, TTS provider, session voice -- previously spread across four verbs on three surfaces (`/vox model`/`/vox provider` slash sub-verbs writing through `mic:unmute`'s overloaded `model=`/`provider=` parameters, `mic:who` for voice listing, `/unmute <voice>` and `vox voice <name>`/`vox voices` for voice writes) now speak with one voice: three `mic:*` tools, three `vox` subcommands, three `/vox:*` slash commands. Each takes an optional NAME: no arg lists (marking the current selection); a name writes to the same `ConfigStore.write_field` choke-point the CLI has always used. Design landed at PR #397 (docs/vox-0rp9-model-provider-voice.md, §§2-4). **Breaking changes:**
+  - **`mic:who` retired** -- the voice roster now lives on `mic:voice(name=None)`. The reply keeps `provider`/`current`/`featured` and renames `all` to `available` for shape parity with `mic:model`/`mic:provider`.
+  - **`vox voices` retired** -- folded into `vox voice`, which with no argument lists the roster (marking the current selection) and with a name writes it.
+  - **`vox voice` no longer errors on no argument** -- it lists. Callers who need the write path pass the name.
+  - **`/vox model`/`/vox provider` slash sub-verbs retired** -- replaced by top-level `/vox:model`/`/vox:provider` with the same shape plus a no-arg `AskUserQuestion` picker. `/vox` retains only `enable`/`disable`.
+  - **`/unmute [voice]` retired** -- `/unmute` no longer accepts a voice argument. `/vox:voice` owns the session-voice picker; `/unmute` remains the "enable voice mode" toggle.
+  - **`mic:provider` schema tightening** -- the `name` argument is now `Literal["elevenlabs", "openai", "polly", "say", "espeak"]`, so an unknown provider is rejected at the FastMCP schema layer before dispatch.
+  - **`mic:unmute` keeps its `provider=`/`model=`/`voice=` parameters in this release** -- Unit B (vox-0rp9.4) strips them in a follow-up PR, and it is the release note that carries the "breaking" flag for the schema strip. This release adds the dedicated tools; the strip lands next.
+
 ### Fixed
 
 - **`mic:notify mode="n"` retired — off is routed through `mic:enablement action="disable"` (vox-0rp9.5).** The MCP tool's `mode` argument was `str`, guarded at runtime for `{"y", "n", "c"}` — while the CLI's `vox notify` had accepted only `normal|continuous` since the tool-enable-disable standard (§2.3) retired the `y|n` vocabulary for enablement and moved off to `vox disable`. That divergence let a caller turn spoken notifications off through the wrong channel — via `mic:notify` — bypassing the marker-based enablement contract §2.3 mandates as the sole enable/disable path. `mode` is now `Literal["y", "c"]`, so FastMCP rejects an `"n"` call at the schema layer before dispatch (a stronger boundary than the runtime guard it replaces), with the docstring pointing callers at `mic:enablement action="disable"` for the off path. The internal state can still be `"n"` (from config load, from a disable) — the change is only at the tool INPUT boundary, not the state model. First task delivered under epic **vox-0rp9** (vox surface consistency — split model/provider/voice out of `/vox`, close CLI/MCP parity gaps).
