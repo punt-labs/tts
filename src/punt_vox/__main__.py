@@ -31,7 +31,6 @@ from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.doctor import claude_desktop_config_path
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
-from punt_vox.server_switches import PROVIDER_NAMES
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe import VibeChange
 
@@ -583,29 +582,13 @@ def provider_cmd(  # pyright: ignore[reportUnusedFunction]
     """List or set the TTS provider.
 
     ``vox provider`` lists the five providers, marking the current selection.
-    ``vox provider <name>`` writes to ``.punt-labs/vox/vox.md``.
+    ``vox provider <name>`` writes to ``.punt-labs/vox/vox.md``. On a
+    genuine provider change the stale model is cleared in the same write --
+    model names are provider-scoped, so ``eleven_v3`` reaching an OpenAI
+    request is an invalid API call.
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-    store = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR)
-
-    if name is None:
-        listing = SwitchList(names=PROVIDER_NAMES, current=store.read().provider)
-        _formatter.emit(listing.payload(), listing.render())
-        return
-
-    if name not in PROVIDER_NAMES:
-        allowed = ", ".join(PROVIDER_NAMES)
-        raise typer.BadParameter(f"unknown provider {name!r}. Allowed: {allowed}")
-    # Clear the stale model on a genuine provider change -- model names are
-    # provider-scoped, so `eleven_v3` reaching an OpenAI request is an invalid
-    # API call. `mic:provider` (server_switches.ProviderTool) applies the same
-    # write; both surfaces must agree.
-    previous = store.read().provider
-    updates: dict[str, str] = {"provider": name}
-    if previous != name:
-        updates["model"] = ""
-    store.write_fields(updates)
-    _formatter.emit({"provider": name}, f"Provider: {name}")
+    _run(cmds.provider(_ctx(), name))
 
 
 @app.command("voice")
