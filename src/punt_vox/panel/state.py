@@ -37,9 +37,15 @@ class PanelState:
 
     @classmethod
     def read(cls, client: VoiceRoster, store: SettingsSource) -> Self:
-        """Read the config fields fresh from disk and the voice roster from voxd."""
+        """Read the config fields fresh from disk and the voice roster from voxd.
+
+        The roster is fetched for the current session provider (or the daemon's
+        default when unset) so a mid-session switch is seen after the next
+        resync -- the panel does not display an elevenlabs roster while the
+        session is configured to speak through espeak.
+        """
         cfg = store.read()
-        roster = tuple(client.voices())
+        roster = tuple(client.voices(cfg.provider))
         return cls(
             notify=cfg.notify,
             speak=cfg.speak,
@@ -61,18 +67,36 @@ class PanelState:
         """Return a copy with ``voice`` set to ``voice``."""
         return replace(self, voice=voice)
 
-    def with_provider(self, provider: str) -> Self:
-        """Return a copy with ``provider`` set and stale ``model`` cleared.
+    def with_provider(
+        self, provider: str, roster: tuple[str, ...] | None = None
+    ) -> Self:
+        """Return a copy with ``provider`` set + stale model/voice cleared.
 
-        Model names are provider-scoped -- an ``eleven_v3`` left in state
-        after a switch to OpenAI would drive an invalid request the next
-        time synthesis fires. A re-publish of the same provider is a no-op:
-        the model is only wiped on a genuine change, so an echoed event
-        never accidentally drops the current model.
+        Both model names and voice names are provider-scoped -- an
+        ``eleven_v3`` model or a ``benno`` voice left in state after a
+        switch to OpenAI/espeak would drive an invalid request the next
+        time synthesis fires. On a genuine change, this method (a) swaps
+        the roster if one was supplied, (b) clears the stored model, and
+        (c) clears the stored voice when it is not in the new roster.
+
+        A re-publish of the same provider is a no-op -- an echoed event
+        neither swaps the roster nor drops the current model/voice.
+
+        When ``roster`` is ``None`` the caller has not fetched the new
+        roster yet (e.g. a pre-refresh unit test); the previous roster
+        is kept and the voice is not re-validated against a stale list.
         """
         if provider == self.provider:
             return self
-        return replace(self, provider=provider, model=None)
+        next_roster = self.roster if roster is None else roster
+        next_voice = (
+            self.voice
+            if roster is None or self.voice is None or self.voice in next_roster
+            else None
+        )
+        return replace(
+            self, provider=provider, model=None, roster=next_roster, voice=next_voice
+        )
 
     def with_model(self, model: str) -> Self:
         """Return a copy with ``model`` set to ``model``."""

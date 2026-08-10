@@ -189,22 +189,67 @@ class VoxPanelService:
         return ModelControl(models=models, current=current).model_for_index(index)
 
     def _commit_provider(self, provider: str) -> None:
-        """Persist a provider change, clearing the stale model in the same step.
+        """Persist a provider change; refresh roster; clear stale model + voice.
 
-        Model names are provider-scoped: an ``eleven_v3`` left behind after a
-        switch to OpenAI would drive an invalid request. A re-publish of the
-        same provider is a no-op -- an echoed event neither rewrites the disk
-        nor drops the model. On a genuine change the two writes stay
-        sequential rather than atomic; the panel's own lock keeps the state
-        transition indivisible even if the two disk writes are not.
+        Model names AND voice names are provider-scoped: an ``eleven_v3``
+        model or a ``benno`` voice left behind after a switch to OpenAI or
+        espeak would drive an invalid request (voxd fails the synth). On a
+        genuine change this method writes the new provider, refetches the
+        roster for it, clears the model on disk, and clears the voice on
+        disk when it is not in the new roster. A re-publish of the same
+        provider is a no-op -- an echoed event neither rewrites the disk
+        nor drops the model/voice/roster.
+
+        Roster fetch happens OUTSIDE the lock -- it is a voxd round-trip
+        that must not block other panel threads on their own reads. The
+        provider is re-checked under the lock after the fetch: if another
+        thread swapped the provider mid-flight (e.g. a second click hit
+        first), this call gives up rather than clobber the newer state.
+        The voice-membership check also uses the current-under-lock voice,
+        not a stale pre-fetch snapshot, so a voice picked mid-flight
+        survives when it is in the new roster.
+
+        A ``VoxdConnectionError`` on the roster fetch surfaces as a
+        transient notice; the write is abandoned so the disk never lands
+        a provider whose roster we could not read.
         """
         with self._lock:
+            pre_fetch_provider = self._state.provider
+            if provider == pre_fetch_provider:
+                self._notice = PanelNotice.silent()
+                return
+        try:
+            roster = tuple(self._client.voices(provider))
+        except VoxdConnectionError:
+            logger.warning(
+                "vox-panel: voxd unreachable during provider-switch roster fetch"
+            )
+            with self._lock:
+                self._notice = PanelNotice.voxd_unavailable()
+            return
+        with self._lock:
+            # Re-check under the lock: another thread may have committed a
+            # different provider while our roster RPC was in flight. If the
+            # provider we saw before the fetch is not the one we see now,
+            # give up rather than overwrite that newer state.
+            if self._state.provider != pre_fetch_provider:
+                logger.info(
+                    "vox-panel: provider changed to %r mid-fetch; "
+                    "aborting our %r commit",
+                    self._state.provider,
+                    provider,
+                )
+                self._notice = PanelNotice.silent()
+                return
             if provider == self._state.provider:
                 self._notice = PanelNotice.silent()
                 return
             self._store.write_field("provider", provider)
             self._store.write_field("model", "")
-            self._state = self._state.with_provider(provider)
+            current_voice = self._state.voice
+            if current_voice is not None and current_voice not in roster:
+                self._store.write_field("voice", "")
+            self._state = self._state.with_provider(provider, roster=roster)
             self._notice = PanelNotice.silent()
 
     def _preview(self) -> bool:
