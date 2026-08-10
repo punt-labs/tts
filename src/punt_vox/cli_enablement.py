@@ -18,7 +18,6 @@ import typer
 from punt_vox.config import ConfigStore
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.enablement import RepoEnablement
-from punt_vox.types_synthesis import SynthesisSpec
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -50,10 +49,6 @@ _NotifyMode = Annotated[
             "'continuous' also announces real-time signals."
         ),
     ),
-]
-_VoiceOpt = Annotated[
-    str | None,
-    typer.Option("--voice", help="Set the session voice in the same call."),
 ]
 
 
@@ -128,7 +123,6 @@ class EnablementCli:
     def notify(
         self,
         mode: _NotifyMode,
-        voice: _VoiceOpt = None,
         *,
         json_output: _JsonOutput = False,
         verbose: _Verbose = False,
@@ -139,13 +133,14 @@ class EnablementCli:
         Distinct from the enablement marker: ``off`` is no longer a level; use
         ``vox disable`` to turn vox off for the repo. ``continuous`` implies
         speech (sets ``speak=y``); ``normal`` leaves ``speak`` alone after the
-        first init.
+        first init. Change the session voice through ``vox voice`` -- notify
+        is a mode toggle, not a voice-write channel.
 
         Example: vox notify normal
-        Example: vox notify continuous --voice matilda
+        Example: vox notify continuous
 
         See also: vox enable/disable (enablement marker), vox speak (voice on/off),
-        mic:notify (MCP peer).
+        vox voice (session voice), mic:notify (MCP peer).
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         if mode not in self._NOTIFY_VALUES:
@@ -159,21 +154,8 @@ class EnablementCli:
         # so a later `vox notify normal` never silently re-enables speech.
         if value == "c" or (first_init and value == "y"):
             updates["speak"] = "y"
-        stored_voice = self._resolve_voice(voice)
-        if stored_voice is not None:
-            updates["voice"] = stored_voice
         store.write_fields(updates)
         self._formatter.emit(updates, f"Notify: {mode}.")
-
-    @staticmethod
-    def _resolve_voice(voice: str | None) -> str | None:
-        """Normalize a session voice, tolerating a stray leading '@'; None if unset."""
-        if voice is None:
-            return None
-        normalized = SynthesisSpec.normalize_voice(voice)
-        if normalized is None:
-            raise typer.BadParameter("voice name is empty")
-        return normalized
 
     @staticmethod
     def _transition(action: Callable[[RepoEnablement], None]) -> RepoEnablement:

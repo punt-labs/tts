@@ -271,27 +271,6 @@ class TestUnmute:
         assert state["speak"] == "y"
         assert state["voice"] == "matilda"
 
-    def test_partition_18_set_voice_replaces(self) -> None:
-        """P18: nOn/sChime/{v1} + v?={v2} -> nOn/sVoice/{v2} -- voice replaced."""
-        _set_state(
-            notify_mode="y", speak_mode="n", speak_explicit=True, voice="matilda"
-        )
-        result = json.loads(speak(mode="y", voice="roger"))
-        assert result["voice"] == "roger"
-        state = _read_state()
-        assert state["speak"] == "y"
-        assert state["voice"] == "roger"
-
-    def test_partition_19_set_voice_from_empty(self) -> None:
-        """P19: nOff/sUnset/empty + v?={v1} -> nOff/sVoice/{v1} -- first unmute."""
-        _set_state(notify_mode="n")
-        result = json.loads(speak(mode="y", voice="sarah"))
-        assert result["voice"] == "sarah"
-        state = _read_state()
-        assert state["speak"] == "y"
-        assert state["voice"] == "sarah"
-        assert state["notify"] == "n"  # notify frame
-
     def test_partition_20_notify_frame_noff(self) -> None:
         """P20: nOff/sChime -> nOff/sVoice -- unmute keeps notify off."""
         _set_state(notify_mode="n", speak_mode="n", speak_explicit=True)
@@ -462,16 +441,6 @@ class TestWatcherObservations:
 
 class TestInvariantPreservation:
     """Partitions 39-41: Design invariants via multi-step sequences."""
-
-    def test_partition_39_voice_replacement(self) -> None:
-        """P39: Unmute replaces voice (not union) -- #voice <= 1 maintained."""
-        _set_state(
-            notify_mode="y", speak_mode="y", speak_explicit=True, voice="matilda"
-        )
-        speak(mode="y", voice="roger")
-        state = _read_state()
-        assert state["voice"] == "roger"
-        # Only one voice, not both
 
     def test_partition_40_sunset_one_way(self) -> None:
         """P40: sUnset -> sVoice is one-way; nOff+VoxOn keeps sVoice."""

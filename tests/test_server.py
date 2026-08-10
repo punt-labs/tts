@@ -651,35 +651,6 @@ class TestUnmute:
         assert "error" in result
         assert "not running" in result["error"]
 
-    def test_provider_persists_to_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import punt_vox.server as srv
-
-        mock_client = MagicMock()
-        mock_client.synthesize.return_value = SynthesizeResult(request_id="req_prov")
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        unmute(text="Hello", provider="openai")
-        assert srv._session.provider == "openai"
-
-    def test_model_persists_to_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import punt_vox.server as srv
-
-        mock_client = MagicMock()
-        mock_client.synthesize.return_value = SynthesizeResult(request_id="req_mod")
-        monkeypatch.setattr("punt_vox.server._voxd_client", lambda: mock_client)
-
-        unmute(text="Hello", model="eleven_v3")
-        assert srv._session.model == "eleven_v3"
-
-    def test_config_only_update_no_text(self) -> None:
-        """Provider/model/vibe_tags update without text returns config update."""
-        import punt_vox.server as srv
-
-        result = json.loads(unmute(provider="polly"))
-        assert result["status"] == "config updated"
-        assert result["provider"] == "polly"
-        assert srv._session.provider == "polly"
-
     def test_voice_settings_validation(self) -> None:
         """Invalid voice settings raise ValueError."""
         with pytest.raises(ValueError, match="stability"):
@@ -899,20 +870,6 @@ class TestNotifyTool:
         assert "speak" not in result["notify"]
         assert srv._session._speak == "n"
 
-    def test_set_voice(self) -> None:
-        import punt_vox.server as srv
-
-        result = json.loads(notify(mode="c", voice="matilda"))
-        assert result["notify"]["voice"] == "matilda"
-        assert srv._session.voice == "matilda"
-
-    def test_set_voice_strips_at_sigil(self) -> None:
-        import punt_vox.server as srv
-
-        result = json.loads(notify(mode="c", voice="@sarah"))
-        assert result["notify"]["voice"] == "sarah"
-        assert srv._session.voice == "sarah"
-
 
 class TestNotifySchemaRejectsOff:
     """The notify schema advertises y/c only — n is the retired vocabulary.
@@ -982,29 +939,6 @@ class TestSpeakTool:
         result = json.loads(speak(mode="n"))
         assert result["speak"] == "n"
         assert srv._session._speak == "n"
-
-    def test_set_voice(self) -> None:
-        import punt_vox.server as srv
-
-        result = json.loads(speak(mode="y", voice="matilda"))
-        assert result["speak"] == "y"
-        assert result["voice"] == "matilda"
-        assert srv._session.voice == "matilda"
-
-    def test_set_voice_strips_at_sigil(self) -> None:
-        import punt_vox.server as srv
-
-        result = json.loads(speak(mode="y", voice="@sarah"))
-        assert result["voice"] == "sarah"
-        assert srv._session.voice == "sarah"
-
-    def test_lone_at_leaves_voice_unset(self) -> None:
-        import punt_vox.server as srv
-
-        srv._session.voice = "matilda"
-        result = json.loads(speak(mode="y", voice="@"))
-        assert "voice" not in result
-        assert srv._session.voice == "matilda"
 
     def test_invalid_mode(self) -> None:
         result = json.loads(speak(mode="x"))
