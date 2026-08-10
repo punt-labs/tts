@@ -32,7 +32,7 @@ class _FakeClient:
         return self._voices
 
 
-def _config() -> VoxConfig:
+def _config(provider: str | None = None, model: str | None = None) -> VoxConfig:
     from punt_vox.config import VoxConfig
 
     return VoxConfig(
@@ -40,8 +40,8 @@ def _config() -> VoxConfig:
         speak="y",
         vibe_mode="auto",
         voice="roger",
-        provider=None,
-        model=None,
+        provider=provider,
+        model=model,
         vibe=None,
         vibe_tags=None,
     )
@@ -54,6 +54,8 @@ class TestEmpty:
         assert state.speak == "y"
         assert state.voice is None
         assert state.roster == ()
+        assert state.provider is None
+        assert state.model is None
 
 
 class TestRead:
@@ -63,6 +65,14 @@ class TestRead:
         assert state.speak == "y"
         assert state.voice == "roger"
         assert state.roster == ("aria", "roger")
+
+    def test_reads_provider_and_model_from_config(self) -> None:
+        state = PanelState.read(
+            _FakeClient(["aria"]),
+            _FakeStore(_config(provider="openai", model="tts-1")),
+        )
+        assert state.provider == "openai"
+        assert state.model == "tts-1"
 
 
 class TestWithField:
@@ -80,12 +90,41 @@ class TestWithField:
         after = PanelState.empty().with_voice("aria")
         assert after.voice == "aria"
 
+    def test_with_provider_sets_provider_and_clears_model(self) -> None:
+        before = PanelState(
+            notify="n",
+            speak="y",
+            voice=None,
+            roster=(),
+            provider="elevenlabs",
+            model="eleven_v3",
+        )
+        after = before.with_provider("openai")
+        assert after.provider == "openai"
+        assert after.model is None
+        # The old state is untouched.
+        assert before.provider == "elevenlabs"
+        assert before.model == "eleven_v3"
+
+    def test_with_model_returns_a_new_state(self) -> None:
+        after = PanelState.empty().with_model("tts-1")
+        assert after.model == "tts-1"
+
 
 class TestScene:
     def test_scene_carries_the_state_fields(self) -> None:
-        state = PanelState(notify="c", speak="n", voice="aria", roster=("aria",))
+        state = PanelState(
+            notify="c",
+            speak="n",
+            voice="aria",
+            roster=("aria",),
+            provider="openai",
+            model="tts-1",
+        )
         scene = state.scene()
         assert scene.notify == "c"
         assert scene.speak == "n"
         assert scene.voice == "aria"
         assert scene.roster == ("aria",)
+        assert scene.provider == "openai"
+        assert scene.model == "tts-1"

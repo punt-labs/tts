@@ -6,17 +6,23 @@ from punt_vox.panel.panel_notice import PanelNotice
 from punt_vox.panel.panel_scene import PanelScene
 
 
-def _scene(notice: PanelNotice | None = None) -> PanelScene:
+def _scene(
+    notice: PanelNotice | None = None,
+    provider: str | None = "elevenlabs",
+    model: str | None = "eleven_v3",
+) -> PanelScene:
     """Return the reference scene, optionally carrying *notice*.
 
-    ``None`` means "no notice given", which the scene renders as its own
-    silent default -- not a notice that failed to be produced.
+    ``None`` for *notice* means "no notice given", which the scene renders
+    as its own silent default -- not a notice that failed to be produced.
     """
     return PanelScene(
         notify="y",
         speak="n",
         voice="aria",
         roster=("aria", "roger"),
+        provider=provider,
+        model=model,
         notice=notice if notice is not None else PanelNotice.silent(),
     )
 
@@ -35,7 +41,9 @@ class TestFrame:
         assert size is not None
         width, height = size
         assert 330 <= width <= 350
-        assert 220 <= height <= 260
+        # Height range widened after the Voice engine trio landed:
+        # provider combo + model combo + section label added ~100px.
+        assert 320 <= height <= 360
 
 
 class TestStatusLine:
@@ -65,3 +73,48 @@ class TestElements:
         assert "vox.panel.notify" in ids
         assert "vox.panel.mic_mode" in ids
         assert "vox.panel.voice.row" in ids
+
+    def test_carries_the_voice_engine_trio(self) -> None:
+        request = _scene().render_request()
+        ids = [e["id"] for e in request.elements]
+        assert "vox.panel.voice_engine" in ids
+        assert "vox.panel.provider" in ids
+        assert "vox.panel.model" in ids
+
+    def test_voice_engine_section_precedes_the_provider_combo(self) -> None:
+        request = _scene().render_request()
+        ids = [e["id"] for e in request.elements]
+        assert ids.index("vox.panel.voice_engine") < ids.index("vox.panel.provider")
+        assert ids.index("vox.panel.provider") < ids.index("vox.panel.model")
+
+    def test_provider_current_is_highlighted(self) -> None:
+        request = _scene(provider="openai").render_request()
+        provider_combo = next(
+            e for e in request.elements if e["id"] == "vox.panel.provider"
+        )
+        items = provider_combo["items"]
+        assert isinstance(items, list)
+        assert provider_combo["selected"] == items.index("openai")
+
+    def test_model_list_reflects_the_current_provider(self) -> None:
+        # OpenAI's models: tts-1, tts-1-hd, gpt-4o-mini-tts.
+        request = _scene(provider="openai", model="tts-1-hd").render_request()
+        model_combo = next(e for e in request.elements if e["id"] == "vox.panel.model")
+        assert model_combo["items"] == ["tts-1", "tts-1-hd", "gpt-4o-mini-tts"]
+        assert model_combo["selected"] == 1
+
+    def test_modelless_provider_renders_the_sentinel(self) -> None:
+        # Polly has no user-selectable model.
+        request = _scene(provider="polly", model=None).render_request()
+        model_combo = next(e for e in request.elements if e["id"] == "vox.panel.model")
+        assert model_combo["items"] == ["(no models)"]
+        assert "handlers" not in model_combo
+
+    def test_missing_provider_defaults_to_elevenlabs_models(self) -> None:
+        # No provider chosen yet -- the model list must still be non-empty
+        # so the panel shows a valid Voice engine trio out of the gate.
+        request = _scene(provider=None, model=None).render_request()
+        model_combo = next(e for e in request.elements if e["id"] == "vox.panel.model")
+        items = model_combo["items"]
+        assert isinstance(items, list)
+        assert "eleven_v3" in items

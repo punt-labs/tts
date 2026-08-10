@@ -95,7 +95,11 @@ class _FakeRest:
         raise NotImplementedError
 
 
-def _config(voice: str | None = "roger") -> VoxConfig:
+def _config(
+    voice: str | None = "roger",
+    provider: str | None = None,
+    model: str | None = None,
+) -> VoxConfig:
     from punt_vox.config import VoxConfig
 
     return VoxConfig(
@@ -103,8 +107,8 @@ def _config(voice: str | None = "roger") -> VoxConfig:
         speak="y",
         vibe_mode="auto",
         voice=voice,
-        provider=None,
-        model=None,
+        provider=provider,
+        model=model,
         vibe=None,
         vibe_tags=None,
     )
@@ -203,6 +207,31 @@ class TestApplyEvent:
         changed = service.apply_event(PanelTopic.VOICE_PREVIEW, {})
         assert changed is True
         assert service.scene().notice == PanelNotice.voxd_unavailable()
+
+    def test_provider_writes_the_name_and_clears_the_stale_model(self) -> None:
+        service = VoxPanelService(
+            _FakeDaemonClient(),
+            (store := _FakeStore(_config(provider="elevenlabs", model="eleven_v3"))),
+        )
+        service.prefetch()
+        service.apply_event(PanelTopic.PROVIDER, {"value": 1})  # openai
+        assert store.written["provider"] == "openai"
+        # Stale model must be cleared in the same commit -- an eleven_v3
+        # left behind after a switch to openai would drive an invalid call.
+        assert store.written["model"] == ""
+        scene = service.scene()
+        assert scene.provider == "openai"
+        assert scene.model is None
+
+    def test_model_writes_the_name_and_updates_state(self) -> None:
+        service = VoxPanelService(
+            _FakeDaemonClient(),
+            (store := _FakeStore(_config(provider="openai"))),
+        )
+        service.prefetch()
+        service.apply_event(PanelTopic.MODEL, {"value": 1})  # tts-1-hd
+        assert store.written["model"] == "tts-1-hd"
+        assert service.scene().model == "tts-1-hd"
 
     def test_voice_preview_lets_a_real_bug_propagate(self) -> None:
         """Only the voxd-unreachable transient is swallowed -- a protocol bug is not."""
