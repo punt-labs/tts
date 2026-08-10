@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import shutil
@@ -13,7 +14,7 @@ from typing import TYPE_CHECKING, Annotated, cast
 
 import typer
 
-from punt_vox import __version__
+from punt_vox import __version__, commands as cmds
 from punt_vox.api_key_resolver import ApiKeyResolver
 from punt_vox.cli_daemon import build_daemon_app
 from punt_vox.cli_desktop import build_desktop_app
@@ -23,18 +24,19 @@ from punt_vox.cli_music import MusicCli
 from punt_vox.cli_rec import build_rec_app
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
+from punt_vox.commands import CommandResult, Ctx
+from punt_vox.commands._result import SwitchList
 from punt_vox.config import ConfigStore
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.doctor import claude_desktop_config_path
 from punt_vox.hooks import hook_app
-from punt_vox.models import MODEL_TABLE, resolve_model
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.server_switches import PROVIDER_NAMES
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe import VibeChange
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Coroutine
 
     # Annotation-only; keeps `client` off __main__'s runtime import graph.
     from punt_vox.client import SynthesizeResult
@@ -529,9 +531,27 @@ _VoiceName = Annotated[
 ]
 
 
-def _render_list(names: Sequence[str], current: str | None) -> str:
-    """Render a switch-tool list for humans, marking the current entry."""
-    return "\n".join(f"{n} (current)" if n == current else n for n in names)
+def _ctx() -> Ctx:
+    """Wire the collaborators the command layer needs."""
+    return Ctx(ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR), VoxClientSync())
+
+
+def _run(coro: Coroutine[object, object, CommandResult]) -> None:
+    """Drive *coro* to completion and route its result through the formatter.
+
+    JSON mode wraps errors under an ``error`` key so ``--json`` consumers parse
+    one object; text mode routes the human message to stderr on failure. The
+    exit code the result carries becomes the process exit on failure.
+    """
+    result = asyncio.run(coro)
+    if result.error:
+        detail = result.json_data if result.json_data is not None else result.text
+        _formatter.error(detail, result.text)
+        raise typer.Exit(code=result.exit_code)
+    payload = (
+        result.json_data if result.json_data is not None else {"text": result.text}
+    )
+    _formatter.emit(payload, result.text)
 
 
 @app.command("model")
@@ -549,24 +569,7 @@ def model_cmd(  # pyright: ignore[reportUnusedFunction]
     (``v3`` -> ``eleven_v3``, etc.) and writes it to ``.punt-labs/vox/vox.md``.
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-    store = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR)
-    provider = store.read().provider or "elevenlabs"
-
-    if name is None:
-        names = list(MODEL_TABLE.available(provider))
-        current = store.read().model
-        _formatter.emit(
-            {"names": names, "current": current},
-            _render_list(names, current) if names else "No models for this provider.",
-        )
-        return
-
-    try:
-        resolved = resolve_model(name, provider)
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-    store.write_field("model", resolved)
-    _formatter.emit({"model": resolved}, f"Model: {resolved}")
+    _run(cmds.model(_ctx(), name))
 
 
 @app.command("provider")
@@ -586,12 +589,8 @@ def provider_cmd(  # pyright: ignore[reportUnusedFunction]
     store = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR)
 
     if name is None:
-        current = store.read().provider
-        names = list(PROVIDER_NAMES)
-        _formatter.emit(
-            {"names": names, "current": current},
-            _render_list(names, current),
-        )
+        listing = SwitchList(names=PROVIDER_NAMES, current=store.read().provider)
+        _formatter.emit(listing.payload(), listing.render())
         return
 
     if name not in PROVIDER_NAMES:
@@ -632,11 +631,11 @@ def voice_cmd(  # pyright: ignore[reportUnusedFunction]
         except (VoxdConnectionError, VoxdProtocolError) as exc:
             _formatter.error(str(exc), f"Error: {exc}")
             raise typer.Exit(code=1) from exc
-        current = store.read().voice
-        payload: dict[str, object] = {"names": names, "current": current}
+        listing = SwitchList(names=tuple(names), current=store.read().voice)
+        payload: dict[str, object] = dict(listing.payload())
         if provider is not None:
             payload["provider"] = provider
-        _formatter.emit(payload, _render_list(names, current))
+        _formatter.emit(payload, listing.render())
         return
 
     voice = SynthesisSpec.normalize_voice(name)

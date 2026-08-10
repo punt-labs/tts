@@ -17,8 +17,10 @@ Library callers can import and await these directly::
 from __future__ import annotations
 
 from punt_vox.commands._result import CommandResult, Ctx
+from punt_vox.commands.model import model
 
 __all__ = [
     "CommandResult",
     "Ctx",
+    "model",
 ]
