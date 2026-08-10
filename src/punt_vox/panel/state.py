@@ -21,12 +21,14 @@ __all__ = ["PanelState"]
 @final
 @dataclass(frozen=True, slots=True)
 class PanelState:
-    """A snapshot of the settings the panel shows: notify, speak, voice, roster."""
+    """The settings snapshot the panel shows: notify, speak, voice engine, roster."""
 
     notify: str
     speak: str
     voice: str | None
     roster: tuple[str, ...]
+    provider: str | None = None
+    model: str | None = None
 
     @classmethod
     def empty(cls) -> Self:
@@ -38,7 +40,14 @@ class PanelState:
         """Read the config fields fresh from disk and the voice roster from voxd."""
         cfg = store.read()
         roster = tuple(client.voices())
-        return cls(notify=cfg.notify, speak=cfg.speak, voice=cfg.voice, roster=roster)
+        return cls(
+            notify=cfg.notify,
+            speak=cfg.speak,
+            voice=cfg.voice,
+            roster=roster,
+            provider=cfg.provider,
+            model=cfg.model,
+        )
 
     def with_notify(self, code: str) -> Self:
         """Return a copy with ``notify`` set to ``code``."""
@@ -52,8 +61,30 @@ class PanelState:
         """Return a copy with ``voice`` set to ``voice``."""
         return replace(self, voice=voice)
 
+    def with_provider(self, provider: str) -> Self:
+        """Return a copy with ``provider`` set and stale ``model`` cleared.
+
+        Model names are provider-scoped -- an ``eleven_v3`` left in state
+        after a switch to OpenAI would drive an invalid request the next
+        time synthesis fires. A re-publish of the same provider is a no-op:
+        the model is only wiped on a genuine change, so an echoed event
+        never accidentally drops the current model.
+        """
+        if provider == self.provider:
+            return self
+        return replace(self, provider=provider, model=None)
+
+    def with_model(self, model: str) -> Self:
+        """Return a copy with ``model`` set to ``model``."""
+        return replace(self, model=model)
+
     def scene(self) -> PanelScene:
         """Return this state as the scene it projects onto."""
         return PanelScene(
-            notify=self.notify, speak=self.speak, voice=self.voice, roster=self.roster
+            notify=self.notify,
+            speak=self.speak,
+            voice=self.voice,
+            roster=self.roster,
+            provider=self.provider,
+            model=self.model,
         )

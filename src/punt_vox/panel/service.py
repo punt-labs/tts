@@ -24,11 +24,15 @@ from typing import TYPE_CHECKING, Self, final
 from punt_lux import OpError
 
 from punt_vox.client_errors import VoxdConnectionError
+from punt_vox.models import MODEL_TABLE
+from punt_vox.panel.model_control import ModelControl
 from punt_vox.panel.panel_notice import PanelNotice
+from punt_vox.panel.provider_control import ProviderControl
 from punt_vox.panel.radio_control import MIC_MODE_SPEC, NOTIFY_SPEC
 from punt_vox.panel.state import PanelState
 from punt_vox.panel.topics import PanelTopic
 from punt_vox.panel.voice_control import VoiceControl
+from punt_vox.server_switches import PROVIDER_NAMES
 from punt_vox.types_synthesis import SynthesisSpec
 
 if TYPE_CHECKING:
@@ -145,6 +149,12 @@ class VoxPanelService:
         elif topic == PanelTopic.VOICE:
             voice = self._voice_for(self._index(payload))
             self._commit("voice", voice, PanelState.with_voice)
+        elif topic == PanelTopic.PROVIDER:
+            provider = self._provider_for(self._index(payload))
+            self._commit_provider(provider)
+        elif topic == PanelTopic.MODEL:
+            model = self._model_for(self._index(payload))
+            self._commit("model", model, PanelState.with_model)
         elif topic == PanelTopic.VOICE_PREVIEW:
             return self._preview()
         else:
@@ -165,6 +175,37 @@ class VoxPanelService:
         with self._lock:
             roster, current = self._state.roster, self._state.voice
         return VoiceControl(roster=roster, current=current).voice_for_index(index)
+
+    def _provider_for(self, index: int) -> str:
+        with self._lock:
+            current = self._state.provider
+        control = ProviderControl(providers=PROVIDER_NAMES, current=current)
+        return control.provider_for_index(index)
+
+    def _model_for(self, index: int) -> str:
+        with self._lock:
+            provider, current = self._state.provider, self._state.model
+        models = MODEL_TABLE.available(provider or "elevenlabs")
+        return ModelControl(models=models, current=current).model_for_index(index)
+
+    def _commit_provider(self, provider: str) -> None:
+        """Persist a provider change, clearing the stale model in the same step.
+
+        Model names are provider-scoped: an ``eleven_v3`` left behind after a
+        switch to OpenAI would drive an invalid request. A re-publish of the
+        same provider is a no-op -- an echoed event neither rewrites the disk
+        nor drops the model. On a genuine change the two writes stay
+        sequential rather than atomic; the panel's own lock keeps the state
+        transition indivisible even if the two disk writes are not.
+        """
+        with self._lock:
+            if provider == self._state.provider:
+                self._notice = PanelNotice.silent()
+                return
+            self._store.write_field("provider", provider)
+            self._store.write_field("model", "")
+            self._state = self._state.with_provider(provider)
+            self._notice = PanelNotice.silent()
 
     def _preview(self) -> bool:
         """Play the held voice back; return whether a status notice needs to show."""

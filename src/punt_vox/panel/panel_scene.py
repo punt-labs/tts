@@ -28,19 +28,27 @@ from typing import final
 from punt_lux import RenderRequest, SeparatorElement, TextElement
 from punt_lux.operations.models import FrameSpec
 
+from punt_vox.models import MODEL_TABLE
+from punt_vox.panel.model_control import ModelControl
 from punt_vox.panel.panel_notice import PanelNotice
+from punt_vox.panel.provider_control import ProviderControl
 from punt_vox.panel.radio_control import MIC_MODE_SPEC, NOTIFY_SPEC
 from punt_vox.panel.voice_control import VoiceControl
+from punt_vox.server_switches import PROVIDER_NAMES
 
 __all__ = ["PanelScene"]
 
 _SCENE_ID = "vox.panel"
 _TITLE = "Vox"
 _STATUS_ID = "vox.panel.status"
+_ENGINE_LABEL_ID = "vox.panel.voice_engine"
+_ENGINE_LABEL = "Voice engine"
+_DEFAULT_PROVIDER = "elevenlabs"
 # The widest row (the Voice combo plus its inline preview button) measured
-# ~330-350px wide by ~220-260px tall against the locked mockup; splitting the
-# difference gives headroom on both axes without inflating the frame.
-_FRAME_SIZE = (340, 240)
+# ~330-350px wide against the locked mockup. Height grew with the Voice engine
+# trio (provider combo, model combo, section label) from ~240 to ~340; the
+# range test tracks the new bounds.
+_FRAME_SIZE = (340, 340)
 
 
 @final
@@ -52,16 +60,24 @@ class PanelScene:
     speak: str
     voice: str | None
     roster: tuple[str, ...]
+    provider: str | None = None
+    model: str | None = None
     notice: PanelNotice = field(default_factory=PanelNotice.silent)
 
     def render_request(self) -> RenderRequest:
-        """Return the whole panel scene: status line, both radios, voice row."""
+        """Return the whole panel scene: status, radios, Voice engine trio."""
+        provider = self.provider or _DEFAULT_PROVIDER
         elements = [
             TextElement(id=_STATUS_ID, content=self.notice.message).to_dict(),
             NOTIFY_SPEC.control_for(self.notify).to_dict(),
             SeparatorElement(id="vox.panel.sep1").to_dict(),
             MIC_MODE_SPEC.control_for(self.speak).to_dict(),
             SeparatorElement(id="vox.panel.sep2").to_dict(),
+            TextElement(id=_ENGINE_LABEL_ID, content=_ENGINE_LABEL).to_dict(),
+            ProviderControl(providers=PROVIDER_NAMES, current=self.provider).to_dict(),
+            ModelControl(
+                models=MODEL_TABLE.available(provider), current=self.model
+            ).to_dict(),
             VoiceControl(roster=self.roster, current=self.voice).to_dict(),
         ]
         return RenderRequest(
