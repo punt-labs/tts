@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Humble Object Commands layer for the switch trio: `commands/{model,provider,voice}.py` (vox-0rp9.11).** Adopts the `commands/` package pattern from python.md Rule 5 and cli.md Pattern 2 (see Biff DES-022). The public library API is a `Ctx` (ConfigStore + VoxClientSync), a `CommandResult` (text + json_data + error + exit_code), and three callable command objects (`model`, `provider`, `voice`) each returning a `CommandResult`. The CLI wrappers in `__main__.py` collapse to arg parsing plus one `_run(cmds.model(_ctx(), name))` line, and the shared `_run` translates CommandResult into the OutputFormatter's JSON/text branching and the CLI exit code. This is a pattern-adoption slice: the remaining CLI subcommands stay inline pending a follow-up bead. `__main__.py` module_size drops 838 → 803 lines and avg_complexity 3.55 → 2.91.
+
 ### Changed
 
 - **One MCP tool and one CLI subcommand per switch: `model`, `provider`, `voice` (vox-0rp9.1 + .2 + .3).** The three mid-session switches -- TTS model, TTS provider, session voice -- previously spread across four verbs on three surfaces (`/vox model`/`/vox provider` slash sub-verbs writing through `mic:unmute`'s overloaded `model=`/`provider=` parameters, `mic:who` for voice listing, `/unmute <voice>` and `vox voice <name>`/`vox voices` for voice writes) now speak with one voice: three `mic:*` tools, three `vox` subcommands, three `/vox:*` slash commands. Each takes an optional NAME: no arg lists (marking the current selection); a name writes to the same `ConfigStore.write_field` choke-point the CLI has always used. Design landed at PR #397 (docs/vox-0rp9-model-provider-voice.md, §§2-4). **Breaking changes:**
