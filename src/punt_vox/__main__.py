@@ -25,7 +25,6 @@ from punt_vox.cli_rec import build_rec_app
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.commands import CommandResult, Ctx
-from punt_vox.commands._result import SwitchList
 from punt_vox.config import ConfigStore
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.doctor import claude_desktop_config_path
@@ -606,26 +605,7 @@ def voice_cmd(  # pyright: ignore[reportUnusedFunction]
     ``.punt-labs/vox/vox.md`` (a stray leading ``@`` is stripped).
     """
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-    store = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR)
-
-    if name is None:
-        try:
-            names = VoxClientSync().voices(provider)
-        except (VoxdConnectionError, VoxdProtocolError) as exc:
-            _formatter.error(str(exc), f"Error: {exc}")
-            raise typer.Exit(code=1) from exc
-        listing = SwitchList(names=tuple(names), current=store.read().voice)
-        payload: dict[str, object] = dict(listing.payload())
-        if provider is not None:
-            payload["provider"] = provider
-        _formatter.emit(payload, listing.render())
-        return
-
-    voice = SynthesisSpec.normalize_voice(name)
-    if voice is None:
-        raise typer.BadParameter("voice name is empty")
-    store.write_field("voice", voice)
-    _formatter.emit({"voice": voice}, f"{voice}'s here.")
+    _run(cmds.voice(_ctx(), name, provider))
 
 
 # ---------------------------------------------------------------------------

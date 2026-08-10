@@ -7,7 +7,7 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/__main__.py": {
-    "efferent_coupling": 18.0,
+    "efferent_coupling": 17.0,
     "public_names": 37.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
@@ -175,8 +175,8 @@
     "avg_lcom": 0.142
   },
   "src/punt_vox/commands/__init__.py": {
-    "efferent_coupling": 3.0,
-    "public_names": 4.0,
+    "efferent_coupling": 4.0,
+    "public_names": 5.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
     "avg_lcom": 0.0
@@ -189,6 +189,13 @@
     "avg_lcom": 1.0
   },
   "src/punt_vox/commands/model.py": {
+    "efferent_coupling": 2.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 1.0,
+    "avg_lcom": 1.0
+  },
+  "src/punt_vox/commands/provider.py": {
     "efferent_coupling": 2.0,
     "public_names": 1.0,
     "circular_imports": 0.0,

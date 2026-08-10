@@ -19,10 +19,12 @@ from __future__ import annotations
 from punt_vox.commands._result import CommandResult, Ctx
 from punt_vox.commands.model import model
 from punt_vox.commands.provider import provider
+from punt_vox.commands.voice import voice
 
 __all__ = [
     "CommandResult",
     "Ctx",
     "model",
     "provider",
+    "voice",
 ]
