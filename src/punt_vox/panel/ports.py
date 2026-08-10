@@ -81,8 +81,8 @@ class SettingsSource(Protocol):
 class VoiceRoster(Protocol):
     """The daemon read :class:`~punt_vox.panel.state.PanelState` needs."""
 
-    def voices(self) -> list[str]:
-        """Return the active provider's available voice names."""
+    def voices(self, provider: str | None = None) -> list[str]:
+        """Return the named provider's voice names, or the active one's if absent."""
         ...
 
 

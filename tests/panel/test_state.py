@@ -23,12 +23,20 @@ class _FakeStore:
 
 @final
 class _FakeClient:
-    """A minimal ``VoxClientSync``-shaped double: one canned ``voices()`` result."""
+    """A minimal ``VoxClientSync``-shaped double: one canned ``voices()`` result.
+
+    Records the ``provider`` argument so tests can assert that ``PanelState.read``
+    fetches the roster for the current session provider.
+    """
 
     def __init__(self, voices: list[str]) -> None:
         self._voices = voices
+        self.last_provider_arg: str | None = None
+        self.call_count = 0
 
-    def voices(self) -> list[str]:
+    def voices(self, provider: str | None = None) -> list[str]:
+        self.last_provider_arg = provider
+        self.call_count += 1
         return self._voices
 
 
@@ -74,6 +82,23 @@ class TestRead:
         assert state.provider == "openai"
         assert state.model == "tts-1"
 
+    def test_roster_fetch_carries_the_current_provider(self) -> None:
+        """PanelState.read asks voxd for the CURRENT provider's roster (vox-w79f).
+
+        A resync after a provider switch must see the new provider's voices,
+        not the daemon-default provider's -- otherwise the panel keeps showing
+        the previous roster until voxd restarts.
+        """
+        client = _FakeClient(["en", "en-us"])
+        PanelState.read(client, _FakeStore(_config(provider="espeak")))
+        assert client.last_provider_arg == "espeak"
+
+    def test_roster_fetch_passes_none_when_provider_unset(self) -> None:
+        """An unset provider defers to the daemon's default (backwards-compat)."""
+        client = _FakeClient(["aria"])
+        PanelState.read(client, _FakeStore(_config()))
+        assert client.last_provider_arg is None
+
 
 class TestWithField:
     def test_with_notify_returns_a_new_state(self) -> None:
@@ -105,6 +130,53 @@ class TestWithField:
         # The old state is untouched.
         assert before.provider == "elevenlabs"
         assert before.model == "eleven_v3"
+
+    def test_with_provider_swaps_roster_when_supplied(self) -> None:
+        """A genuine provider change carries the new roster forward (vox-w79f)."""
+        before = PanelState(
+            notify="y",
+            speak="y",
+            voice="benno",
+            roster=("aria", "benno"),
+            provider="elevenlabs",
+            model="eleven_v3",
+        )
+        after = before.with_provider("espeak", roster=("en", "en-us"))
+        assert after.roster == ("en", "en-us")
+
+    def test_with_provider_clears_stale_voice_absent_from_new_roster(self) -> None:
+        """The panel voice cannot survive a switch to a roster it is missing from."""
+        before = PanelState(
+            notify="y",
+            speak="y",
+            voice="benno",
+            roster=("aria", "benno"),
+            provider="elevenlabs",
+            model="eleven_v3",
+        )
+        after = before.with_provider("espeak", roster=("en", "en-us"))
+        assert after.voice is None
+
+    def test_with_provider_keeps_voice_when_present_in_new_roster(self) -> None:
+        """A cross-provider voice name that happens to exist survives the switch."""
+        before = PanelState(
+            notify="y", speak="y", voice="alloy", roster=("alloy",), provider="openai"
+        )
+        after = before.with_provider("say", roster=("alloy", "samantha"))
+        assert after.voice == "alloy"
+
+    def test_with_provider_no_op_when_provider_unchanged(self) -> None:
+        """A re-publish of the same provider drops nothing, even with a roster arg."""
+        before = PanelState(
+            notify="y",
+            speak="y",
+            voice="benno",
+            roster=("aria", "benno"),
+            provider="elevenlabs",
+            model="eleven_v3",
+        )
+        after = before.with_provider("elevenlabs", roster=("only", "roger"))
+        assert after is before
 
     def test_with_model_returns_a_new_state(self) -> None:
         after = PanelState.empty().with_model("tts-1")
