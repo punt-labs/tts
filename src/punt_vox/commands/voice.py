@@ -49,7 +49,20 @@ class VoiceCommand:
                 error=True,
                 exit_code=1,
             )
-        ctx.store.write_field("voice", normalized)
+        try:
+            ctx.store.write_field("voice", normalized)
+        except ValueError as exc:
+            # ConfigStore rejects control chars / unescaped quotes in string
+            # values (raises ConfigValueError, a ValueError subclass). Return a
+            # clean error envelope rather than let the exception cross the
+            # boundary as a traceback.
+            message = str(exc)
+            return CommandResult(
+                text=f"Error: {message}",
+                json_data={"error": message},
+                error=True,
+                exit_code=1,
+            )
         return CommandResult(
             text=f"{normalized}'s here.", json_data={"voice": normalized}
         )

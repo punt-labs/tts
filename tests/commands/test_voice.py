@@ -90,3 +90,15 @@ class TestSet:
         assert result.error is True
         assert result.exit_code == 1
         assert "empty" in result.text
+
+    async def test_config_write_error_returns_envelope(self, tmp_path: Path) -> None:
+        """ConfigStore rejects control chars -- the command envelopes it, not raises.
+
+        Historical footgun: a voice string with a newline or unescaped quote
+        raised ConfigValueError across the CommandResult boundary. The command
+        must catch it and return an error result.
+        """
+        result = await voice(_ctx(tmp_path), 'matilda"; injected: "bad')
+        assert result.error is True
+        assert result.exit_code == 1
+        assert "Error" in result.text or "quote" in result.text.lower()
