@@ -897,22 +897,6 @@ class TestNotifyCommand:
         assert 'speak: "y"' in text
         assert 'notify: "c"' in text
 
-    def test_notify_continuous_with_voice(
-        self, tmp_path: Path, monkeypatch: MagicMock
-    ) -> None:
-        import punt_vox.config as cfg
-
-        monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
-        monkeypatch.setattr("punt_vox.cli_enablement.find_config_dir", lambda: tmp_path)
-
-        runner = CliRunner()
-        result = runner.invoke(app, ["notify", "continuous", "--voice", "matilda"])
-        assert result.exit_code == 0
-        text = (tmp_path / "vox.md").read_text()
-        assert 'voice: "matilda"' in text
-        assert 'notify: "c"' in text
-        assert 'speak: "y"' in text
-
     def test_notify_invalid(self, tmp_path: Path, monkeypatch: MagicMock) -> None:
         monkeypatch.setattr("punt_vox.cli_enablement.find_config_dir", lambda: tmp_path)
 

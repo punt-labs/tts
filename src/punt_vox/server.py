@@ -384,19 +384,21 @@ def unmute(
     style: float | None = None,
     speaker_boost: bool | None = None,  # noqa: FBT001 -- MCP tool schema requires bool param
     vibe_tags: str | None = None,
-    provider: str | None = None,
-    model: str | None = None,
 ) -> str:
     """Synthesize and play audio sequentially.
 
     Pass either a simple ``text`` string or a ``segments`` list for
-    multi-voice sequential playback. Top-level ``voice`` is the default;
-    per-segment ``voice`` overrides it.
+    multi-voice sequential playback. Top-level ``voice`` is the default
+    for this call; per-segment ``voice`` overrides it. Session-wide
+    switches live on their own tools: change the TTS model with
+    ``mic:model``, the provider with ``mic:provider``, and the session
+    voice with ``mic:voice`` -- ``unmute``'s ``voice`` argument is a
+    per-call override on this synthesis, not a session-voice write.
 
     Args:
         text: Simple text to speak. Ignored when segments is provided.
-        voice: Default voice for all segments. If omitted, uses the
-            session voice or provider default.
+        voice: Per-call voice for this synthesis. If omitted, uses the
+            session voice (set via ``mic:voice``) or provider default.
         language: Default ISO 639-1 language code (e.g. 'de', 'ko').
             Per-segment "language" overrides this.
         segments: List of segment objects, each with "text" (required)
@@ -415,12 +417,6 @@ def unmute(
         speaker_boost: ElevenLabs speaker boost toggle.
         vibe_tags: ElevenLabs expressive tags (e.g. "[warm] [satisfied]").
             When provided, writes tags to config.
-        provider: TTS provider override (elevenlabs, openai, polly, say,
-            espeak). When provided, persists to session config for
-            subsequent calls.
-        model: TTS model override (e.g. eleven_v3, eleven_flash_v2_5,
-            tts-1). When provided, persists to session config for
-            subsequent calls.
 
     Returns:
         JSON string with synthesis results.
@@ -433,28 +429,21 @@ def unmute(
     # ephemeral is accepted for callers but voxd cleans up internally today.
     _ = ephemeral
 
-    # Persist explicit overrides; a None argument leaves the session untouched.
-    _session.provider = provider if provider is not None else _session.provider
-    _session.model = model if model is not None else _session.model
-    _session.set_vibe(tags=vibe_tags)
-
-    # Normalize input: text -> single segment.
+    # Normalize input: text -> single segment. Validate BEFORE the vibe write
+    # so an error path (missing text/segments) does not leave the session
+    # holding new vibe tags the caller never got to synthesize under.
     if segments is None:
         if text is None:
-            given = {"provider": provider, "model": model, "vibe_tags": vibe_tags}
-            updates = {key: val for key, val in given.items() if val is not None}
-            if updates:
-                return json.dumps({"status": "config updated", **updates})
             return _error("Provide text or segments.")
         segments = [{"text": text}]
+
+    _session.set_vibe(tags=vibe_tags)
 
     defaults = _session.fill_defaults(
         SynthesisSpec(
             voice=voice,
             language=language,
             rate=rate,
-            provider=provider,
-            model=model,
             stability=stability,
             similarity=similarity,
             style=style,
@@ -575,9 +564,8 @@ mcp.tool(name="voice")(_voice_tool.dispatch)
 @mcp.tool()
 def notify(
     mode: Literal["y", "c"],
-    voice: str | None = None,
 ) -> str:
-    """Set notification mode and optionally the session voice.
+    """Set notification mode.
 
     Whether notifications are chimes or TTS speech is controlled by the
     separate ``speak`` field (see the ``speak`` tool). Enabling initializes
@@ -585,10 +573,11 @@ def notify(
 
     Route "off" through ``mic:enablement action="disable"`` -- disablement
     is the enablement channel, not a notify level (tool-enable-disable.md 2.3).
+    Change the session voice through ``mic:voice`` -- notify is a mode toggle,
+    not a voice-write channel.
 
     Args:
         mode: "y" (on) or "c" (continuous, adds real-time signals).
-        voice: Optional session voice (e.g. "matilda", "roger").
 
     Returns:
         JSON string with the updated config fields.
@@ -604,10 +593,6 @@ def notify(
         updates["speak"] = "y"
         _session.set_speak("y", explicit=False)
 
-    stored_voice = _session.set_voice(voice)
-    if stored_voice is not None:
-        updates["voice"] = stored_voice
-
     # Persist to disk so hooks (which read config independently) see the change
     ConfigStore(_find_config_dir()).write_fields(updates)
 
@@ -617,13 +602,14 @@ def notify(
 @mcp.tool()
 def speak(
     mode: str,
-    voice: str | None = None,
 ) -> str:
     """Toggle spoken notifications on or off.
 
+    Change the session voice through ``mic:voice`` -- speak is a mode
+    toggle, not a voice-write channel.
+
     Args:
         mode: "y" for voice (TTS speech) or "n" for chimes only.
-        voice: Optional session voice to set (e.g. "matilda", "roger").
 
     Returns:
         JSON string with the updated fields.
@@ -635,10 +621,6 @@ def speak(
 
     updates: dict[str, str] = {"speak": mode}
     _session.set_speak(mode)
-
-    stored_voice = _session.set_voice(voice)
-    if stored_voice is not None:
-        updates["voice"] = stored_voice
 
     # Persist to disk so hooks (which read config independently) see the change
     ConfigStore(_find_config_dir()).write_fields(updates)

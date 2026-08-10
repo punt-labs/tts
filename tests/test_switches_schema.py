@@ -68,19 +68,42 @@ async def test_voice_schema_name_is_optional_string_with_no_enum() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unmute_schema_still_carries_provider_and_model_kwargs() -> None:
-    """Unit A does not touch mic:unmute overloads -- Unit B (vox-0rp9.4) does.
+async def test_unmute_schema_does_not_expose_provider_or_model() -> None:
+    """Unit B stripped mic:unmute's provider/model overloads (vox-0rp9.4).
 
-    This pin-test asserts the current state: model/provider are still schema
-    parameters on unmute. Flipped to negative assertions when Unit B lands.
+    The dedicated mic:model/mic:provider tools own those writes now; a
+    regression that reintroduces the overload params on unmute re-opens the
+    surface-consistency gap the epic closed.
     """
     import punt_vox.server as srv
 
     tools = await srv.mcp.list_tools()
     schema = next(t for t in tools if t.name == "unmute").inputSchema
     properties = cast("dict[str, Any]", schema["properties"])
-    assert "provider" in properties
-    assert "model" in properties
+    assert "provider" not in properties
+    assert "model" not in properties
+
+
+@pytest.mark.asyncio
+async def test_notify_schema_does_not_expose_voice() -> None:
+    """Unit B stripped mic:notify's voice overload; mic:voice owns the write."""
+    import punt_vox.server as srv
+
+    tools = await srv.mcp.list_tools()
+    schema = next(t for t in tools if t.name == "notify").inputSchema
+    properties = cast("dict[str, Any]", schema["properties"])
+    assert "voice" not in properties
+
+
+@pytest.mark.asyncio
+async def test_speak_schema_does_not_expose_voice() -> None:
+    """Unit B stripped mic:speak's voice overload; mic:voice owns the write."""
+    import punt_vox.server as srv
+
+    tools = await srv.mcp.list_tools()
+    schema = next(t for t in tools if t.name == "speak").inputSchema
+    properties = cast("dict[str, Any]", schema["properties"])
+    assert "voice" not in properties
 
 
 def _has_string_type(prop: dict[str, Any]) -> bool:
