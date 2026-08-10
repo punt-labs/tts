@@ -467,8 +467,9 @@ def test_no_output_option_in_rec_get_surface() -> None:
     assert "--output" not in opts
 
 
-def test_output_dir_kept_only_on_install_desktop() -> None:
-    opts = command_opts("install-desktop")
+def test_output_dir_kept_only_on_desktop_install() -> None:
+    """--output-dir lives on ``vox desktop install``, not on ``vox rec get``."""
+    opts = command_opts("desktop", "install")
     assert "--output-dir" in opts
     assert "-d" in opts
     assert "--output-dir" not in command_opts("rec", "get")

@@ -6,16 +6,17 @@ from __future__ import annotations
 
 import json
 import logging
-import platform
 import shutil
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, cast
 
 import typer
 
 from punt_vox import __version__
 from punt_vox.api_key_resolver import ApiKeyResolver
+from punt_vox.cli_daemon import build_daemon_app
+from punt_vox.cli_desktop import build_desktop_app
 from punt_vox.cli_enablement import build_enablement_commands
 from punt_vox.cli_io import OutputFlags, TextInput
 from punt_vox.cli_music import MusicCli
@@ -23,8 +24,8 @@ from punt_vox.cli_rec import build_rec_app
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.config import ConfigStore
-from punt_vox.desktop_install import DesktopInstaller
-from punt_vox.dirs import DEFAULT_CONFIG_DIR, default_output_dir, find_config_dir
+from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
+from punt_vox.doctor import claude_desktop_config_path
 from punt_vox.hooks import hook_app
 from punt_vox.models import MODEL_TABLE, resolve_model
 from punt_vox.output_formatter import OutputFormatter
@@ -152,10 +153,6 @@ LanguageOpt = Annotated[
 RateOpt = Annotated[
     int,
     typer.Option("--rate", help="Speech rate as percentage (e.g. 90 = 90% speed)."),
-]
-OutputDirOpt = Annotated[
-    Path | None,
-    typer.Option("--output-dir", "-d", help="Output directory. Default: ~/Music/vox."),
 ]
 StabilityOpt = Annotated[
     float | None,
@@ -380,9 +377,27 @@ def say(  # pyright: ignore[reportUnusedFunction]
 
 @app.command("vibe")
 def vibe_cmd(  # pyright: ignore[reportUnusedFunction]
-    mood: Annotated[str, typer.Argument(help="Mood description or 'auto'/'off'.")],
+    mood: Annotated[
+        str,
+        typer.Argument(
+            help=(
+                "Mood word (e.g. 'excited', 'weary') pinned as manual, "
+                "'auto' (mood follows session signals), or 'off' (neutral)."
+            )
+        ),
+    ],
 ) -> None:
-    """Set session mood for TTS voice."""
+    """Set the session mood the voice director translates into voice tags.
+
+    The daemon resolves the mood into 1-3 expressive tags (e.g. [excited],
+    [weary]) that ride the next synthesis call. A mode change ('auto' or
+    'off') resets the nudge cadence.
+
+    Example: vox vibe excited
+    Example: vox vibe auto
+
+    See also: vox status (current mood), mic:vibe (MCP peer).
+    """
     # Route through VibeChange so the CLI and MCP tool share one transition rule
     # (a mode change resets the nudge cadence).
     is_mode = mood in ("auto", "off")
@@ -416,10 +431,25 @@ build_enablement_commands(app, _formatter, _flags)
 def speak_cmd(  # pyright: ignore[reportUnusedFunction]
     mode: Annotated[
         str,
-        typer.Argument(help="Speak mode: y (voice) or n (chimes only)."),
+        typer.Argument(
+            help=(
+                "'y' plays notifications as spoken voice; "
+                "'n' plays them as chimes only (muted voice)."
+            )
+        ),
     ],
 ) -> None:
-    """Toggle spoken notifications on or off."""
+    """Toggle whether notifications are spoken or chimed.
+
+    Sets the per-repo ``speak`` field. When 'n', the daemon still plays a
+    chime for each notification event but does not synthesize speech --
+    useful when the room is shared or the mic budget is tight.
+
+    Example: vox speak y
+    Example: vox speak n
+
+    See also: vox notify (level within 'on'), mic:speak (MCP peer).
+    """
     if mode not in ("y", "n"):
         typer.echo("Error: mode must be y or n.", err=True)
         raise typer.Exit(code=1)
@@ -645,7 +675,7 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
     verbose: Verbose = False,
     quiet: Quiet = False,
 ) -> None:
-    """Show current state (daemon, voice, vibe, notify)."""
+    """Show current state (daemon, voice, vibe, notify, desktop registration)."""
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
     cfg = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
 
@@ -661,6 +691,7 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
 
     provider_name = daemon_provider or "unknown"
     display_name = _PROVIDER_DISPLAY.get(provider_name, provider_name)
+    desktop_reg = _desktop_registration()
 
     info: dict[str, str | None] = {
         "daemon": daemon_status,
@@ -674,6 +705,7 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
         # The effective level (global vox log setting, or a repo override), not
         # this dir's raw field -- so status reflects what the daemon/clients use.
         "log_level": ConfigStore.resolve_log_level(),
+        "desktop": desktop_reg,
     }
 
     text_lines = [
@@ -684,12 +716,43 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
         f"Speak:     {info['speak']}",
         f"Vibe mode: {info['vibe_mode']}",
         f"Log level: {info['log_level']}",
+        f"Desktop:   {desktop_reg}",
     ]
     if cfg.vibe:
         text_lines.append(f"Vibe:      {cfg.vibe}")
     if cfg.vibe_tags:
         text_lines.append(f"Tags:      {cfg.vibe_tags}")
     _formatter.emit(info, "\n".join(text_lines))
+
+
+def _desktop_registration() -> str:
+    """Return the Claude Desktop registration state as one operator-visible line.
+
+    Four states are surfaced so the operator sees exactly what
+    ``vox desktop uninstall`` would (or would not) clean up:
+
+    - ``"registered"`` -- a ``vox`` entry lives under ``mcpServers``.
+    - ``"not registered"`` -- config exists, no ``vox`` entry (or the top
+      level is not an object, so no ``mcpServers`` map can be present).
+    - ``"no config"`` -- the config file does not exist.
+    - ``"config unreadable"`` -- the file exists but is malformed or
+      permission-denied. Surfaced distinctly from ``not registered``
+      because the operator cannot conclude anything about the
+      registration from a file the CLI cannot parse.
+    """
+    config_path = claude_desktop_config_path()
+    if not config_path.exists():
+        return "no config"
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return "config unreadable"
+    if not isinstance(data, dict):
+        return "not registered"
+    servers = cast("dict[str, object]", data).get("mcpServers")
+    if isinstance(servers, dict) and "vox" in servers:
+        return "registered"
+    return "not registered"
 
 
 # ---------------------------------------------------------------------------
@@ -849,92 +912,6 @@ def register_guidance(
 
 
 # ---------------------------------------------------------------------------
-# install-desktop (Claude Desktop MCP server registration)
-# ---------------------------------------------------------------------------
-
-
-def _load_desktop_config(config_path: Path) -> dict[str, Any]:
-    """Read a Claude Desktop config JSON object, or `{}` if absent.
-
-    A non-object top level (list/string) would crash deep inside the caller's
-    `setdefault` merge; rejected here with a clean Typer error.
-    """
-    if not config_path.exists():
-        return {}
-    try:
-        parsed = json.loads(config_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        typer.echo(f"Error: Could not read {config_path}: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-    if not isinstance(parsed, dict):
-        typer.echo(f"Error: {config_path} must be a JSON object.", err=True)
-        raise typer.Exit(code=1)
-    return cast("dict[str, Any]", parsed)
-
-
-@app.command("install-desktop")
-def install_desktop(
-    output_dir: OutputDirOpt = None,
-    uvx_path: Annotated[
-        str | None,
-        typer.Option("--uvx-path", help="Path to uvx binary. Default: auto-detect."),
-    ] = None,
-    install_provider: Annotated[
-        str | None,
-        typer.Option(
-            "--provider",
-            help="TTS provider. Default: auto-detect.",
-        ),
-    ] = None,
-) -> None:
-    """Register the MCP server with Claude Desktop."""
-    if platform.system() != "Darwin":
-        typer.echo(
-            "Warning: Claude Desktop config path is only known for macOS. "
-            "You may need to configure manually on this platform.",
-            err=True,
-        )
-
-    uvx = uvx_path or shutil.which("uvx")
-    if not uvx:
-        typer.echo(
-            "Error: uvx not found. Install uv (https://docs.astral.sh/uv/) first.",
-            err=True,
-        )
-        raise typer.Exit(code=1)
-
-    audio_dir = output_dir or default_output_dir()
-    audio_dir.mkdir(parents=True, exist_ok=True)
-
-    installer = DesktopInstaller.detect(install_provider, audio_dir)
-
-    from punt_vox.doctor import claude_desktop_config_path
-
-    config_path = claude_desktop_config_path()
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-
-    data = _load_desktop_config(config_path)
-    servers = data.setdefault("mcpServers", {})
-    overwriting = "vox" in servers
-    servers["vox"] = {
-        "command": uvx,
-        "args": ["--from", "punt-vox", "vox", "mcp"],
-        "env": installer.server_env(),
-    }
-    config_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    typer.echo(
-        "Updated existing vox entry." if overwriting else "Registered vox MCP server."
-    )
-
-    typer.echo(f"Provider: {installer.provider}")
-    typer.echo(f"Config: {config_path}")
-    typer.echo(f"Output: {audio_dir}")
-    if not installer.daemon_can_authenticate():
-        typer.echo(installer.credential_guidance(), err=True)
-    typer.echo("Restart Claude Desktop to activate.")
-
-
-# ---------------------------------------------------------------------------
 # cache commands
 # ---------------------------------------------------------------------------
 
@@ -996,80 +973,17 @@ app.add_typer(build_rec_app(_formatter, _flags), name="rec")
 
 
 # ---------------------------------------------------------------------------
-# daemon subcommand group
+# daemon subcommand group (implementation in cli_daemon)
 # ---------------------------------------------------------------------------
 
-daemon_app = typer.Typer(
-    help="Manage the vox daemon service.",
-    no_args_is_help=True,
-)
-app.add_typer(daemon_app, name="daemon")
+app.add_typer(build_daemon_app(_formatter, _flags), name="daemon")
 
 
-@daemon_app.command("install")
-def daemon_install_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """Register vox as a system service (launchd/systemd).
+# ---------------------------------------------------------------------------
+# desktop subcommand group (implementation in cli_desktop)
+# ---------------------------------------------------------------------------
 
-    Run as your normal user, NOT under ``sudo``. On macOS no sudo is
-    needed — the LaunchAgent installs to ``~/Library/LaunchAgents/``.
-    On Linux, vox will prompt once for your sudo password to place
-    the systemd unit. Running under sudo yourself would cause per-user
-    state to land under ``/root/.punt-labs/vox/`` — wrong on both
-    platforms.
-    """
-    from punt_vox.service import install as svc_install
-
-    result = svc_install()
-    typer.echo(result)
-
-
-@daemon_app.command("uninstall")
-def daemon_uninstall_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """Remove the vox system service."""
-    from punt_vox.service import uninstall as svc_uninstall
-
-    result = svc_uninstall()
-    typer.echo(result)
-
-
-@daemon_app.command("restart")
-def daemon_restart_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """Restart the voxd system service and verify it is back up.
-
-    Use this after ``uv tool upgrade punt-vox`` so the running daemon
-    picks up the new wheel. A plain ``uv tool upgrade`` replaces the
-    on-disk binary but does not cycle the long-running voxd process —
-    so changes to the WebSocket protocol or playback behavior do not
-    take effect until the service is restarted. ``vox daemon restart``
-    is the supported way to do that.
-
-    Runs as your normal user, NOT under ``sudo``. On macOS, no sudo
-    is needed (LaunchAgent). On Linux, vox will prompt once for your
-    sudo password when it drives ``systemctl``.
-    """
-    from punt_vox.daemon_restarter import DaemonRestarter
-
-    restarter = DaemonRestarter(_formatter)
-    restarter.run()
-
-
-@daemon_app.command("status")
-def daemon_status_cmd() -> None:  # pyright: ignore[reportUnusedFunction]
-    """Check if the vox daemon is reachable.
-
-    Routes through the client so it queries the configured daemon --
-    honoring ``VOXD_HOST`` / ``VOXD_PORT`` / ``VOXD_TOKEN`` -- rather than
-    a hardcoded ``127.0.0.1``, matching ``vox status`` and ``vox doctor``.
-    """
-    try:
-        health = VoxClientSync().health()
-    except (VoxdConnectionError, VoxdProtocolError) as exc:
-        typer.echo(f"Daemon: not running ({exc})")
-        raise typer.Exit(code=1) from exc
-
-    typer.echo(f"Daemon: running on port {health.port}")
-    typer.echo(f"  Uptime:   {health.uptime_seconds}s")
-    typer.echo(f"  Sessions: {health.active_sessions}")
+app.add_typer(build_desktop_app(_formatter, _flags), name="desktop")
 
 
 if __name__ == "__main__":

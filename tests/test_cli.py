@@ -22,6 +22,8 @@ if TYPE_CHECKING:
 
 
 _CLI = "punt_vox.__main__"
+_CLI_DAEMON = "punt_vox.cli_daemon"
+_CLI_DESKTOP = "punt_vox.cli_desktop"
 _DR = "punt_vox.daemon_restarter"
 
 
@@ -1881,13 +1883,13 @@ class TestUninstallCommand:
 
 
 # ---------------------------------------------------------------------------
-# install-desktop tests (Claude Desktop MCP registration)
+# desktop install / uninstall tests (Claude Desktop MCP registration)
 # ---------------------------------------------------------------------------
 
 _UVX = "/usr/local/bin/uvx"
 
 
-class TestInstallDesktopCommand:
+class TestDesktopInstallCommand:
     def test_creates_config_from_scratch(self, tmp_path: Path) -> None:
         config_path = tmp_path / "Claude" / "claude_desktop_config.json"
         audio_dir = tmp_path / "audio"
@@ -1895,13 +1897,13 @@ class TestInstallDesktopCommand:
         runner = CliRunner()
         with (
             patch(
-                f"{_CLI}.shutil.which",
+                f"{_CLI_DESKTOP}.shutil.which",
                 side_effect=lambda name: (  # pyright: ignore[reportUnknownLambdaType]
                     _UVX if name == "uvx" else "/usr/bin/say" if name == "say" else None
                 ),
             ),
             patch(
-                "punt_vox.doctor.claude_desktop_config_path",
+                "punt_vox.cli_desktop.claude_desktop_config_path",
                 return_value=config_path,
             ),
             patch("punt_vox.providers.platform.system", return_value="Darwin"),
@@ -1911,7 +1913,7 @@ class TestInstallDesktopCommand:
             os.environ.pop("ELEVENLABS_API_KEY", None)
             result = runner.invoke(
                 app,
-                ["install-desktop", "--output-dir", str(audio_dir)],
+                ["desktop", "install", "--output-dir", str(audio_dir)],
             )
 
         assert result.exit_code == 0
@@ -1942,14 +1944,15 @@ class TestInstallDesktopCommand:
 
         runner = CliRunner()
         with (
-            patch(f"{_CLI}.shutil.which", return_value=_UVX),
+            patch(f"{_CLI_DESKTOP}.shutil.which", return_value=_UVX),
             patch(
-                "punt_vox.doctor.claude_desktop_config_path", return_value=config_path
+                "punt_vox.cli_desktop.claude_desktop_config_path",
+                return_value=config_path,
             ),
         ):
             result = runner.invoke(
                 app,
-                ["install-desktop", "--output-dir", str(tmp_path / "audio")],
+                ["desktop", "install", "--output-dir", str(tmp_path / "audio")],
             )
 
         assert result.exit_code == 0
@@ -1968,16 +1971,18 @@ class TestInstallDesktopCommand:
 
         runner = CliRunner()
         with (
-            patch(f"{_CLI}.shutil.which", return_value=_UVX),
+            patch(f"{_CLI_DESKTOP}.shutil.which", return_value=_UVX),
             patch(
-                "punt_vox.doctor.claude_desktop_config_path", return_value=config_path
+                "punt_vox.cli_desktop.claude_desktop_config_path",
+                return_value=config_path,
             ),
             patch("punt_vox.providers.platform.system", return_value="Darwin"),
         ):
             result = runner.invoke(
                 app,
                 [
-                    "install-desktop",
+                    "desktop",
+                    "install",
                     "--provider",
                     "elevenlabs",
                     "--output-dir",
@@ -2005,9 +2010,10 @@ class TestInstallDesktopCommand:
 
         runner = CliRunner()
         with (
-            patch(f"{_CLI}.shutil.which", return_value=_UVX),
+            patch(f"{_CLI_DESKTOP}.shutil.which", return_value=_UVX),
             patch(
-                "punt_vox.doctor.claude_desktop_config_path", return_value=config_path
+                "punt_vox.cli_desktop.claude_desktop_config_path",
+                return_value=config_path,
             ),
             patch("punt_vox.providers.platform.system", return_value="Darwin"),
             patch(
@@ -2018,7 +2024,8 @@ class TestInstallDesktopCommand:
             result = runner.invoke(
                 app,
                 [
-                    "install-desktop",
+                    "desktop",
+                    "install",
                     "--provider",
                     "elevenlabs",
                     "--output-dir",
@@ -2030,6 +2037,83 @@ class TestInstallDesktopCommand:
         assert "vox" in json.loads(config_path.read_text())["mcpServers"]
         assert "ELEVENLABS_API_KEY" in result.stderr
         assert "vox daemon install" in result.stderr
+
+
+class TestDesktopUninstallCommand:
+    def test_removes_vox_entry(self, tmp_path: Path) -> None:
+        """``vox desktop uninstall`` removes the vox entry, preserves others."""
+        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
+        config_path.parent.mkdir(parents=True)
+        existing: dict[str, object] = {
+            "mcpServers": {
+                "vox": {"command": _UVX, "args": [], "env": {}},
+                "other-server": {"command": "other", "args": []},
+            }
+        }
+        config_path.write_text(json.dumps(existing))
+
+        runner = CliRunner()
+        with patch(
+            "punt_vox.cli_desktop.claude_desktop_config_path", return_value=config_path
+        ):
+            result = runner.invoke(app, ["desktop", "uninstall"])
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(config_path.read_text())
+        assert "vox" not in data["mcpServers"]
+        assert "other-server" in data["mcpServers"]
+        assert "Removed" in result.output
+
+    def test_missing_config_idempotent(self, tmp_path: Path) -> None:
+        """Absent config: reports "nothing to do", exits 0."""
+        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
+
+        runner = CliRunner()
+        with patch(
+            "punt_vox.cli_desktop.claude_desktop_config_path", return_value=config_path
+        ):
+            result = runner.invoke(app, ["desktop", "uninstall"])
+
+        assert result.exit_code == 0, result.output
+        assert "nothing to do" in result.output
+
+    def test_absent_vox_entry_idempotent(self, tmp_path: Path) -> None:
+        """Config exists but no vox entry: idempotent, exits 0."""
+        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
+        config_path.parent.mkdir(parents=True)
+        config_path.write_text(
+            json.dumps({"mcpServers": {"other-server": {"command": "x", "args": []}}})
+        )
+
+        runner = CliRunner()
+        with patch(
+            "punt_vox.cli_desktop.claude_desktop_config_path", return_value=config_path
+        ):
+            result = runner.invoke(app, ["desktop", "uninstall"])
+
+        assert result.exit_code == 0
+        assert "nothing to do" in result.output
+        # Other entries untouched.
+        data = json.loads(config_path.read_text())
+        assert "other-server" in data["mcpServers"]
+
+    def test_json_output(self, tmp_path: Path) -> None:
+        """--json returns {"unregistered": true, "config": ...} on success."""
+        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
+        config_path.parent.mkdir(parents=True)
+        config_path.write_text(
+            json.dumps({"mcpServers": {"vox": {"command": _UVX, "args": []}}})
+        )
+
+        runner = CliRunner()
+        with patch(
+            "punt_vox.cli_desktop.claude_desktop_config_path", return_value=config_path
+        ):
+            result = runner.invoke(app, ["desktop", "uninstall", "--json"])
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["unregistered"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -2147,11 +2231,11 @@ class TestDaemonStatusCommand:
     ``VOXD_HOST`` / ``VOXD_PORT`` / ``VOXD_TOKEN``.
     """
 
-    @patch(f"{_CLI}.VoxClientSync")
+    @patch(f"{_CLI_DAEMON}.VoxClientSync")
     def test_routes_through_client_health(self, mock_client_cls: MagicMock) -> None:
         mock_instance = mock_client_cls.return_value
         mock_instance.health.return_value = HealthStatus.from_wire(
-            {"port": 8421, "uptime_seconds": 12, "active_sessions": 3}
+            {"status": "ok", "port": 8421, "uptime_seconds": 12, "active_sessions": 3}
         )
 
         runner = CliRunner()
@@ -2159,11 +2243,13 @@ class TestDaemonStatusCommand:
 
         assert result.exit_code == 0
         mock_instance.health.assert_called_once_with()
-        assert "running" in result.output
+        # The status line mirrors the daemon's own health.status (voxd/health.py
+        # reports "ok"), matching the mic:status daemon block shape.
+        assert "ok" in result.output
         assert "8421" in result.output
 
     @patch("punt_vox.client.read_port_file")
-    @patch(f"{_CLI}.VoxClientSync")
+    @patch(f"{_CLI_DAEMON}.VoxClientSync")
     def test_does_not_read_local_port_file(
         self, mock_client_cls: MagicMock, mock_read_port: MagicMock
     ) -> None:
@@ -2177,7 +2263,7 @@ class TestDaemonStatusCommand:
         assert result.exit_code == 0
         mock_read_port.assert_not_called()
 
-    @patch(f"{_CLI}.VoxClientSync")
+    @patch(f"{_CLI_DAEMON}.VoxClientSync")
     def test_honors_voxd_host(
         self, mock_client_cls: MagicMock, monkeypatch: MagicMock
     ) -> None:
@@ -2196,7 +2282,7 @@ class TestDaemonStatusCommand:
         mock_client_cls.assert_called_once_with()
         assert "127.0.0.1" not in result.output
 
-    @patch(f"{_CLI}.VoxClientSync")
+    @patch(f"{_CLI_DAEMON}.VoxClientSync")
     def test_not_running_exits_nonzero(self, mock_client_cls: MagicMock) -> None:
         from punt_vox.client_errors import VoxdConnectionError
 
@@ -2207,6 +2293,51 @@ class TestDaemonStatusCommand:
 
         assert result.exit_code == 1
         assert "not running" in result.output
+
+    @patch(f"{_CLI_DAEMON}.VoxClientSync")
+    def test_json_returns_health_shape(self, mock_client_cls: MagicMock) -> None:
+        """--json emits the daemon health snapshot (mic:status daemon block)."""
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire(
+            {
+                "status": "ok",
+                "port": 8421,
+                "pid": 4242,
+                "provider": "elevenlabs",
+                "daemon_version": "4.17.0",
+                "uptime_seconds": 123.4,
+                "queued": 0,
+                "active_sessions": 2,
+            }
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["daemon", "status", "--json"])
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        # Mirrors the daemon's own health schema ("ok" from voxd/health.py) so
+        # the CLI --json output matches the mic:status daemon block shape.
+        assert payload["status"] == "ok"
+        assert payload["port"] == 8421
+        assert payload["pid"] == 4242
+        assert payload["provider"] == "elevenlabs"
+        assert payload["daemon_version"] == "4.17.0"
+        assert payload["active_sessions"] == 2
+
+    @patch(f"{_CLI_DAEMON}.VoxClientSync")
+    def test_json_not_running(self, mock_client_cls: MagicMock) -> None:
+        """--json on a down daemon returns {"status": "not_running", ...}, exit 1."""
+        from punt_vox.client_errors import VoxdConnectionError
+
+        mock_client_cls.return_value.health.side_effect = VoxdConnectionError("refused")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["daemon", "status", "--json"])
+
+        assert result.exit_code == 1, result.output
+        payload = json.loads(result.output)
+        assert payload["status"] == "not_running"
+        assert "refused" in payload["reason"]
 
 
 # ---------------------------------------------------------------------------
