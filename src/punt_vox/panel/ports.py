@@ -94,6 +94,10 @@ class SettingsStore(SettingsSource, Protocol):
         """Write one config field, raising on a value it cannot store or a bad write."""
         ...
 
+    def write_fields(self, updates: dict[str, str]) -> None:
+        """Write several fields in one atomic step; readers see them together."""
+        ...
+
 
 @runtime_checkable
 class PanelDaemonClient(VoiceRoster, Protocol):

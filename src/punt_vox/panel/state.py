@@ -68,39 +68,38 @@ class PanelState:
         return replace(self, voice=voice)
 
     def with_provider(
-        self, provider: str, roster: tuple[str, ...] | None = None
+        self,
+        provider: str,
+        *,
+        roster: tuple[str, ...],
+        model: str | None,
+        voice: str | None,
     ) -> Self:
-        """Return a copy with ``provider`` set + stale model/voice cleared.
+        """Return a copy with ``provider`` + cascaded ``model``/``voice``/``roster``.
 
-        Both model names and voice names are provider-scoped -- an
-        ``eleven_v3`` model or a ``benno`` voice left in state after a
-        switch to OpenAI/espeak would drive an invalid request the next
-        time synthesis fires. On a genuine change, this method (a) swaps
-        the roster if one was supplied, (b) clears the stored model, and
-        (c) clears the stored voice when it is not in the new roster.
+        The cascade is computed by the caller (``VoxPanelService`` in
+        production) so this method is a pure setter -- it stores what it
+        is handed. A re-publish of the same provider is still a no-op.
 
-        A re-publish of the same provider is a no-op -- an echoed event
-        neither swaps the roster nor drops the current model/voice.
-
-        When ``roster`` is ``None`` the caller has not fetched the new
-        roster yet (e.g. a pre-refresh unit test); the previous roster
-        is kept and the voice is not re-validated against a stale list.
+        Model names and voice names are provider-scoped, so the caller
+        must supply defaults valid for *provider* (typically the first
+        model from ``MODEL_TABLE.available(provider)`` and the first
+        voice from ``roster``). ``model=None`` means "no model on this
+        provider" (Polly/say/espeak); ``voice=None`` means "roster was
+        empty" (an edge the caller normally guards against).
         """
         if provider == self.provider:
             return self
-        next_roster = self.roster if roster is None else roster
-        next_voice = (
-            self.voice
-            if roster is None or self.voice is None or self.voice in next_roster
-            else None
-        )
-        return replace(
-            self, provider=provider, model=None, roster=next_roster, voice=next_voice
-        )
+        return replace(self, provider=provider, model=model, roster=roster, voice=voice)
 
-    def with_model(self, model: str) -> Self:
-        """Return a copy with ``model`` set to ``model``."""
-        return replace(self, model=model)
+    def with_model(self, model: str, *, voice: str | None) -> Self:
+        """Return a copy with ``model`` set + cascaded ``voice`` from the caller.
+
+        The cascade is computed by the caller (``VoxPanelService``) so
+        this method is a pure setter. ``voice=None`` means the roster
+        the caller fetched was empty.
+        """
+        return replace(self, model=model, voice=voice)
 
     def scene(self) -> PanelScene:
         """Return this state as the scene it projects onto."""

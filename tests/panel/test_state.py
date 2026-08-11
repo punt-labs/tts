@@ -115,7 +115,8 @@ class TestWithField:
         after = PanelState.empty().with_voice("aria")
         assert after.voice == "aria"
 
-    def test_with_provider_sets_provider_and_clears_model(self) -> None:
+    def test_with_provider_stores_the_cascaded_defaults(self) -> None:
+        """The cascade rule stores exactly what the caller resolved."""
         before = PanelState(
             notify="n",
             speak="y",
@@ -124,15 +125,19 @@ class TestWithField:
             provider="elevenlabs",
             model="eleven_v3",
         )
-        after = before.with_provider("openai")
+        after = before.with_provider(
+            "openai", roster=("alloy", "nova"), model="tts-1", voice="alloy"
+        )
         assert after.provider == "openai"
-        assert after.model is None
+        assert after.model == "tts-1"
+        assert after.voice == "alloy"
+        assert after.roster == ("alloy", "nova")
         # The old state is untouched.
         assert before.provider == "elevenlabs"
         assert before.model == "eleven_v3"
 
-    def test_with_provider_swaps_roster_when_supplied(self) -> None:
-        """A genuine provider change carries the new roster forward (vox-w79f)."""
+    def test_with_provider_modelless_default_stores_none(self) -> None:
+        """A modelless provider carries ``model=None`` -- the caller's default."""
         before = PanelState(
             notify="y",
             speak="y",
@@ -141,32 +146,15 @@ class TestWithField:
             provider="elevenlabs",
             model="eleven_v3",
         )
-        after = before.with_provider("espeak", roster=("en", "en-us"))
+        after = before.with_provider(
+            "espeak", roster=("en", "en-us"), model=None, voice="en"
+        )
+        assert after.model is None
+        assert after.voice == "en"
         assert after.roster == ("en", "en-us")
 
-    def test_with_provider_clears_stale_voice_absent_from_new_roster(self) -> None:
-        """The panel voice cannot survive a switch to a roster it is missing from."""
-        before = PanelState(
-            notify="y",
-            speak="y",
-            voice="benno",
-            roster=("aria", "benno"),
-            provider="elevenlabs",
-            model="eleven_v3",
-        )
-        after = before.with_provider("espeak", roster=("en", "en-us"))
-        assert after.voice is None
-
-    def test_with_provider_keeps_voice_when_present_in_new_roster(self) -> None:
-        """A cross-provider voice name that happens to exist survives the switch."""
-        before = PanelState(
-            notify="y", speak="y", voice="alloy", roster=("alloy",), provider="openai"
-        )
-        after = before.with_provider("say", roster=("alloy", "samantha"))
-        assert after.voice == "alloy"
-
     def test_with_provider_no_op_when_provider_unchanged(self) -> None:
-        """A re-publish of the same provider drops nothing, even with a roster arg."""
+        """A re-publish of the same provider drops nothing, even with new args."""
         before = PanelState(
             notify="y",
             speak="y",
@@ -175,12 +163,25 @@ class TestWithField:
             provider="elevenlabs",
             model="eleven_v3",
         )
-        after = before.with_provider("elevenlabs", roster=("only", "roger"))
+        after = before.with_provider(
+            "elevenlabs",
+            roster=("only", "roger"),
+            model="eleven_flash_v2_5",
+            voice="only",
+        )
         assert after is before
 
-    def test_with_model_returns_a_new_state(self) -> None:
-        after = PanelState.empty().with_model("tts-1")
+    def test_with_model_stores_cascaded_voice(self) -> None:
+        """The cascade rule stores exactly what the caller resolved."""
+        after = PanelState.empty().with_model("tts-1", voice="alloy")
         assert after.model == "tts-1"
+        assert after.voice == "alloy"
+
+    def test_with_model_voice_none_stores_none(self) -> None:
+        """A ``voice=None`` cascade (empty roster) is stored verbatim."""
+        after = PanelState.empty().with_model("tts-1", voice=None)
+        assert after.model == "tts-1"
+        assert after.voice is None
 
 
 class TestScene:
