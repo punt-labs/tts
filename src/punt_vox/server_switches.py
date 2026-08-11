@@ -21,12 +21,9 @@ from __future__ import annotations
 import json
 import logging
 import random
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Final, Literal, Self, final
 
-from websockets.exceptions import WebSocketException
-
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.cascade import Cascade, RosterError
 from punt_vox.config_writer import ConfigWriter
 from punt_vox.models import MODEL_TABLE, resolve_model
 from punt_vox.types_synthesis import SynthesisSpec
@@ -64,32 +61,12 @@ PROVIDER_NAMES: Final[tuple[ProviderName, ...]] = (
 )
 
 
-# Non-connect faults on the voice-listing wire funnel to the same JSON error
-# envelope. VoxdConnectionError (the daemon is down) is common and prosaic --
-# handled separately without a stack trace -- while everything else logs
-# .exception() before returning, matching how the retired ``mic:who`` tool
-# reported and diagnosed the two classes.
-_VOICES_FAULT_ERRORS = (VoxdProtocolError, WebSocketException, OSError, ValueError)
-
 _FEATURED_CAP = 6
 
 
 def _error(message: str) -> str:
     """Return a JSON error string -- the tools never raise across their boundary."""
     return json.dumps({"error": message})
-
-
-@final
-@dataclass(frozen=True, slots=True)
-class _RosterError:
-    """Sentinel returned by a cascade helper when the roster fetch failed.
-
-    A plain ``str`` return would collide with a real voice name (the empty
-    string ``""`` is a valid modelless-roster answer). Wrapping the failure
-    in a distinct type keeps the caller's branch explicit and typed.
-    """
-
-    message: str
 
 
 @final
@@ -167,8 +144,8 @@ class ModelTool:
         except ValueError as exc:
             return _error(str(exc))
 
-        voice_default = self._first_voice(provider)
-        if isinstance(voice_default, _RosterError):
+        voice_default = Cascade.fetch_first_voice(self._client_factory(), provider)
+        if isinstance(voice_default, RosterError):
             return _error(voice_default.message)
 
         write_err = self._config.write_fields(
@@ -179,17 +156,6 @@ class ModelTool:
         session.model = resolved
         session.voice = voice_default or None
         return json.dumps({"model": resolved, "voice": voice_default})
-
-    def _first_voice(self, provider: str) -> str | _RosterError:
-        """Return the provider's first voice, or a RosterError on a daemon fault."""
-        try:
-            voices = self._client_factory().voices(provider=provider)
-        except VoxdConnectionError as exc:
-            return _RosterError(str(exc))
-        except _VOICES_FAULT_ERRORS as exc:
-            logger.exception("Voice roster fetch failed on model cascade")
-            return _RosterError(str(exc))
-        return voices[0] if voices else ""
 
 
 @final
@@ -262,10 +228,9 @@ class ProviderTool:
         if previous == name:
             return json.dumps({"provider": name})
 
-        available_models = MODEL_TABLE.available(name)
-        model_default = available_models[0] if available_models else ""
-        voice_default = self._first_voice(name)
-        if isinstance(voice_default, _RosterError):
+        model_default = Cascade.default_model(name)
+        voice_default = Cascade.fetch_first_voice(self._client_factory(), name)
+        if isinstance(voice_default, RosterError):
             return _error(voice_default.message)
 
         write_err = self._config.write_fields(
@@ -279,17 +244,6 @@ class ProviderTool:
         return json.dumps(
             {"provider": name, "model": model_default, "voice": voice_default}
         )
-
-    def _first_voice(self, provider: str) -> str | _RosterError:
-        """Return the provider's first voice, or a RosterError on a daemon fault."""
-        try:
-            voices = self._client_factory().voices(provider=provider)
-        except VoxdConnectionError as exc:
-            return _RosterError(str(exc))
-        except _VOICES_FAULT_ERRORS as exc:
-            logger.exception("Voice roster fetch failed on provider cascade")
-            return _RosterError(str(exc))
-        return voices[0] if voices else ""
 
 
 @final
@@ -359,14 +313,10 @@ class VoiceTool:
 
     def _list(self, session: SessionConfig) -> str:
         """Return the voice roster for the current provider, blurbs included."""
-        client = self._client_factory()
-        try:
-            all_voices = client.voices(provider=session.provider)
-        except VoxdConnectionError as exc:
-            return _error(str(exc))
-        except _VOICES_FAULT_ERRORS as exc:
-            logger.exception("Voice listing failed")
-            return _error(str(exc))
+        roster = Cascade.fetch_roster(self._client_factory(), session.provider)
+        if isinstance(roster, RosterError):
+            return _error(roster.message)
+        all_voices = roster
 
         provider_name = session.provider or "elevenlabs"
         featured = [
