@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Self, final
 
+from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.commands._result import CommandResult, Ctx, SwitchList
 from punt_vox.models import MODEL_TABLE, resolve_model
 
@@ -32,7 +33,10 @@ class ModelCommand:
         Name given: resolve ElevenLabs shorthand (``v3`` -> ``eleven_v3``,
         etc.) and write the full name to ``.punt-labs/vox/vox.md``. Unknown
         or modelless-provider names return an error result; the CLI adapter
-        exits with code 1.
+        exits with code 1. The cascade rule (vox-awm9) also fires: setting
+        model writes voice = first from the current provider's roster in
+        the same atomic ``write_fields`` call. A daemon fault on the roster
+        fetch aborts the write and returns an error result.
         """
         cfg = ctx.store.read()
         provider = cfg.provider or "elevenlabs"
@@ -57,8 +61,33 @@ class ModelCommand:
                 exit_code=1,
             )
 
-        ctx.store.write_field("model", resolved)
-        return CommandResult(text=f"Model: {resolved}", json_data={"model": resolved})
+        try:
+            voices = ctx.client.voices(provider)
+        except (VoxdConnectionError, VoxdProtocolError) as exc:
+            message = str(exc)
+            return CommandResult(
+                text=f"Error: {message}",
+                json_data={"error": message},
+                error=True,
+                exit_code=1,
+            )
+
+        voice_default = voices[0] if voices else ""
+
+        try:
+            ctx.store.write_fields({"model": resolved, "voice": voice_default})
+        except ValueError as exc:
+            message = str(exc)
+            return CommandResult(
+                text=f"Error: {message}",
+                json_data={"error": message},
+                error=True,
+                exit_code=1,
+            )
+        return CommandResult(
+            text=f"Model: {resolved}",
+            json_data={"model": resolved, "voice": voice_default},
+        )
 
 
 model: ModelCommand = ModelCommand()

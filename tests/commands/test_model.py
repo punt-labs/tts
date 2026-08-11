@@ -15,9 +15,15 @@ from punt_vox.commands import Ctx, model
 from punt_vox.config import ConfigStore
 
 
-def _ctx(tmp_path: Path) -> Ctx:
-    """Build a Ctx with a real ConfigStore and a stub client (model never dials)."""
-    return Ctx(store=ConfigStore(tmp_path), client=MagicMock(spec_set=[]))
+def _ctx(tmp_path: Path, voices: list[str] | None = None) -> Ctx:
+    """Build a Ctx with a real ConfigStore and a voxd client stub for cascade.
+
+    The cascade rule fetches the current provider's voice roster on every
+    model set; tests supply what that roster returns via *voices*.
+    """
+    client = MagicMock()
+    client.voices.return_value = voices if voices is not None else []
+    return Ctx(store=ConfigStore(tmp_path), client=client)
 
 
 class TestList:
@@ -50,18 +56,34 @@ class TestList:
 class TestSet:
     """A name given -- resolve shorthand and write the full model name."""
 
-    async def test_shorthand_resolves_and_writes(self, tmp_path: Path) -> None:
-        result = await model(_ctx(tmp_path), "v3")
+    async def test_shorthand_resolves_and_cascades_voice(self, tmp_path: Path) -> None:
+        """The cascade rule (vox-awm9): setting model populates voice = first."""
+        result = await model(_ctx(tmp_path, voices=["matilda", "roger"]), "v3")
         assert result.error is False
-        assert result.json_data == {"model": "eleven_v3"}
+        assert result.json_data == {"model": "eleven_v3", "voice": "matilda"}
         assert result.text == "Model: eleven_v3"
-        # Full round-trip: reading through ConfigStore sees the written value.
-        assert ConfigStore(tmp_path).read().model == "eleven_v3"
+        # Full round-trip: reading through ConfigStore sees both writes.
+        cfg = ConfigStore(tmp_path).read()
+        assert cfg.model == "eleven_v3"
+        assert cfg.voice == "matilda"
 
     async def test_full_name_is_accepted(self, tmp_path: Path) -> None:
-        result = await model(_ctx(tmp_path), "eleven_turbo_v2_5")
+        result = await model(_ctx(tmp_path, voices=["matilda"]), "eleven_turbo_v2_5")
         assert result.error is False
-        assert result.json_data == {"model": "eleven_turbo_v2_5"}
+        assert result.json_data == {
+            "model": "eleven_turbo_v2_5",
+            "voice": "matilda",
+        }
+
+    async def test_cascade_with_empty_roster_writes_blank_voice(
+        self, tmp_path: Path
+    ) -> None:
+        """A daemon that returns no voices cascades voice = '' (cleared on disk)."""
+        result = await model(_ctx(tmp_path, voices=[]), "v3")
+        assert result.error is False
+        assert result.json_data == {"model": "eleven_v3", "voice": ""}
+        cfg = ConfigStore(tmp_path).read()
+        assert cfg.voice in (None, "")
 
     async def test_unknown_model_returns_error(self, tmp_path: Path) -> None:
         result = await model(_ctx(tmp_path), "does-not-exist")
@@ -77,3 +99,19 @@ class TestSet:
         assert result.error is True
         assert result.exit_code == 1
         assert "polly" in result.text
+
+    async def test_roster_fetch_error_aborts_the_write(self, tmp_path: Path) -> None:
+        """A daemon fault on the cascade roster fetch returns an error envelope."""
+        from punt_vox.client_errors import VoxdConnectionError
+
+        client = MagicMock()
+        client.voices.side_effect = VoxdConnectionError("voxd unreachable")
+        ctx = Ctx(store=ConfigStore(tmp_path), client=client)
+
+        result = await model(ctx, "v3")
+
+        assert result.error is True
+        assert result.exit_code == 1
+        # The model must not have landed on disk.
+        cfg = ConfigStore(tmp_path).read()
+        assert cfg.model is None

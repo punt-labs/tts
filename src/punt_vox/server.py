@@ -552,8 +552,8 @@ mcp.tool(name="enablement")(_enablement_tool.dispatch)
 # honoured on the next call, and each writes through the same
 # ``ConfigStore.write_field`` choke-point the CLI uses. mic:who is retired;
 # its list capability lives on ``mic:voice`` (no arg).
-_model_tool = ModelTool(lambda: _session, _find_config_dir)
-_provider_tool = ProviderTool(lambda: _session, _find_config_dir)
+_model_tool = ModelTool(lambda: _session, _find_config_dir, _voxd_client)
+_provider_tool = ProviderTool(lambda: _session, _find_config_dir, _voxd_client)
 _voice_tool = VoiceTool(lambda: _session, _find_config_dir, _voxd_client)
 
 mcp.tool(name="model")(_model_tool.dispatch)

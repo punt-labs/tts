@@ -76,6 +76,9 @@ class _FakeStore:
     def write_field(self, key: str, value: str) -> None:
         self.written[key] = value
 
+    def write_fields(self, updates: dict[str, str]) -> None:
+        self.written.update(updates)
+
 
 @final
 class _FakeRest:
@@ -217,20 +220,23 @@ class TestApplyEvent:
         assert changed is True
         assert service.scene().notice == PanelNotice.voxd_unavailable()
 
-    def test_provider_writes_the_name_and_clears_the_stale_model(self) -> None:
+    def test_provider_writes_the_name_and_cascades_model_and_voice(self) -> None:
+        """Cascade rule (vox-s5uv): provider + first-model + first-voice, atomic."""
         service = VoxPanelService(
-            _FakeDaemonClient(),
+            _FakeDaemonClient(voices_by_provider={"openai": ["alloy", "nova"]}),
             (store := _FakeStore(_config(provider="elevenlabs", model="eleven_v3"))),
         )
         service.prefetch()
         service.apply_event(PanelTopic.PROVIDER, {"value": 1})  # openai
         assert store.written["provider"] == "openai"
-        # Stale model must be cleared in the same commit -- an eleven_v3
-        # left behind after a switch to openai would drive an invalid call.
-        assert store.written["model"] == ""
+        # Model cascades to MODEL_TABLE.available("openai")[0].
+        assert store.written["model"] == "tts-1"
+        # Voice cascades to roster[0].
+        assert store.written["voice"] == "alloy"
         scene = service.scene()
         assert scene.provider == "openai"
-        assert scene.model is None
+        assert scene.model == "tts-1"
+        assert scene.voice == "alloy"
 
     def test_provider_refetches_roster_and_updates_scene(self) -> None:
         """A provider switch pulls the new roster into the panel scene (vox-w79f)."""
@@ -253,12 +259,12 @@ class TestApplyEvent:
         # The roster refetch queried voxd for the new provider by name.
         assert "espeak" in client.roster_reads_by_provider
 
-    def test_provider_clears_stale_voice_absent_from_new_roster(self) -> None:
-        """A voice not in the new provider's roster is cleared on disk and in state.
+    def test_provider_cascades_voice_to_first_regardless_of_prior_voice(self) -> None:
+        """Cascade rule (vox-s5uv): voice always becomes ``roster[0]``.
 
-        Regression for vox-w79f: switching to espeak while voice=benno left benno
-        in place, so the next unmute failed because espeak cannot render an
-        elevenlabs voice.
+        Supersedes the vox-w79f 'clear when absent from roster' behavior with a
+        stronger invariant: the new provider's first voice is written every
+        time, so a stale voice can never leak past a switch.
         """
         client = _FakeDaemonClient(
             voices_by_provider={
@@ -272,11 +278,16 @@ class TestApplyEvent:
         )
         service.prefetch()
         service.apply_event(PanelTopic.PROVIDER, {"value": 4})  # espeak
-        assert store.written.get("voice") == ""
-        assert service.scene().voice is None
+        assert store.written["voice"] == "en"
+        assert service.scene().voice == "en"
 
-    def test_provider_keeps_voice_when_present_in_new_roster(self) -> None:
-        """A voice that exists in both rosters survives -- no needless disk write."""
+    def test_provider_cascades_voice_to_first_even_when_prior_is_valid(self) -> None:
+        """A voice that happens to exist in the new roster is still overwritten.
+
+        The cascade is deterministic: setting a provider always writes
+        ``roster[0]``. This is intentional -- the caller can override with
+        a follow-up voice write.
+        """
         client = _FakeDaemonClient(
             voices_by_provider={
                 "openai": ["alloy", "nova"],
@@ -288,7 +299,7 @@ class TestApplyEvent:
         )
         service.prefetch()
         service.apply_event(PanelTopic.PROVIDER, {"value": 3})  # say
-        assert "voice" not in store.written
+        assert store.written["voice"] == "alloy"  # say roster[0]
         assert service.scene().voice == "alloy"
 
     def test_provider_no_op_when_unchanged_leaves_roster_and_voice_intact(self) -> None:
@@ -364,7 +375,9 @@ class TestApplyEvent:
                 # openai. We simulate by mutating the service's state
                 # directly (as if another thread had held the lock).
                 svc = self._service_ref[0]
-                svc._state = svc._state.with_provider("openai", roster=("alloy",))
+                svc._state = svc._state.with_provider(
+                    "openai", roster=("alloy",), model="tts-1", voice="alloy"
+                )
                 return ["en", "en-us"]  # espeak roster (what our caller asked for)
 
             def synthesize(self, *args: object, **kwargs: object) -> object:
@@ -395,6 +408,50 @@ class TestApplyEvent:
         assert store.written["model"] == "tts-1-hd"
         assert service.scene().model == "tts-1-hd"
 
+    def test_model_yields_when_provider_changed_mid_fetch(self) -> None:
+        """A mid-flight competing provider commit wins; this model commit gives up.
+
+        Same race as ``_commit_provider``: if the roster RPC lands second,
+        the model commit must not clobber the new provider's state with a
+        voice default computed for the OLD provider.
+        """
+
+        class _RacingClient:
+            def __init__(self, service_ref: list[VoxPanelService]) -> None:
+                self._service_ref = service_ref
+                self.prefetch_done = False
+
+            def voices(self, provider: str | None = None) -> list[str]:
+                _ = provider  # RacingClient ignores provider arg
+                if not self.prefetch_done:
+                    self.prefetch_done = True
+                    return ["matilda", "aria"]
+                # Mid-flight: another thread wins with espeak. Simulate by
+                # mutating the service's state directly.
+                svc = self._service_ref[0]
+                svc._state = svc._state.with_provider(
+                    "espeak", roster=("en",), model=None, voice="en"
+                )
+                return ["matilda", "aria"]  # old-provider roster
+
+            def synthesize(self, *args: object, **kwargs: object) -> object:
+                raise NotImplementedError
+
+        ref: list[VoxPanelService] = []
+        client = _RacingClient(ref)
+        service = VoxPanelService(
+            client,  # type: ignore[arg-type]
+            (store := _FakeStore(_config(provider="elevenlabs"))),
+        )
+        ref.append(service)
+        service.prefetch()
+        service.apply_event(PanelTopic.MODEL, {"value": 1})  # tts-1-hd (arbitrary)
+        # The racing "espeak" write happened mid-fetch. We MUST NOT write
+        # a model + old-provider voice on top of it.
+        assert "model" not in store.written
+        assert "voice" not in store.written
+        assert service.scene().provider == "espeak"
+
     def test_voice_preview_lets_a_real_bug_propagate(self) -> None:
         """Only the voxd-unreachable transient is swallowed -- a protocol bug is not."""
 
@@ -422,6 +479,10 @@ class TestApplyEvent:
                 msg = "disk full"
                 raise OSError(msg)
 
+            def write_fields(self, updates: dict[str, str]) -> None:
+                msg = "disk full"
+                raise OSError(msg)
+
         service = VoxPanelService(_FakeDaemonClient(), _FailingStore())
         with pytest.raises(OSError, match="disk full"):
             service.apply_event(PanelTopic.NOTIFY, {"value": 2})
@@ -439,6 +500,10 @@ class TestApplyEvent:
                 return _config()
 
             def write_field(self, key: str, value: str) -> None:
+                msg = "config values must not contain double-quotes"
+                raise ConfigValueError(msg)
+
+            def write_fields(self, updates: dict[str, str]) -> None:
                 msg = "config values must not contain double-quotes"
                 raise ConfigValueError(msg)
 
@@ -554,6 +619,9 @@ class TestConcurrentApplyEvent:
                     first_entered.set()
                     release_first.wait(timeout=2)
                 store.write_field(key, value)
+
+            def write_fields(self, updates: dict[str, str]) -> None:
+                store.write_fields(updates)
 
         service = VoxPanelService(_FakeDaemonClient(), _BlockingStore())
         service.prefetch()

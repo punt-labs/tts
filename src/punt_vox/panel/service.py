@@ -154,7 +154,7 @@ class VoxPanelService:
             self._commit_provider(provider)
         elif topic == PanelTopic.MODEL:
             model = self._model_for(self._index(payload))
-            self._commit("model", model, PanelState.with_model)
+            self._commit_model(model)
         elif topic == PanelTopic.VOICE_PREVIEW:
             return self._preview()
         else:
@@ -189,29 +189,24 @@ class VoxPanelService:
         return ModelControl(models=models, current=current).model_for_index(index)
 
     def _commit_provider(self, provider: str) -> None:
-        """Persist a provider change; refresh roster; clear stale model + voice.
+        """Persist a provider change; cascade model + voice to their defaults.
 
-        Model names AND voice names are provider-scoped: an ``eleven_v3``
-        model or a ``benno`` voice left behind after a switch to OpenAI or
-        espeak would drive an invalid request (voxd fails the synth). On a
-        genuine change this method writes the new provider, refetches the
-        roster for it, clears the model on disk, and clears the voice on
-        disk when it is not in the new roster. A re-publish of the same
-        provider is a no-op -- an echoed event neither rewrites the disk
-        nor drops the model/voice/roster.
+        The cascade rule (vox-s5uv): setting a provider writes provider +
+        ``MODEL_TABLE.available(provider)[0]`` (empty string for modelless
+        providers) + ``roster[0]`` for the voice. All three land in one
+        atomic write so a reader sees them together, never a partial
+        state. A re-publish of the same provider is still a no-op -- an
+        echoed event neither rewrites the disk nor refetches the roster.
 
         Roster fetch happens OUTSIDE the lock -- it is a voxd round-trip
         that must not block other panel threads on their own reads. The
         provider is re-checked under the lock after the fetch: if another
         thread swapped the provider mid-flight (e.g. a second click hit
         first), this call gives up rather than clobber the newer state.
-        The voice-membership check also uses the current-under-lock voice,
-        not a stale pre-fetch snapshot, so a voice picked mid-flight
-        survives when it is in the new roster.
 
         A ``VoxdConnectionError`` on the roster fetch surfaces as a
         transient notice; the write is abandoned so the disk never lands
-        a provider whose roster we could not read.
+        a provider whose voice roster we could not read.
         """
         with self._lock:
             pre_fetch_provider = self._state.provider
@@ -227,6 +222,9 @@ class VoxPanelService:
             with self._lock:
                 self._notice = PanelNotice.voxd_unavailable()
             return
+        available = MODEL_TABLE.available(provider)
+        model_default = available[0] if available else ""
+        voice_default = roster[0] if roster else ""
         with self._lock:
             # Re-check under the lock: another thread may have committed a
             # different provider while our roster RPC was in flight. If the
@@ -244,12 +242,66 @@ class VoxPanelService:
             if provider == self._state.provider:
                 self._notice = PanelNotice.silent()
                 return
-            self._store.write_field("provider", provider)
-            self._store.write_field("model", "")
-            current_voice = self._state.voice
-            if current_voice is not None and current_voice not in roster:
-                self._store.write_field("voice", "")
-            self._state = self._state.with_provider(provider, roster=roster)
+            self._store.write_fields(
+                {
+                    "provider": provider,
+                    "model": model_default,
+                    "voice": voice_default,
+                }
+            )
+            self._state = self._state.with_provider(
+                provider,
+                roster=roster,
+                model=model_default or None,
+                voice=voice_default or None,
+            )
+            self._notice = PanelNotice.silent()
+
+    def _commit_model(self, model: str) -> None:
+        """Persist a model change; cascade voice to the current-provider default.
+
+        The cascade rule (vox-s5uv): setting a model writes model +
+        ``client.voices(current_provider)[0]`` for the voice, in one
+        atomic write. A ``VoxdConnectionError`` on the roster fetch
+        surfaces as a transient notice; the write is abandoned so the
+        disk never lands a model whose companion voice we could not read.
+
+        Roster fetch happens OUTSIDE the lock -- it is a voxd round-trip
+        that must not block other panel threads on their own reads. The
+        provider is re-checked under the lock after the fetch: if another
+        thread swapped the provider mid-flight, this commit gives up
+        rather than clobber the newer state with a voice from the wrong
+        provider. Mirrors ``_commit_provider``'s pre-fetch guard.
+        """
+        with self._lock:
+            pre_fetch_provider = self._state.provider or "elevenlabs"
+        try:
+            roster = tuple(self._client.voices(pre_fetch_provider))
+        except VoxdConnectionError:
+            logger.warning(
+                "vox-panel: voxd unreachable during model-switch roster fetch"
+            )
+            with self._lock:
+                self._notice = PanelNotice.voxd_unavailable()
+            return
+        voice_default = roster[0] if roster else ""
+        with self._lock:
+            # Re-check under the lock: another thread may have committed a
+            # different provider (via PROVIDER topic) while our roster RPC
+            # was in flight. Give up rather than persist a voice default
+            # from the wrong provider on top of that newer state.
+            current_provider = self._state.provider or "elevenlabs"
+            if current_provider != pre_fetch_provider:
+                logger.info(
+                    "vox-panel: provider changed to %r mid-fetch; "
+                    "aborting our model %r commit",
+                    current_provider,
+                    model,
+                )
+                self._notice = PanelNotice.silent()
+                return
+            self._store.write_fields({"model": model, "voice": voice_default})
+            self._state = self._state.with_model(model, voice=voice_default or None)
             self._notice = PanelNotice.silent()
 
     def _preview(self) -> bool:
