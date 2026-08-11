@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_lux import OpError
 
+from punt_vox.cascade import Cascade, RosterError
 from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.models import MODEL_TABLE
 from punt_vox.panel.model_control import ModelControl
@@ -188,6 +189,30 @@ class VoxPanelService:
         models = MODEL_TABLE.available(provider or "elevenlabs")
         return ModelControl(models=models, current=current).model_for_index(index)
 
+    def _fetch_roster_or_notice(
+        self, provider: str, context: str
+    ) -> tuple[str, ...] | None:
+        """Fetch *provider*'s voice roster; on daemon fault, set the notice.
+
+        Returns the roster tuple on success. On :class:`RosterError`
+        (voxd unreachable or malformed), sets ``PanelNotice.voxd_unavailable()``
+        under the lock and returns ``None`` -- the caller aborts its
+        commit. Extracted so ``_commit_provider`` and ``_commit_model``
+        share one fetch-and-guard body.
+        """
+        result = Cascade.fetch_roster(self._client, provider)
+        if isinstance(result, RosterError):
+            logger.warning(
+                "vox-panel: roster fetch failed during %s (provider=%r): %s",
+                context,
+                provider,
+                result.message,
+            )
+            with self._lock:
+                self._notice = PanelNotice.voxd_unavailable()
+            return None
+        return tuple(result)
+
     def _commit_provider(self, provider: str) -> None:
         """Persist a provider change; cascade model + voice to their defaults.
 
@@ -213,18 +238,12 @@ class VoxPanelService:
             if provider == pre_fetch_provider:
                 self._notice = PanelNotice.silent()
                 return
-        try:
-            roster = tuple(self._client.voices(provider))
-        except VoxdConnectionError:
-            logger.warning(
-                "vox-panel: voxd unreachable during provider-switch roster fetch"
-            )
-            with self._lock:
-                self._notice = PanelNotice.voxd_unavailable()
+        fetched = self._fetch_roster_or_notice(provider, "provider-switch")
+        if fetched is None:
             return
-        available = MODEL_TABLE.available(provider)
-        model_default = available[0] if available else ""
-        voice_default = roster[0] if roster else ""
+        roster = fetched
+        model_default = Cascade.default_model(provider)
+        voice_default = Cascade.first_or_empty(roster)
         with self._lock:
             # Re-check under the lock: another thread may have committed a
             # different provider while our roster RPC was in flight. If the
@@ -275,16 +294,11 @@ class VoxPanelService:
         """
         with self._lock:
             pre_fetch_provider = self._state.provider or "elevenlabs"
-        try:
-            roster = tuple(self._client.voices(pre_fetch_provider))
-        except VoxdConnectionError:
-            logger.warning(
-                "vox-panel: voxd unreachable during model-switch roster fetch"
-            )
-            with self._lock:
-                self._notice = PanelNotice.voxd_unavailable()
+        fetched = self._fetch_roster_or_notice(pre_fetch_provider, "model-switch")
+        if fetched is None:
             return
-        voice_default = roster[0] if roster else ""
+        roster = fetched
+        voice_default = Cascade.first_or_empty(roster)
         with self._lock:
             # Re-check under the lock: another thread may have committed a
             # different provider (via PROVIDER topic) while our roster RPC

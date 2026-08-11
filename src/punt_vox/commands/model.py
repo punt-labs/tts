@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Self, final
 
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.cascade import Cascade, RosterError
 from punt_vox.commands._result import CommandResult, Ctx, SwitchList
 from punt_vox.models import MODEL_TABLE, resolve_model
 
@@ -61,18 +61,14 @@ class ModelCommand:
                 exit_code=1,
             )
 
-        try:
-            voices = ctx.client.voices(provider)
-        except (VoxdConnectionError, VoxdProtocolError) as exc:
-            message = str(exc)
+        voice_default = Cascade.fetch_first_voice(ctx.client, provider)
+        if isinstance(voice_default, RosterError):
             return CommandResult(
-                text=f"Error: {message}",
-                json_data={"error": message},
+                text=f"Error: {voice_default.message}",
+                json_data={"error": voice_default.message},
                 error=True,
                 exit_code=1,
             )
-
-        voice_default = voices[0] if voices else ""
 
         try:
             ctx.store.write_fields({"model": resolved, "voice": voice_default})

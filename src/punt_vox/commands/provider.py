@@ -10,9 +10,8 @@ from __future__ import annotations
 
 from typing import Self, final
 
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.cascade import Cascade, RosterError
 from punt_vox.commands._result import CommandResult, Ctx, SwitchList
-from punt_vox.models import MODEL_TABLE
 from punt_vox.server_switches import PROVIDER_NAMES
 
 
@@ -59,20 +58,16 @@ class ProviderCommand:
         if cfg.provider == name:
             return CommandResult(text=f"Provider: {name}", json_data={"provider": name})
 
-        try:
-            voices = ctx.client.voices(name)
-        except (VoxdConnectionError, VoxdProtocolError) as exc:
-            message = str(exc)
+        voice_default = Cascade.fetch_first_voice(ctx.client, name)
+        if isinstance(voice_default, RosterError):
             return CommandResult(
-                text=f"Error: {message}",
-                json_data={"error": message},
+                text=f"Error: {voice_default.message}",
+                json_data={"error": voice_default.message},
                 error=True,
                 exit_code=1,
             )
 
-        available_models = MODEL_TABLE.available(name)
-        model_default = available_models[0] if available_models else ""
-        voice_default = voices[0] if voices else ""
+        model_default = Cascade.default_model(name)
 
         try:
             ctx.store.write_fields(
