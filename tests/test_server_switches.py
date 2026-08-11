@@ -82,19 +82,32 @@ def _tools(
     session: _FakeSession,
     tmp_path: Path,
     voices: list[str] | None = None,
+    voices_by_provider: dict[str, list[str]] | None = None,
 ) -> tuple[ModelTool, ProviderTool, VoiceTool]:
-    """Build the three tools wired to *session*, *tmp_path*, and a voices fake."""
+    """Build the three tools wired to *session*, *tmp_path*, and a voices fake.
+
+    ``voices`` gives the default voice list. ``voices_by_provider`` lets a
+    test supply distinct rosters per provider so cascade tests can verify the
+    tool queried the correct one.
+    """
     client = MagicMock()
-    client.voices.return_value = voices if voices is not None else []
+
+    def _voices_side_effect(provider: str | None = None) -> list[str]:
+        if voices_by_provider is not None and provider in voices_by_provider:
+            return voices_by_provider[provider]
+        return voices if voices is not None else []
+
+    client.voices.side_effect = _voices_side_effect
 
     def _finder() -> Path | None:
         return tmp_path
 
     provider_of_session = _session_provider(session)
+    factory = _client_factory(client)
     return (
-        ModelTool(provider_of_session, _finder),
-        ProviderTool(provider_of_session, _finder),
-        VoiceTool(provider_of_session, _finder, _client_factory(client)),
+        ModelTool(provider_of_session, _finder, factory),
+        ProviderTool(provider_of_session, _finder, factory),
+        VoiceTool(provider_of_session, _finder, factory),
     )
 
 
@@ -143,24 +156,72 @@ def test_model_no_arg_defaults_to_elevenlabs_when_provider_unset(
 
 
 def test_model_shorthand_resolves_and_persists(tmp_path: Path) -> None:
-    """A shorthand resolves via resolve_model and lands on both surfaces."""
+    """A shorthand resolves via resolve_model and lands on both surfaces.
+
+    The cascade rule (vox-awm9) also sets voice to first-from-roster on
+    every model set. Here the roster is ``["matilda"]``, so voice lands as
+    ``matilda`` alongside the resolved model.
+    """
     session = _FakeSession(provider="elevenlabs")
-    model, _, _ = _tools(session, tmp_path)
+    model, _, _ = _tools(session, tmp_path, voices=["matilda", "roger"])
 
     result = json.loads(model.dispatch("v3"))
 
-    assert result == {"model": "eleven_v3"}
+    assert result == {"model": "eleven_v3", "voice": "matilda"}
     assert session.model == "eleven_v3"
+    assert session.voice == "matilda"
     assert ConfigStore(tmp_path).read_field("model") == "eleven_v3"
+    assert ConfigStore(tmp_path).read_field("voice") == "matilda"
 
 
 def test_model_full_name_persists_unchanged(tmp_path: Path) -> None:
     session = _FakeSession(provider="elevenlabs")
-    model, _, _ = _tools(session, tmp_path)
+    model, _, _ = _tools(session, tmp_path, voices=["matilda"])
 
     json.loads(model.dispatch("eleven_flash_v2_5"))
 
     assert session.model == "eleven_flash_v2_5"
+    # Cascade rule: setting model also writes voice = first from roster.
+    assert session.voice == "matilda"
+
+
+def test_model_set_cascade_uses_empty_when_roster_is_empty(tmp_path: Path) -> None:
+    """A daemon with no voices for the provider cascades voice = ''."""
+    session = _FakeSession(provider="elevenlabs")
+    model, _, _ = _tools(session, tmp_path, voices=[])
+
+    result = json.loads(model.dispatch("v3"))
+
+    assert result == {"model": "eleven_v3", "voice": ""}
+    assert session.voice is None
+    # Frontmatter treats "" as absent; the field is cleared on disk.
+    assert not ConfigStore(tmp_path).read_field("voice")
+
+
+def test_model_set_roster_fetch_error_returns_error_envelope(tmp_path: Path) -> None:
+    """A daemon fault on the cascade roster fetch aborts the write cleanly.
+
+    Same pattern as vox-w79f on the panel: the model MUST NOT persist when
+    we cannot read the voice roster to compute the cascaded default.
+    """
+    from unittest.mock import MagicMock
+
+    from punt_vox.client_errors import VoxdConnectionError
+
+    client = MagicMock()
+    client.voices.side_effect = VoxdConnectionError("voxd unreachable")
+    session = _FakeSession(provider="elevenlabs")
+    model = ModelTool(
+        _session_provider(session),
+        lambda: tmp_path,
+        _client_factory(client),
+    )
+
+    result = json.loads(model.dispatch("v3"))
+
+    assert "error" in result
+    assert session.model is None
+    assert ConfigStore(tmp_path).read_field("model") is None
 
 
 def test_model_unknown_shorthand_returns_error(tmp_path: Path) -> None:
@@ -219,15 +280,42 @@ def test_provider_no_arg_reports_null_when_none_set(tmp_path: Path) -> None:
     assert json.loads(provider.dispatch())["current"] is None
 
 
-def test_provider_set_writes_session_and_config(tmp_path: Path) -> None:
+def test_provider_set_writes_session_and_cascades_defaults(tmp_path: Path) -> None:
+    """The cascade rule (vox-awm9): set provider populates model + voice defaults.
+
+    ``openai`` first model is ``tts-1``; the fake client returns
+    ``["alloy", "nova"]``, so voice cascades to ``alloy``.
+    """
     session = _FakeSession()
-    _, provider, _ = _tools(session, tmp_path)
+    _, provider, _ = _tools(session, tmp_path, voices=["alloy", "nova"])
 
     result = json.loads(provider.dispatch("openai"))
 
-    assert result == {"provider": "openai"}
+    assert result == {
+        "provider": "openai",
+        "model": "tts-1",
+        "voice": "alloy",
+    }
     assert session.provider == "openai"
+    assert session.model == "tts-1"
+    assert session.voice == "alloy"
     assert ConfigStore(tmp_path).read_field("provider") == "openai"
+    assert ConfigStore(tmp_path).read_field("model") == "tts-1"
+    assert ConfigStore(tmp_path).read_field("voice") == "alloy"
+
+
+def test_provider_set_modelless_leaves_model_empty_but_cascades_voice(
+    tmp_path: Path,
+) -> None:
+    """A modelless provider (polly/say/espeak) cascades voice, leaves model blank."""
+    session = _FakeSession()
+    _, provider, _ = _tools(session, tmp_path, voices=["joanna", "matthew"])
+
+    result = json.loads(provider.dispatch("polly"))
+
+    assert result == {"provider": "polly", "model": "", "voice": "joanna"}
+    assert session.model is None  # "" write clears the session field
+    assert session.voice == "joanna"
 
 
 def test_provider_dispatch_refreshes_the_session(tmp_path: Path) -> None:
@@ -239,38 +327,81 @@ def test_provider_dispatch_refreshes_the_session(tmp_path: Path) -> None:
     assert session.refreshes == 1
 
 
-def test_provider_switch_clears_the_stale_model(tmp_path: Path) -> None:
-    """A genuine provider change wipes the previously-stored model.
+def test_provider_switch_cascades_across_providers(tmp_path: Path) -> None:
+    """Genuine switch overwrites model + voice with the new provider's defaults.
 
-    Model names are provider-scoped -- ``eleven_v3`` reaching an OpenAI request
-    is an invalid API call, so persisting the old model across a switch is a
-    footgun. Verified through the ConfigStore choke-point both surfaces write
-    to.
+    Was: 'clears stale model' (vox-0rp9.1). Under vox-awm9 the rule is
+    'sets model to first, voice to first' -- deterministic default rather than
+    a cleared placeholder.
     """
     ConfigStore(tmp_path).write_fields({"provider": "elevenlabs", "model": "eleven_v3"})
-    session = _FakeSession(provider="elevenlabs", model="eleven_v3")
-    _, provider, _ = _tools(session, tmp_path)
+    session = _FakeSession(provider="elevenlabs", model="eleven_v3", voice="matilda")
+    _, provider, _ = _tools(
+        session,
+        tmp_path,
+        voices_by_provider={
+            "elevenlabs": ["matilda"],
+            "openai": ["alloy", "nova"],
+        },
+    )
 
     provider.dispatch("openai")
 
     assert session.provider == "openai"
-    assert session.model is None
+    assert session.model == "tts-1"
+    assert session.voice == "alloy"
     assert ConfigStore(tmp_path).read_field("provider") == "openai"
-    # Empty string writes clear the field (frontmatter treats "" as absent);
-    # the important invariant is that the stale model is not readable.
-    assert not ConfigStore(tmp_path).read_field("model")
+    assert ConfigStore(tmp_path).read_field("model") == "tts-1"
+    assert ConfigStore(tmp_path).read_field("voice") == "alloy"
 
 
-def test_provider_same_write_keeps_the_model(tmp_path: Path) -> None:
-    """Writing the same provider again is a no-op on the stored model."""
-    ConfigStore(tmp_path).write_fields({"provider": "elevenlabs", "model": "eleven_v3"})
-    session = _FakeSession(provider="elevenlabs", model="eleven_v3")
-    _, provider, _ = _tools(session, tmp_path)
+def test_provider_no_op_when_unchanged_preserves_model_and_voice(
+    tmp_path: Path,
+) -> None:
+    """Re-publishing the same provider does not rewrite the disk or drop state."""
+    ConfigStore(tmp_path).write_fields(
+        {"provider": "elevenlabs", "model": "eleven_v3", "voice": "roger"}
+    )
+    session = _FakeSession(provider="elevenlabs", model="eleven_v3", voice="roger")
+    _, provider, _ = _tools(session, tmp_path, voices=["matilda", "aria"])
 
-    provider.dispatch("elevenlabs")
+    result = json.loads(provider.dispatch("elevenlabs"))
 
+    # No-op returns the provider only; no cascade fires.
+    assert result == {"provider": "elevenlabs"}
     assert session.model == "eleven_v3"
+    assert session.voice == "roger"
     assert ConfigStore(tmp_path).read_field("model") == "eleven_v3"
+    assert ConfigStore(tmp_path).read_field("voice") == "roger"
+
+
+def test_provider_set_roster_fetch_error_returns_error_envelope(
+    tmp_path: Path,
+) -> None:
+    """A daemon fault on the cascade roster fetch aborts the write cleanly.
+
+    Same pattern as vox-w79f on the panel: the provider MUST NOT persist
+    when we cannot read the voice roster to compute the cascaded default.
+    """
+    from unittest.mock import MagicMock
+
+    from punt_vox.client_errors import VoxdConnectionError
+
+    client = MagicMock()
+    client.voices.side_effect = VoxdConnectionError("voxd unreachable")
+    session = _FakeSession(provider="elevenlabs")
+    provider = ProviderTool(
+        _session_provider(session),
+        lambda: tmp_path,
+        _client_factory(client),
+    )
+
+    result = json.loads(provider.dispatch("openai"))
+
+    assert "error" in result
+    # The failed switch left the previous state intact.
+    assert session.provider == "elevenlabs"
+    assert ConfigStore(tmp_path).read_field("provider") is None
 
 
 # ---------------------------------------------------------------------------
@@ -388,32 +519,85 @@ def test_voice_dispatch_refreshes_the_session(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Isolation: the switch tools never call each other's collaborators
+# Cascade: model/provider list is roster-free; write fires the cascade fetch
 # ---------------------------------------------------------------------------
+#
+# Was (pre-vox-awm9): model and provider tools MUST NOT touch the voice
+# roster on any path. Now: no-arg list is still roster-free, but a write
+# fires exactly one voices() call to fetch the cascaded default. The two
+# tests below enforce both halves of the new invariant.
 
 
-def test_model_call_does_not_touch_voice_roster(tmp_path: Path) -> None:
+def test_model_no_arg_does_not_touch_voice_roster(tmp_path: Path) -> None:
+    """Listing models is roster-free -- only a write fires the cascade fetch."""
     session = _FakeSession(provider="elevenlabs")
     client = MagicMock()
     client.voices.return_value = []
 
-    model = ModelTool(_session_provider(session), lambda: tmp_path)
+    model = ModelTool(
+        _session_provider(session), lambda: tmp_path, _client_factory(client)
+    )
     _ = model.dispatch()
-    _ = model.dispatch("v3")
 
     assert client.voices.call_count == 0
 
 
-def test_provider_call_does_not_touch_voice_roster(tmp_path: Path) -> None:
+def test_model_set_fires_exactly_one_voices_call(tmp_path: Path) -> None:
+    """The cascade fetches the roster once per model write (no duplicate)."""
+    session = _FakeSession(provider="elevenlabs")
+    client = MagicMock()
+    client.voices.return_value = ["matilda"]
+
+    model = ModelTool(
+        _session_provider(session), lambda: tmp_path, _client_factory(client)
+    )
+    _ = model.dispatch("v3")
+
+    assert client.voices.call_count == 1
+
+
+def test_provider_no_arg_does_not_touch_voice_roster(tmp_path: Path) -> None:
+    """Listing providers is roster-free -- only a genuine change fires the fetch."""
     session = _FakeSession()
     client = MagicMock()
     client.voices.return_value = []
 
-    provider = ProviderTool(_session_provider(session), lambda: tmp_path)
+    provider = ProviderTool(
+        _session_provider(session), lambda: tmp_path, _client_factory(client)
+    )
     _ = provider.dispatch()
+
+    assert client.voices.call_count == 0
+
+
+def test_provider_no_op_re_publish_does_not_touch_voice_roster(
+    tmp_path: Path,
+) -> None:
+    """Re-publishing the same provider still short-circuits before the roster fetch."""
+    session = _FakeSession(provider="polly")
+    client = MagicMock()
+    client.voices.return_value = []
+
+    provider = ProviderTool(
+        _session_provider(session), lambda: tmp_path, _client_factory(client)
+    )
     _ = provider.dispatch("polly")
 
     assert client.voices.call_count == 0
+
+
+def test_provider_set_fires_exactly_one_voices_call(tmp_path: Path) -> None:
+    """A genuine provider switch fetches the roster once for the cascade."""
+    session = _FakeSession(provider="elevenlabs")
+    client = MagicMock()
+    client.voices.return_value = ["joanna"]
+
+    provider = ProviderTool(
+        _session_provider(session), lambda: tmp_path, _client_factory(client)
+    )
+    _ = provider.dispatch("polly")
+
+    assert client.voices.call_count == 1
 
 
 @pytest.mark.parametrize(

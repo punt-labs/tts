@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from typing import Self, final
 
+from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.commands._result import CommandResult, Ctx, SwitchList
+from punt_vox.models import MODEL_TABLE
 from punt_vox.server_switches import PROVIDER_NAMES
 
 
@@ -29,11 +31,14 @@ class ProviderCommand:
         No arg: list ``elevenlabs``, ``openai``, ``polly``, ``say``, ``espeak``,
         marking the current selection.
 
-        Name given: validate against the closed enum and write to
-        ``.punt-labs/vox/vox.md``. On a genuine provider change the stale
-        model is cleared in the same write -- model names are
-        provider-scoped, so ``eleven_v3`` reaching an OpenAI request is an
-        invalid API call.
+        Name given: validate against the closed enum. On a genuine change,
+        the cascade rule (vox-awm9) fires: writes provider + model = first
+        from ``MODEL_TABLE.available(name)`` (empty string for modelless) +
+        voice = first from the new provider's voice roster, all in one
+        atomic ``write_fields`` call. A re-publish of the same provider is
+        a no-op -- no roster fetch, no disk write. A daemon fault on the
+        roster fetch aborts the write and returns an error result rather
+        than persist a provider whose voice we could not read.
         """
         cfg = ctx.store.read()
 
@@ -51,11 +56,48 @@ class ProviderCommand:
                 exit_code=1,
             )
 
-        updates: dict[str, str] = {"provider": name}
-        if cfg.provider != name:
-            updates["model"] = ""
-        ctx.store.write_fields(updates)
-        return CommandResult(text=f"Provider: {name}", json_data={"provider": name})
+        if cfg.provider == name:
+            return CommandResult(text=f"Provider: {name}", json_data={"provider": name})
+
+        try:
+            voices = ctx.client.voices(name)
+        except (VoxdConnectionError, VoxdProtocolError) as exc:
+            message = str(exc)
+            return CommandResult(
+                text=f"Error: {message}",
+                json_data={"error": message},
+                error=True,
+                exit_code=1,
+            )
+
+        available_models = MODEL_TABLE.available(name)
+        model_default = available_models[0] if available_models else ""
+        voice_default = voices[0] if voices else ""
+
+        try:
+            ctx.store.write_fields(
+                {
+                    "provider": name,
+                    "model": model_default,
+                    "voice": voice_default,
+                }
+            )
+        except ValueError as exc:
+            message = str(exc)
+            return CommandResult(
+                text=f"Error: {message}",
+                json_data={"error": message},
+                error=True,
+                exit_code=1,
+            )
+        return CommandResult(
+            text=f"Provider: {name}",
+            json_data={
+                "provider": name,
+                "model": model_default,
+                "voice": voice_default,
+            },
+        )
 
 
 provider: ProviderCommand = ProviderCommand()

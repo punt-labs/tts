@@ -265,6 +265,13 @@ class VoxPanelService:
         atomic write. A ``VoxdConnectionError`` on the roster fetch
         surfaces as a transient notice; the write is abandoned so the
         disk never lands a model whose companion voice we could not read.
+
+        Roster fetch happens OUTSIDE the lock -- it is a voxd round-trip
+        that must not block other panel threads on their own reads. The
+        provider is re-checked under the lock after the fetch: if another
+        thread swapped the provider mid-flight, this commit gives up
+        rather than clobber the newer state with a voice from the wrong
+        provider. Mirrors ``_commit_provider``'s pre-fetch guard.
         """
         with self._lock:
             pre_fetch_provider = self._state.provider or "elevenlabs"
@@ -279,6 +286,20 @@ class VoxPanelService:
             return
         voice_default = roster[0] if roster else ""
         with self._lock:
+            # Re-check under the lock: another thread may have committed a
+            # different provider (via PROVIDER topic) while our roster RPC
+            # was in flight. Give up rather than persist a voice default
+            # from the wrong provider on top of that newer state.
+            current_provider = self._state.provider or "elevenlabs"
+            if current_provider != pre_fetch_provider:
+                logger.info(
+                    "vox-panel: provider changed to %r mid-fetch; "
+                    "aborting our model %r commit",
+                    current_provider,
+                    model,
+                )
+                self._notice = PanelNotice.silent()
+                return
             self._store.write_fields({"model": model, "voice": voice_default})
             self._state = self._state.with_model(model, voice=voice_default or None)
             self._notice = PanelNotice.silent()

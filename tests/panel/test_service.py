@@ -408,6 +408,50 @@ class TestApplyEvent:
         assert store.written["model"] == "tts-1-hd"
         assert service.scene().model == "tts-1-hd"
 
+    def test_model_yields_when_provider_changed_mid_fetch(self) -> None:
+        """A mid-flight competing provider commit wins; this model commit gives up.
+
+        Same race as ``_commit_provider``: if the roster RPC lands second,
+        the model commit must not clobber the new provider's state with a
+        voice default computed for the OLD provider.
+        """
+
+        class _RacingClient:
+            def __init__(self, service_ref: list[VoxPanelService]) -> None:
+                self._service_ref = service_ref
+                self.prefetch_done = False
+
+            def voices(self, provider: str | None = None) -> list[str]:
+                _ = provider  # RacingClient ignores provider arg
+                if not self.prefetch_done:
+                    self.prefetch_done = True
+                    return ["matilda", "aria"]
+                # Mid-flight: another thread wins with espeak. Simulate by
+                # mutating the service's state directly.
+                svc = self._service_ref[0]
+                svc._state = svc._state.with_provider(
+                    "espeak", roster=("en",), model=None, voice="en"
+                )
+                return ["matilda", "aria"]  # old-provider roster
+
+            def synthesize(self, *args: object, **kwargs: object) -> object:
+                raise NotImplementedError
+
+        ref: list[VoxPanelService] = []
+        client = _RacingClient(ref)
+        service = VoxPanelService(
+            client,  # type: ignore[arg-type]
+            (store := _FakeStore(_config(provider="elevenlabs"))),
+        )
+        ref.append(service)
+        service.prefetch()
+        service.apply_event(PanelTopic.MODEL, {"value": 1})  # tts-1-hd (arbitrary)
+        # The racing "espeak" write happened mid-fetch. We MUST NOT write
+        # a model + old-provider voice on top of it.
+        assert "model" not in store.written
+        assert "voice" not in store.written
+        assert service.scene().provider == "espeak"
+
     def test_voice_preview_lets_a_real_bug_propagate(self) -> None:
         """Only the voxd-unreachable transient is swallowed -- a protocol bug is not."""
 
