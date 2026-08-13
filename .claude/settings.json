@@ -141,9 +141,7 @@
       "Bash(tftp:*)",
       "Bash(wget:*)",
       "Edit(.env)",
-      "Edit(.envrc)",
-      "Write(.env)",
-      "Write(.envrc)"
+      "Edit(.envrc)"
     ]
   }
 }
