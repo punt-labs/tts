@@ -21,8 +21,9 @@ htmlcov/
 .env
 lancedb/
 .mcp.json
-.claude/
+.claude/*
 !.claude/settings.json
+*/**/.claude/
 Lux.ini
 research/
 .biff.local
