@@ -83,6 +83,14 @@ def hermetic_config(  # pyright: ignore[reportUnusedFunction]
     config_dir = tmp_path_factory.mktemp("vox-config") / ".punt-labs" / "vox"
     config_dir.mkdir(parents=True)
 
+    # Seed a real ``provider:`` value so surfaces that fill from state through
+    # SessionSpec get a configured provider by default. Without this every CLI
+    # ``vox say``, hook synthesis, panel preview, and mic:unmute test would hit
+    # the F1 refusal introduced by vox-w3f8 and exit before the assertion it
+    # was actually written for. Tests that mean to exercise F1 overwrite this
+    # file explicitly; the seed keeps the rest of the suite unchanged.
+    (config_dir / "vox.md").write_text("---\nprovider: elevenlabs\n---\n")
+
     def _resolve(_start: Path | None = None) -> Path:
         """Stand-in for ``find_config_dir`` that never escapes the tmp dir."""
         return config_dir
@@ -91,6 +99,11 @@ def hermetic_config(  # pyright: ignore[reportUnusedFunction]
     monkeypatch.setattr("punt_vox.dirs.DEFAULT_CONFIG_DIR", config_dir)
     monkeypatch.setattr("punt_vox.dirs.find_config_dir", _resolve)
     monkeypatch.setattr("punt_vox.__main__.find_config_dir", _resolve)
+    # cli_rec imports find_config_dir at module scope for the SessionSpec
+    # fill on ``vox rec new``; the ``from X import Y`` binding captures the
+    # function at import time, so patching only ``punt_vox.dirs`` leaves
+    # cli_rec's copy pointing at the real walker.
+    monkeypatch.setattr("punt_vox.cli_rec.find_config_dir", _resolve)
     return config_dir
 
 

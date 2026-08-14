@@ -41,6 +41,22 @@ class VoiceCommand:
         if name is None:
             return self._list(ctx, provider, cfg.voice)
 
+        # Setting a voice with no provider configured lands a wrong-provider
+        # voice into vox.md the moment a caller runs mic:provider -- exactly
+        # the substitution class this bead exists to prevent. Listing does
+        # not require a provider (empty roster is fine); setting does.
+        if not cfg.provider:
+            message = (
+                "no TTS provider is configured for this repo; "
+                "set one with vox provider <name>"
+            )
+            return CommandResult(
+                text=f"Error: {message}",
+                json_data={"error": message},
+                error=True,
+                exit_code=1,
+            )
+
         normalized = SynthesisSpec.normalize_voice(name)
         if normalized is None:
             return CommandResult(
@@ -69,9 +85,34 @@ class VoiceCommand:
 
     @staticmethod
     def _list(ctx: Ctx, provider: str | None, current: str | None) -> CommandResult:
-        """Return the voice roster, or an error envelope on a daemon fault."""
+        """Return the voice roster, or an empty listing when no provider is set.
+
+        Listing needs no synthesis, so an unset provider (no ``--provider``
+        flag and no ``provider:`` in ``vox.md``) yields an honest empty
+        roster instead of a refusal -- refusing at listing time when a user
+        is trying to discover what to configure would be the worst possible
+        moment to say "configure something first". Symmetric with ``vox
+        model``'s list branch and ``mic:voice``'s. The set path
+        (``VoiceCommand.__call__`` with a name) still refuses when there is
+        no provider, since a wrong-provider voice landing in ``vox.md`` is
+        the substitution the whole subsystem exists to prevent.
+
+        ``VoxClientSync.voices`` requires a provider (state is the sole
+        authority on which provider voxd runs) so the empty-roster branch
+        must not reach it.
+        """
+        cfg = ctx.store.read()
+        resolved = provider or cfg.provider
+        if not resolved:
+            listing: SwitchList = SwitchList(names=(), current=current)
+            payload: dict[str, object] = dict(listing.payload())
+            payload["provider"] = None
+            return CommandResult(
+                text=listing.render("No voices for this provider."),
+                json_data=payload,
+            )
         try:
-            names = ctx.client.voices(provider)
+            names = ctx.client.voices(resolved)
         except (VoxdConnectionError, VoxdProtocolError) as exc:
             message = str(exc)
             return CommandResult(
@@ -81,9 +122,8 @@ class VoiceCommand:
                 exit_code=1,
             )
         listing = SwitchList(names=tuple(names), current=current)
-        payload: dict[str, object] = dict(listing.payload())
-        if provider is not None:
-            payload["provider"] = provider
+        payload = dict(listing.payload())
+        payload["provider"] = resolved
         return CommandResult(text=listing.render(), json_data=payload)
 
 

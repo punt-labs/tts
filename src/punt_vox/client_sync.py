@@ -165,8 +165,8 @@ class VoxClientSync:
         """Return a stored recording's bytes by its store reference."""
         return cast("bytes", self._runner.run(self._call("fetch", ref)))
 
-    def voices(self, provider: str | None = None) -> list[str]:
-        """List available voices."""
+    def voices(self, provider: str) -> list[str]:
+        """List *provider*'s voice roster; the wire always carries a provider."""
         return self._runner.run(self._call("voices", provider))  # type: ignore[no-any-return]
 
     def health(self) -> HealthStatus:
