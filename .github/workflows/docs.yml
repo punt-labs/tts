@@ -16,6 +16,6 @@ jobs:
     # markdownlint across all tracked .md files
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-      - uses: DavidAnson/markdownlint-cli2-action@2256fe35224a451507c8848ec825a4212e9eeb00 # v22
+      - uses: DavidAnson/markdownlint-cli2-action@83c6b49590003d85b71ea0e478b36aa0a9bb3cd4 # v22
         with:
           globs: "**/*.md"
