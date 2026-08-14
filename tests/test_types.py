@@ -16,6 +16,7 @@ from punt_vox.types import (
     MusicResult,
     SynthesisRequest,
     SynthesisResult,
+    VoiceNotFoundError,
     generate_filename,
     result_to_dict,
     validate_language,
@@ -243,3 +244,51 @@ class TestMusicProvider:
             def unrelated(self) -> None: ...
 
         assert not isinstance(NotMusic(), MusicProvider)
+
+
+class TestVoiceNotFoundError:
+    """The F5 error carries structured fields and renders a user-facing sentence.
+
+    Both matter separately: a wire surface renders via ``str(exc)``, while a
+    programmatic caller inspects the properties. The rendering was silently
+    a tuple repr before ``__str__`` was overridden -- a substring assertion
+    would have passed either way, which is why these tests check the whole
+    string.
+    """
+
+    def test_str_renders_the_f5_sentence(self) -> None:
+        exc = VoiceNotFoundError("bella", ["alloy", "ash", "ballad"])
+
+        assert str(exc) == "bella (available: alloy, ash, ballad)"
+
+    def test_str_is_not_the_tuple_repr(self) -> None:
+        """Regression: without ``__str__`` this would render as the args tuple.
+
+        The defect this test guards against: ``BaseException.__init__`` runs
+        after ``__new__`` and overwrites ``args`` with the constructor's
+        original positional arguments, so a message stashed in
+        ``super().__new__(cls, msg)`` round-trips out as
+        ``"('bella', ['alloy', ...])"``. The ``__str__`` override is the fix;
+        this test names the wrong shape so a future edit removing the
+        override fails visibly.
+        """
+        rendered = str(VoiceNotFoundError("bella", ["alloy"]))
+
+        assert not rendered.startswith("(")
+        assert "'bella'" not in rendered  # the tuple repr quotes 'bella'
+        assert "available" in rendered
+
+    def test_properties_expose_the_structured_fields(self) -> None:
+        exc = VoiceNotFoundError("bella", ["alloy", "ash"])
+
+        assert exc.voice_name == "bella"
+        assert exc.available == ["alloy", "ash"]
+
+    def test_available_returns_a_copy(self) -> None:
+        """The property returns a copy so a caller cannot mutate the error's state."""
+        available = ["alloy"]
+        exc = VoiceNotFoundError("bella", available)
+
+        got = exc.available
+        got.append("mutation")
+        assert exc.available == ["alloy"]

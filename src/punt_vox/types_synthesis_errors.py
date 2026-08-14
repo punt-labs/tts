@@ -43,6 +43,17 @@ class ModelNotAvailableError(ValueError):
     prevent -- the caller must see the pair the state actually holds. Empty
     state ``model: ""`` is not this case; it means "no model declared", which
     is a permanent and legitimate state for polly, say, and espeak.
+
+    Renders through :meth:`__str__` so ``str(exc)`` is the crafted sentence
+    every F7 surface reports through. ``__str__`` is the load-bearing
+    override: ``BaseException.__init__`` runs after ``__new__`` and
+    overwrites ``args`` with the constructor's original positional arguments,
+    so a message built and stashed in ``super().__new__(cls, msg)`` would
+    round-trip out as the tuple repr
+    ``"('eleven_v3', 'openai', ['tts-1', ...])"`` -- what six F7 surfaces on
+    this branch would show if they trusted ``str(exc)``. The structured
+    fields stay on ``args`` (useful to programmatic callers) while ``__str__``
+    renders the message.
     """
 
     _model: str
@@ -50,15 +61,18 @@ class ModelNotAvailableError(ValueError):
     _available: list[str]
 
     def __new__(cls, model: str, provider: str, available: list[str]) -> Self:  # pyright: ignore[reportInconsistentConstructor]
-        message = (
-            f"model {model!r} is not available for provider {provider!r} "
-            f"(available: {', '.join(available)})"
-        )
-        self = super().__new__(cls, message)
+        self = super().__new__(cls, model, provider, available)
         self._model = model
         self._provider = provider
         self._available = available
         return self
+
+    def __str__(self) -> str:
+        """Render the F7 message so ``str(exc)`` is user-facing, not a tuple repr."""
+        return (
+            f"model {self._model!r} is not available for provider "
+            f"{self._provider!r} (available: {', '.join(self._available)})"
+        )
 
     @property
     def model(self) -> str:

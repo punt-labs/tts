@@ -226,10 +226,28 @@ def test_provider_alien_model_is_rejected() -> None:
     assert "tts-1" in err.available
 
 
-def test_alien_model_error_message_names_the_available_set() -> None:
-    """The error message lists the available models so the caller can pick one."""
-    with pytest.raises(ModelNotAvailableError, match="tts-1"):
+def test_alien_model_error_renders_the_full_sentence() -> None:
+    """``str(exc)`` returns the crafted F7 sentence, not the args tuple repr.
+
+    A substring match on ``"tts-1"`` would pass whether ``str(exc)`` returned
+    ``"model 'eleven_v3' is not available for provider 'openai' (available:
+    tts-1, tts-1-hd, ...)"`` OR the tuple repr ``"('eleven_v3', 'openai',
+    ['tts-1', ...])"`` -- the second is what a subclass of ``BaseException``
+    with a multi-arg constructor produces when ``__str__`` is not overridden
+    (``BaseException.__init__`` runs after ``__new__`` and overwrites
+    ``args``). Assert on ``"is not available for provider"`` -- a phrase only
+    the crafted sentence can contain -- so the test fails loudly if the
+    override goes missing.
+    """
+    with pytest.raises(ModelNotAvailableError) as excinfo:
         SessionSpec(_State(provider="openai", model="eleven_v3")).fill()
+
+    rendered = str(excinfo.value)
+    assert (
+        rendered == "model 'eleven_v3' is not available for provider "
+        "'openai' (available: tts-1, tts-1-hd, gpt-4o-mini-tts)"
+    )
+    assert "is not available for provider" in rendered
 
 
 def test_empty_model_uses_the_provider_default() -> None:
