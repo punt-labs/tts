@@ -115,13 +115,21 @@ class SessionSpec:
     def _resolve_provider(self, override: str | None) -> str:
         """Return the authoritative provider name, or raise if state has none.
 
-        The override wins over state; an empty string is treated as absent so
-        that ``provider: ""`` in a fresh ``vox.md`` (:class:`DESIGN.md`:69)
-        and an omitted ``--provider`` flag both fall through to state and,
+        The override wins over state; an empty or whitespace-only string is
+        treated as absent so that ``provider: ""`` in a fresh ``vox.md``
+        (:class:`DESIGN.md`:69), an omitted ``--provider`` flag, and a
+        hand-edited ``provider: "   "`` all fall through to state and,
         failing that, refuse.
+
+        The strip is what closes the whitespace-bypass hazard. Without it
+        ``"   "`` is truthy, would satisfy the guard, and would flow on to
+        ``ProviderRegistry.get`` where it raises the less-informative
+        ``Unknown provider '   '`` (design F4) instead of the F1
+        "configure one" message the caller needs. Assigning through the
+        walrus both rejects the whitespace-only case AND normalises what
+        downstream surfaces see, so no padded name crosses the boundary.
         """
-        candidate = override or self._state.provider or ""
-        if not candidate:
+        if not (candidate := (override or self._state.provider or "").strip()):
             msg = (
                 "no TTS provider is configured for this repo; "
                 "set one with mic:provider <name>"
@@ -136,21 +144,32 @@ class SessionSpec:
         """Return the model to send, validated against *provider* when non-empty.
 
         The override wins over state's model; either falls through to
-        :data:`None` when both are unset. An empty string is treated as
-        "no model" (the permanent state for polly, say, and espeak, and
-        the "use the provider's default constant" case for elevenlabs and
-        openai) -- a modelless request never fails validation. A non-empty
-        model must appear in the provider's own list, or the caller sees
-        the pair state actually declared, not a substitution to the
-        provider's default.
+        :data:`None` when both are unset. An empty or whitespace-only string
+        is treated as "no model" (the permanent state for polly, say, and
+        espeak, and the "use the provider's default constant" case for
+        elevenlabs and openai) -- a modelless request never fails
+        validation. A non-empty model must appear in the provider's own
+        list, or the caller sees the pair state actually declared, not a
+        substitution to the provider's default.
+
+        The strip mirrors :meth:`_resolve_provider`'s: a hand-edited
+        ``model: "   "`` would otherwise reach ``MODEL_TABLE.available()``
+        as ``"   "`` and fail with a list-membership error naming a
+        whitespace model, when the documented meaning of empty-for-those-
+        two-providers is "use the default". Normalising here also means
+        no downstream surface sees a padded model name.
         """
-        candidate = override if override is not None else state_model
-        # An unset or empty model means "no user-selectable model" and skips
-        # validation, so a modelless provider (polly / say / espeak) and an
-        # elevenlabs/openai session that has not chosen a model both pass
-        # through to the provider constructor's own default constant.
-        if not candidate:
-            return candidate
+        raw = override if override is not None else state_model
+        if raw is None:
+            return None
+        # An empty (or whitespace-only) model means "no user-selectable
+        # model" and skips validation, so a modelless provider (polly /
+        # say / espeak) and an elevenlabs/openai session that has not
+        # chosen a model both pass through to the provider constructor's
+        # own default constant. The empty string is preserved verbatim
+        # so ``config.get("model") == ""`` on the wire round-trips.
+        if not (candidate := raw.strip()):
+            return raw
         available = MODEL_TABLE.available(provider)
         # Modelless providers report ``available == ()``; a non-empty model
         # requested against one of them is the pair state must not hold,

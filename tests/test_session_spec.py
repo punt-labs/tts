@@ -138,6 +138,72 @@ def test_empty_string_override_provider_falls_through_to_state() -> None:
     assert spec.provider == "elevenlabs"
 
 
+def test_whitespace_only_provider_state_raises_provider_not_configured() -> None:
+    """``provider: "   "`` (hand-edited padding) raises F1, not the F4 unknown-provider.
+
+    Without the strip, ``"   "`` is truthy: the F1 guard passes and the
+    whitespace name reaches ``ProviderRegistry.get`` where it raises
+    ``Unknown provider '   '`` (design F4). That is diagnosable but wrong
+    -- the caller needs the F1 message that names the fix
+    (``mic:provider <name>``). Same shape as the lux
+    ``AppletIdentity.for_session`` fix: the walrus-strip both rejects the
+    whitespace-only case and normalises what flows onward.
+    """
+    with pytest.raises(ProviderNotConfiguredError, match="no TTS provider"):
+        SessionSpec(_State(provider="   ")).fill()
+
+
+def test_whitespace_only_override_provider_raises_provider_not_configured() -> None:
+    """A whitespace-only ``--provider "   "`` on the CLI is also F1, not F4.
+
+    Same rationale as the state case: without the strip the whitespace
+    would flow through to the daemon as an unknown-provider error.
+    """
+    with pytest.raises(ProviderNotConfiguredError):
+        SessionSpec(_State(provider="elevenlabs")).fill(SynthesisSpec(provider="  "))
+
+
+def test_provider_stripped_before_flowing_downstream() -> None:
+    """``provider: "elevenlabs "`` reaches the wire as ``"elevenlabs"``.
+
+    A hand-edited trailing space would otherwise send ``"elevenlabs "``
+    to ``ProviderRegistry.get`` and fail with an unknown-provider error.
+    Normalising here means no padded name crosses the SessionSpec boundary.
+    """
+    spec = SessionSpec(_State(provider="  elevenlabs  ")).fill()
+
+    assert spec.provider == "elevenlabs"
+
+
+def test_whitespace_only_model_state_is_treated_as_no_model() -> None:
+    """``model: "   "`` is "no model", not a name to validate against the roster.
+
+    Without the strip the whitespace would reach
+    ``MODEL_TABLE.available()`` as ``"   "`` and fail with a
+    ``ModelNotAvailableError`` naming a whitespace model, when the
+    documented meaning of empty-for-elevenlabs is "use the provider's
+    default constant". The raw empty/whitespace value is preserved
+    verbatim so ``config`` round-trips.
+    """
+    spec = SessionSpec(_State(provider="elevenlabs", model="   ")).fill()
+
+    assert spec.provider == "elevenlabs"
+    assert spec.model == "   "
+
+
+def test_model_stripped_before_validation() -> None:
+    """``model: " eleven_v3 "`` validates as ``eleven_v3`` and flows unpadded.
+
+    Without the strip the trailing/leading space would fail list-membership
+    against the provider's models and raise ``ModelNotAvailableError`` for
+    a name the user meant correctly. Normalising here means the padded
+    form is accepted and the clean form is what reaches downstream.
+    """
+    spec = SessionSpec(_State(provider="elevenlabs", model=" eleven_v3 ")).fill()
+
+    assert spec.model == "eleven_v3"
+
+
 def test_provider_alien_model_is_rejected() -> None:
     """``provider: openai`` paired with ``model: eleven_v3`` refuses, never falls back.
 
