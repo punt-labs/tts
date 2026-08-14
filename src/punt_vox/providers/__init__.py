@@ -93,22 +93,32 @@ class ProviderRegistry:
     def get(self, name: str, *, model: str | None = None) -> TTSProvider:
         """Return a fresh provider instance for *name*.
 
-        Raises :class:`ProviderUnavailableError` when the daemon has no
-        credentials for a known provider, and ``ValueError('Unknown
-        provider ...')`` when *name* is not registered. The credentials
-        check runs BEFORE the factory so an uncredentialed provider
-        never reaches SDK construction (where the failure would arrive
-        as whichever SDK exception the provider happens to raise, at
-        whichever moment). The check must sit INSIDE any per-call
-        ``api_key`` context the caller has opened around this call --
-        :class:`ApiKeyRequirement` reads ``os.environ`` and a caller
-        supplying ``api_key=`` deserves to be allowed through.
+        Raises :class:`UnknownProviderError` when *name* is not a
+        registered provider (F4) and :class:`ProviderUnavailableError`
+        when the daemon has no credentials for a known provider (F2).
+        Both are :class:`ValueError` subclasses so
+        ``WireReply.reject_or_fault`` routes their messages verbatim --
+        but they are typed rather than plain ``ValueError`` so the
+        synthesize handler can catch them explicitly without widening
+        to every ``ValueError`` under the pipeline.
+
+        The credentials check runs BEFORE the factory so an
+        uncredentialed provider never reaches SDK construction (where
+        the failure would arrive as whichever SDK exception the
+        provider happens to raise, at whichever moment). The check
+        must sit INSIDE any per-call ``api_key`` context the caller
+        has opened around this call -- :class:`ApiKeyRequirement`
+        reads ``os.environ`` and a caller supplying ``api_key=``
+        deserves to be allowed through.
         """
+        # Deferred so this module's header stays importable without the
+        # types_provider_errors -> types_errors chain (matches the
+        # ProviderCredentials import in __new__).
+        from punt_vox.types_provider_errors import UnknownProviderError
+
         resolved = name.lower()
         if resolved not in self._factories:
-            available = ", ".join(sorted(self._factories))
-            msg = f"Unknown provider {resolved!r}. Available: {available}"
-            raise ValueError(msg)
+            raise UnknownProviderError(resolved, sorted(self._factories))
         # Gate BEFORE the factory: keep uncredentialed providers off the
         # SDK path so no billable call, no temp file, no cache entry.
         self._credentials.require(resolved)

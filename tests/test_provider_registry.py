@@ -20,7 +20,10 @@ from punt_vox.providers import ProviderRegistry
 from punt_vox.providers.credential_requirements import ApiKeyRequirement
 from punt_vox.providers.credentials import ProviderCredentials
 from punt_vox.types import TTSProvider
-from punt_vox.types_provider_errors import ProviderUnavailableError
+from punt_vox.types_provider_errors import (
+    ProviderUnavailableError,
+    UnknownProviderError,
+)
 
 
 class _NoopProvider:
@@ -62,7 +65,7 @@ class TestGet:
         monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-x")
         registry = ProviderRegistry()
         _register_test_provider(registry)
-        with pytest.raises(ValueError, match="Unknown provider ''"):
+        with pytest.raises(UnknownProviderError, match="Unknown provider ''"):
             registry.get("")
 
     def test_get_returns_provider_when_credentials_present(
@@ -116,11 +119,24 @@ class TestGet:
             registry.get("elevenlabs")
 
     def test_get_raises_unknown_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # F4: a hand-edited ``vox.md`` naming a name the registry does
+        # not know. Typed as :class:`UnknownProviderError` (still a
+        # ``ValueError`` subclass so ``WireReply.reject_or_fault`` on
+        # the voices path renders it verbatim) so the synthesize
+        # handler can catch it explicitly. Full-message assertion, not
+        # a substring -- the tuple-repr trap applies here too.
         monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-x")
         registry = ProviderRegistry()
         _register_test_provider(registry)
-        with pytest.raises(ValueError, match="Unknown provider 'ploly'"):
+        with pytest.raises(UnknownProviderError) as exc_info:
             registry.get("ploly")
+        assert str(exc_info.value) == "Unknown provider 'ploly'. Available: elevenlabs"
+        assert exc_info.value.provider_name == "ploly"
+        assert exc_info.value.available == ["elevenlabs"]
+        # ValueError base is load-bearing for the voices-path routing
+        # (system_handlers' reject_or_fault classifies ValueError as a
+        # client rejection).
+        assert isinstance(exc_info.value, ValueError)
 
     def test_get_does_not_construct_provider_when_credentials_missing(
         self, monkeypatch: pytest.MonkeyPatch
@@ -136,12 +152,12 @@ class TestGet:
         assert calls == []
 
     def test_get_does_not_read_a_repo_config(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # The ConfigStore read used to fire from ``get`` when name was
-        # None; both are gone now. Test by proving no config-related
-        # import happens (indirectly, via the signature accepting no
-        # config_dir at all) and by exercising the happy path.
+        # None; both are gone now. The signature no longer accepts a
+        # config_dir at all, and the happy path proves the read is
+        # absent without needing a real fixture to prove it.
         monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-x")
         registry = ProviderRegistry()
         _register_test_provider(registry)
@@ -182,5 +198,5 @@ class TestDefaultRegistry:
         from punt_vox.providers import get_provider
 
         monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-x")
-        with pytest.raises(ValueError, match="Unknown provider 'ploly'"):
+        with pytest.raises(UnknownProviderError, match="Unknown provider 'ploly'"):
             get_provider("ploly")

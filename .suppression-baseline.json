@@ -1,22 +1,25 @@
 {
-  "total": 213,
+  "total": 214,
   "by_category": {
-    "noqa": 32,
-    "type_ignore": 14,
+    "noqa": 31,
+    "type_ignore": 17,
     "pylint_disable": 0,
-    "pyright_ignore": 93,
-    "per_file_ignores": 74
+    "pyright_ignore": 90,
+    "per_file_ignores": 76
   },
   "by_file": {
     "src/punt_vox/__main__.py": {
-      "noqa": 8,
-      "pyright_ignore": 17
+      "noqa": 5,
+      "pyright_ignore": 12
     },
     "src/punt_vox/cli_io.py": {
       "pyright_ignore": 2
     },
+    "src/punt_vox/cli_rec.py": {
+      "noqa": 1
+    },
     "src/punt_vox/client_sync.py": {
-      "type_ignore": 10
+      "type_ignore": 13
     },
     "src/punt_vox/core.py": {
       "noqa": 1
@@ -30,6 +33,12 @@
     },
     "src/punt_vox/hooks.py": {
       "pyright_ignore": 11
+    },
+    "src/punt_vox/log_append_handler.py": {
+      "noqa": 1
+    },
+    "src/punt_vox/providers/credential_requirements.py": {
+      "noqa": 2
     },
     "src/punt_vox/providers/elevenlabs.py": {
       "noqa": 4,
@@ -53,8 +62,11 @@
       "pyright_ignore": 3
     },
     "src/punt_vox/server.py": {
-      "noqa": 5,
+      "noqa": 3,
       "pyright_ignore": 1
+    },
+    "src/punt_vox/server_audio_tools.py": {
+      "noqa": 1
     },
     "src/punt_vox/service/installer.py": {
       "pyright_ignore": 2
@@ -65,12 +77,14 @@
     "src/punt_vox/types_errors.py": {
       "pyright_ignore": 1
     },
-    "src/punt_vox/voxd/daemon.py": {
-      "type_ignore": 1,
+    "src/punt_vox/types_provider_errors.py": {
+      "pyright_ignore": 3
+    },
+    "src/punt_vox/types_synthesis_errors.py": {
       "pyright_ignore": 1
     },
-    "src/punt_vox/voxd/playback.py": {
-      "pyright_ignore": 1
+    "src/punt_vox/voxd/daemon.py": {
+      "type_ignore": 1
     },
     "src/punt_vox/voxd/programs/music_producer.py": {
       "pyright_ignore": 1
@@ -84,12 +98,8 @@
     "src/punt_vox/voxd/synthesis.py": {
       "pyright_ignore": 3
     },
-    "src/punt_vox/voxd/system_handlers.py": {
-      "noqa": 1
-    },
     "src/punt_vox/voxd/types.py": {
       "noqa": 1
     }
-  },
-  "updated_at": "2026-07-12T17:30:02Z"
+  }
 }

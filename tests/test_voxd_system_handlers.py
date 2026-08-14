@@ -395,6 +395,39 @@ class TestVoicesHandler:
         assert any("rejected op" in r.getMessage() for r in caplog.records)
 
     @pytest.mark.asyncio
+    async def test_unknown_provider_crosses_verbatim_via_error(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """F4 on the voices op: hand-edited ``provider: ploly``.
+
+        ``UnknownProviderError`` is a ``ValueError`` subclass, so
+        ``system_handlers.VoicesHandler`` catches it in the existing
+        ``(ValueError, LookupError, OSError)`` trio and routes it
+        through ``reject_or_fault`` -> ``WireReply.error``. The
+        message crosses verbatim, and the audit line is a WARNING
+        rejected op rather than an ERROR operation failed.
+        """
+        from punt_vox.types_provider_errors import UnknownProviderError
+
+        def boom(*_args: object, **_kwargs: object) -> object:
+            raise UnknownProviderError("ploly", ["elevenlabs", "openai", "polly"])
+
+        monkeypatch.setattr("punt_vox.voxd.system_handlers.get_provider", boom)
+        ws = _CollectingWs()
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            await VoicesHandler()(
+                {"id": "vf4", "provider": "ploly"}, cast("WebSocket", ws)
+            )
+
+        assert ws.sent[-1]["type"] == "error"
+        assert ws.sent[-1]["id"] == "vf4"
+        assert ws.sent[-1]["message"] == (
+            "Unknown provider 'ploly'. Available: elevenlabs, openai, polly"
+        )
+        assert not any("operation failed" in r.getMessage() for r in caplog.records)
+        assert any("rejected op" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
     async def test_voice_not_found_crosses_verbatim_via_error(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
     ) -> None:

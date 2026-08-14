@@ -11,7 +11,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from punt_vox.types_errors import VoiceNotFoundError
-from punt_vox.types_provider_errors import ProviderAuthError, ProviderUnavailableError
+from punt_vox.types_provider_errors import (
+    ProviderAuthError,
+    ProviderUnavailableError,
+    UnknownProviderError,
+)
 from punt_vox.voxd.dedup import OnceDedup
 from punt_vox.voxd.playback import PlaybackItem, PlaybackQueue
 from punt_vox.voxd.speech_handlers import SynthesizeHandler
@@ -529,6 +533,32 @@ class TestSynthesizeHandlerTypedErrorRouting:
         ), "F3 must never route through fault()"
 
     @pytest.mark.asyncio
+    async def test_f4_unknown_provider_crosses_verbatim_via_error(self) -> None:
+        # F4: a hand-edited ``vox.md`` naming ``provider: ploly``. The
+        # registry raises ``UnknownProviderError`` (a ``ValueError``
+        # subclass, so ``WireReply.reject_or_fault`` on the voices path
+        # renders it verbatim). The synthesize handler catches it in
+        # the same tuple as F2/F3/F5 -- widening to plain ValueError
+        # would swallow genuine daemon-side bugs, which is why the
+        # typed class exists. Without this catch, F4 falls through to
+        # the broad except and reaches the caller as "operation
+        # failed" -- the F3 twin the review round-2 caught.
+        handler, _ = self._handler_that_raises(
+            UnknownProviderError("ploly", ["elevenlabs", "openai", "polly"])
+        )
+
+        sent = await self._drive(handler)
+
+        assert sent[-1]["type"] == "error"
+        assert sent[-1]["message"] == (
+            "Unknown provider 'ploly'. Available: elevenlabs, openai, polly"
+        )
+        assert not any(
+            f.get("type") == "fault" or f.get("message") == "operation failed"
+            for f in sent
+        ), "F4 must never route through fault()"
+
+    @pytest.mark.asyncio
     async def test_f5_voice_not_found_crosses_verbatim_via_error(self) -> None:
         # F5: the bead's ORIGINALLY reported incident. Before this PR
         # the path produced "operation failed" instead of the voice
@@ -547,6 +577,38 @@ class TestSynthesizeHandlerTypedErrorRouting:
             f.get("type") == "fault" or f.get("message") == "operation failed"
             for f in sent
         ), "F5 must never route through fault()"
+
+    @pytest.mark.asyncio
+    async def test_reject_log_escapes_newlines_in_caller_supplied_strings(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The reject-path WARNING interpolates the exception message
+        # through ``%r`` on ``str(exc)`` so a caller-supplied string
+        # in the message (a voice name that carries a newline, a
+        # hostile provider name in a hand-edited vox.md) cannot forge
+        # a second audit line. Same discipline
+        # AwsRequirement.satisfied uses on the boto3 exception it
+        # swallows, and the shape this test pins so a future change
+        # cannot regress it back to ``%s``.
+        #
+        # VoiceNotFoundError renders the voice name verbatim into
+        # str(exc), so a forged newline in the voice name would land
+        # directly at the log sink without the ``%r`` escape.
+        handler, _ = self._handler_that_raises(
+            VoiceNotFoundError("b\nFATAL forged audit line", ["alloy"])
+        )
+
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd"):
+            await self._drive(handler)
+
+        rejected = [r for r in caplog.records if "Rejected synthesis" in r.getMessage()]
+        assert len(rejected) == 1
+        message = rejected[0].getMessage()
+        # The raw newline is escaped as ``\n`` inside the quoted repr;
+        # never a literal newline character at the log sink.
+        assert "\n" not in message
+        assert "\\n" in message
+        assert message.splitlines() == [message]
 
     @pytest.mark.asyncio
     async def test_unexpected_exception_still_routes_through_fault(

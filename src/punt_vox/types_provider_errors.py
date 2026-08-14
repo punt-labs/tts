@@ -25,6 +25,7 @@ from typing import Self
 __all__ = [
     "ProviderAuthError",
     "ProviderUnavailableError",
+    "UnknownProviderError",
 ]
 
 
@@ -121,3 +122,57 @@ class ProviderAuthError(ValueError):
     def status_code(self) -> int | None:
         """Return the SDK-reported HTTP status, or ``None`` when the SDK gave none."""
         return self._status_code
+
+
+class UnknownProviderError(ValueError):
+    """Raised when state names a provider the registry has no factory for.
+
+    The F4 failure. A hand-edited ``vox.md`` naming ``provider: ploly``
+    reaches the daemon (``mic:provider`` cannot produce it -- the
+    ``Literal`` schema narrows it -- but the file can). Distinct from
+    :class:`ProviderUnavailableError` (F2, credentials missing) and
+    :class:`ProviderAuthError` (F3, credentials present but rejected):
+    F4 is a lookup miss on a name the daemon does not know at all.
+
+    Kept typed rather than plain :class:`ValueError` so the synthesize
+    handler can catch it alongside the other diagnosable rejections
+    without widening its net to every ``ValueError`` -- widening would
+    swallow genuine daemon-side bugs (an internal invariant violation
+    that happens to raise a bare ``ValueError``) and report them as
+    caller-side rejections. The typed tuple is the discriminator.
+
+    ``__str__`` is the load-bearing override for the same reason as
+    :class:`ProviderUnavailableError` -- :class:`BaseException`
+    reinitialises ``args`` with the constructor's positional arguments
+    after ``__new__`` runs, so the message a caller sees survives only
+    when it is rendered on ``__str__`` rather than stashed on the
+    args tuple.
+    """
+
+    _provider_name: str
+    _available: tuple[str, ...]
+
+    def __new__(cls, provider: str, available: list[str]) -> Self:  # pyright: ignore[reportInconsistentConstructor]
+        self = super().__new__(cls, provider, available)
+        self._provider_name = provider
+        # Tuple-copy so a caller mutating the original list after
+        # raising cannot change ``str(exc)`` or ``exc.available``.
+        self._available = tuple(available)
+        return self
+
+    def __str__(self) -> str:
+        """Render the F4 message so ``str(exc)`` is user-facing, not a tuple repr."""
+        return (
+            f"Unknown provider {self._provider_name!r}. "
+            f"Available: {', '.join(self._available)}"
+        )
+
+    @property
+    def provider_name(self) -> str:
+        """Return the provider name the registry did not know."""
+        return self._provider_name
+
+    @property
+    def available(self) -> list[str]:
+        """Return a copy of the registered provider names."""
+        return list(self._available)

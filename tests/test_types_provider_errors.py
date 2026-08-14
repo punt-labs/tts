@@ -14,6 +14,7 @@ import pytest
 from punt_vox.types_provider_errors import (
     ProviderAuthError,
     ProviderUnavailableError,
+    UnknownProviderError,
 )
 
 
@@ -70,3 +71,30 @@ class TestProviderAuthError:
 
     def test_is_a_valueerror(self) -> None:
         assert isinstance(ProviderAuthError("openai", 401), ValueError)
+
+
+class TestUnknownProviderError:
+    """The F4 failure: hand-edited provider name the registry does not know."""
+
+    def test_renders_the_sentence_not_a_tuple_repr(self) -> None:
+        exc = UnknownProviderError("ploly", ["elevenlabs", "openai", "polly"])
+        assert str(exc) == (
+            "Unknown provider 'ploly'. Available: elevenlabs, openai, polly"
+        )
+        assert exc.provider_name == "ploly"
+        assert exc.available == ["elevenlabs", "openai", "polly"]
+
+    def test_is_a_valueerror(self) -> None:
+        # Load-bearing on the voices path: system_handlers' reject_or_fault
+        # classifies ValueError as a client rejection and sends the
+        # message verbatim through WireReply.error.
+        assert isinstance(UnknownProviderError("x", ["a"]), ValueError)
+
+    def test_available_is_a_defensive_copy(self) -> None:
+        # Tuple-copy in __new__ guards str(exc) too: mutating the list
+        # after raise must not change what the exception renders.
+        available = ["a", "b"]
+        exc = UnknownProviderError("x", available)
+        available.append("c")
+        assert exc.available == ["a", "b"]
+        assert str(exc) == "Unknown provider 'x'. Available: a, b"

@@ -15,7 +15,11 @@ from typing import Self
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from punt_vox.types_errors import VoiceNotFoundError
-from punt_vox.types_provider_errors import ProviderAuthError, ProviderUnavailableError
+from punt_vox.types_provider_errors import (
+    ProviderAuthError,
+    ProviderUnavailableError,
+    UnknownProviderError,
+)
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd._parse import (
     parse_optional_float,
@@ -255,15 +259,41 @@ class SynthesizeHandler(MessageHandler):
         """Synthesize to a file, enqueue it, and drive the playing/done replies."""
         try:
             outcome = await self._synthesis.synthesize_to_file(req.text, req.spec)
-        except (ProviderUnavailableError, ProviderAuthError, VoiceNotFoundError) as exc:
-            # Diagnosable, caller-side (design §3.5): route verbatim
+        except (
+            ProviderUnavailableError,
+            ProviderAuthError,
+            UnknownProviderError,
+            VoiceNotFoundError,
+        ) as exc:
+            # Diagnosable, caller-side (design §4): route verbatim
             # through error() so the sentence naming the missing
-            # credential (F2), the rejected credential (F3), or the
-            # unrecognised voice (F5) crosses the wire, instead of
-            # being laundered by the broad guard below into
-            # "operation failed".
+            # credential (F2), the rejected credential (F3), the
+            # unknown provider name (F4), or the unrecognised voice
+            # (F5) crosses the wire, instead of being laundered by
+            # the broad guard below into "operation failed". Only
+            # these four typed errors qualify -- widening to every
+            # ValueError would swallow genuine daemon-side bugs and
+            # report them as caller rejections.
+            #
+            # The rejected reasons that DO NOT reach this catch, for
+            # the record: F1 (state has no provider) is caught by
+            # SessionSpec on the client before any wire message is
+            # built; F6 (voxd unreachable) is a connection failure
+            # the client sees, never a daemon-side raise; F7
+            # (provider-alien model) is caught by SessionSpec too.
             self._rollback(req, dedup_recorded=dedup_recorded)
-            logger.warning("Rejected synthesis for id=%r: %s", req.request_id, exc)
+            # ``%r`` on ``str(exc)`` renders the sentence with its
+            # newlines escaped -- caller-supplied strings can travel
+            # inside the message (a voice name for F5, a provider
+            # name for F2/F3/F4), and a newline in one of those
+            # would forge a second audit line without the escape.
+            # Same discipline AwsRequirement.satisfied uses on the
+            # boto3 exception it swallows.
+            logger.warning(
+                "Rejected synthesis for id=%r: %r",
+                req.request_id,
+                str(exc),
+            )
             await req.reject(str(exc))
             return
         except Exception as exc:
