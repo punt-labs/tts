@@ -7,6 +7,13 @@ voice cascade and state authority). This is the state-authority half.
 recommendation for the implementation mission, not a prescription carried over
 from the bead.
 
+**Status:** amended after design review. The review carried one defect and four
+rulings, all now in the text: enable proposes **through the daemon**, not from
+the client process (§3.8); `TTS_MODEL` folds into this bead rather than a
+sibling (§3.9, D3 overruled); the work splits into **three** PRs, not two (§6);
+D1, D2, and D4 are approved as written. One decision remains open — the order
+of the three PRs (D5).
+
 **Forward-integrated by contract.** Every path this design retires is deleted
 in the same commit as its replacement. There is no shim, no flag, no
 warn-and-continue, no deprecation window. Punt Labs products have no installed
@@ -150,9 +157,15 @@ One corollary, which the rest of the design leans on:
 > Detection may **propose** a value to be written into state. It may never
 > **stand in** for state at run time.
 
-That is the line between `vox enable` picking a sensible starting provider and
-writing it into `vox.md`, and `voxd` guessing on every request. The first is a
-recorded, visible, reviewable decision. The second is the bug.
+That is the line between `vox enable` asking the daemon for a sensible starting
+provider and writing the answer into `vox.md`, and `voxd` guessing on every
+request. The first is a recorded, visible, reviewable decision. The second is
+the bug.
+
+The proposal must come from the process that holds the credentials — the
+daemon — for the same reason the refusal does. A client that proposes from its
+own environment writes a provider the daemon cannot run, which is this bug
+again with a friendlier face (§3.8).
 
 ---
 
@@ -243,20 +256,39 @@ def get(self, name: str, *, model: str | None = None) -> TTSProvider: ...
   provider, arrives on the wire from the client that owns the state.
 - No `auto_detect()` branch (`providers/__init__.py:108`).
 
-`auto_detect` itself is not deleted, but it is renamed to say what it is now
-allowed to do — `ProviderRegistry.propose()` / `propose_provider()` — and its
-callers are reduced to the two that write a value into state rather than
-substitute for one:
+`auto_detect`, `_resolve_choice`, `_has_aws_credentials`, and the `_last_logged`
+dedup machinery (`providers/__init__.py:125–188`, `:62–68`) are **deleted
+outright**, not renamed. An earlier draft of this design kept them under the
+name `propose()`, on the reasoning that proposing a value for state is a
+legitimate job. The reasoning holds; keeping this code does not. The proposal
+must be answered by the process that owns the credentials — the daemon — and
+the daemon already answers it from `ProviderCredentials` (§3.4). A second
+environment-probing code path in `providers/__init__.py` would be a second
+source of truth for the same question, differing from the first in that it
+shells out to the `aws` CLI (`providers/__init__.py:171–188`) where the
+readiness object consults botocore directly. One question, one answer, one
+place.
 
-- `vox enable` seeds `provider` into `vox.md` once, at enable time (new; see
-  §3.6).
-- `desktop_install.py:65–73` picks the `TTS_PROVIDER` written into the Claude
-  Desktop registration.
+Proposal therefore becomes a method on the readiness object —
+`ProviderCredentials.preferred()` — and reaches clients only through the
+`provider_status` wire op (§3.6). §3.8 uses it at enable time.
 
-Both are recorded, visible decisions. `TTS_PROVIDER` (`keys.py:29`,
-`providers/__init__.py:154–156`) therefore stops being able to override state
-at run time; it is an input to a proposal, nothing more. Without this the same
-bug returns wearing an environment variable.
+`TTS_PROVIDER` (`keys.py:29`, loaded into the daemon environment at
+`voxd/config.py:182`) survives as exactly one thing: an input to
+`ProviderCredentials.preferred()`, which returns it when it names a provider
+that is *ready* and returns the first ready provider in the fixed order
+(elevenlabs, openai, polly, platform binary) otherwise. It can no longer
+override state at run time. Without that demotion the bug this bead closes
+returns wearing an environment variable.
+
+The distinction that makes this safe, stated once because it is the line the
+whole design turns on: reading `TTS_PROVIDER` to *answer a question a client
+asked, whose answer the client then writes into state* is not a substitution.
+Reading it to *decide what to synthesize with, right now, instead of state* is.
+The first is visible, recorded, and happens at enable; the second is the defect.
+
+`providers/openai.py:62` and `providers/elevenlabs.py:78, :138` read
+`TTS_MODEL` in exactly the second form. §3.9 removes it.
 
 ### 3.4 One object owns "can this provider run here"
 
@@ -295,16 +327,19 @@ host the call returns a credential object and does so immediately.
 callers re-pointed here; `keys.PROVIDER_KEY_NAMES` is derived from the same
 object so `keys.env` and the gate cannot drift.
 
-The class has exactly two entry points, and both callers get the same answer
-from the same code:
+The class has three entry points, and every caller gets the same answer from
+the same code:
 
 - `require(provider)` — raises `ProviderUnavailableError` when unmet. Called
   by `ProviderRegistry.get`.
-- `report(provider)` — returns the verdict without raising. Called by the
-  `provider_status` wire op (§3.5).
+- `report(provider)` / `report_all()` — the same verdict without raising.
+  Called by the `provider_status` wire op (§3.6).
+- `preferred()` — the name a fresh repo should adopt: `TTS_PROVIDER` when it
+  names a ready provider, else the first ready provider in the fixed order,
+  else `None` when nothing is ready. Called by the same wire op, for §3.8.
 
-Status therefore cannot drift from behaviour: they are one function, called
-two ways.
+Status therefore cannot drift from behaviour, and enable cannot propose a
+provider the daemon would refuse: they are one function, called three ways.
 
 ### 3.5 The error type, and how it reaches the caller
 
@@ -382,9 +417,15 @@ fresh from voxd on every call, never cached server-side, with an
 design already anticipated and deferred
 (`docs/vox-0rp9-model-provider-voice.md:798–803`).
 
+`mic:status` also gains a flat `model` field. It reports provider, voice,
+notify, speak, and the vibe cluster today (`server.py:647–659`) but not the
+model, and under this rule status reports what voxd will run with — of which
+the model is part (§3.9).
+
 ```json
 {
   "provider": "polly",
+  "model": null,
   "provider_status": {
     "name": "polly",
     "ready": false,
@@ -398,11 +439,18 @@ design already anticipated and deferred
 "no_credentials", "voxd_unavailable"]` — not a free string, so a caller can
 branch on it and an illegal value cannot be written.
 
-The daemon side is a new wire op, `provider_status`, with an optional
-`provider` field: named, it reports one; absent, it reports all five (which is
-what `vox doctor` wants). It gets its own module,
-`voxd/provider_status_handler.py`, because `voxd/system_handlers.py` already
-holds three classes and PY-OO-2 caps a module at three.
+The daemon side is a new wire op, `provider_status`, whose reply carries three
+things:
+
+- with a `provider` field on the request, that provider's verdict;
+- without one, all five verdicts (what `vox doctor` wants) plus
+- `preferred` — `ProviderCredentials.preferred()`, the name a fresh repo should
+  adopt, or `null` when nothing on this daemon is ready. This is what §3.8
+  uses, and it is why enable does not probe its own environment.
+
+It gets its own module, `voxd/provider_status_handler.py`, because
+`voxd/system_handlers.py` already holds three classes and PY-OO-2 caps a module
+at three.
 
 ### 3.7 The client half: state must always send a provider
 
@@ -442,13 +490,115 @@ Refusing alone would leave a freshly enabled repo mute until someone ran
 `vox provider`, which is a real cliff and the strongest argument the fallback
 ever had. The answer is to make the empty state unreachable in the normal
 path rather than to guess out of it: **`vox enable` / `mic:enablement
-action="enable"` writes a real provider into `vox.md`**, chosen by
-`propose_provider()` at that moment, and reports which one it chose. Detection
-survives exactly once, where a human is present, and its result lands in state
-where `mic:status` shows it and git records it.
+action="enable"` writes a real provider into `vox.md`** and reports which one
+it wrote. Detection survives exactly once, where a human is present, and its
+result lands in state where `mic:status` shows it and git records it.
 
-A repo that still reaches synthesis with no provider — a hand-edited file, an
-older `vox.md` — gets the client-side refusal in §4, F1.
+**The daemon chooses it, not the client.** Enable calls the `provider_status`
+op (§3.6) and takes its `preferred` field. It does not call a local
+`propose_provider()` and it does not read its own environment.
+
+An earlier draft of this section had enable propose from the CLI/MCP process.
+That is the same defect §3.5 identifies in `doctor.py:228–244`: the CLI's
+environment is not the daemon's. `voxd` runs as a launchd/systemd service with
+a stripped environment and loads its credentials from `keys.env`
+(`voxd/config.py:155–185`, `keys.py:1–7`), so a shell with
+`ELEVENLABS_API_KEY` exported and a daemon with no `keys.env` disagree
+completely. Proposing from the client would write a provider the daemon cannot
+run — recreating the exact divergence this bead closes, at the one moment a
+human is watching and would trust the answer. The daemon is asked because the
+daemon is the one that will have to honour it.
+
+Two consequences worth stating:
+
+- **Enable needs voxd running.** If the op cannot be reached, enable writes no
+  provider and says so: `vox enable` completes the rest of its work (marker,
+  guide, settings) and reports "voxd is not reachable; no provider was
+  selected — start the daemon and run `vox provider <name>`". It does not
+  guess locally as a consolation.
+- **Nothing ready is not an error.** When `preferred` is `null` — no keys, no
+  platform binary — enable writes no provider and names the condition. That is
+  a true report of an unusable host, which is more useful than a provider that
+  will refuse on first use.
+
+`vox desktop install` keeps its own `keys.env` read
+(`desktop_install.py:98–148`) rather than calling the op, and that is not an
+inconsistency: it runs at install time, when voxd may not exist yet, and it
+reads *the daemon's own credential file* rather than its own environment. It
+is already asking the right question of the right source
+(`desktop_install.py:101–106` says so explicitly). It re-points at
+`providers/credentials.py` for the key-variable map (§3.4) and otherwise
+stands.
+
+A repo that still reaches synthesis with no provider — a hand-edited file, a
+`vox.md` written before enable could reach the daemon — gets the client-side
+refusal in §4, F1.
+
+### 3.9 The model: state decides there too
+
+The provider is not the only field an environment variable can override.
+`providers/openai.py:62` and `providers/elevenlabs.py:78` both read
+
+```python
+self._model = model or os.environ.get("TTS_MODEL") or _DEFAULT_MODEL
+```
+
+and `ElevenLabsProvider.model_supports_expressive_tags` repeats the expression
+at `providers/elevenlabs.py:138`. `TTS_MODEL` is in `PROVIDER_KEY_NAMES`
+(`keys.py:30`) and is therefore loaded into the daemon's environment at
+startup (`voxd/config.py:182`). A repo whose `vox.md` says
+`model: eleven_flash_v2_5` synthesizes with `eleven_v3` if the daemon's
+`keys.env` says so — the identical substitution, one field over, with the
+identical consequence: `mic:status` (once it reports the model at all, §3.6)
+and the audio disagree.
+
+Shipping the provider fix while leaving this is not defensible, and the
+operator has ruled accordingly (§9, D3).
+
+**The rule is the same.** Three changes:
+
+1. `os.environ.get("TTS_MODEL")` is deleted from all three sites. The
+   constructors become `model or _DEFAULT_MODEL` — the provider's own
+   documented default constant, not an environment probe.
+2. `TTS_MODEL` is removed from `PROVIDER_KEY_NAMES` (`keys.py:30`), so
+   `vox daemon install` stops snapshotting it into `keys.env`
+   (`service/keys_env.py:103`) and the daemon stops loading it. It is state,
+   not a credential, and it has no business in the credential file.
+3. `session_spec.py` (§3.7) validates the model against the provider before
+   the spec goes on the wire, and raises `ModelNotAvailableError` when state
+   holds a provider-alien pair (§4, F7).
+
+**Why a default model is not the same as a default provider.** §3.8 refuses
+when state declares no provider, but §3.9 falls back to the provider's default
+when state declares no model. The asymmetry is deliberate and rests on three
+differences:
+
+- A provider is a choice *among five* with different credentials, different
+  bills, and different voice rosters — guessing produces the wrong voice from
+  the wrong vendor. A model is a choice *within* an already-chosen provider,
+  and the wrong guess is a quality or cost difference, not a different vendor.
+- The provider default would come from probing the environment. The model
+  default is a constant in the provider class
+  (`providers/elevenlabs.py:35`, `providers/openai.py:62`), deterministic and
+  identical on every host.
+- Three of the five providers have no model at all
+  (`models.py:136–138`: polly, say, espeak have empty lists), so `model: ""`
+  is a permanent, legitimate state. Refusing on an empty model would make
+  those three providers unusable.
+
+**The validation the daemon used to do must move.** `ProviderRegistry.get`
+today fills the model from config only when the config provider matches the
+resolved provider, with the comment "An ElevenLabs model name passed to OpenAI
+(or vice-versa) would cause API errors" (`providers/__init__.py:110–117`).
+§3.3 deletes that whole config read, so the guard goes with it. It is replaced
+in `session_spec.py`, where the state is actually known — and it rejects
+rather than drops, because silently dropping `eleven_v3` and using the OpenAI
+default is a substitution of exactly the kind this document forbids.
+
+A mismatched pair should be rare: setting the provider rewrites the model in
+the same atomic `write_fields` call (`server_switches.py:231, :237`,
+`commands/provider.py:75`). It arises from a hand-edited `vox.md` — the same
+origin as the unknown-provider case in F4, and it gets the same treatment.
 
 ---
 
@@ -556,6 +706,28 @@ failed"`.
 - `mic:status`: `provider_status.reason == "voxd_unavailable"`, mirroring
   `MusicStateView.unavailable` (`server.py:661–663`).
 - Synthesis surfaces: the existing `VoxdConnectionError` envelope, unchanged.
+- `vox enable`: no provider written, and the reply says so (§3.8).
+
+### F7 — state names a model the provider does not offer
+
+Owner: the client (`session_spec.py`, §3.9). A hand-edited `vox.md` pairing
+`provider: openai` with `model: eleven_v3`.
+
+- `mic:unmute`, `vox say`: `{"error": "model 'eleven_v3' is not available for
+  provider 'openai' (available: tts-1, tts-1-hd, gpt-4o-mini-tts)"}` — the
+  available list from `MODEL_TABLE.available` (`models.py:88–90, :132–135`).
+- Rejected, never dropped. Silently substituting the OpenAI default for the
+  model state asked for is the same class of substitution as F2's provider
+  case.
+- `mic:status`: reports the declared `model` verbatim, so the caller sees the
+  pair that is wrong rather than a corrected one.
+- `mic:model` with no argument still lists correctly — listing needs no
+  synthesis and `ModelTool` already resolves against the current provider
+  (`server_switches.py:134–140`).
+
+An empty model (`model: ""`, and the permanent state for polly, say, and
+espeak) is not this case: it means "no model declared", and the provider's own
+default constant applies (§3.9).
 
 ---
 
@@ -563,53 +735,96 @@ failed"`.
 
 - **No fallback in any form.** No warn-and-continue, no try-then-fallback, no
   "best effort", no environment variable or flag that restores the old
-  behaviour. The probe survives only as a *proposal* at enable and desktop
-  registration (§3.3), where its result is written into state.
+  behaviour. The environment probe survives only as
+  `ProviderCredentials.preferred()`, answered by the daemon and written into
+  state at enable (§3.3, §3.8).
+- **No environment override of state, for either field.** `TTS_PROVIDER` is
+  demoted to an input to `preferred()`; `TTS_MODEL` is deleted outright
+  (§3.9). A run-time environment override is the defect with a different
+  trigger.
 - **No migration.** `provider: ""` in an existing `vox.md` is handled by the
   refusal in F1 and by enable writing a real value; there is no detector, no
   one-shot upgrade path, no `vox provider --migrate`.
 - **No readiness cache in the daemon.** The check is cheap enough to run per
   request, and a cache would need invalidation — which is how a stale verdict,
   the very thing this bead is about, gets reintroduced.
+- **No local proposal in any client.** Enable asks the daemon or writes
+  nothing (§3.8). A client-side fallback "when voxd is down" would be the
+  wrong-process bug wearing a convenience argument.
 
 ---
 
-## 6. Recommended write set
+## 6. Recommended write set, in three PRs
 
-The design mission owns the write set; this is it. The implementation mission
-may split it across at most two rollback-coherent PRs (the daemon gate and the
-observability surface), but they are sequentially dependent in that order.
+The operator has ruled the split: three sequentially dependent PRs, not two.
+Twenty-six files plus the `TTS_MODEL` work is past the diff size at which agent
+reviewers hold quality, and each of the three reverts coherently on its own.
+I accept the boundaries as drawn. I recommend one change to the **order** —
+see D5 in §9, which must be ruled before dispatch.
+
+**The order below is the one I recommend (client half first).** Landing the
+daemon gate first leaves `main` mute between PR 1 and PR 2: after the daemon
+requires a `provider` on the wire, `vox say` with no `--provider`
+(`__main__.py:354–367`), the panel preview (`panel/service.py:329`), and any
+repo whose `vox.md` has `provider: ""` (`hooks.py:168`, via `or None`) all
+send no provider and are rejected. Filling the clients first is inert — every
+surface simply starts sending the provider the daemon was already going to
+guess correctly in the common case — and then the gate removes a branch that
+has become unreachable.
+
+### PR 1 — the client half: every surface sends the provider from state
+
+Inert on its own: nothing refuses that did not refuse before.
 
 | File | Change | Why |
 |------|--------|-----|
-| `src/punt_vox/providers/credentials.py` | **new** — `CredentialRequirement` protocol, its five implementations, and the `ProviderCredentials` facade with `require` / `report`. | One home for "can this provider run here", replacing four partial copies. |
-| `src/punt_vox/providers/__init__.py` | `get(name: str, *, model)` — drop `None`, the config read, and the auto-detect branch; call `ProviderCredentials.require` before the factory; rename `auto_detect` → `propose`. | The substitution and the daemon's config read both live here. |
-| `src/punt_vox/types_errors.py` | add `ProviderUnavailableError`, `ProviderNotConfigured`, `ProviderAuthError`. | `ValueError` subclasses so the existing reject-vs-fault taxonomy carries their text verbatim. |
-| `src/punt_vox/types_provider.py` | **new** — `ProviderReadiness` (frozen, `from_wire`) and the `reason` `Literal`. | The wire shape both the daemon and the client need, importable without heavy deps. |
-| `src/punt_vox/voxd/provider_status_handler.py` | **new** — the `provider_status` op, one or all providers. | A fourth class will not fit in `system_handlers.py` (PY-OO-2). |
-| `src/punt_vox/voxd/handler_registry.py` | register `provider_status`. | Wiring. |
-| `src/punt_vox/voxd/speech_handlers.py` | require `provider` on the wire; add `_SpeechRequest.reject`; catch the typed provider errors and `VoiceNotFoundError` before the broad guard. | Removes the synthesize-path guess and stops laundering diagnosable errors. |
-| `src/punt_vox/voxd/system_handlers.py` | require `provider` on the `voices` op; delete the `auto_detect_provider` import. | Removes the roster-path guess. |
-| `src/punt_vox/voxd/health.py` | delete `payload["provider"]`. | The daemon has no provider to report. |
-| `src/punt_vox/types_health.py` | delete the `provider` field and its `from_wire` line. | Follows the payload. |
-| `src/punt_vox/voxd/synthesis.py` | delete `_PROVIDER_API_KEY_VAR`; take the key-var map from `providers/credentials.py`. | De-duplicates the credential table. |
-| `src/punt_vox/session_spec.py` | **new** — `VoxConfig` → `SynthesisSpec` with a guaranteed provider, raising `ProviderNotConfigured`. | One state-to-spec constructor instead of five, so the next surface cannot reintroduce the bug. |
-| `src/punt_vox/server.py` | `fill_defaults` delegates to `session_spec`; `status()` merges the `provider_status` block. | The MCP surface. |
-| `src/punt_vox/server_switches.py` | drop `or "elevenlabs"` at `:132` and `:321`; label the roster with the provider actually fetched. | Two more silent substitutions. |
-| `src/punt_vox/commands/model.py` | drop `or "elevenlabs"`. | The CLI twin of the same substitution. |
+| `src/punt_vox/session_spec.py` | **new** — `VoxConfig` → `SynthesisSpec` with a guaranteed provider and a provider-validated model; raises `ProviderNotConfigured` / `ModelNotAvailableError`. | One state-to-spec constructor instead of five, so the next surface cannot reintroduce the bug. Carries the model guard the daemon is about to lose (§3.9). |
+| `src/punt_vox/types_errors.py` | add `ProviderNotConfigured`, `ModelNotAvailableError`. | `ValueError` subclasses; the client-owned failures (F1, F7). |
+| `src/punt_vox/server.py` | `fill_defaults` delegates to `session_spec`. | The MCP surface. |
 | `src/punt_vox/hooks.py` | build the spec through `session_spec`. | Hooks were the path that produced the reported log line. |
 | `src/punt_vox/__main__.py` | `say` / `record` fill from state through `session_spec`. | `vox say` ignores `vox.md` today. |
 | `src/punt_vox/panel/service.py` | preview fills the provider; drop `or "elevenlabs"` at `:189`. | The preview sends no provider at all today. |
-| `src/punt_vox/client.py`, `client_sync.py` | `voices(provider: str)` required; add `provider_status(...)`. | The client half of both ops. |
-| `src/punt_vox/cascade.py` | `fetch_roster(client, provider: str)`. | Propagates the required provider. |
-| `src/punt_vox/enablement.py` | write a proposed `provider` into `vox.md` at enable; report it. | Makes the empty state unreachable in the normal path. |
-| `src/punt_vox/doctor.py` | drop `(provider: …)`; add a per-provider readiness section from the new op; drop the caller-env check at `:228–244`. | The error message points here, so it has to answer. |
-| `src/punt_vox/desktop_install.py` | use `providers/credentials.py`; call `propose_provider`. | Deletes the third copy of the key-var map. |
-| `src/punt_vox/keys.py` | derive `PROVIDER_KEY_NAMES` from `providers/credentials.py`. | Deletes the fourth. |
-| `src/punt_vox/resolve.py` | delete `resolve_voice_and_language` and `_validate_and_infer`. | No production callers, and it is the same silent-substitution pattern preserved as a template (PY-RF-6, forward integration). |
-| `tests/test_resolve.py` | delete. | Follows its subject. |
-| `tests/…` | per §7. | |
-| `CHANGELOG.md`, `README.md`, `DESIGN.md` | Changed/Fixed entry; the `mic:status` shape; an ADR recording the authority rule and the rejected gate positions. | Documentation discipline. |
+| `src/punt_vox/server_audio_tools.py` | `rec new` fills through `session_spec`. | Already correct; routed through the one constructor so it stays that way. |
+| `src/punt_vox/server_switches.py` | drop `or "elevenlabs"` at `:132` and `:321`; label the roster with the provider actually fetched. | Two more silent substitutions. |
+| `src/punt_vox/commands/model.py` | drop `or "elevenlabs"`. | The CLI twin of the same substitution. |
+| `src/punt_vox/cascade.py`, `client.py`, `client_sync.py` | `voices(provider: str)` / `fetch_roster(..., provider: str)` required. | Propagates the required provider to the roster path. |
+
+### PR 2 — the daemon gate: require it, refuse without credentials
+
+| File | Change | Why |
+|------|--------|-----|
+| `src/punt_vox/providers/credentials.py` | **new** — `CredentialRequirement` protocol, its five implementations, and `ProviderCredentials` with `require` / `report` / `report_all` / `preferred`. | One home for "can this provider run here", replacing four partial copies. |
+| `src/punt_vox/providers/__init__.py` | `get(name: str, *, model)` — drop `None`, the `ConfigStore` read, and the auto-detect branch; call `ProviderCredentials.require` before the factory; **delete** `auto_detect`, `_resolve_choice`, `_has_aws_credentials`, `_last_logged`. | The substitution, the daemon's config read, and the duplicate probe all live here. |
+| `src/punt_vox/types_errors.py` | add `ProviderUnavailableError`, `ProviderAuthError`. | The daemon-owned failures (F2, F3). |
+| `src/punt_vox/voxd/speech_handlers.py` | require `provider` on the wire; add `_SpeechRequest.reject`; catch the typed provider errors and `VoiceNotFoundError` before the broad guard. | Removes the synthesize-path guess and stops laundering diagnosable errors. |
+| `src/punt_vox/voxd/system_handlers.py` | require `provider` on the `voices` op; delete the `auto_detect_provider` import. | Removes the roster-path guess. |
+| `src/punt_vox/voxd/synthesis.py` | delete `_PROVIDER_API_KEY_VAR`; take the key-variable map from `providers/credentials.py`. | De-duplicates the credential table. |
+| `src/punt_vox/providers/openai.py`, `providers/elevenlabs.py` | delete `os.environ.get("TTS_MODEL")` at `openai.py:62`, `elevenlabs.py:78`, `elevenlabs.py:138`; raise `ProviderAuthError` on a credential rejection. | The model substitution (§3.9) and F3's typed error. |
+| `src/punt_vox/keys.py` | derive `PROVIDER_KEY_NAMES` from `providers/credentials.py`; **remove** `TTS_MODEL` (`:30`). | Deletes the fourth copy of the map; the model is state, not a credential. |
+| `src/punt_vox/desktop_install.py` | use `providers/credentials.py` for the key-variable map; keep the `keys.env` read (§3.8). | Deletes the third copy. |
+| `src/punt_vox/resolve.py` | delete `resolve_voice_and_language` and `_validate_and_infer` only — `apply_vibe`, `split_leading_expressive_tags`, and `strip_expressive_tags` stay (imported by `tests/test_server.py:25`). | No production callers, and it is the same silent-substitution pattern preserved as a template (PY-RF-6, forward integration). |
+| `tests/test_resolve.py` | delete the `resolve_voice_and_language` cases; keep the rest. | Follows its subject, function-scoped. |
+
+### PR 3 — observability: the client can see all of it
+
+| File | Change | Why |
+|------|--------|-----|
+| `src/punt_vox/types_provider.py` | **new** — `ProviderReadiness` (frozen, `from_wire`) and the `reason` `Literal`. | The wire shape both sides need, importable without heavy deps. |
+| `src/punt_vox/voxd/provider_status_handler.py` | **new** — the `provider_status` op: one provider, all five, plus `preferred`. | A fourth class will not fit in `system_handlers.py` (PY-OO-2). |
+| `src/punt_vox/voxd/handler_registry.py` | register `provider_status`. | Wiring. |
+| `src/punt_vox/client.py`, `client_sync.py` | add `provider_status(...)`. | The client half of the new op. |
+| `src/punt_vox/server.py` | `status()` merges the `provider_status` block and reports `model`. | The standing question, answerable without synthesizing. |
+| `src/punt_vox/voxd/health.py` | delete `payload["provider"]`. | The daemon has no provider to report. |
+| `src/punt_vox/types_health.py` | delete the `provider` field and its `from_wire` line. | Follows the payload. |
+| `src/punt_vox/enablement.py` | ask the daemon for `preferred` and write it into `vox.md`; report what was written, or why nothing was (§3.8). | Makes the empty state unreachable in the normal path — without the wrong-process bug. |
+| `src/punt_vox/doctor.py` | drop `(provider: …)`; add a per-provider readiness section from the new op; drop the caller-env check at `:228–244`. | Every error message points here, so it has to answer. |
+
+### Across all three
+
+| File | Change | Why |
+|------|--------|-----|
+| `tests/…` | per §7, split by the PR that introduces each behaviour. | |
+| `CHANGELOG.md`, `README.md`, `DESIGN.md` | Changed/Fixed entries; the `mic:status` shape; an ADR recording the authority rule, the rejected gate positions, and the enable-asks-the-daemon rule. | Documentation discipline. |
 
 ---
 
@@ -686,11 +901,41 @@ Named cases. Each is a test that fails before the change.
 
 **Enable.**
 
-1. `enable_writes_a_provider` — after enable, `vox.md` names a real provider
-   and the reply says which.
-2. `enable_reports_when_nothing_is_credentialed` — the proposal falls to the
-   platform binary, or the reply says no provider could be proposed. No
-   silent empty write.
+1. `enable_writes_the_daemon_s_preferred_provider` — after enable, `vox.md`
+   names the provider the `provider_status` op returned as `preferred`, and
+   the reply says which.
+2. `enable_does_not_read_its_own_environment` — the client process has
+   `ELEVENLABS_API_KEY` set and the daemon does not. Enable must write the
+   daemon's answer, never `elevenlabs`. This is the regression test for the
+   wrong-process defect.
+3. `enable_writes_nothing_when_voxd_is_unreachable` — the marker, guide, and
+   settings still land; no provider is written; the reply names the condition.
+   No local fallback proposal.
+4. `enable_writes_nothing_when_no_provider_is_ready` — `preferred` is `null`;
+   no silent empty write, and the reply says why.
+
+**Model authority (§3.9).**
+
+1. `tts_model_env_var_does_not_override_state` — the daemon's environment sets
+   `TTS_MODEL=eleven_flash_v2_5`, state says `model: eleven_v3`, and the
+   ElevenLabs provider is constructed with `eleven_v3`. The model twin of the
+   bead's own regression test.
+2. `tts_model_env_var_does_not_supply_a_model` — the environment sets
+   `TTS_MODEL`, state declares none, and the provider uses its own default
+   constant, not the environment value.
+3. `tts_model_is_not_in_provider_key_names` — `keys.PROVIDER_KEY_NAMES`
+   excludes it, so `vox daemon install` stops snapshotting it into `keys.env`.
+4. `provider_alien_model_is_rejected` — `provider: openai` with
+   `model: eleven_v3` errors naming the available OpenAI models, and does
+   **not** silently fall back to `tts-1`.
+5. `empty_model_uses_the_provider_default` — `model: ""` with
+   `provider: elevenlabs` synthesizes with `eleven_v3`.
+6. `modelless_provider_needs_no_model` — polly, say, and espeak synthesize
+   with `model: ""` and no error.
+7. `expressive_tag_capability_follows_state` — `model_supports_expressive_tags`
+   answers from the spec's model, not from `TTS_MODEL`
+   (`providers/elevenlabs.py:138`).
+8. `status_reports_the_model` — `mic:status` carries the declared model.
 
 ---
 
@@ -736,39 +981,83 @@ vox-awm9 formalises that, it has a case. This design does not touch it.
 
 ---
 
-## 9. Decisions for the operator
+## 9. Decisions
 
-Each is stated as a decision with my recommendation, not an open question.
+D1 through D4 are **ruled**. They are recorded here as decided, with the
+ruling, so the implementation missions have one place to read the settled
+position. D5 is new and open.
 
-**D1 — `vox enable` writes a provider into `vox.md`.** §3.8. This is the piece
-of the design that changes a user-visible behaviour beyond the bug fix: enable
-gains a side effect and a fresh repo arrives with a concrete provider in a
-tracked file. **Recommend: yes.** Without it, every freshly enabled repo hits
-the F1 refusal on its first chime, which trades a wrong-provider bug for a
-no-audio bug. With it, detection happens exactly once, in front of a human,
-and the result is visible in `mic:status` and reviewable in git.
+**D1 — `vox enable` writes a provider into `vox.md`. APPROVED, with a
+correction.** §3.8. Enable gains a side effect: a fresh repo arrives with a
+concrete provider in a tracked file. Without it, every freshly enabled repo
+hits the F1 refusal on its first chime, trading a wrong-provider bug for a
+no-audio bug.
 
-**D2 — `TTS_PROVIDER` stops overriding state at run time.** §3.3. It is in
-`PROVIDER_KEY_NAMES` (`keys.py:29`) and is loaded into the daemon environment
-(`voxd/config.py:182`), so today it silently outranks `vox.md`
-(`providers/__init__.py:154–156`). **Recommend: demote it to an input to the
-enable/install proposal.** Leaving it as a run-time override would preserve
-precisely the defect this bead closes, wearing an environment variable. Anyone
-who wants a per-invocation provider already has `vox say --provider` and
-`mic:provider`.
+The correction, which the leader caught and which is now the design: the
+provider is chosen **by the daemon**, through the `provider_status` op's
+`preferred` field, never by a local proposal in the CLI or MCP process. My
+first draft had enable probe its own environment — the same wrong-process
+mistake §3.5 identifies in `doctor.py:228–244`, and worse for happening at the
+one moment a human is watching and would trust the answer. §3.8 now states the
+rule, the two consequences (voxd must be reachable; nothing-ready is a report,
+not an error), and why `vox desktop install` legitimately differs.
 
-**D3 — `TTS_MODEL` has the same defect and is not fixed here.** The provider
-constructors read it directly (`providers/openai.py:62`,
-`providers/elevenlabs.py:78`), so an environment variable can outrank the
-model in state exactly as `TTS_PROVIDER` outranks the provider.
-**Recommend: file a sibling bead under vox-awm9 rather than widen this one.**
-It is a separate rollback unit, it needs the model cascade's context, and
-folding it in doubles the diff of a P1 fix. If the operator prefers one PR,
-say so and I will fold it in — it is a small addition once
-`providers/credentials.py` exists.
+**D2 — `TTS_PROVIDER` stops overriding state at run time. APPROVED.** §3.3. It
+is in `PROVIDER_KEY_NAMES` (`keys.py:29`) and is loaded into the daemon
+environment (`voxd/config.py:182`), so today it silently outranks `vox.md`
+(`providers/__init__.py:154–156`). It is demoted to an input to
+`ProviderCredentials.preferred()`, consulted by the daemon when a client asks
+what a fresh repo should adopt. Anyone who wants a per-invocation provider has
+`vox say --provider` and `mic:provider`.
 
-**D4 — `health.provider` is deleted rather than repurposed.** §3.5. It is read
-by `doctor.py:261` and typed at `types_health.py:28`. **Recommend: delete.**
-The daemon has no provider; keeping the field and filling it with a readiness
-summary would overload one name with two meanings, and the readiness answer
-already has its own op and its own type.
+**D3 — `TTS_MODEL` folds into this bead. OVERRULED; the operator's ruling
+stands and the design now carries it.** I recommended a sibling bead. The
+operator overruled: shipping a P1 that closes the provider substitution while
+knowingly leaving the identical substitution one field over contradicts the
+org rule that there is no such thing as an existing issue, and my own words —
+that it is a small addition once `providers/credentials.py` exists — were the
+deciding fact.
+
+The ruling is right and I withdraw the recommendation. My split reasoning
+weighed diff size, which is a PR-boundary concern the operator has now
+addressed directly by splitting into three (D5). Diff size was never a reason
+to leave a known defect in place; it is a reason to sequence the work. §3.9
+specifies the model treatment, F7 gives its client-observable surface, the
+test plan gains eight cases, and the write set places the deletions in PR 2
+alongside the provider gate they mirror.
+
+**D4 — `health.provider` is deleted rather than repurposed. APPROVED.** §3.5.
+It is read by `doctor.py:261` and typed at `types_health.py:28`. The daemon has
+no provider; keeping the field and filling it with a readiness summary would
+overload one name with two meanings, and the readiness answer already has its
+own op and its own type.
+
+**D5 — the order of the three PRs. OPEN; needs a ruling before dispatch.** The
+operator's split into three is accepted and I am not relitigating the
+boundaries. The stated order is (1) daemon gate, (2) client half, (3)
+observability. **Recommend: swap 1 and 2 — client half first.**
+
+The reason is mechanical, not stylistic. PR "daemon gate" makes `provider` a
+required wire field. Until the client half lands, three surfaces do not send
+one: `vox say` with no `--provider` (`__main__.py:354–367`), the panel preview
+(`panel/service.py:329`), and any repo whose `vox.md` holds `provider: ""` —
+which is the shipped shape (`DESIGN.md:69`) — through `hooks.py:168`'s
+`or None`. Between the two merges, `main` refuses those paths. Every repo that
+has not explicitly set a provider loses its chimes, and `vox say` needs a flag
+it never needed before.
+
+Reversed, nothing breaks at any point. The client half is inert on its own:
+each surface starts sending the provider from state, which the daemon accepts
+exactly as it accepts a provider today — the guess simply stops being reached.
+The gate PR then deletes a branch that has already become unreachable, and the
+refusal it adds is the intended new behaviour arriving in one step.
+
+One dependency moves with the swap: `ProviderNotConfigured` and
+`ModelNotAvailableError` are needed by `session_spec.py`, so those two
+`types_errors.py` additions belong in the client-half PR;
+`ProviderUnavailableError` and `ProviderAuthError` stay with the gate. §6
+already reflects the recommended order and this split.
+
+If the operator prefers the stated order, say so and I will amend §6 — but the
+mute window between the first two merges should then be an accepted, recorded
+cost rather than a surprise.
