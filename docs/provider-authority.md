@@ -11,8 +11,9 @@ from the bead.
 rulings, all now in the text: enable proposes **through the daemon**, not from
 the client process (§3.8); `TTS_MODEL` folds into this bead rather than a
 sibling (§3.9, D3 overruled); the work splits into **three** PRs, not two (§6);
-D1, D2, and D4 are approved as written. One decision remains open — the order
-of the three PRs (D5).
+D1, D2, D4, and D5 are approved; D3 was overruled and folded into this bead.
+No decision remains open — this document is settled and implementation may
+proceed against it.
 
 **Forward-integrated by contract.** Every path this design retires is deleted
 in the same commit as its replacement. There is no shim, no flag, no
@@ -760,7 +761,7 @@ The operator has ruled the split: three sequentially dependent PRs, not two.
 Twenty-six files plus the `TTS_MODEL` work is past the diff size at which agent
 reviewers hold quality, and each of the three reverts coherently on its own.
 I accept the boundaries as drawn. I recommend one change to the **order** —
-see D5 in §9, which must be ruled before dispatch.
+see D5 in §9, ruled and settled.
 
 **The order below is the one I recommend (client half first).** Landing the
 daemon gate first leaves `main` mute between PR 1 and PR 2: after the daemon
@@ -985,7 +986,7 @@ vox-awm9 formalises that, it has a case. This design does not touch it.
 
 D1 through D4 are **ruled**. They are recorded here as decided, with the
 ruling, so the implementation missions have one place to read the settled
-position. D5 is new and open.
+position. D5 was raised in that round and is now ruled.
 
 **D1 — `vox enable` writes a provider into `vox.md`. APPROVED, with a
 correction.** §3.8. Enable gains a side effect: a fresh repo arrives with a
@@ -1032,10 +1033,10 @@ no provider; keeping the field and filling it with a readiness summary would
 overload one name with two meanings, and the readiness answer already has its
 own op and its own type.
 
-**D5 — the order of the three PRs. OPEN; needs a ruling before dispatch.** The
-operator's split into three is accepted and I am not relitigating the
-boundaries. The stated order is (1) daemon gate, (2) client half, (3)
-observability. **Recommend: swap 1 and 2 — client half first.**
+**D5 — the order of the three PRs. RULED: client half first.** The split into
+three is accepted; the boundaries are not relitigated. The order is
+**(1) client half, (2) daemon gate, (3) observability** — a reversal of the
+leader's original (1) daemon gate, (2) client half.
 
 The reason is mechanical, not stylistic. PR "daemon gate" makes `provider` a
 required wire field. Until the client half lands, three surfaces do not send
@@ -1058,6 +1059,10 @@ One dependency moves with the swap: `ProviderNotConfigured` and
 `ProviderUnavailableError` and `ProviderAuthError` stay with the gate. §6
 already reflects the recommended order and this split.
 
-If the operator prefers the stated order, say so and I will amend §6 — but the
-mute window between the first two merges should then be an accepted, recorded
-cost rather than a surprise.
+The leader accepted this on review, naming the cause: the three-way split was
+made on reviewer-effectiveness grounds, and that split was then allowed to
+imply an order. Reviewer load decides where the boundaries fall; the
+intermediate states decide which end to start from. They are two questions
+answered by the same list, and separating them is the general lesson — whenever
+a change is split at all, a broken intermediate state should be an accepted,
+recorded cost rather than a discovered one.
