@@ -81,18 +81,28 @@ class TestList:
         assert result.error is True
         assert result.exit_code == 1
 
-    async def test_unconfigured_provider_refuses_list(self, tmp_path: Path) -> None:
-        """``vox voices`` with no provider (state or ``--provider``) refuses.
+    async def test_unconfigured_provider_lists_empty_no_refusal(
+        self, tmp_path: Path
+    ) -> None:
+        """``vox voices`` with no provider lists an empty roster, does not refuse.
 
-        State is the sole authority on which provider voxd runs; the
-        listing surface can no longer substitute one when state has none.
+        Listing is how a user discovers what to configure; refusing to list
+        because nothing is configured yet would be the worst possible moment
+        to say "configure something first". Symmetric with ``vox model``'s
+        list branch. The set path (``vox voice <name>``) still refuses --
+        writing a wrong-provider voice into ``vox.md`` is the substitution
+        this bead exists to prevent.
         """
         client = MagicMock()
         result = await voice(Ctx(store=ConfigStore(tmp_path), client=client), None)
-        assert result.error is True
-        assert result.exit_code == 1
-        assert "no TTS provider" in result.text
-        # Nothing was fetched.
+        assert result.error is False
+        assert result.exit_code == 0
+        assert result.text == "No voices for this provider."
+        assert result.json_data is not None
+        assert cast("list[str]", result.json_data["names"]) == []
+        assert result.json_data["provider"] is None
+        # Empty branch must not call the daemon: VoxClientSync.voices
+        # requires a provider now.
         client.voices.assert_not_called()
 
 
@@ -118,6 +128,25 @@ class TestSet:
         assert result.error is True
         assert result.exit_code == 1
         assert "empty" in result.text
+
+    async def test_unconfigured_provider_refuses_set(self, tmp_path: Path) -> None:
+        """Setting a voice with no provider configured refuses, never writes.
+
+        A voice name is provider-scoped, so writing ``matilda`` into
+        ``vox.md`` while no provider is set would land a wrong-provider
+        voice the moment a caller runs ``vox provider <name>``. Symmetric
+        with ``vox model``'s set-refusal; unlike the list branch, setting
+        needs an authoritative provider.
+        """
+        # Overwrite the seeded vox.md to remove the provider entry.
+        (tmp_path / "vox.md").write_text("---\n---\n")
+        client = MagicMock()
+        result = await voice(Ctx(store=ConfigStore(tmp_path), client=client), "matilda")
+        assert result.error is True
+        assert result.exit_code == 1
+        assert "no TTS provider" in result.text
+        assert ConfigStore(tmp_path).read_field("voice") is None
+        client.voices.assert_not_called()
 
     async def test_config_write_error_returns_envelope(self, tmp_path: Path) -> None:
         """ConfigStore rejects control chars -- the command envelopes it, not raises.

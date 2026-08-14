@@ -36,6 +36,10 @@ from punt_vox.server_switches import ModelTool, ProviderTool, VoiceTool
 from punt_vox.session_spec import SessionSpec
 from punt_vox.synthesis_batch import SegmentBatch
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.types_synthesis_errors import (
+    ModelNotAvailableError,
+    ProviderNotConfiguredError,
+)
 from punt_vox.vibe_command import MusicPreference, VibeCommand
 from punt_vox.vibe_trace import VibeTraceLog
 
@@ -439,20 +443,33 @@ def unmute(
             return _error("Provide text or segments.")
         segments = [{"text": text}]
 
+    # Fill defaults BEFORE mutating session vibe: an F1 refusal
+    # (no provider) or F7 refusal (provider-alien model) must leave the
+    # session untouched, otherwise a refused call still leaks its vibe
+    # tags into the next successful synthesis. The sibling verb
+    # ``server_audio_tools.RecTool._new`` wraps the same SessionSpec call
+    # in the same envelope; without this guard ``mic:unmute`` crashed with
+    # a bare ProviderNotConfiguredError that FastMCP re-raised as a
+    # protocol-level ToolError instead of the ``{"error": ...}`` shape
+    # every sibling surface returns.
+    try:
+        defaults = _session.fill_defaults(
+            SynthesisSpec(
+                voice=voice,
+                language=language,
+                rate=rate,
+                stability=stability,
+                similarity=similarity,
+                style=style,
+                speaker_boost=speaker_boost,
+                vibe_tags=vibe_tags,
+            )
+        )
+    except (ProviderNotConfiguredError, ModelNotAvailableError) as exc:
+        return _error(str(exc))
+
     _session.set_vibe(tags=vibe_tags)
 
-    defaults = _session.fill_defaults(
-        SynthesisSpec(
-            voice=voice,
-            language=language,
-            rate=rate,
-            stability=stability,
-            similarity=similarity,
-            style=style,
-            speaker_boost=speaker_boost,
-            vibe_tags=vibe_tags,
-        )
-    )
     client = _voxd_client()
 
     def _synth_handler(seg_text: str, seg_spec: SynthesisSpec) -> dict[str, object]:

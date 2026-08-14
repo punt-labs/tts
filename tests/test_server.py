@@ -582,6 +582,62 @@ class TestUnmute:
         assert result[0]["text"] == "Hello world"
         mock_client.synthesize.assert_called_once()
 
+    def test_unconfigured_provider_returns_error_envelope(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An unset session provider returns a JSON error, never crashes the tool.
+
+        Every sibling synthesis surface returns ``{"error": ...}`` on the F1
+        refusal (``session_spec.SessionSpec`` raises
+        :class:`ProviderNotConfiguredError`); ``mic:unmute`` must match. A bare
+        exception would surface as a FastMCP protocol-level ``ToolError``
+        instead, which the caller cannot introspect. The guard must also fire
+        BEFORE ``_session.set_vibe`` so a refused call leaves no trace on the
+        session's vibe state.
+        """
+        import punt_vox.server as srv
+
+        monkeypatch.setattr(srv, "_session", SessionConfig())  # no provider
+        mock_client = MagicMock()
+        monkeypatch.setattr(srv, "_voxd_client", lambda: mock_client)
+
+        vibe_before = srv._session._vibe_tags
+
+        result = json.loads(unmute(text="Hi", vibe_tags="[warm]"))
+
+        assert isinstance(result, dict)
+        assert "error" in result
+        assert "no TTS provider" in result["error"]
+        # The daemon was never contacted.
+        mock_client.synthesize.assert_not_called()
+        # The refusal left the session's vibe untouched.
+        assert srv._session._vibe_tags == vibe_before
+
+    def test_unconfigured_model_returns_error_envelope(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A hand-edited provider/model pair returns the F7 refusal, not a crash.
+
+        Same envelope contract as F1: the caller sees the wrong pair state
+        actually declared, not a silent substitution to the provider default.
+        """
+        import punt_vox.server as srv
+
+        # provider=openai + model=eleven_v3 is the hand-edited hazard from §3.9.
+        monkeypatch.setattr(
+            srv, "_session", SessionConfig(_provider="openai", _model="eleven_v3")
+        )
+        mock_client = MagicMock()
+        monkeypatch.setattr(srv, "_voxd_client", lambda: mock_client)
+
+        result = json.loads(unmute(text="Hi"))
+
+        assert isinstance(result, dict)
+        assert "error" in result
+        assert "eleven_v3" in result["error"]
+        assert "openai" in result["error"]
+        mock_client.synthesize.assert_not_called()
+
     def test_segments(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock_client = MagicMock()
         mock_client.synthesize.return_value = SynthesizeResult(request_id="req456")

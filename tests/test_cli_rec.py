@@ -147,6 +147,73 @@ def test_new_daemon_error_is_clean_exit() -> None:
         cli.new(text="hi")
 
 
+def test_new_uses_configured_provider_from_state(
+    hermetic_config: Path,
+) -> None:
+    """``vox rec new`` sends the provider ``vox.md`` names, not an empty field.
+
+    ``vox rec new`` used to build a ``SynthesisSpec`` with only the flags the
+    caller passed, so a bare ``vox rec new "hi"`` sent no provider and let
+    the daemon guess -- the same substitution the client half of vox-w3f8
+    exists to prevent. Routing through ``SessionSpec`` off ``vox.md`` fills
+    provider from state.
+    """
+    hermetic_config.joinpath("vox.md").write_text(
+        '---\nprovider: "elevenlabs"\nvoice: "matilda"\n---\n'
+    )
+    gateway = MagicMock(spec=RecordGateway)
+    gateway.new.return_value = RecordResult(
+        id="x.mp3", name="x.mp3", store_path=Path("x.mp3"), byte_count=3
+    )
+    cli = RecCli(MagicMock(spec=OutputFormatter), lambda: gateway)
+
+    cli.new(text="hi")
+
+    # The gateway saw a spec whose provider came from state, not empty.
+    sent_spec = gateway.new.call_args.args[1]
+    assert sent_spec.provider == "elevenlabs"
+    assert sent_spec.voice == "matilda"
+
+
+def test_new_unconfigured_provider_exits_1(hermetic_config: Path) -> None:
+    """No provider in state -- ``vox rec new`` exits 1 (F1), never sends.
+
+    The refusal happens before the gateway is touched: the daemon is not
+    contacted, and no id is emitted. Same shape as ``vox say`` on the
+    F1 path.
+    """
+    hermetic_config.joinpath("vox.md").write_text("---\n---\n")
+    fake = InMemoryRecordGateway()
+    cli, formatter = _cli(fake)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.new(text="hi")
+
+    assert excinfo.value.exit_code == 1
+    assert fake.calls == []
+    formatter.emit.assert_not_called()
+
+
+def test_new_alien_model_exits_1(hermetic_config: Path) -> None:
+    """A hand-edited ``vox.md`` pair (provider openai, model eleven_v3) exits 1.
+
+    The F7 refusal fires at the same seam as F1; the caller sees the pair
+    state actually declared, never a silent substitution to the OpenAI
+    default.
+    """
+    hermetic_config.joinpath("vox.md").write_text(
+        '---\nprovider: "openai"\nmodel: "eleven_v3"\n---\n'
+    )
+    fake = InMemoryRecordGateway()
+    cli, _ = _cli(fake)
+
+    with pytest.raises(typer.Exit) as excinfo:
+        cli.new(text="hi")
+
+    assert excinfo.value.exit_code == 1
+    assert fake.calls == []
+
+
 def test_new_from_file_emits_one_id_per_segment(tmp_path: Path) -> None:
     segments_file = tmp_path / "segs.json"
     segments_file.write_text('["first line", "second line"]', encoding="utf-8")

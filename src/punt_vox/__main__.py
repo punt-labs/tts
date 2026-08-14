@@ -105,13 +105,15 @@ def _fill_from_state(spec: SynthesisSpec) -> SynthesisSpec:
     """Fill unset fields from the repo's ``vox.md`` through :class:`SessionSpec`.
 
     The CLI counterpart to :meth:`SessionConfig.fill_defaults` (server.py):
-    ``vox say`` and ``vox record`` used to ignore ``vox.md`` entirely, so a
-    bare ``vox say "hi"`` sent no provider and let the daemon guess. Filling
-    here makes state the authority on the CLI too. An unconfigured provider
-    is the F1 refusal -- reported on stderr and exit 1 -- and an incompatible
-    provider/model pair is the F7 refusal, same treatment. All other CLI
-    surfaces trust this one function so a sixth caller cannot reintroduce
-    the guess by hand.
+    ``vox say`` used to ignore ``vox.md`` entirely, so a bare ``vox say "hi"``
+    sent no provider and let the daemon guess. Filling here makes state the
+    authority on ``vox say`` too. ``vox rec new`` fills through the same
+    :class:`SessionSpec` from its own helper in :mod:`cli_rec`, matching
+    the shape here.
+
+    An unconfigured provider is the F1 refusal -- reported on stderr and
+    exit 1 -- and an incompatible provider/model pair is the F7 refusal,
+    same treatment.
     """
     config = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
     try:

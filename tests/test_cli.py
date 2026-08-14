@@ -990,6 +990,9 @@ class TestVoiceCommand:
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
         monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        # Setting a voice with no provider configured refuses (F1); seed
+        # provider so the set path exercises the write, not the refusal.
+        (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
 
         runner = CliRunner()
         result = runner.invoke(app, ["voice", "matilda"])

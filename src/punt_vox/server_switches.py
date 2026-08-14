@@ -314,6 +314,16 @@ class VoiceTool:
         if name is None:
             return self._list(session)
 
+        # Setting a voice with no provider configured lands a wrong-provider
+        # voice into vox.md the moment a caller runs mic:provider -- exactly
+        # the substitution class this bead exists to prevent. Listing does
+        # not require a provider (empty roster is fine); setting does.
+        if not session.provider:
+            return _error(
+                "no TTS provider is configured for this repo; "
+                "set one with mic:provider <name>"
+            )
+
         normalized = SynthesisSpec.normalize_voice(name)
         if normalized is None:
             return _error("voice name is empty")
@@ -327,18 +337,25 @@ class VoiceTool:
     def _list(self, session: SessionConfig) -> str:
         """Return the voice roster for the current provider, blurbs included.
 
-        Refuses when no provider is configured: fetching a roster requires
-        naming a provider now (``Cascade.fetch_roster`` takes a ``str``, not
-        ``str | None``) and the response used to be labelled with a
-        substituted ``"elevenlabs"`` even when the roster was fetched for
-        the daemon's guessed provider, so caller and label could name
-        different providers. The refusal makes both truthful.
+        Listing needs no synthesis, so an unset provider yields an honest
+        empty answer instead of a refusal -- the caller is trying to learn
+        what to configure, and answering "configure something first" is
+        the worst possible moment to refuse. Symmetric with ``ModelTool``'s
+        list branch; a client can tell "no provider is configured" apart
+        from "the provider has no voices" by checking ``provider is None``.
+        A set operation (``mic:voice <name>``) does still refuse F1 in
+        ``VoiceTool.dispatch`` -- writing a wrong-provider voice into
+        state is the substitution the whole subsystem exists to prevent.
         """
         provider = session.provider
         if not provider:
-            return _error(
-                "no TTS provider is configured for this repo; "
-                "set one with mic:provider <name>"
+            return json.dumps(
+                {
+                    "provider": None,
+                    "current": session.voice,
+                    "available": [],
+                    "featured": [],
+                }
             )
         roster = Cascade.fetch_roster(self._client_factory(), provider)
         if isinstance(roster, RosterError):

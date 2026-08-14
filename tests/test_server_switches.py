@@ -496,6 +496,55 @@ def test_voice_set_rejects_blank(tmp_path: Path) -> None:
     assert session.voice == "matilda"  # untouched
 
 
+def test_voice_no_arg_unconfigured_provider_lists_empty(tmp_path: Path) -> None:
+    """No session provider -- ``mic:voice`` (no name) lists an empty roster.
+
+    Listing is how a caller discovers what to configure; refusing to list
+    because nothing is configured yet would be the worst possible moment
+    to say "configure something first". Symmetric with ``mic:model``'s
+    unconfigured-provider list branch. The daemon is never contacted
+    because ``VoxClientSync.voices`` requires a provider.
+    """
+    session = _FakeSession()
+    client = MagicMock()
+
+    voice = VoiceTool(
+        _session_provider(session),
+        lambda: tmp_path,
+        _client_factory(client),
+    )
+
+    result = json.loads(voice.dispatch())
+
+    assert result == {
+        "provider": None,
+        "current": None,
+        "available": [],
+        "featured": [],
+    }
+    client.voices.assert_not_called()
+
+
+def test_voice_set_refuses_when_provider_unset(tmp_path: Path) -> None:
+    """Setting a voice when no provider is configured refuses, never writes.
+
+    A voice name is provider-scoped -- writing ``matilda`` into ``vox.md``
+    while no provider is set would land a wrong-provider voice the moment
+    a caller runs ``mic:provider``. The tool refuses instead, matching the
+    F1 client-side refusal every synthesis surface emits.
+    """
+    session = _FakeSession()
+    _, _, voice = _tools(session, tmp_path)
+
+    result = json.loads(voice.dispatch("matilda"))
+
+    assert "error" in result
+    assert "no TTS provider" in result["error"]
+    # Nothing landed on disk or on the in-memory session.
+    assert ConfigStore(tmp_path).read_field("voice") is None
+    assert session.voice is None
+
+
 def test_voice_no_arg_reports_daemon_connect_error(tmp_path: Path) -> None:
     """When voxd is unreachable, the roster path returns an error envelope."""
 
