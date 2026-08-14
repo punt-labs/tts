@@ -40,7 +40,10 @@ dependencies = [
     # (reconnect with port re-resolution), and the publish-button surface. 0.22.1
     # adds the listener on_connect hook (fired after every handshake, including
     # internal reconnects) that voxd uses to re-register the Music menu register-fresh.
-    "punt-lux>=0.23.0",
+    # 0.24.0 makes AppletIdentity.for_session take the declaring program as its
+    # first argument, so two applets in one session (lux-beads and vox-panel)
+    # resolve to two Hub connections instead of collapsing onto one (vox-iyny).
+    "punt-lux>=0.24.0",
 ]
 
 [project.urls]

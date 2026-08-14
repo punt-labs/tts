@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from punt_lux.applets import AppletIdentity
 from punt_lux.applets.claim import NoClaim, SessionClaim
 from punt_lux.applets.watch import NoSession, SessionWatch
+from punt_lux.connection_identity import connection_for
 
 from punt_vox.panel.applet import VoxPanelApplet
 from punt_vox.panel.leg import VoxPanelLeg
@@ -47,6 +48,21 @@ def _isolate_claim_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     )
 
 
+def _isolate_config_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Redirect ``_leg_for``'s config-dir lookup into *tmp_path*.
+
+    ``_leg_for`` builds its ``ConfigStore`` from ``find_config_dir()``, which
+    walks the process cwd's parents for a ``.punt-labs/vox`` directory. Pinning
+    the lookup at an empty tmp directory means the panel's store reads no
+    ambient repo config -- the test does not rely on where it happens to run.
+    """
+
+    def _pinned(_start: Path | None = None) -> Path:
+        return tmp_path
+
+    monkeypatch.setattr("punt_vox.panel.applet.find_config_dir", _pinned)
+
+
 class TestForSession:
     def test_binds_a_session_claim_a_leg_and_a_session_watch(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -74,26 +90,34 @@ class TestUnattended:
 
 
 class TestLegFor:
-    def test_subscribes_to_every_panel_topic(self) -> None:
+    def test_subscribes_to_every_panel_topic(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         """The leg carries every ``PanelTopic`` -- a rename cannot drift the two."""
+        _isolate_config_dir(monkeypatch, tmp_path)
         leg = VoxPanelApplet._leg_for(_SESSION_PID)
         assert leg._topics == tuple(topic.value for topic in PanelTopic)
 
-    def test_serves_a_vox_panel_service(self) -> None:
+    def test_serves_a_vox_panel_service(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         """The leg's service is the real ``VoxPanelService``, not a stand-in."""
+        _isolate_config_dir(monkeypatch, tmp_path)
         leg = VoxPanelApplet._leg_for(_SESSION_PID)
         assert isinstance(leg._service, VoxPanelService)
 
-    def test_declares_the_identity_lux_derives_for_this_session(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The REST leg's identity is what ``AppletIdentity.for_session`` yields.
+    @staticmethod
+    def _identity_from_leg(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> ClientIdentity:
+        """Build the leg for the standard test pid and return the identity it declares.
 
-        The Hub keys its connections on that identity's fields, so the value
-        the REST factory closes over IS what determines the connection this
-        program owns. We ask the factory who it built for by capturing the
-        argument it hands to ``LuxRestClient.for_identity``.
+        Captures the ``ClientIdentity`` the REST factory closes over by
+        monkey-patching ``LuxRestClient.for_identity``, then invokes the
+        factory once so the closed-over value flows into the capture. This
+        is the identity the Hub attributes the panel's connection to.
         """
+        _isolate_config_dir(monkeypatch, tmp_path)
         captured: list[ClientIdentity] = []
 
         def _capture(identity: ClientIdentity) -> object:
@@ -103,6 +127,48 @@ class TestLegFor:
         monkeypatch.setattr("punt_vox.panel.leg.LuxRestClient.for_identity", _capture)
         leg = VoxPanelApplet._leg_for(_SESSION_PID)
         leg._rest_factory()
+        return captured[0]
 
-        expected = AppletIdentity.for_session(_SESSION_PID).client
-        assert captured == [expected]
+    def test_declares_the_vox_panel_program_at_the_hub(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Positive control: the leg's identity IS the ``vox-panel`` identity.
+
+        A fresh ``AppletIdentity.for_session("vox-panel", _SESSION_PID)``
+        collapses to the same ``ConnectionId`` as the one the leg declares,
+        so the applet is actually passing ``"vox-panel"`` -- not a typo like
+        ``"vox-pannel"`` and not some other program constant a future
+        refactor might quietly wire in. A distinctness-only assertion would
+        pass those false-negatives green, since a mis-spelled token still
+        differs from ``lux-beads``. It also pins ``connection_for``'s
+        collapse-when-agreeing invariant: two identical declarations must
+        resolve to one ``ConnectionId``, which is the property the whole
+        Hub-connection design rests on.
+        """
+        panel_identity = self._identity_from_leg(monkeypatch, tmp_path)
+        expected = AppletIdentity.for_session("vox-panel", _SESSION_PID).client
+        assert connection_for(panel_identity.model_dump()) == connection_for(
+            expected.model_dump()
+        )
+
+    def test_owns_a_hub_connection_distinct_from_the_beads_applet(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The vox-panel and lux-beads identities for one session resolve apart.
+
+        Both applets are ``kind="applet"``, declared against the same repo,
+        with no agent handle -- so three of the four fields
+        ``connection_for`` seeds its hash from agree. The fourth is the
+        name, which must carry the program token. If it does not, the two
+        identities hash to one ``ConnectionId`` and the second applet to
+        connect silently takes the first's Hub connection over: the
+        session's menu ends up with one entry where it should have two.
+        The assertion is on the ``ConnectionId`` values themselves (the
+        property that actually broke), not on the label strings that
+        produce them.
+        """
+        panel_identity = self._identity_from_leg(monkeypatch, tmp_path)
+        beads_identity = AppletIdentity.for_session("lux-beads", _SESSION_PID).client
+        assert connection_for(panel_identity.model_dump()) != connection_for(
+            beads_identity.model_dump()
+        )
