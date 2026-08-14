@@ -26,12 +26,14 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["ElevenLabsProvider"]
 
-# Default model — eleven_v3 is the latest model with the best voice
-# quality and multilingual support. eleven_v3 interprets bracket-style
-# expressive tags natively (e.g. [whisper], [serious]), so vibe tags
-# are preserved for that model. Other models strip tags before
-# synthesis. Users who want lower cost or lower latency can override
-# via TTS_MODEL=eleven_flash_v2_5.
+# Default model. State (or an explicit ``model=`` kwarg) is the sole
+# authority; the earlier ``TTS_MODEL`` env-var probe was removed to
+# close the state-vs-env substitution one field over from the
+# provider case (design §3.9). eleven_v3 is the highest-quality
+# multilingual model and the only one that interprets bracket-style
+# expressive tags ([whisper], [serious]) natively; other models
+# strip the tags before synthesis. Users wanting a different model
+# set it in ``vox.md``.
 _DEFAULT_MODEL = "eleven_v3"
 
 # Character limits per model (from ElevenLabs docs).
@@ -59,9 +61,11 @@ class ElevenLabsProvider(TTSProvider):
     Implements the TTSProvider protocol using the ElevenLabs SDK.
     Defaults to eleven_v3 for best voice quality. eleven_v3 interprets
     bracket-style expressive tags natively, so tags are preserved for
-    that model. Other models strip tags before synthesis. Override with
-    ``TTS_MODEL`` env var for lower cost or latency (e.g.
-    ``eleven_flash_v2_5``).
+    that model. Other models strip tags before synthesis. A different
+    model comes from ``vox.md`` (or an explicit ``model=`` kwarg),
+    never from the environment: the ``TTS_MODEL`` env-var probe was
+    the same substitution defect the provider gate closes, one field
+    over (design §3.9).
     """
 
     _model: str
@@ -75,7 +79,7 @@ class ElevenLabsProvider(TTSProvider):
         client: Any | None = None,  # pyright: ignore[reportExplicitAny]
     ) -> Self:
         self = super().__new__(cls)
-        self._model = model or os.environ.get("TTS_MODEL") or _DEFAULT_MODEL
+        self._model = model or _DEFAULT_MODEL
         if client is not None:
             self._client = client
         else:
@@ -128,14 +132,15 @@ class ElevenLabsProvider(TTSProvider):
     def model_supports_expressive_tags(cls, model: str | None) -> bool:
         """Return whether the given model interprets expressive tags natively.
 
-        Resolves the model the same way the constructor does (explicit param,
-        ``TTS_MODEL`` env var, then ``_DEFAULT_MODEL``) and checks
-        membership in the expressive set. Returns True for ``eleven_v3``,
-        which treats bracket tags like ``[alert]`` as expressive cues.
-
-        Pure: does not construct the provider or touch the ElevenLabs SDK.
+        Resolves the model the same way the constructor does (explicit
+        param, else :data:`_DEFAULT_MODEL`) and checks membership in
+        the expressive set. Returns True for ``eleven_v3``, which
+        treats bracket tags like ``[alert]`` as expressive cues. Pure:
+        does not construct the provider or touch the ElevenLabs SDK.
+        The ``TTS_MODEL`` env-var branch was removed in the same
+        change as the constructor's, for the same reason (design §3.9).
         """
-        effective = model or os.environ.get("TTS_MODEL") or _DEFAULT_MODEL
+        effective = model or _DEFAULT_MODEL
         return effective in cls._EXPRESSIVE_MODELS
 
     def generate_audio(self, request: SynthesisRequest) -> SynthesisResult:

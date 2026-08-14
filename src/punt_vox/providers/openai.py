@@ -28,6 +28,13 @@ __all__ = ["OpenAIProvider"]
 # Maximum characters per OpenAI TTS API request.
 _MAX_CHARS = 4096
 
+# Default model. State (or an explicit ``model=`` kwarg) is the sole
+# authority: the ``TTS_MODEL`` env-var probe was removed to close the
+# state-vs-env substitution one field over from the provider case
+# (design §3.9). ``vox.md`` says which model to use; this constant is
+# the fallback when state declares none.
+_DEFAULT_MODEL = "tts-1"
+
 # Static voice list for tts-1 / tts-1-hd models.
 VOICES: dict[str, str] = {
     "alloy": "alloy",
@@ -59,7 +66,7 @@ class OpenAIProvider(TTSProvider):
         client: openai.OpenAI | None = None,
     ) -> Self:
         self = super().__new__(cls)
-        self._model = model or os.environ.get("TTS_MODEL") or "tts-1"
+        self._model = model or _DEFAULT_MODEL
         self._client = client or openai.OpenAI()
         return self
 

@@ -467,66 +467,8 @@ class TestSayProviderInferLanguage:
         assert say_provider.infer_language_from_voice("anna") == "de"
 
 
-class TestAutoDetectSayFallback:
-    def test_macos_no_keys_returns_say(self) -> None:
-        with (
-            patch.dict("os.environ", {}, clear=True),
-            patch("punt_vox.providers.platform") as mock_platform,
-            patch(
-                "punt_vox.providers.shutil.which",
-                side_effect=lambda name: (  # pyright: ignore[reportUnknownLambdaType]
-                    "/usr/bin/say" if name == "say" else None
-                ),
-            ),
-        ):
-            mock_platform.system.return_value = "Darwin"
-            from punt_vox.providers import auto_detect_provider
-
-            assert auto_detect_provider() == "say"
-
-    def test_linux_no_keys_no_espeak_returns_polly(self) -> None:
-        with (
-            patch.dict("os.environ", {}, clear=True),
-            patch("punt_vox.providers.platform") as mock_platform,
-            patch("punt_vox.providers.shutil.which", return_value=None),
-        ):
-            mock_platform.system.return_value = "Linux"
-            from punt_vox.providers import auto_detect_provider
-
-            assert auto_detect_provider() == "polly"
-
-    def test_linux_no_keys_with_espeak_returns_espeak(self) -> None:
-        with (
-            patch.dict("os.environ", {}, clear=True),
-            patch("punt_vox.providers.platform") as mock_platform,
-            patch(
-                "punt_vox.providers.shutil.which",
-                side_effect=lambda name: (  # pyright: ignore[reportUnknownLambdaType]
-                    "/usr/bin/espeak-ng" if name == "espeak-ng" else None
-                ),
-            ),
-        ):
-            mock_platform.system.return_value = "Linux"
-            from punt_vox.providers import auto_detect_provider
-
-            assert auto_detect_provider() == "espeak"
-
-    def test_explicit_provider_overrides(self) -> None:
-        with patch.dict("os.environ", {"TTS_PROVIDER": "openai"}, clear=True):
-            from punt_vox.providers import auto_detect_provider
-
-            assert auto_detect_provider() == "openai"
-
-    def test_elevenlabs_key_takes_priority(self) -> None:
-        with (
-            patch.dict(
-                "os.environ",
-                {"ELEVENLABS_API_KEY": "test-key"},
-                clear=True,
-            ),
-            patch("punt_vox.providers.platform") as mock_platform,
-        ):
-            mock_platform.system.return_value = "Darwin"
-            from punt_vox.providers import auto_detect_provider
-
-            assert auto_detect_provider() == "elevenlabs"
+# The old ``TestAutoDetectSayFallback`` covered ``auto_detect_provider``,
+# which is deleted (design §3.3): the daemon never invents a provider,
+# state names it. Preference (the ``vox enable`` proposal) is answered
+# by :meth:`ProviderCredentials.preferred`, covered by
+# tests/test_credentials.py.

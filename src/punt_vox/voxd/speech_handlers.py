@@ -14,7 +14,8 @@ from typing import Self
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from punt_vox.providers import auto_detect_provider
+from punt_vox.types_errors import VoiceNotFoundError
+from punt_vox.types_provider_errors import ProviderAuthError, ProviderUnavailableError
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd._parse import (
     parse_optional_float,
@@ -65,9 +66,14 @@ class _SpeechRequest:
         if not text:
             raise ValueError("empty text")
         speaker_boost_raw = msg.get("speaker_boost")
+        # ``provider`` is required on the wire (design §3.7): every client
+        # surface (MCP, hook, CLI, panel, record) fills it from state via
+        # :class:`SessionSpec` before crossing the wire. A hand-rolled
+        # client that omits it gets an id-stamped rejection here rather
+        # than a daemon-side guess -- the substitution this bead closes.
         spec = SynthesisSpec(
             voice=parse_optional_str(msg, "voice"),
-            provider=parse_optional_str(msg, "provider") or auto_detect_provider(),
+            provider=parse_required_str(msg, "provider"),
             model=parse_optional_str(msg, "model"),
             rate=parse_optional_int(msg, "rate"),
             language=parse_optional_str(msg, "language"),
@@ -107,6 +113,21 @@ class _SpeechRequest:
         no absolute prefix reaches the client.
         """
         await WireReply(self.websocket, self.request_id).fault(fault)
+
+    async def reject(self, message: str) -> None:
+        """Audit a client-side rejection and send the *message* verbatim.
+
+        A synthesis whose named provider has no credentials, whose voice
+        the provider does not offer, or whose credentials the provider
+        rejects on the wire is a CALLER-side failure: state named
+        something the daemon cannot honour. Routing through
+        :meth:`WireReply.error` (the ``error`` frame + WARNING
+        ``rejected op`` audit line) crosses the sentence verbatim
+        rather than laundering it to ``"operation failed"``. The whole
+        F2/F3/F5 promise (design §3.5) is that a diagnosable failure
+        reaches the caller with a message they can act on.
+        """
+        await WireReply(self.websocket, self.request_id).error(message)
 
 
 class SynthesizeHandler(MessageHandler):
@@ -210,7 +231,15 @@ class SynthesizeHandler(MessageHandler):
         )
         if result is None:
             return False
-        if isinstance(result, Exception):
+        if isinstance(result, ProviderUnavailableError | VoiceNotFoundError):
+            # Diagnosable, caller-side: the provider has no credentials
+            # on this host, or the voice is not in its roster. Route
+            # verbatim through error() so the sentence crosses the wire
+            # rather than getting laundered to "operation failed" by
+            # fault(). See design §3.5, F2/F5.
+            self._rollback(req, dedup_recorded=dedup_recorded)
+            await req.reject(str(result))
+        elif isinstance(result, Exception):
             self._rollback(req, dedup_recorded=dedup_recorded)
             await req.fault(SafeFault.from_exception(result))
         elif result == 0:
@@ -226,6 +255,17 @@ class SynthesizeHandler(MessageHandler):
         """Synthesize to a file, enqueue it, and drive the playing/done replies."""
         try:
             outcome = await self._synthesis.synthesize_to_file(req.text, req.spec)
+        except (ProviderUnavailableError, ProviderAuthError, VoiceNotFoundError) as exc:
+            # Diagnosable, caller-side (design §3.5): route verbatim
+            # through error() so the sentence naming the missing
+            # credential (F2), the rejected credential (F3), or the
+            # unrecognised voice (F5) crosses the wire, instead of
+            # being laundered by the broad guard below into
+            # "operation failed".
+            self._rollback(req, dedup_recorded=dedup_recorded)
+            logger.warning("Rejected synthesis for id=%r: %s", req.request_id, exc)
+            await req.reject(str(exc))
+            return
         except Exception as exc:
             self._rollback(req, dedup_recorded=dedup_recorded)
             logger.exception("Synthesis failed for id=%r", req.request_id)

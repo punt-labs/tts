@@ -273,12 +273,19 @@ class TestOpenAIProviderDefaultModel:
         assert provider._model == "tts-1-hd"  # pyright: ignore[reportPrivateUsage]
 
     @patch.dict("os.environ", {"TTS_MODEL": "tts-1-hd"})
-    def test_model_from_env(self) -> None:
+    def test_env_var_does_not_override_default(self) -> None:
+        """State (or an explicit kwarg) is authoritative -- not the env.
+
+        The ``TTS_MODEL`` env probe was the same substitution defect the
+        provider gate closes, one field over (design §3.9). With no
+        explicit ``model=`` and the env var set to a different value, the
+        constructor still picks the provider's own ``_DEFAULT_MODEL``.
+        """
         provider = OpenAIProvider(client=MagicMock())
-        assert provider._model == "tts-1-hd"  # pyright: ignore[reportPrivateUsage]
+        assert provider._model == "tts-1"  # pyright: ignore[reportPrivateUsage]
 
     @patch.dict("os.environ", {"TTS_MODEL": "tts-1-hd"})
-    def test_explicit_overrides_env(self) -> None:
+    def test_explicit_wins_over_env(self) -> None:
         provider = OpenAIProvider(model="tts-1", client=MagicMock())
         assert provider._model == "tts-1"  # pyright: ignore[reportPrivateUsage]
 

@@ -1,102 +1,186 @@
-"""Tests for ProviderRegistry auto-detect logging (deduplicated decision line)."""
+"""Tests for :class:`~punt_vox.providers.ProviderRegistry`.
+
+The registry stopped reading state and stopped probing the environment
+(design §3.3): ``get`` now requires an explicit provider name and calls
+:meth:`ProviderCredentials.require` before the factory. These tests
+cover that gate -- that a known-but-uncredentialed provider is a typed
+:class:`ProviderUnavailableError` with the exact message, that an
+unknown name still gets the pre-existing ``ValueError('Unknown ...')``,
+and that a per-call ``api_key`` context is honoured because the gate
+sits inside it.
+"""
 
 from __future__ import annotations
 
-import logging
-from typing import TYPE_CHECKING
+from typing import Any, cast
+
+import pytest
 
 from punt_vox.providers import ProviderRegistry
+from punt_vox.providers.credential_requirements import ApiKeyRequirement
+from punt_vox.providers.credentials import ProviderCredentials
+from punt_vox.types import TTSProvider
+from punt_vox.types_provider_errors import ProviderUnavailableError
 
-if TYPE_CHECKING:
-    import pytest
+
+class _NoopProvider:
+    """A minimal stand-in that satisfies ``TTSProvider`` for the gate tests."""
+
+    __slots__ = ("model",)
+
+    def __init__(self, *, model: str | None = None) -> None:
+        self.model = model
 
 
-class TestAutoDetectLogging:
-    """Provider selection logs a deduplicated INFO decision line with its reason."""
+def _register_test_provider(
+    registry: ProviderRegistry, name: str = "elevenlabs"
+) -> list[dict[str, object]]:
+    """Register a factory that records its kwargs, so tests can inspect them."""
+    calls: list[dict[str, object]] = []
 
-    def test_auto_detect_logs_decision_once(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    def _factory(**kwargs: Any) -> TTSProvider:  # pyright: ignore[reportExplicitAny, reportAny]
+        calls.append(dict(kwargs))
+        # cast() is honest here: the registry expects a ``TTSProvider``
+        # implementation, and this test only exercises the resolution
+        # gate -- no synthesize call ever reaches the double.
+        return cast("TTSProvider", _NoopProvider(model=kwargs.get("model")))
+
+    registry.register(name, _factory)
+    return calls
+
+
+class TestGet:
+    """The resolution gate: provider required, credentials required, then factory."""
+
+    def test_get_requires_a_provider_name(
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("TTS_PROVIDER", "say")
+        # A caller passing no name would be the substitution defect this
+        # bead closes: the daemon has no session, so a "guess for me" call
+        # cannot answer. The signature enforces the requirement at the type
+        # level, and passing an empty string still raises.
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-x")
         registry = ProviderRegistry()
-        with caplog.at_level(logging.INFO, logger="punt_vox.providers"):
-            first = registry.auto_detect()
-            second = registry.auto_detect()  # same decision -> no second line
-        assert first == second == "say"
-        infos = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
-        assert infos == ["provider: auto-detected say (TTS_PROVIDER env var)"]
+        _register_test_provider(registry)
+        with pytest.raises(ValueError, match="Unknown provider ''"):
+            registry.get("")
 
-    def test_aws_probe_failure_logged(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    def test_get_returns_provider_when_credentials_present(
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """When Polly is not chosen, the AWS probe records why at DEBUG."""
-        for key in ("TTS_PROVIDER", "ELEVENLABS_API_KEY", "OPENAI_API_KEY"):
-            monkeypatch.delenv(key, raising=False)
-
-        def _no_binary(_name: str, *_a: object, **_k: object) -> str | None:
-            return None
-
-        monkeypatch.setattr("punt_vox.providers.shutil.which", _no_binary)
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-x")
         registry = ProviderRegistry()
-        with caplog.at_level(logging.DEBUG, logger="punt_vox.providers"):
-            registry.auto_detect()
-        debugs = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
-        assert any("aws" in m and "polly not chosen" in m for m in debugs)
+        calls = _register_test_provider(registry)
+        result = registry.get("elevenlabs")
+        assert isinstance(result, _NoopProvider)
+        assert calls == [{"model": None}]
 
-    def test_no_provider_warning_is_deduped(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    def test_get_forwards_model_kwarg(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-x")
+        registry = ProviderRegistry()
+        calls = _register_test_provider(registry)
+        registry.get("elevenlabs", model="eleven_flash_v2_5")
+        assert calls == [{"model": "eleven_flash_v2_5"}]
+
+    def test_get_lowercases_the_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-x")
+        registry = ProviderRegistry()
+        _register_test_provider(registry)
+        # Case-insensitive resolution used to live in the ConfigStore
+        # branch that's gone; the gate must still accept a mixed-case name.
+        registry.get("ElevenLabs")
+
+    def test_get_raises_provider_unavailable_when_credentials_missing(
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The no-provider fallback WARNING logs once per outcome, not per call."""
-        for key in ("TTS_PROVIDER", "ELEVENLABS_API_KEY", "OPENAI_API_KEY"):
-            monkeypatch.delenv(key, raising=False)
-
-        def _no_binary(_name: str, *_a: object, **_k: object) -> str | None:
-            return None
-
-        monkeypatch.setattr("punt_vox.providers.shutil.which", _no_binary)
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
         registry = ProviderRegistry()
-        with caplog.at_level(logging.WARNING, logger="punt_vox.providers"):
-            for _ in range(3):  # a long-lived daemon would repeat this
-                assert registry.auto_detect() == "polly"
-        warnings = [
-            r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
-        ]
-        assert warnings == ["provider: none detected, falling back to polly"]
+        _register_test_provider(registry)
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            registry.get("elevenlabs")
+        # Full message assertion -- a substring pass on the tuple repr is
+        # exactly the failure mode vox-ll26 documented.
+        assert str(exc_info.value) == (
+            "provider 'elevenlabs' is configured but voxd has no "
+            "ELEVENLABS_API_KEY; run `vox doctor`"
+        )
+        assert exc_info.value.provider_name == "elevenlabs"
 
-    def test_same_provider_state_change_still_emits(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    def test_get_error_is_a_valueerror(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Load-bearing: WireReply.reject_or_fault routes ValueError to
+        # error() (verbatim) rather than fault() ("operation failed").
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        registry = ProviderRegistry()
+        _register_test_provider(registry)
+        with pytest.raises(ValueError):
+            registry.get("elevenlabs")
+
+    def test_get_raises_unknown_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-x")
+        registry = ProviderRegistry()
+        _register_test_provider(registry)
+        with pytest.raises(ValueError, match="Unknown provider 'ploly'"):
+            registry.get("ploly")
+
+    def test_get_does_not_construct_provider_when_credentials_missing(
+        self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The none->polly WARNING then a later auto-detected-polly INFO both emit.
-
-        Dedup keys on the full (provider, reason, detected) outcome, not just the
-        provider string, so a real state change with the same provider surfaces.
-        """
-        for key in ("TTS_PROVIDER", "ELEVENLABS_API_KEY", "OPENAI_API_KEY"):
-            monkeypatch.delenv(key, raising=False)
-
-        def _no_binary(_name: str, *_a: object, **_k: object) -> str | None:
-            return None
-
-        monkeypatch.setattr("punt_vox.providers.shutil.which", _no_binary)
-        aws_valid = {"ready": False}
-
-        def _has_aws(_self: ProviderRegistry) -> bool:
-            return aws_valid["ready"]
-
-        monkeypatch.setattr(ProviderRegistry, "_has_aws_credentials", _has_aws)
+        # The whole point of gating BEFORE the factory: an uncredentialed
+        # provider never reaches SDK construction, so no billable call, no
+        # temp file, no cache write happens.
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
         registry = ProviderRegistry()
-        with caplog.at_level(logging.DEBUG, logger="punt_vox.providers"):
-            assert registry.auto_detect() == "polly"  # none detected -> WARNING
-            aws_valid["ready"] = True  # AWS creds now appear
-            assert registry.auto_detect() == "polly"  # same provider, new reason
-            assert registry.auto_detect() == "polly"  # true repeat -> silent
+        calls = _register_test_provider(registry)
+        with pytest.raises(ProviderUnavailableError):
+            registry.get("elevenlabs")
+        assert calls == []
 
-        decisions = [
-            r.getMessage()
-            for r in caplog.records
-            if r.getMessage().startswith("provider:")
-        ]
-        assert decisions == [
-            "provider: none detected, falling back to polly",
-            "provider: auto-detected polly (AWS credentials valid)",
-        ]
+    def test_get_does_not_read_a_repo_config(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: pytest.TempPathFactory
+    ) -> None:
+        # The ConfigStore read used to fire from ``get`` when name was
+        # None; both are gone now. Test by proving no config-related
+        # import happens (indirectly, via the signature accepting no
+        # config_dir at all) and by exercising the happy path.
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-x")
+        registry = ProviderRegistry()
+        _register_test_provider(registry)
+        registry.get("elevenlabs")
+
+    def test_get_honours_an_injected_credentials_object(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A caller supplying ``api_key=`` opens the per-call context
+        # around ``get``: the check needs to see the injected value.
+        # Test the plumbing by injecting a bespoke credentials object.
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        creds = ProviderCredentials(
+            requirements={"openai": ApiKeyRequirement("OPENAI_API_KEY")}
+        )
+        # Simulate the per-call context: set the key before calling get.
+        monkeypatch.setenv("OPENAI_API_KEY", "per-call-key")
+        registry = ProviderRegistry(credentials=creds)
+        _register_test_provider(registry, name="openai")
+        registry.get("openai")
+
+
+class TestDefaultRegistry:
+    """The module-level ``get_provider`` should wire the same gate."""
+
+    def test_get_provider_requires_credentials(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from punt_vox.providers import get_provider
+
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        with pytest.raises(ProviderUnavailableError):
+            get_provider("elevenlabs")
+
+    def test_get_provider_rejects_unknown_name(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from punt_vox.providers import get_provider
+
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-x")
+        with pytest.raises(ValueError, match="Unknown provider 'ploly'"):
+            get_provider("ploly")

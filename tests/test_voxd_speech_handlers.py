@@ -213,9 +213,9 @@ class TestHandleSynthesizeOnceFlag:
         monkeypatch.setattr(
             "punt_vox.voxd.speech_handlers._LOCAL_PROVIDERS", set[str]()
         )
-        monkeypatch.setattr(
-            "punt_vox.voxd.speech_handlers.auto_detect_provider", lambda: "elevenlabs"
-        )
+        # Provider is now required on the wire (design §3.7): tests must
+        # send it, so the daemon-side ``auto_detect_provider`` monkeypatch
+        # this fixture used to install is gone with the function itself.
 
         handler = _make_synthesize_handler(synthesis=mock_synth)
 
@@ -239,12 +239,14 @@ class TestHandleSynthesizeOnceFlag:
             "type": "synthesize",
             "id": "a",
             "text": "hello",
+            "provider": "elevenlabs",
         }
         await handler(msg, ws)
         msg2: dict[str, object] = {
             "type": "synthesize",
             "id": "b",
             "text": "hello",
+            "provider": "elevenlabs",
         }
         await handler(msg2, ws)
 
@@ -263,6 +265,7 @@ class TestHandleSynthesizeOnceFlag:
             "type": "synthesize",
             "id": "a",
             "text": "wall msg",
+            "provider": "elevenlabs",
             "once": 600,
         }
         await handler(msg, ws)
@@ -270,6 +273,7 @@ class TestHandleSynthesizeOnceFlag:
             "type": "synthesize",
             "id": "b",
             "text": "wall msg",
+            "provider": "elevenlabs",
             "once": 600,
         }
         await handler(msg2, ws)
@@ -300,6 +304,7 @@ class TestHandleSynthesizeOnceFlag:
             "type": "synthesize",
             "id": "a",
             "text": "hello",
+            "provider": "elevenlabs",
             "once": 0,
         }
         await handler(msg, ws)
@@ -307,6 +312,7 @@ class TestHandleSynthesizeOnceFlag:
             "type": "synthesize",
             "id": "b",
             "text": "hello",
+            "provider": "elevenlabs",
             "once": 0,
         }
         await handler(msg2, ws)
@@ -333,9 +339,9 @@ class TestHandleSynthesizeCachedSignal:
         monkeypatch.setattr(
             "punt_vox.voxd.speech_handlers._LOCAL_PROVIDERS", set[str]()
         )
-        monkeypatch.setattr(
-            "punt_vox.voxd.speech_handlers.auto_detect_provider", lambda: "elevenlabs"
-        )
+        # Provider is now required on the wire (design §3.7): tests must
+        # send it, so the daemon-side ``auto_detect_provider`` monkeypatch
+        # this fixture used to install is gone with the function itself.
         handler = _make_synthesize_handler(synthesis=mock_synth)
 
         class _InstantPlaybackQueue:
@@ -346,7 +352,17 @@ class TestHandleSynthesizeCachedSignal:
 
         ws = MagicMock()
         ws.send_json = AsyncMock()
-        asyncio.run(handler({"type": "synthesize", "id": "x", "text": "hi"}, ws))
+        asyncio.run(
+            handler(
+                {
+                    "type": "synthesize",
+                    "id": "x",
+                    "text": "hi",
+                    "provider": "elevenlabs",
+                },
+                ws,
+            )
+        )
         return [call[0][0] for call in ws.send_json.call_args_list]
 
     def test_playing_reports_cache_hit(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -385,12 +401,14 @@ class TestDedupHitLogIsInjectionSafe:
             "type": "synthesize",
             "id": "a",
             "text": "hi",
+            "provider": "elevenlabs",
             "once": 600,
         }
         forged: dict[str, object] = {
             "type": "synthesize",
             "id": "b\nFATAL forged entry",
             "text": "hi",
+            "provider": "elevenlabs",
             "once": 600,
         }
         await handler(first, ws)

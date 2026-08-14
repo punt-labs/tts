@@ -1888,6 +1888,12 @@ class TestDesktopInstallCommand:
         audio_dir = tmp_path / "audio"
 
         runner = CliRunner()
+        mock_creds = MagicMock()
+        mock_creds.preferred.return_value = "say"
+        mock_creds.api_key_env_vars.return_value = {
+            "elevenlabs": "ELEVENLABS_API_KEY",
+            "openai": "OPENAI_API_KEY",
+        }
         with (
             patch(
                 f"{_CLI_DESKTOP}.shutil.which",
@@ -1899,7 +1905,13 @@ class TestDesktopInstallCommand:
                 "punt_vox.cli_desktop.claude_desktop_config_path",
                 return_value=config_path,
             ),
-            patch("punt_vox.providers.platform.system", return_value="Darwin"),
+            # Design §3.8: ``DesktopInstaller`` asks ``ProviderCredentials``
+            # for its preferred provider; stub the answer so the test is
+            # independent of the host's shell env and AWS chain.
+            patch(
+                "punt_vox.desktop_install.ProviderCredentials",
+                return_value=mock_creds,
+            ),
             patch.dict(os.environ, {}, clear=False),
         ):
             os.environ.pop("OPENAI_API_KEY", None)
@@ -1969,7 +1981,9 @@ class TestDesktopInstallCommand:
                 "punt_vox.cli_desktop.claude_desktop_config_path",
                 return_value=config_path,
             ),
-            patch("punt_vox.providers.platform.system", return_value="Darwin"),
+            # ``providers.platform`` is gone with the auto-detect probe
+            # (design §3.3); ``--provider elevenlabs`` names the provider
+            # explicitly, so no proposal path runs.
         ):
             result = runner.invoke(
                 app,
@@ -2008,11 +2022,12 @@ class TestDesktopInstallCommand:
                 "punt_vox.cli_desktop.claude_desktop_config_path",
                 return_value=config_path,
             ),
-            patch("punt_vox.providers.platform.system", return_value="Darwin"),
             patch(
                 "punt_vox.desktop_install.keys_env_file",
                 return_value=tmp_path / "absent.env",
             ),
+            # ``--provider elevenlabs`` is explicit; the auto-detect
+            # ``platform`` mock is retired with the probe.
         ):
             result = runner.invoke(
                 app,
@@ -2168,14 +2183,18 @@ class TestGlobalFlags:
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_json_after_status(self, mock_client_cls: MagicMock) -> None:
-        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire(
-            {"provider": "polly"}
-        )
+        # Provider comes from state now (design §3.6); the daemon health
+        # probe used to invent one, which was the substitution defect
+        # this bead closes. The client is stubbed only to confirm the
+        # daemon is running; the ``--json`` payload's ``provider`` field
+        # reads from the local ``vox.md`` -- which is empty in this
+        # runner, so it renders as ``"unknown"``.
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
         runner = CliRunner()
         result = runner.invoke(app, ["status", "--json"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data["provider"] == "polly"
+        assert "provider" in data
 
     def test_quiet_after_version(self) -> None:
         runner = CliRunner()
@@ -2289,13 +2308,17 @@ class TestDaemonStatusCommand:
 
     @patch(f"{_CLI_DAEMON}.VoxClientSync")
     def test_json_returns_health_shape(self, mock_client_cls: MagicMock) -> None:
-        """--json emits the daemon health snapshot (mic:status daemon block)."""
+        """--json emits the daemon health snapshot (mic:status daemon block).
+
+        ``provider`` is deliberately absent from the payload (design §3.6
+        / D4): the daemon has no provider of its own; per-provider
+        readiness lives on the ``provider_status`` op PR 3 delivers.
+        """
         mock_client_cls.return_value.health.return_value = HealthStatus.from_wire(
             {
                 "status": "ok",
                 "port": 8421,
                 "pid": 4242,
-                "provider": "elevenlabs",
                 "daemon_version": "4.17.0",
                 "uptime_seconds": 123.4,
                 "queued": 0,
@@ -2308,12 +2331,10 @@ class TestDaemonStatusCommand:
 
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)
-        # Mirrors the daemon's own health schema ("ok" from voxd/health.py) so
-        # the CLI --json output matches the mic:status daemon block shape.
         assert payload["status"] == "ok"
         assert payload["port"] == 8421
         assert payload["pid"] == 4242
-        assert payload["provider"] == "elevenlabs"
+        assert "provider" not in payload
         assert payload["daemon_version"] == "4.17.0"
         assert payload["active_sessions"] == 2
 

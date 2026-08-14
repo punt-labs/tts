@@ -245,12 +245,19 @@ class TestElevenLabsProviderDefaultModel:
         assert provider._model == "eleven_turbo_v2_5"  # pyright: ignore[reportPrivateUsage]
 
     @patch.dict("os.environ", {"TTS_MODEL": "eleven_turbo_v2"})
-    def test_model_from_env(self) -> None:
+    def test_env_var_does_not_override_default(self) -> None:
+        """State (or an explicit kwarg) is authoritative -- not the env.
+
+        The ``TTS_MODEL`` env probe was the same substitution defect
+        the provider gate closes, one field over (design §3.9). With
+        no explicit ``model=`` and the env var set to a different
+        value, the constructor still picks ``_DEFAULT_MODEL``.
+        """
         provider = ElevenLabsProvider(client=MagicMock())
-        assert provider._model == "eleven_turbo_v2"  # pyright: ignore[reportPrivateUsage]
+        assert provider._model == "eleven_v3"  # pyright: ignore[reportPrivateUsage]
 
     @patch.dict("os.environ", {"TTS_MODEL": "eleven_turbo_v2"})
-    def test_explicit_overrides_env(self) -> None:
+    def test_explicit_wins_over_env(self) -> None:
         provider = ElevenLabsProvider(model="eleven_v3", client=MagicMock())
         assert provider._model == "eleven_v3"  # pyright: ignore[reportPrivateUsage]
 
@@ -287,16 +294,19 @@ class TestElevenLabsProviderDefaultModel:
         monkeypatch.delenv("TTS_MODEL", raising=False)
         assert ElevenLabsProvider.model_supports_expressive_tags(None) is True
 
-    def test_model_supports_expressive_tags_classmethod_env_override(
+    def test_model_supports_expressive_tags_env_does_not_override(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """``TTS_MODEL`` is not consulted (design §3.9): with the env set
+        to a non-expressive model and no arg, the classmethod still uses
+        the provider default (``eleven_v3``), which IS expressive."""
         monkeypatch.setenv("TTS_MODEL", "eleven_flash_v2_5")
-        assert ElevenLabsProvider.model_supports_expressive_tags(None) is False
+        assert ElevenLabsProvider.model_supports_expressive_tags(None) is True
 
-    def test_model_supports_expressive_tags_classmethod_explicit_beats_env(
+    def test_model_supports_expressive_tags_explicit_beats_absent_env(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("TTS_MODEL", "eleven_flash_v2_5")
+        monkeypatch.delenv("TTS_MODEL", raising=False)
         assert ElevenLabsProvider.model_supports_expressive_tags("eleven_v3") is True
 
 
