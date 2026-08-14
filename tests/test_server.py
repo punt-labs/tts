@@ -151,14 +151,22 @@ def _patch_config(  # pyright: ignore[reportUnusedFunction]
 def _fresh_session(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
     """Reset server session config before every test.
 
-    Also stubs _find_config_dir to return None so refresh_from_config
-    is a no-op by default.  Tests that need refresh behavior override via
-    the _refresh_config fixture.
+    Seeds the session with ``provider="elevenlabs"`` so surfaces that fill
+    from state through :class:`~punt_vox.session_spec.SessionSpec` -- the
+    ``mic:unmute`` synthesis path in particular -- have an authoritative
+    provider to send. Without a seed every ``TestUnmute`` case would hit
+    the F1 refusal introduced by vox-w3f8 and exit before the assertion it
+    was written for. Tests that mean to exercise the unset-provider
+    branch reset ``_session._provider`` explicitly.
+
+    Also stubs ``_find_config_dir`` to return None so
+    ``refresh_from_config`` is a no-op by default; tests that need refresh
+    behavior override via the ``_refresh_config`` fixture.
     """
     import punt_vox.server as srv
     from punt_vox.vibe_command import MusicPreference
 
-    monkeypatch.setattr(srv, "_session", SessionConfig())
+    monkeypatch.setattr(srv, "_session", SessionConfig(_provider="elevenlabs"))
     monkeypatch.setattr(srv, "_music_pref", MusicPreference())
     monkeypatch.setattr(srv, "_find_config_dir", lambda: None)
 
@@ -1036,14 +1044,23 @@ class TestStatusTool:
         result = json.loads(status())
         assert result["style"] == "flamenco"
 
-    def test_defaults_when_no_state_set(self) -> None:
+    def test_defaults_when_no_state_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A bare ``status`` reads the hermetic idle default, never the live daemon.
+
+        Overrides ``_fresh_session``'s provider seed with a pristine
+        :class:`SessionConfig` (no provider set) because this test's whole
+        point is what status reports when nothing has been configured -- the
+        seed introduced for the F1 refusal path is not the state under test
+        here.
 
         ``music_mode`` is "off" because the autouse ``_hermetic_daemon`` fixture
         installs an idle ``FakeProgramGateway`` -- not because ``voxd`` happens to
         be unreachable. Without that fixture this test read the real daemon and
         failed whenever music was actually playing.
         """
+        import punt_vox.server as srv
+
+        monkeypatch.setattr(srv, "_session", SessionConfig())
         result = json.loads(status())
         assert result["voice"] is None
         assert result["provider"] is None
@@ -1119,7 +1136,7 @@ class TestSuiteDoesNotTouchRealDaemon:
         import punt_vox.server as srv
 
         with pytest.raises(VoxdConnectionError):
-            srv._voxd_client().voices()
+            srv._voxd_client().voices("elevenlabs")
 
 
 # ---------------------------------------------------------------------------

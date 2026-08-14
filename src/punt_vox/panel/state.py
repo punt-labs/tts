@@ -39,13 +39,16 @@ class PanelState:
     def read(cls, client: VoiceRoster, store: SettingsSource) -> Self:
         """Read the config fields fresh from disk and the voice roster from voxd.
 
-        The roster is fetched for the current session provider (or the daemon's
-        default when unset) so a mid-session switch is seen after the next
-        resync -- the panel does not display an elevenlabs roster while the
-        session is configured to speak through espeak.
+        The roster is fetched for the current session provider -- state is
+        the sole authority on which provider voxd runs, so an unset
+        ``cfg.provider`` returns an empty roster rather than borrowing a
+        different provider's voices. The panel does not display an
+        elevenlabs roster while the session is configured to speak through
+        espeak, and it does not display any roster at all until the caller
+        has chosen a provider.
         """
         cfg = store.read()
-        roster = tuple(client.voices(cfg.provider))
+        roster = tuple(client.voices(cfg.provider)) if cfg.provider else ()
         return cls(
             notify=cfg.notify,
             speak=cfg.speak,

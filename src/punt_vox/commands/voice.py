@@ -69,9 +69,30 @@ class VoiceCommand:
 
     @staticmethod
     def _list(ctx: Ctx, provider: str | None, current: str | None) -> CommandResult:
-        """Return the voice roster, or an error envelope on a daemon fault."""
+        """Return the voice roster, or an error envelope on a daemon fault.
+
+        The provider is required now -- ``VoxClientSync.voices`` no longer
+        accepts ``None`` since state is the sole authority on which provider
+        voxd runs. A ``vox voices`` invocation without ``--provider`` fills
+        from the current state's provider; when state has no provider
+        either, the caller sees the same F1 refusal every other synthesis
+        surface uses.
+        """
+        cfg = ctx.store.read()
+        resolved = provider or cfg.provider
+        if not resolved:
+            message = (
+                "no TTS provider is configured for this repo; "
+                "set one with vox provider <name>"
+            )
+            return CommandResult(
+                text=f"Error: {message}",
+                json_data={"error": message},
+                error=True,
+                exit_code=1,
+            )
         try:
-            names = ctx.client.voices(provider)
+            names = ctx.client.voices(resolved)
         except (VoxdConnectionError, VoxdProtocolError) as exc:
             message = str(exc)
             return CommandResult(
@@ -82,8 +103,7 @@ class VoiceCommand:
             )
         listing = SwitchList(names=tuple(names), current=current)
         payload: dict[str, object] = dict(listing.payload())
-        if provider is not None:
-            payload["provider"] = provider
+        payload["provider"] = resolved
         return CommandResult(text=listing.render(), json_data=payload)
 
 

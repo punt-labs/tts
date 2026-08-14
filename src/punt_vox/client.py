@@ -906,15 +906,16 @@ class VoxClient:
             tmp.unlink(missing_ok=True)
             raise
 
-    async def voices(self, provider: str | None = None) -> list[str]:
-        """List available voices; a missing ``voices`` key is a protocol error.
+    async def voices(self, provider: str) -> list[str]:
+        """List *provider*'s voice roster; a missing ``voices`` key is a protocol error.
 
-        Defaulting to ``[]`` would hide a misbehaving daemon behind a
-        provider that genuinely offers no voices.
+        State is the sole authority on which provider voxd runs, so the
+        caller names it explicitly on every roster fetch: the wire never
+        omits ``provider`` and the daemon never has to guess. Defaulting
+        to ``[]`` on a missing key would hide a misbehaving daemon behind
+        a provider that genuinely offers no voices.
         """
-        msg: dict[str, object] = {"type": "voices"}
-        if provider is not None:
-            msg["provider"] = provider
+        msg: dict[str, object] = {"type": "voices", "provider": provider}
         resp = await self._transport.send_and_recv(msg, timeout=_TIMEOUT_SHORT)
         if "voices" not in resp:
             raise VoxdProtocolError(f"'voices' response missing 'voices' key: {resp}")

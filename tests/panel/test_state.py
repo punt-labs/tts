@@ -68,7 +68,10 @@ class TestEmpty:
 
 class TestRead:
     def test_reads_config_and_roster(self) -> None:
-        state = PanelState.read(_FakeClient(["aria", "roger"]), _FakeStore(_config()))
+        state = PanelState.read(
+            _FakeClient(["aria", "roger"]),
+            _FakeStore(_config(provider="elevenlabs")),
+        )
         assert state.notify == "y"
         assert state.speak == "y"
         assert state.voice == "roger"
@@ -83,7 +86,7 @@ class TestRead:
         assert state.model == "tts-1"
 
     def test_roster_fetch_carries_the_current_provider(self) -> None:
-        """PanelState.read asks voxd for the CURRENT provider's roster (vox-w79f).
+        """PanelState.read asks voxd for the CURRENT provider's roster.
 
         A resync after a provider switch must see the new provider's voices,
         not the daemon-default provider's -- otherwise the panel keeps showing
@@ -93,11 +96,18 @@ class TestRead:
         PanelState.read(client, _FakeStore(_config(provider="espeak")))
         assert client.last_provider_arg == "espeak"
 
-    def test_roster_fetch_passes_none_when_provider_unset(self) -> None:
-        """An unset provider defers to the daemon's default (backwards-compat)."""
+    def test_roster_fetch_skipped_when_provider_unset(self) -> None:
+        """An unset provider yields an empty roster; no daemon fetch is made.
+
+        State is the sole authority on which provider voxd runs, so an unset
+        ``cfg.provider`` cannot ask the daemon which one to fetch a roster
+        for -- the roster is empty until a provider is chosen. Previously
+        this deferred to the daemon's guessed default.
+        """
         client = _FakeClient(["aria"])
-        PanelState.read(client, _FakeStore(_config()))
-        assert client.last_provider_arg is None
+        state = PanelState.read(client, _FakeStore(_config()))
+        assert client.call_count == 0
+        assert state.roster == ()
 
 
 class TestWithField:

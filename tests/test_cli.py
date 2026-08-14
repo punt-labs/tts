@@ -1014,6 +1014,7 @@ class TestVoiceCommand:
         self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
     ) -> None:
         monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
         mock_client_cls.return_value.voices.return_value = ["matilda", "roger"]
 
         runner = CliRunner()
@@ -1031,7 +1032,9 @@ class TestVoiceCommand:
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
         monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
-        (tmp_path / "vox.md").write_text('---\nvoice: "roger"\n---\n')
+        (tmp_path / "vox.md").write_text(
+            '---\nprovider: "elevenlabs"\nvoice: "roger"\n---\n'
+        )
         mock_client_cls.return_value.voices.return_value = ["matilda", "roger"]
 
         runner = CliRunner()
@@ -1065,7 +1068,9 @@ class TestVoiceCommand:
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
         monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
-        (tmp_path / "vox.md").write_text('---\nvoice: "matilda"\n---\n')
+        (tmp_path / "vox.md").write_text(
+            '---\nprovider: "elevenlabs"\nvoice: "matilda"\n---\n'
+        )
         mock_client_cls.return_value.voices.return_value = ["matilda", "roger"]
 
         runner = CliRunner()
@@ -1083,6 +1088,7 @@ class TestVoiceCommand:
         from punt_vox.client_errors import VoxdConnectionError
 
         monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
         mock_client_cls.return_value.voices.side_effect = VoxdConnectionError("nope")
 
         runner = CliRunner()

@@ -1321,7 +1321,8 @@ class TestVoxClientVoices:
         assert sent["provider"] == "elevenlabs"
 
     @pytest.mark.asyncio
-    async def test_voices_no_provider(self) -> None:
+    async def test_voices_always_sends_provider_on_the_wire(self) -> None:
+        """The wire always carries a provider -- state, not the daemon, decides."""
         mock_ws = _make_mock_ws()
         mock_ws.recv = AsyncMock(
             return_value=json.dumps(
@@ -1331,10 +1332,10 @@ class TestVoxClientVoices:
         client = VoxClient(port=8421, token="tok")
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
-        result = await client.voices()
+        result = await client.voices("say")
         assert result == ["fred"]
         sent = json.loads(mock_ws.send.call_args[0][0])
-        assert "provider" not in sent
+        assert sent["provider"] == "say"
 
     @pytest.mark.asyncio
     async def test_voices_missing_key_raises_protocol_error(self) -> None:
@@ -1351,7 +1352,7 @@ class TestVoxClientVoices:
         client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
 
         with pytest.raises(VoxdProtocolError, match="missing 'voices' key"):
-            await client.voices()
+            await client.voices("say")
 
 
 class TestVoxClientHealth:
@@ -1653,7 +1654,7 @@ class TestVoxClientSync:
             return_value=mock_ws,
         ):
             sync_client = VoxClientSync(port=8421, token="tok")
-            result = sync_client.voices()
+            result = sync_client.voices("say")
             assert result == ["fred"]
 
 

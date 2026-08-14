@@ -50,7 +50,12 @@ from punt_vox.quips import (
     SUBAGENT_START_PHRASES,
     SUBAGENT_STOP_PHRASES,
 )
+from punt_vox.session_spec import SessionSpec
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.types_synthesis_errors import (
+    ModelNotAvailableError,
+    ProviderNotConfiguredError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -159,15 +164,26 @@ def _make_client() -> VoxClientSync:
 def _speak_via_voxd(text: str, config: VoxConfig) -> None:
     """Synthesize and play a phrase via voxd.
 
-    Catches ``VoxdConnectionError`` so a missing daemon never crashes
-    a hook.
+    Builds the wire spec through :class:`SessionSpec` so state -- not a
+    daemon-side probe -- is the sole authority on which provider voxd runs.
+    A hook has no caller to answer, so a client-side refusal
+    (:class:`ProviderNotConfiguredError` for empty provider state,
+    :class:`ModelNotAvailableError` for a hand-edited provider/model pair)
+    is logged as a WARNING in ``vox.log`` and no audio plays -- the F1
+    contract in ``docs/provider-authority.md`` §4. ``VoxdConnectionError``
+    and ``VoxdProtocolError`` are still caught so a missing daemon never
+    crashes a hook either.
     """
     try:
-        client = _make_client()
-        spec = SynthesisSpec(
-            voice=config.voice or None, provider=config.provider or None, rate=90
-        )
-        client.synthesize(text, spec)
+        spec = SessionSpec(config).fill(SynthesisSpec(rate=90))
+    except ProviderNotConfiguredError:
+        logger.warning("hook speech skipped: no TTS provider configured for this repo")
+        return
+    except ModelNotAvailableError as exc:
+        logger.warning("hook speech skipped: %s", exc)
+        return
+    try:
+        _make_client().synthesize(text, spec)
     except (VoxdConnectionError, VoxdProtocolError):
         logger.warning("voxd not running, skipping speech")
 

@@ -16,7 +16,17 @@ from punt_vox.config import ConfigStore
 
 
 def _ctx(tmp_path: Path, *, voices: list[str] | None = None) -> Ctx:
-    """Build a Ctx with a real ConfigStore and a stub client returning *voices*."""
+    """Build a Ctx with a real ConfigStore and a stub client returning *voices*.
+
+    Seeds ``vox.md`` with ``provider: elevenlabs`` so listing has an
+    authoritative provider to fetch a roster for -- an unset provider is
+    now the F1 refusal (state is the sole authority on which provider
+    voxd runs). Tests that mean to exercise the refusal overwrite the
+    seeded file explicitly.
+    """
+    vox_md = tmp_path / "vox.md"
+    if not vox_md.exists():
+        vox_md.write_text('---\nprovider: "elevenlabs"\n---\n')
     client = MagicMock()
     client.voices.return_value = voices if voices is not None else []
     return Ctx(store=ConfigStore(tmp_path), client=client)
@@ -35,7 +45,9 @@ class TestList:
         assert names == ["matilda", "roger"]
 
     async def test_marks_current(self, tmp_path: Path) -> None:
-        (tmp_path / "vox.md").write_text('---\nvoice: "roger"\n---\n')
+        (tmp_path / "vox.md").write_text(
+            '---\nprovider: "elevenlabs"\nvoice: "roger"\n---\n'
+        )
         result = await voice(_ctx(tmp_path, voices=["matilda", "roger"]), None)
         assert "roger (current)" in result.text
         assert result.json_data is not None
@@ -51,6 +63,7 @@ class TestList:
         assert result.json_data.get("provider") == "polly"
 
     async def test_daemon_connection_error_returns_error(self, tmp_path: Path) -> None:
+        (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
         ctx = Ctx(store=ConfigStore(tmp_path), client=MagicMock())
         ctx.client.voices.side_effect = VoxdConnectionError("not running")  # type: ignore[attr-defined]
         result = await voice(ctx, None)
@@ -61,11 +74,26 @@ class TestList:
         assert result.json_data["error"] == "not running"
 
     async def test_daemon_protocol_error_returns_error(self, tmp_path: Path) -> None:
+        (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
         ctx = Ctx(store=ConfigStore(tmp_path), client=MagicMock())
         ctx.client.voices.side_effect = VoxdProtocolError("bad wire")  # type: ignore[attr-defined]
         result = await voice(ctx, None)
         assert result.error is True
         assert result.exit_code == 1
+
+    async def test_unconfigured_provider_refuses_list(self, tmp_path: Path) -> None:
+        """``vox voices`` with no provider (state or ``--provider``) refuses.
+
+        State is the sole authority on which provider voxd runs; the
+        listing surface can no longer substitute one when state has none.
+        """
+        client = MagicMock()
+        result = await voice(Ctx(store=ConfigStore(tmp_path), client=client), None)
+        assert result.error is True
+        assert result.exit_code == 1
+        assert "no TTS provider" in result.text
+        # Nothing was fetched.
+        client.voices.assert_not_called()
 
 
 class TestSet:

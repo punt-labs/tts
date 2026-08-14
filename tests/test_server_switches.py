@@ -143,16 +143,45 @@ def test_model_no_arg_on_modelless_provider_returns_empty(tmp_path: Path) -> Non
     assert result == {"available": [], "current": None}
 
 
-def test_model_no_arg_defaults_to_elevenlabs_when_provider_unset(
+def test_model_no_arg_unconfigured_provider_lists_empty_no_substitution(
     tmp_path: Path,
 ) -> None:
-    """When no session provider, model lists the ElevenLabs enum (the default)."""
+    """No session provider -- the list is empty, not the ElevenLabs enum.
+
+    Previously ``mic:model`` substituted ``"elevenlabs"`` for an unset
+    provider and reported its model enum as if it belonged to the current
+    session; that substitution is exactly what this bead deletes. Listing
+    gets an honest empty answer instead, ``current`` reports whatever the
+    session's ``model`` field holds (typically ``null``), and the caller
+    can distinguish "no provider is configured" from "the provider has no
+    user-selectable model".
+    """
     session = _FakeSession()
     model, _, _ = _tools(session, tmp_path)
 
     result = json.loads(model.dispatch())
 
-    assert result["available"][0] == "eleven_v3"
+    assert result == {"available": [], "current": None}
+
+
+def test_model_set_refuses_when_provider_unset(tmp_path: Path) -> None:
+    """Setting a model when no provider is configured refuses, never substitutes.
+
+    A model name is provider-scoped -- resolving one against a substituted
+    ``"elevenlabs"`` would land a wrong-provider model in ``vox.md``. The
+    tool refuses instead, matching the F1 client-side refusal every
+    synthesis surface now emits.
+    """
+    session = _FakeSession()
+    model, _, _ = _tools(session, tmp_path)
+
+    result = json.loads(model.dispatch("v3"))
+
+    assert "error" in result
+    assert "no TTS provider" in result["error"]
+    # Nothing landed on disk.
+    assert ConfigStore(tmp_path).read_field("model") is None
+    assert session.model is None
 
 
 def test_model_shorthand_resolves_and_persists(tmp_path: Path) -> None:

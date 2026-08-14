@@ -129,7 +129,20 @@ class ModelTool:
         err = self._config.refresh(session)
         if err is not None:
             return err
-        provider = session.provider or "elevenlabs"
+        provider = session.provider
+        if not provider:
+            # ``mic:model`` used to substitute ``"elevenlabs"`` for an unset
+            # provider and then report its models as the current session's --
+            # the exact substitution this bead deletes. Listing needs no
+            # synthesis, so an empty list with ``current: null`` is the
+            # honest answer; setting is refused so no wrong-provider model
+            # writes into state.
+            if name is None:
+                return json.dumps({"available": [], "current": session.model})
+            return _error(
+                "no TTS provider is configured for this repo; "
+                "set one with mic:provider <name>"
+            )
 
         if name is None:
             return json.dumps(
@@ -312,22 +325,35 @@ class VoiceTool:
         return json.dumps({"voice": normalized})
 
     def _list(self, session: SessionConfig) -> str:
-        """Return the voice roster for the current provider, blurbs included."""
-        roster = Cascade.fetch_roster(self._client_factory(), session.provider)
+        """Return the voice roster for the current provider, blurbs included.
+
+        Refuses when no provider is configured: fetching a roster requires
+        naming a provider now (``Cascade.fetch_roster`` takes a ``str``, not
+        ``str | None``) and the response used to be labelled with a
+        substituted ``"elevenlabs"`` even when the roster was fetched for
+        the daemon's guessed provider, so caller and label could name
+        different providers. The refusal makes both truthful.
+        """
+        provider = session.provider
+        if not provider:
+            return _error(
+                "no TTS provider is configured for this repo; "
+                "set one with mic:provider <name>"
+            )
+        roster = Cascade.fetch_roster(self._client_factory(), provider)
         if isinstance(roster, RosterError):
             return _error(roster.message)
         all_voices = roster
 
-        provider_name = session.provider or "elevenlabs"
         featured = [
             {"name": name, "blurb": blurb}
             for (prov, name), blurb in VOICE_BLURBS.items()
-            if prov == provider_name and name in all_voices
+            if prov == provider and name in all_voices
         ]
 
         return json.dumps(
             {
-                "provider": provider_name,
+                "provider": provider,
                 "current": session.voice,
                 "available": all_voices,
                 "featured": random.sample(featured, min(_FEATURED_CAP, len(featured))),

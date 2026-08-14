@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, final
 
@@ -33,6 +33,7 @@ from punt_vox.server_audio_tools import RecTool
 from punt_vox.server_enablement import EnablementTool
 from punt_vox.server_music_tool import MusicTool
 from punt_vox.server_switches import ModelTool, ProviderTool, VoiceTool
+from punt_vox.session_spec import SessionSpec
 from punt_vox.synthesis_batch import SegmentBatch
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.vibe_command import MusicPreference, VibeCommand
@@ -239,14 +240,15 @@ class SessionConfig:
         return f"ready -- {voice}, {delivery}, {self._vibe_mode} vibe"
 
     def fill_defaults(self, spec: SynthesisSpec) -> SynthesisSpec:
-        """Return *spec* with unset voice/provider/model/vibe_tags from session."""
-        return replace(
-            spec,
-            voice=spec.voice or self._voice,
-            provider=spec.provider or self._provider,
-            model=spec.model or self._model,
-            vibe_tags=spec.vibe_tags or self._vibe_tags,
-        )
+        """Return *spec* with unset voice/provider/model/vibe_tags from session.
+
+        Delegates to :class:`SessionSpec` so every synthesis surface builds
+        its spec through one authority: an unconfigured provider is a typed
+        refusal (:class:`ProviderNotConfiguredError`) rather than a silent daemon
+        guess, and a provider-alien model is rejected
+        (:class:`ModelNotAvailableError`) rather than dropped.
+        """
+        return SessionSpec(self).fill(spec)
 
     def change_vibe(self, change: VibeChange) -> dict[str, str]:
         """Apply an authoritative vibe change; return the fields to persist.
