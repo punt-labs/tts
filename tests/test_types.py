@@ -292,3 +292,21 @@ class TestVoiceNotFoundError:
         got = exc.available
         got.append("mutation")
         assert exc.available == ["alloy"]
+
+    def test_mutating_the_original_list_does_not_change_str(self) -> None:
+        """Regression: the exception snapshots ``available`` at construction.
+
+        Two half-defences are needed for the immutability contract: the
+        property returns an outbound copy (already tested) AND the internal
+        field is stored as a copy at construction time. Without the second,
+        a caller that mutates its list after raising changes ``str(exc)``
+        and ``exc.available``. Test the whole invariant, not one half.
+        """
+        available = ["alloy", "ash"]
+        exc = VoiceNotFoundError("bella", available)
+
+        available.append("added-after-raise")
+        available[0] = "MUTATED"
+
+        assert str(exc) == "bella (available: alloy, ash)"
+        assert exc.available == ["alloy", "ash"]

@@ -109,6 +109,62 @@ class TestRead:
         assert client.call_count == 0
         assert state.roster == ()
 
+    def test_whitespace_provider_is_normalised_to_none(self) -> None:
+        """A hand-edited ``provider: "   "`` becomes ``None`` on the panel state.
+
+        Without normalisation the truthy whitespace string would satisfy
+        the ``if provider:`` guard in ``PanelState.read``, bypass
+        ``SessionSpec`` entirely, and reach the daemon on the roster wire
+        as ``client.voices("   ")`` -- the daemon-side guessing this bead
+        exists to remove. The strip at the boundary means downstream sites
+        trust one invariant: ``state.provider`` is either a non-empty
+        stripped string or ``None``.
+        """
+        client = _FakeClient(["aria"])
+        state = PanelState.read(client, _FakeStore(_config(provider="   ")))
+        assert state.provider is None
+        assert state.roster == ()
+        assert client.call_count == 0
+
+    def test_empty_string_provider_is_normalised_to_none(self) -> None:
+        """``provider: ""`` (the shipped shape of a fresh ``vox.md``) is ``None``.
+
+        Same invariant as the whitespace case: no bare-empty provider
+        crosses the boundary.
+        """
+        client = _FakeClient(["aria"])
+        state = PanelState.read(client, _FakeStore(_config(provider="")))
+        assert state.provider is None
+        assert client.call_count == 0
+
+    def test_padded_provider_is_normalised_before_the_roster_fetch(self) -> None:
+        """``provider: "elevenlabs "`` reaches the wire as ``"elevenlabs"``.
+
+        Without normalisation the padded name would flow to
+        ``client.voices("elevenlabs ")`` and either fail on the daemon or
+        return an empty roster for a name the user typed correctly.
+        """
+        client = _FakeClient(["aria", "roger"])
+        state = PanelState.read(client, _FakeStore(_config(provider="  elevenlabs  ")))
+        assert state.provider == "elevenlabs"
+        assert client.last_provider_arg == "elevenlabs"
+
+    def test_whitespace_model_is_normalised_to_none(self) -> None:
+        """``model: "   "`` becomes ``None`` on the panel state.
+
+        Same shape as the provider fix -- a padded model would slip a
+        truthiness guard downstream and either fail an
+        ``MODEL_TABLE.available`` lookup or (worse) satisfy a
+        ``model or DEFAULT`` expression as a truthy real name. The strip
+        collapses whitespace-only to absent so the downstream contract
+        is one shape.
+        """
+        client = _FakeClient(["aria"])
+        state = PanelState.read(
+            client, _FakeStore(_config(provider="elevenlabs", model="   "))
+        )
+        assert state.model is None
+
 
 class TestWithField:
     def test_with_notify_returns_a_new_state(self) -> None:

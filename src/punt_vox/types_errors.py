@@ -37,12 +37,19 @@ class VoiceNotFoundError(ValueError):
     """
 
     _voice_name: str
-    _available: list[str]
+    _available: tuple[str, ...]
 
     def __new__(cls, name: str, available: list[str]) -> Self:  # pyright: ignore[reportInconsistentConstructor]
         self = super().__new__(cls, name, available)
         self._voice_name = name
-        self._available = available
+        # Tuple-copy in __new__ so the stored field is immutable outright:
+        # a caller that mutates its list after raising cannot change
+        # ``str(exc)`` or ``exc.available``. The outbound ``list()`` copy
+        # on the property is not enough on its own -- it defends the
+        # caller who reads from the exception but not the exception
+        # itself. Both halves matter: the frozen snapshot here plus the
+        # defensive copy on read.
+        self._available = tuple(available)
         return self
 
     def __str__(self) -> str:

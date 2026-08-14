@@ -58,13 +58,18 @@ class ModelNotAvailableError(ValueError):
 
     _model: str
     _provider: str
-    _available: list[str]
+    _available: tuple[str, ...]
 
     def __new__(cls, model: str, provider: str, available: list[str]) -> Self:  # pyright: ignore[reportInconsistentConstructor]
         self = super().__new__(cls, model, provider, available)
         self._model = model
         self._provider = provider
-        self._available = available
+        # Tuple-copy so the stored field is immutable outright: a caller
+        # that mutates its list after raising cannot change ``str(exc)``
+        # or ``exc.available``. The outbound ``list()`` copy on the
+        # property alone would defend readers but not the exception's
+        # own render.
+        self._available = tuple(available)
         return self
 
     def __str__(self) -> str:

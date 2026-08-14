@@ -226,6 +226,30 @@ def test_provider_alien_model_is_rejected() -> None:
     assert "tts-1" in err.available
 
 
+def test_alien_model_error_snapshots_available_at_construction() -> None:
+    """Regression: mutating the caller's list after raising does not change the error.
+
+    Two halves of one invariant: the ``available`` property returns an
+    outbound copy AND the internal field is stored as a copy at
+    construction (tuple in ``__new__``). Without the second, a caller that
+    mutates its list after raising changes ``str(exc)`` and every subsequent
+    ``exc.available`` read. This test guards the whole invariant, not one
+    half -- the previous ``available``-returns-a-copy test passes even with
+    the inbound-copy defect present.
+    """
+    available = ["tts-1", "tts-1-hd"]
+    exc = ModelNotAvailableError("eleven_v3", "openai", available)
+
+    available.append("added-after-raise")
+    available[0] = "MUTATED"
+
+    assert (
+        str(exc) == "model 'eleven_v3' is not available for provider "
+        "'openai' (available: tts-1, tts-1-hd)"
+    )
+    assert exc.available == ["tts-1", "tts-1-hd"]
+
+
 def test_alien_model_error_renders_the_full_sentence() -> None:
     """``str(exc)`` returns the crafted F7 sentence, not the args tuple repr.
 
