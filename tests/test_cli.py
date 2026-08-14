@@ -2046,6 +2046,49 @@ class TestDesktopInstallCommand:
         assert "ELEVENLABS_API_KEY" in result.stderr
         assert "vox daemon install" in result.stderr
 
+    def test_no_credentials_exits_cleanly_no_traceback(self, tmp_path: Path) -> None:
+        """``vox desktop install`` with no --provider and no ready credentials
+        must exit(1) with a clean stderr message, not a traceback.
+
+        ``DesktopInstaller.detect(None, ...)`` raises ``ValueError`` when
+        ``ProviderCredentials.preferred()`` returns None; the CLI wrapper
+        must catch that and route through the same
+        ``typer.echo(err) + typer.Exit(1)`` convention the rest of
+        :class:`DesktopCli` uses. Without the guard the user sees the raw
+        Python traceback -- fine for a developer, wrong for a CLI.
+        """
+        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
+        audio_dir = tmp_path / "audio"
+
+        runner = CliRunner()
+        mock_creds = MagicMock()
+        mock_creds.preferred.return_value = None
+        mock_creds.api_key_env_vars.return_value = {
+            "elevenlabs": "ELEVENLABS_API_KEY",
+            "openai": "OPENAI_API_KEY",
+        }
+        with (
+            patch(f"{_CLI_DESKTOP}.shutil.which", return_value=_UVX),
+            patch(
+                "punt_vox.cli_desktop.claude_desktop_config_path",
+                return_value=config_path,
+            ),
+            patch(
+                "punt_vox.desktop_install.ProviderCredentials",
+                return_value=mock_creds,
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                ["desktop", "install", "--output-dir", str(audio_dir)],
+            )
+
+        assert result.exit_code == 1
+        assert "Error: No TTS provider credentials" in result.stderr
+        # No traceback: exception should be intercepted.
+        assert "Traceback" not in result.stderr
+        assert "ValueError" not in result.stderr
+
 
 class TestDesktopUninstallCommand:
     def test_removes_vox_entry(self, tmp_path: Path) -> None:

@@ -164,6 +164,67 @@ class TestElevenLabsProviderSynthesize:
         assert out.exists()
         assert mock_elevenlabs_client.text_to_speech.stream.call_count > 1
 
+    def test_synthesize_translates_401_to_provider_auth_error(
+        self,
+        mock_elevenlabs_client: MagicMock,
+        tmp_output_dir: Path,
+    ) -> None:
+        """A 401 from ElevenLabs at synthesis time crosses as F3.
+
+        Distinct from F2 (readiness gate catches an absent key): here
+        the key was PRESENT but rejected. Without this translation the
+        SDK's ``ApiError`` falls through to speech_handlers' broad
+        ``except Exception`` and gets laundered to ``"operation
+        failed"`` -- the exact defect vox-w3f8 exists to close.
+        """
+        from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
+
+        from punt_vox.types_provider_errors import ProviderAuthError
+
+        mock_elevenlabs_client.text_to_speech.stream.side_effect = ApiError(
+            status_code=401,
+            body={"detail": {"message": "invalid api key"}},
+        )
+        provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+        request = SynthesisRequest(text="hello", voice="matilda", rate=100)
+        with pytest.raises(ProviderAuthError) as exc_info:
+            provider.synthesize(request, tmp_output_dir / "auth.mp3")
+
+        assert str(exc_info.value) == (
+            "provider 'elevenlabs' rejected the credentials (HTTP 401); "
+            "run `vox doctor`"
+        )
+        assert exc_info.value.provider_name == "elevenlabs"
+        assert exc_info.value.status_code == 401
+
+    def test_synthesize_non_401_api_error_re_raises_unchanged(
+        self,
+        mock_elevenlabs_client: MagicMock,
+        tmp_output_dir: Path,
+    ) -> None:
+        """A rate-limit or upstream 500 is NOT an auth problem; re-raise.
+
+        The translation is 401-only. A 429/500/400 is a genuine SDK or
+        upstream fault and belongs on the fault() path (rendered as
+        ``"operation failed"`` to the client with the detail in the
+        log) -- not on the reject() path with a caller-facing message.
+        Widening the translation would misclassify vendor errors as
+        credential problems, which sends the operator setting keys
+        they already had (the same mistake AwsRequirement's swallowed
+        exception used to make).
+        """
+        from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
+
+        mock_elevenlabs_client.text_to_speech.stream.side_effect = ApiError(
+            status_code=429,
+            body={"detail": {"message": "rate limited"}},
+        )
+        provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+        request = SynthesisRequest(text="hello", voice="matilda", rate=100)
+        with pytest.raises(ApiError) as exc_info:
+            provider.synthesize(request, tmp_output_dir / "rate.mp3")
+        assert exc_info.value.status_code == 429
+
 
 class TestElevenLabsProviderCheckHealth:
     @patch.dict("os.environ", {"ELEVENLABS_API_KEY": "test-key"})

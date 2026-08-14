@@ -128,7 +128,16 @@ class DesktopCli:
         audio_dir = output_dir or default_output_dir()
         audio_dir.mkdir(parents=True, exist_ok=True)
 
-        installer = DesktopInstaller.detect(install_provider, audio_dir)
+        # ``detect(None, ...)`` raises ``ValueError`` when no provider
+        # credentials are in view of the installer -- catch it and route
+        # through the same ``typer.echo(err) + typer.Exit(1)`` convention
+        # the rest of :class:`DesktopCli` uses for user-facing failures,
+        # rather than letting a bare traceback reach the terminal.
+        try:
+            installer = DesktopInstaller.detect(install_provider, audio_dir)
+        except ValueError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
 
         config_path = claude_desktop_config_path()
         config_path.parent.mkdir(parents=True, exist_ok=True)

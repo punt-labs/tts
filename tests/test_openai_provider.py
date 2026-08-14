@@ -261,6 +261,45 @@ class TestOpenAIProviderSynthesize:
         # Should have been called multiple times (chunked).
         assert mock_openai_client.audio.speech.create.call_count > 1
 
+    def test_synthesize_translates_auth_error_to_provider_auth_error(
+        self,
+        mock_openai_client: MagicMock,
+        tmp_output_dir: Path,
+    ) -> None:
+        """A revoked or wrong-project key at synthesis time crosses as F3.
+
+        The readiness gate catches the credential-absent case at F2 with
+        the message the caller can act on; this test pins the F3 case --
+        credentials WERE present but the SDK rejected them at the
+        ``audio.speech.create`` call. Without this translation the
+        exception would fall through to ``speech_handlers``' broad
+        ``except Exception`` and get laundered to ``"operation failed"``,
+        which is the exact defect vox-w3f8 exists to close.
+        """
+        import openai
+
+        from punt_vox.types_provider_errors import ProviderAuthError
+
+        mock_openai_client.audio.speech.create.side_effect = openai.AuthenticationError(
+            message="invalid api key",
+            response=MagicMock(status_code=401),
+            body=None,
+        )
+
+        provider = OpenAIProvider(client=mock_openai_client)
+        request = SynthesisRequest(text="hello", voice="alloy")
+        with pytest.raises(ProviderAuthError) as exc_info:
+            provider.synthesize(request, tmp_output_dir / "auth.mp3")
+
+        # Full-message assertion, not a substring: BaseException clobbers
+        # args set in __new__, so a substring would silently pass against
+        # a tuple repr if __str__ ever regressed.
+        assert str(exc_info.value) == (
+            "provider 'openai' rejected the credentials (HTTP 401); run `vox doctor`"
+        )
+        assert exc_info.value.provider_name == "openai"
+        assert exc_info.value.status_code == 401
+
 
 class TestOpenAIProviderDefaultModel:
     def test_default_model(self) -> None:

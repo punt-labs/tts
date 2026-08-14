@@ -21,6 +21,7 @@ from punt_vox.types import (
     SynthesisResult,
     TTSProvider,
 )
+from punt_vox.types_provider_errors import ProviderAuthError
 
 logger = logging.getLogger(__name__)
 
@@ -347,7 +348,21 @@ class ElevenLabsProvider(TTSProvider):
         voice_id: str,
         request: SynthesisRequest,
     ) -> None:
-        """Synthesize a single chunk to a file."""
+        """Synthesize a single chunk to a file.
+
+        Wraps the ElevenLabs SDK call so an ``ApiError`` with a 401
+        status becomes a :class:`ProviderAuthError` that
+        ``WireReply.reject_or_fault`` routes verbatim to the client,
+        rather than falling through to speech_handlers' broad guard
+        and getting laundered to ``"operation failed"``. The
+        readiness gate catches the credential-absent case at F2;
+        this catches the credential-present-but-rejected case at F3.
+        Other ``ApiError`` statuses (429 rate-limit, 500 server error,
+        400 bad request) are not credential problems and re-raise
+        unchanged -- the broad guard will render them opaquely, which
+        is correct for a genuine SDK/upstream fault. Only 401 crosses
+        as a typed rejection.
+        """
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         voice_settings = self._build_voice_settings(request)
@@ -361,7 +376,12 @@ class ElevenLabsProvider(TTSProvider):
         if voice_settings is not None:
             kwargs["voice_settings"] = voice_settings
 
-        response: Any = self._client.text_to_speech.stream(**kwargs)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        try:
+            response: Any = self._client.text_to_speech.stream(**kwargs)  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        except ApiError as exc:
+            if exc.status_code == 401:
+                raise ProviderAuthError("elevenlabs", 401) from exc
+            raise
 
         logger.info(
             "API call: provider=elevenlabs, voice=%s, chars=%d",

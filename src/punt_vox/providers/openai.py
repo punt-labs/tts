@@ -20,6 +20,7 @@ from punt_vox.types import (
     TTSProvider,
     VoiceNotFoundError,
 )
+from punt_vox.types_provider_errors import ProviderAuthError
 
 logger = logging.getLogger(__name__)
 
@@ -223,15 +224,34 @@ class OpenAIProvider(TTSProvider):
         voice: str,
         speed: float,
     ) -> None:
-        """Synthesize a single chunk to a file."""
+        """Synthesize a single chunk to a file.
+
+        Wraps the OpenAI SDK call so an ``AuthenticationError`` at
+        synthesis-time (a revoked key, a wrong project, an org that
+        does not have TTS access) becomes a :class:`ProviderAuthError`
+        that ``WireReply.reject_or_fault`` routes verbatim to the
+        client, rather than falling through to speech_handlers' broad
+        guard and getting laundered to ``"operation failed"``. The
+        readiness gate (:class:`ProviderCredentials`) catches the
+        credential-absent case at F2; this catches the
+        credential-present-but-rejected case at F3, and both cross
+        the wire with a message the caller can act on.
+        """
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        response: Any = self._client.audio.speech.create(  # pyright: ignore[reportUnknownMemberType]
-            model=self._model,
-            voice=voice,  # pyright: ignore[reportArgumentType]
-            input=text,
-            speed=speed,
-            response_format="mp3",
-        )
+        try:
+            response: Any = self._client.audio.speech.create(  # pyright: ignore[reportUnknownMemberType]
+                model=self._model,
+                voice=voice,  # pyright: ignore[reportArgumentType]
+                input=text,
+                speed=speed,
+                response_format="mp3",
+            )
+        except openai.AuthenticationError as exc:
+            # 401 for a rejected key; status_code is nullable on the
+            # SDK's exception when the transport never got a response
+            # (e.g. an outbound proxy dropped the connection).
+            status = getattr(exc, "status_code", None)
+            raise ProviderAuthError("openai", status) from exc
         logger.info(
             "API call: provider=openai, voice=%s, chars=%d",
             voice,
