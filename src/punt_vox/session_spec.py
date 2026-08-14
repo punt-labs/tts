@@ -166,10 +166,15 @@ class SessionSpec:
         # model" and skips validation, so a modelless provider (polly /
         # say / espeak) and an elevenlabs/openai session that has not
         # chosen a model both pass through to the provider constructor's
-        # own default constant. The empty string is preserved verbatim
-        # so ``config.get("model") == ""`` on the wire round-trips.
+        # own default constant. The strip normalises whitespace to ``""``
+        # here so ``"   "`` never crosses the wire as a truthy value that
+        # a provider constructor could mistake for a real model name --
+        # if the provider read ``self._model = model or DEFAULT``, a
+        # padded string would satisfy the truthiness check and lock in a
+        # value nobody chose. The empty case round-trips: ``""`` in
+        # stays ``""`` out; ``"   "`` in becomes ``""`` out.
         if not (candidate := raw.strip()):
-            return raw
+            return candidate
         available = MODEL_TABLE.available(provider)
         # Modelless providers report ``available == ()``; a non-empty model
         # requested against one of them is the pair state must not hold,

@@ -175,20 +175,24 @@ def test_provider_stripped_before_flowing_downstream() -> None:
     assert spec.provider == "elevenlabs"
 
 
-def test_whitespace_only_model_state_is_treated_as_no_model() -> None:
-    """``model: "   "`` is "no model", not a name to validate against the roster.
+def test_whitespace_only_model_state_normalises_to_empty_on_the_wire() -> None:
+    """``model: "   "`` becomes ``""`` in the spec, not ``"   "``.
 
-    Without the strip the whitespace would reach
-    ``MODEL_TABLE.available()`` as ``"   "`` and fail with a
-    ``ModelNotAvailableError`` naming a whitespace model, when the
-    documented meaning of empty-for-elevenlabs is "use the provider's
-    default constant". The raw empty/whitespace value is preserved
-    verbatim so ``config`` round-trips.
+    Without the strip AND the ``return candidate`` the whitespace either
+    (a) reaches ``MODEL_TABLE.available()`` as ``"   "`` and fails with
+    ``ModelNotAvailableError`` naming a whitespace model, or (b) skips
+    validation but still crosses the wire as ``"   "`` -- a truthy value
+    a provider constructor could mistake for a real name (``self._model
+    = model or DEFAULT`` would accept ``"   "`` and lock in a model
+    nobody chose). Normalising to ``""`` here means the empty case
+    round-trips (``""`` in stays ``""`` out) and the whitespace case
+    collapses to the same empty (``"   "`` in becomes ``""`` out), so
+    the downstream contract holds on both.
     """
     spec = SessionSpec(_State(provider="elevenlabs", model="   ")).fill()
 
     assert spec.provider == "elevenlabs"
-    assert spec.model == "   "
+    assert spec.model == ""
 
 
 def test_model_stripped_before_validation() -> None:
