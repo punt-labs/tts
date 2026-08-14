@@ -12,6 +12,7 @@ exactly how the earlier defect (bead vox-ll26) survived review.
 
 from __future__ import annotations
 
+import logging
 import os
 from unittest.mock import patch
 
@@ -101,6 +102,38 @@ class TestAwsRequirement:
         # fault path.
         with patch("boto3.Session", side_effect=RuntimeError("boom")):
             assert AwsRequirement().satisfied() is False
+
+    def test_boto3_exception_is_logged_at_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # The swallowed exception must leave a diagnosable record: a
+        # corrupt ~/.aws config, a permissions error, or a version
+        # incompatibility would otherwise reach the client as "no AWS
+        # credentials" (F2) with no trace of the real cause. The log
+        # names the exception TYPE (not its str) so a provider-embedded
+        # newline cannot forge a second log line at this sink.
+        class _CorruptConfigError(RuntimeError):
+            """A stand-in for a botocore config-parse failure."""
+
+        with (
+            patch("boto3.Session", side_effect=_CorruptConfigError("bad yaml")),
+            caplog.at_level(
+                logging.WARNING,
+                logger="punt_vox.providers.credential_requirements",
+            ),
+        ):
+            result = AwsRequirement().satisfied()
+
+        assert result is False
+        warnings = [
+            r for r in caplog.records if r.name.startswith("punt_vox.providers")
+        ]
+        assert len(warnings) == 1
+        message = warnings[0].getMessage()
+        assert "_CorruptConfigError" in message
+        assert "returning False" in message
+        assert "vox doctor" in message
+        assert message.splitlines() == [message]  # single physical line
 
     def test_unmet_message_names_variables(self) -> None:
         assert AwsRequirement().unmet_message("polly") == _POLLY_MSG

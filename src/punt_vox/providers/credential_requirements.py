@@ -11,6 +11,7 @@ to prevent.
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 from typing import Self, final
@@ -20,6 +21,8 @@ __all__ = [
     "AwsRequirement",
     "BinaryRequirement",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 @final
@@ -103,12 +106,24 @@ class AwsRequirement:
             return False
         try:
             credentials = boto3.Session().get_credentials()
-        except Exception:  # noqa: BLE001 -- botocore raises many concrete types
+        except Exception as exc:  # noqa: BLE001 -- botocore raises many concrete types
             # ProfileNotFound, ClientError, and a family of botocore
             # exceptions all mean "no usable chain". A broad guard here is
             # the boundary between the readiness check (returns bool) and
             # the boto3 SDK (raises), and keeps the check from becoming
-            # its own fault path.
+            # its own fault path. WARNING-log the caught exception with
+            # its type before returning False so an operator debugging a
+            # corrupt AWS config or a permissions error sees the real
+            # cause in ``vox.log`` -- the F2 "no AWS credentials" message
+            # the client receives would otherwise send them setting
+            # credentials they already had, with the diagnosable cause
+            # gone. Log the type name, not the raw ``exc`` string, so a
+            # provider-embedded newline cannot forge a second log line.
+            logger.warning(
+                "AwsRequirement.satisfied: boto3 raised %s -- returning False; "
+                "vox doctor will re-probe with the live network path",
+                type(exc).__name__,
+            )
             return False
         return credentials is not None
 
