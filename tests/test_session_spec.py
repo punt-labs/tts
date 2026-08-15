@@ -7,7 +7,8 @@ from typing import final
 
 import pytest
 
-from punt_vox.session_spec import SessionSpec, SessionState
+from punt_vox.session_spec import SessionSpec
+from punt_vox.session_state import SessionState
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.types_synthesis_errors import (
     ModelNotAvailableError,
@@ -362,3 +363,121 @@ def test_override_model_only_validates_against_state_provider() -> None:
 
     with pytest.raises(ModelNotAvailableError):
         SessionSpec(state).fill(SynthesisSpec(model="eleven_v3"))
+
+
+# Cross-provider-override regression matrix. State carries provider A and a
+# model that is valid for A; the caller overrides to provider B with no
+# model. State's model belongs to A, not to B, so B must synthesize with
+# its own default -- never validate A's model against B's model list.
+# Previous tests either overrode both fields or neither, which let this
+# whole class of override fail silently. Parametrising over all ordered
+# (state_provider, override_provider) pairs where the two differ makes
+# the omission impossible to repeat: any regression that reintroduces
+# the stale-model fall-through fails against 20 cases at once.
+_PROVIDER_MODELS: tuple[tuple[str, str | None], ...] = (
+    ("elevenlabs", "eleven_v3"),
+    ("openai", "tts-1"),
+    ("polly", ""),
+    ("say", ""),
+    ("espeak", ""),
+)
+
+
+@pytest.mark.parametrize(
+    ("state_provider", "state_model", "override_provider"),
+    [
+        (sp, sm, op)
+        for sp, sm in _PROVIDER_MODELS
+        for op, _ in _PROVIDER_MODELS
+        if op != sp
+    ],
+)
+def test_per_call_provider_override_drops_states_model(
+    state_provider: str, state_model: str | None, override_provider: str
+) -> None:
+    """``--provider B`` against state provider A synthesizes cleanly, no model arg.
+
+    The class of bug this covers: with state = ``A / model_valid_for_A``,
+    a per-call ``--provider B`` used to carry A's model into B's validation
+    and refuse every non-matching provider. B's default constant must apply
+    instead. Empty string (polly/say/espeak) and ``None`` (elevenlabs/openai)
+    are both correct absences at the wire boundary -- the daemon-side provider
+    constructor supplies its own default when the field is empty or missing.
+    """
+    state = _State(provider=state_provider, model=state_model)
+
+    spec = SessionSpec(state).fill(SynthesisSpec(provider=override_provider))
+
+    assert spec.provider == override_provider
+    assert not spec.model  # None or "" -- both signal "provider default"
+
+
+def test_per_call_override_matching_state_provider_keeps_states_model() -> None:
+    """A ``--provider elevenlabs`` against elevenlabs state still inherits the model.
+
+    The override drops state's model only when the resolved provider differs
+    from state's; a redundant override that names the same provider must
+    still honour state's model, or the CLI would lose the session's chosen
+    model whenever a caller passed the provider it already had.
+    """
+    state = _State(provider="elevenlabs", model="eleven_v3")
+
+    spec = SessionSpec(state).fill(SynthesisSpec(provider="elevenlabs"))
+
+    assert spec.provider == "elevenlabs"
+    assert spec.model == "eleven_v3"
+
+
+def test_per_call_override_matching_state_after_whitespace_still_inherits_model() -> (
+    None
+):
+    """Padded state provider that normalises to the override still counts as a match.
+
+    ``_resolve_provider`` strips whitespace before returning; the state-vs-
+    override comparison must strip too, or a hand-edited ``provider: "  elevenlabs  "``
+    would spuriously drop state's model on a bare per-call ``elevenlabs``.
+    """
+    state = _State(provider="  elevenlabs  ", model="eleven_v3")
+
+    spec = SessionSpec(state).fill(SynthesisSpec(provider="elevenlabs"))
+
+    assert spec.provider == "elevenlabs"
+    assert spec.model == "eleven_v3"
+
+
+def test_f7_still_refuses_hand_edited_alien_pair_in_state() -> None:
+    """The F7 refusal survives the cross-provider-override fix.
+
+    F7 exists to catch a hand-edited ``vox.md`` that names one provider and
+    an incompatible model. When the caller supplies no per-call override,
+    the resolved provider equals state's provider, so state's model is
+    authoritative and must be validated against it. The fix's guard is
+    "resolved provider matches state's provider" -- exactly the F7 case,
+    so F7 still fires here.
+    """
+    state = _State(provider="openai", model="eleven_v3")
+
+    with pytest.raises(ModelNotAvailableError) as excinfo:
+        SessionSpec(state).fill()
+
+    assert excinfo.value.model == "eleven_v3"
+    assert excinfo.value.provider == "openai"
+
+
+def test_explicit_model_override_wins_even_when_provider_also_overridden() -> None:
+    """A per-call ``model`` override always wins, even when provider is overridden too.
+
+    Dropping state's model on a cross-provider override must not drop the
+    caller's explicit model. An explicit model is the one authoritative
+    signal -- validation still runs against the resolved provider (F7 at the
+    per-call boundary), the same way state's model does when the pair is
+    coherent.
+    """
+    state = _State(provider="elevenlabs", model="eleven_v3")
+
+    spec = SessionSpec(state).fill(
+        SynthesisSpec(provider="openai", model="tts-1"),
+    )
+
+    assert spec.provider == "openai"
+    assert spec.model == "tts-1"

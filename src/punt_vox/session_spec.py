@@ -19,52 +19,22 @@ wire message is built. A state that pairs a provider with an alien model
 (a hand-edited ``vox.md``) gets :class:`ModelNotAvailableError` in the same
 place, never a silent substitution to the provider's default.
 
-The type of the state snapshot is a structural :class:`SessionState`
-protocol so both :class:`~punt_vox.config.VoxConfig` (the on-disk snapshot
-hooks and the CLI read) and :class:`~punt_vox.server.SessionConfig` (the
-in-memory MCP session that a tool may have mutated) satisfy it without a
-common base class.
+The type of the state snapshot is the structural
+:class:`~punt_vox.session_state.SessionState` protocol -- see that module
+for its shape and rationale.
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import Protocol, Self, final, runtime_checkable
+from typing import Self, final
 
 from punt_vox.models import MODEL_TABLE
+from punt_vox.session_state import SessionState
 from punt_vox.types_synthesis import SynthesisSpec
-from punt_vox.types_synthesis_errors import (
-    ModelNotAvailableError,
-    ProviderNotConfiguredError,
-)
+from punt_vox.types_synthesis_errors import ProviderNotConfiguredError
 
-__all__ = ["SessionSpec", "SessionState"]
-
-
-@runtime_checkable
-class SessionState(Protocol):
-    """The state fields a :class:`SessionSpec` reads.
-
-    Structural so :class:`~punt_vox.config.VoxConfig` (dataclass attributes)
-    and :class:`~punt_vox.server.SessionConfig` (properties) both satisfy it
-    without an inheritance relationship neither of them wants.
-    """
-
-    @property
-    def provider(self) -> str | None:
-        """Return the state's provider name, or ``None`` when unset."""
-
-    @property
-    def voice(self) -> str | None:
-        """Return the state's voice name, or ``None`` when unset."""
-
-    @property
-    def model(self) -> str | None:
-        """Return the state's model name, or ``None`` / ``""`` when unset."""
-
-    @property
-    def vibe_tags(self) -> str | None:
-        """Return the state's ElevenLabs expressive tags, or ``None`` when unset."""
+__all__ = ["SessionSpec"]
 
 
 @final
@@ -92,18 +62,13 @@ class SessionSpec:
         A per-call ``override`` field wins when it is set; an unset field
         (``None`` for the ``str | None`` fields, missing for the rest) inherits
         from state. The provider must resolve to a non-empty name; a
-        non-empty model must appear in the resolved provider's model list,
-        or one of the two typed errors is raised.
-
-        Empty state (``model: ""``) or unset state (``model: None``) is a
-        permanent, legitimate state for the modelless providers (polly, say,
-        espeak) and, for the model-bearing providers, means "use the provider
-        default" -- no validation runs in that case, so the daemon still sees
-        an absent model and its constructor supplies its own default.
+        non-empty model must appear in the resolved provider's model list
+        (see :meth:`_state_model_for` for how state's model interacts with
+        a provider override), or one of the two typed errors is raised.
         """
         base = override or SynthesisSpec()
         provider = self._resolve_provider(base.provider)
-        model = self._resolve_model(base.model, provider, self._state.model)
+        model = self._resolve_model(base.model, provider)
         voice = base.voice if base.voice is not None else self._state.voice
         vibe_tags = (
             base.vibe_tags if base.vibe_tags is not None else self._state.vibe_tags
@@ -137,20 +102,33 @@ class SessionSpec:
             raise ProviderNotConfiguredError(msg)
         return candidate
 
-    @staticmethod
-    def _resolve_model(
-        override: str | None, provider: str, state_model: str | None
-    ) -> str | None:
+    def _state_model_for(self, provider: str) -> str | None:
+        """Return state's model when it belongs to *provider*, else :data:`None`.
+
+        State's model is scoped to state's provider -- a hand-edited
+        ``vox.md`` naming elevenlabs and ``eleven_v3`` says nothing about
+        what to send when the caller overrides to polly. The comparison
+        strips whitespace to mirror :meth:`_resolve_provider`'s
+        normalisation, so ``provider: "  elevenlabs  "`` in state still
+        counts as matching a bare ``elevenlabs`` override.
+        """
+        state_provider = (self._state.provider or "").strip()
+        return self._state.model if state_provider == provider else None
+
+    def _resolve_model(self, override: str | None, provider: str) -> str | None:
         """Return the model to send, validated against *provider* when non-empty.
 
         The override wins over state's model; either falls through to
-        :data:`None` when both are unset. An empty or whitespace-only string
-        is treated as "no model" (the permanent state for polly, say, and
-        espeak, and the "use the provider's default constant" case for
-        elevenlabs and openai) -- a modelless request never fails
-        validation. A non-empty model must appear in the provider's own
-        list, or the caller sees the pair state actually declared, not a
-        substitution to the provider's default.
+        :data:`None` when both are unset. State's model is only consulted
+        when it belongs to *provider* -- see :meth:`_state_model_for`.
+
+        An empty or whitespace-only string is treated as "no model" (the
+        permanent state for polly, say, and espeak, and the "use the
+        provider's default constant" case for elevenlabs and openai) --
+        a modelless request never fails validation. A non-empty model
+        must appear in the provider's own list, or the caller sees the
+        pair state actually declared, not a substitution to the provider's
+        default.
 
         The strip mirrors :meth:`_resolve_provider`'s: a hand-edited
         ``model: "   "`` would otherwise reach ``MODEL_TABLE.available()``
@@ -159,7 +137,7 @@ class SessionSpec:
         two-providers is "use the default". Normalising here also means
         no downstream surface sees a padded model name.
         """
-        raw = override if override is not None else state_model
+        raw = override if override is not None else self._state_model_for(provider)
         if raw is None:
             return None
         # An empty (or whitespace-only) model means "no user-selectable
@@ -175,10 +153,5 @@ class SessionSpec:
         # stays ``""`` out; ``"   "`` in becomes ``""`` out.
         if not (candidate := raw.strip()):
             return candidate
-        available = MODEL_TABLE.available(provider)
-        # Modelless providers report ``available == ()``; a non-empty model
-        # requested against one of them is the pair state must not hold,
-        # so it is rejected here rather than at synthesis.
-        if not available or candidate not in available:
-            raise ModelNotAvailableError(candidate, provider, list(available))
+        MODEL_TABLE.validate(candidate, provider)
         return candidate

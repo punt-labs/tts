@@ -14,6 +14,7 @@ from types import MappingProxyType
 import pytest
 
 from punt_vox.models import MODEL_TABLE, ModelTable, ProviderModels, resolve_model
+from punt_vox.types_synthesis_errors import ModelNotAvailableError
 
 _EMPTY: MappingProxyType[str, str] = MappingProxyType({})
 
@@ -158,3 +159,52 @@ def test_ad_hoc_model_table_composes_from_provider_models() -> None:
     )
     assert table.available("custom") == ("m1", "m2")
     assert table.resolve("m", "custom") == "m1"
+
+
+# ---------------------------------------------------------------------------
+# ModelTable.validate (the pair-check every callsite used to inline)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_accepts_a_name_on_the_provider_list() -> None:
+    """A name that appears in the provider's list is silent on success.
+
+    ``validate`` returns ``None``; callers keep the un-mutated name they
+    already hold. The pair check belongs on the table because the list
+    belongs on the table (PY-OO-5).
+    """
+    # No return value; the assertion is "does not raise".
+    MODEL_TABLE.validate("eleven_v3", "elevenlabs")
+    MODEL_TABLE.validate("tts-1", "openai")
+
+
+def test_validate_rejects_a_name_not_on_the_provider_list() -> None:
+    """A name absent from the list raises the typed error, carrying the pair.
+
+    The error names both the requested model and the resolved provider so
+    the caller can render the F7 sentence without reconstructing the pair.
+    """
+    with pytest.raises(ModelNotAvailableError) as excinfo:
+        MODEL_TABLE.validate("eleven_v3", "openai")
+
+    assert excinfo.value.model == "eleven_v3"
+    assert excinfo.value.provider == "openai"
+    assert "tts-1" in excinfo.value.available
+
+
+@pytest.mark.parametrize("provider", ["polly", "say", "espeak"])
+def test_validate_rejects_any_name_against_a_modelless_provider(provider: str) -> None:
+    """Any non-empty model against a modelless provider is refused.
+
+    Modelless providers report ``available == ()``; the pair
+    ``provider, any-name`` is invalid by construction and the caller sees
+    the same F7 refusal as the alien-pair case.
+    """
+    with pytest.raises(ModelNotAvailableError):
+        MODEL_TABLE.validate("eleven_v3", provider)
+
+
+def test_validate_rejects_unknown_provider_as_modelless() -> None:
+    """An unknown provider reads as modelless, matching ``for_provider``."""
+    with pytest.raises(ModelNotAvailableError):
+        MODEL_TABLE.validate("tts-1", "nonesuch")
