@@ -97,6 +97,25 @@ def test_launchd_plist_no_username_key(backend: LaunchdBackend) -> None:
     assert "<key>UserName</key>" not in content
 
 
+def test_launchd_plist_pins_to_aqua_session(backend: LaunchdBackend) -> None:
+    """LimitLoadToSessionType=Aqua pins voxd to the graphical login session.
+
+    Without the pin, launchd may bootstrap the agent into a Background
+    context that lacks CoreAudio session membership -- producing the
+    intermittent ``AudioQueueStart failed (-66681)`` after a ~15s block
+    that made afplay silently fail dozens of times per session.
+    """
+    content = backend.plist_content()
+    assert "<key>LimitLoadToSessionType</key>" in content
+    # Value must appear on the line following the key (adjacent in the
+    # emitted plist), not merely somewhere in the document.
+    lines = content.splitlines()
+    key_index = next(
+        i for i, line in enumerate(lines) if "<key>LimitLoadToSessionType</key>" in line
+    )
+    assert "<string>Aqua</string>" in lines[key_index + 1]
+
+
 @patch.dict("os.environ", {"PATH": "/opt/homebrew/bin:/usr/bin:/bin"})
 def test_launchd_plist_contains_path_from_env() -> None:
     be = LaunchdBackend(
