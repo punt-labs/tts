@@ -1,8 +1,8 @@
 {
-  "total": 214,
+  "total": 201,
   "by_category": {
     "noqa": 31,
-    "type_ignore": 17,
+    "type_ignore": 4,
     "pylint_disable": 0,
     "pyright_ignore": 90,
     "per_file_ignores": 76
@@ -17,9 +17,6 @@
     },
     "src/punt_vox/cli_rec.py": {
       "noqa": 1
-    },
-    "src/punt_vox/client_sync.py": {
-      "type_ignore": 13
     },
     "src/punt_vox/core.py": {
       "noqa": 1

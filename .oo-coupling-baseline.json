@@ -171,8 +171,8 @@
     "efferent_coupling": 4.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.142,
-    "avg_lcom": 0.142
+    "max_lcom": 0.208,
+    "avg_lcom": 0.208
   },
   "src/punt_vox/commands/__init__.py": {
     "efferent_coupling": 4.0,
