@@ -17,6 +17,7 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.dirs import default_output_dir
 from punt_vox.paths import installed_version
+from punt_vox.types_provider import ProviderStatusPayload
 from punt_vox.voxd.programs.mpv import MPV_MIN_VERSION
 
 __all__ = [
@@ -114,6 +115,7 @@ class DoctorCheck:
         results.append(self.check_mpv())
         results.extend(self.check_espeak_fallback())
         results.extend(self.check_daemon_health())
+        results.extend(self.check_provider_readiness())
         results.extend(self.check_env_overrides())
         results.extend(self.check_music_dir())
         results.append(self.check_uvx())
@@ -276,6 +278,87 @@ class DoctorCheck:
             # own, so the health line reports the version-and-port fact only.
             version_note = f", version {running_version}" if running_version else ""
             results.append(_pass(f"Daemon: running on port {port}{version_note}"))
+        return results
+
+    def check_provider_readiness(self) -> list[CheckResult]:
+        """Report the daemon's readiness verdict for every registered provider.
+
+        Every F2 error message points here (``... run `vox doctor```),
+        so this is where those pointers are answered.  The daemon owns
+        the verdict -- ``ProviderCredentials.report_all`` walks the
+        same requirement dispatch the resolution gate uses, so a
+        provider that ``vox doctor`` says is ready is exactly a
+        provider ``mic:unmute`` will not refuse for F2 reasons, and
+        vice versa (§3.4).  A ready provider is a green pass; an
+        unready one is a warning (optional) rather than a hard fail
+        because a single-provider host is a normal configuration --
+        only the state-declared provider being unavailable is a hard
+        failure, and that surfaces the moment the caller tries to
+        synthesize.
+
+        Voxd unreachable is reported once at the section head and
+        the per-provider walk is skipped, since the answer requires
+        the daemon's environment.  The caller-side environment is
+        deliberately NOT probed -- an earlier draft did, and it was
+        the D1 wrong-process defect (§3.5).
+        """
+        client = self._client or VoxClientSync()
+        try:
+            payload = client.provider_status()
+        except VoxdConnectionError:
+            # Daemon down is already a fail from ``check_daemon_health``;
+            # here it would be a duplicate hard-fail with the same cause.
+            # Report it as informational so the readiness section
+            # explains why it is empty rather than pretending nothing
+            # was asked.
+            return [
+                _result(
+                    _OPTIONAL,
+                    "Provider readiness: skipped (voxd not running)",
+                    required=False,
+                )
+            ]
+        except VoxdProtocolError as exc:
+            return [_warn(f"Provider readiness: unavailable — {exc}")]
+        return self._render_provider_readiness(payload)
+
+    @staticmethod
+    def _render_provider_readiness(
+        payload: ProviderStatusPayload,
+    ) -> list[CheckResult]:
+        """Turn a ``provider_status`` payload into per-provider check lines.
+
+        ``preferred`` leads the section so the user sees the daemon's
+        proposed default before the walk of individual verdicts; a
+        ``None`` ``preferred`` (no provider on this host is ready --
+        no keys, no platform binary) is itself a hard fail because it
+        is a genuinely unusable configuration for TTS.
+        """
+        results: list[CheckResult] = []
+        if payload.preferred is None:
+            results.append(
+                _fail(
+                    "Provider readiness: no provider is usable on this daemon"
+                    " — set at least one credential (e.g. ELEVENLABS_API_KEY,"
+                    " OPENAI_API_KEY, or AWS credentials)"
+                )
+            )
+        else:
+            results.append(
+                _pass(f"Provider readiness: preferred → {payload.preferred}")
+            )
+        for row in payload.providers:
+            if row.ready:
+                results.append(_pass(f"  {row.name}: ready"))
+            else:
+                # ``detail`` names the missing variables (F2) or is empty for
+                # ``unknown_provider`` (F4); either way it is the same string
+                # the wire error would carry, so ``doctor`` and ``mic:unmute``
+                # cannot tell the user two different reasons.
+                message = f"  {row.name}: not ready"
+                if row.detail:
+                    message = f"{message} — {row.detail}"
+                results.append(_result(_OPTIONAL, message, required=False))
         return results
 
     def check_env_overrides(self) -> list[CheckResult]:

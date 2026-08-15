@@ -36,6 +36,7 @@ from punt_vox.types_programs import (
     ProgramSummary,
     PromptSet,
 )
+from punt_vox.types_provider import ProviderStatusPayload
 from punt_vox.types_synthesis import SynthesisSpec
 
 __all__ = ["VoxClientSync"]
@@ -195,6 +196,18 @@ class VoxClientSync:
     def health(self) -> HealthStatus:
         """Return the daemon's health snapshot (liveness, port, version)."""
         return self._drive(lambda c: c.health())
+
+    def provider_status(self, provider: str | None = None) -> ProviderStatusPayload:
+        """Return the daemon's provider readiness set + its preferred proposal.
+
+        Sync twin of :meth:`VoxClient.provider_status`; the daemon
+        answer is fetched fresh on every call so ``mic:status`` and
+        ``vox doctor`` report the current environment rather than a
+        cached snapshot.  With *provider* omitted, the reply carries
+        every registered verdict; with it set, the reply carries just
+        that one row.
+        """
+        return self._drive(lambda c: c.provider_status(provider))
 
     # -- program surface (session-free; the daemon-facing wire, design section 4)
 

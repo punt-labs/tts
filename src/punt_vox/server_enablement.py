@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Literal, Self, final
 
-from punt_vox.enablement import RepoEnablement
+from punt_vox.enablement import EnableOutcome, RepoEnablement
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -46,14 +46,19 @@ class EnablementTool:
         """Enable or disable vox in the repo the session runs from.
 
         Returns a JSON object with the action, the repo root, the resulting
-        enabled state, and the marker path. A working directory that is not inside
-        a git repository is reported as a clean ``error`` object, never an
-        exception across the tool boundary.
+        enabled state, the marker path, and -- on ``enable`` -- the outcome
+        of the daemon-proposal step (design §3.8): which provider was
+        written into ``vox.md``, or the reason nothing was written. A
+        working directory that is not inside a git repository is reported
+        as a clean ``error`` object, never an exception across the tool
+        boundary.
 
         Args:
-            action: ``"enable"`` writes the guide, marker, import, and settings;
-                ``"disable"`` removes the import, marker, and settings, leaving the
-                subtree dormant.
+            action: ``"enable"`` writes the guide, marker, import, and settings,
+                asks the daemon for a preferred provider, and writes it to
+                ``vox.md`` when one was proposed and the repo did not already
+                declare one; ``"disable"`` removes the import, marker, and
+                settings, leaving the subtree dormant.
         """
         if action not in ("enable", "disable"):
             return self._error(f"invalid action '{action}'. Use enable or disable.")
@@ -62,32 +67,46 @@ class EnablementTool:
         except ValueError as exc:
             return self._error(str(exc))
         try:
-            self._apply(enablement, action)
+            proposal = self._apply(enablement, action)
         except (OSError, ValueError) as exc:
             # A filesystem failure (permission-denied, ENOSPC, a racing removal) or
             # a malformed .claude/settings.json (a ValueError from the settings
             # guard) is a clean error object, never raised across the tool boundary.
             return self._error(str(exc))
-        return json.dumps(
-            {
-                "action": action,
-                "repo": str(enablement.root),
-                # Report the observed state, not the intent: a disable that could
-                # not remove the marker must not claim the repo is off.
-                "enabled": enablement.is_enabled(),
-                "marker": str(enablement.marker_path),
+        reply: dict[str, object] = {
+            "action": action,
+            "repo": str(enablement.root),
+            # Report the observed state, not the intent: a disable that could
+            # not remove the marker must not claim the repo is off.
+            "enabled": enablement.is_enabled(),
+            "marker": str(enablement.marker_path),
+        }
+        if proposal is not None:
+            # Only ``enable`` produces a proposal outcome; ``disable`` leaves
+            # this key absent so a caller reading it as a boolean does not
+            # misread a proposal-less disable as a failed one.
+            reply["provider_proposal"] = {
+                "reason": proposal.reason,
+                "provider_written": proposal.provider_written,
+                "detail": proposal.detail,
             }
-        )
+        return json.dumps(reply)
 
     @staticmethod
     def _apply(
         enablement: RepoEnablement, action: Literal["enable", "disable"]
-    ) -> None:
-        """Run the requested enablement transition on *enablement*."""
+    ) -> EnableOutcome | None:
+        """Run the requested transition; return the enable outcome, if any.
+
+        ``enable`` produces an :class:`EnableOutcome` from its daemon
+        proposal step; ``disable`` has no daemon interaction and
+        returns ``None``.  Kept as a static return rather than mutated
+        state so :meth:`dispatch` reads as one linear flow.
+        """
         if action == "enable":
-            enablement.enable()
-        else:
-            enablement.disable()
+            return enablement.enable()
+        enablement.disable()
+        return None
 
     @staticmethod
     def _error(message: str) -> str:
