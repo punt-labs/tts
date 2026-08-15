@@ -1832,6 +1832,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/types_provider.py": {
+    "method_ratio": 0.9,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.6,
+    "max_complexity": 3.0,
+    "avg_complexity": 1.7,
+    "module_size": 204.0,
+    "classes_per_module": 2.0,
+    "class_to_func_ratio": 0.667,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/types_provider_errors.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -3386,6 +3399,19 @@
     "max_complexity": 1.0,
     "avg_complexity": 1.0,
     "module_size": 79.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
+  "src/punt_vox/voxd/provider_status_handler.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 1.33,
+    "max_complexity": 3.0,
+    "avg_complexity": 2.0,
+    "module_size": 102.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
