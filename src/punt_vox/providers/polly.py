@@ -19,6 +19,7 @@ from punt_vox.types import (
     SynthesisResult,
     TTSProvider,
 )
+from punt_vox.types_provider_errors import ProviderAuthError
 
 if TYPE_CHECKING:
     from mypy_boto3_polly.client import PollyClient as PollyClientType
@@ -191,21 +192,55 @@ class PollyProvider(TTSProvider):
         Resolves the voice name to Polly parameters internally, wraps
         the text in SSML with prosody rate, and writes the MP3 output.
         """
+        # Deferred so a base-only install (no botocore) keeps
+        # importing polly.py cheap; matches the pattern check_health
+        # already uses. Both credential-family errors surface at the
+        # first call to synthesize_speech below.
+        from botocore.exceptions import ClientError, NoCredentialsError
+
         text = strip_vibe_tags(request.text)
 
         resolved_voice = request.voice or self.default_voice
         voice_cfg = self._voices.resolve(resolved_voice)
         rate = request.rate if request.rate is not None else 100
         ssml_text = f'<speak><prosody rate="{rate}%">{text}</prosody></speak>'
-        response = self._client.synthesize_speech(
-            Text=ssml_text,
-            TextType="ssml",
-            VoiceId=voice_cfg.voice_id,
-            LanguageCode=voice_cfg.language_code,
-            OutputFormat="mp3",
-            Engine=voice_cfg.engine,
-            SampleRate="22050",
-        )
+        try:
+            response = self._client.synthesize_speech(
+                Text=ssml_text,
+                TextType="ssml",
+                VoiceId=voice_cfg.voice_id,
+                LanguageCode=voice_cfg.language_code,
+                OutputFormat="mp3",
+                Engine=voice_cfg.engine,
+                SampleRate="22050",
+            )
+        except NoCredentialsError as exc:
+            # The readiness gate catches the credential-absent case at
+            # F2; NoCredentialsError here means the gate saw a chain
+            # (env, profile, config) but the SDK could not resolve one
+            # by call time -- most likely an SSO session that expired
+            # between the readiness check and the synthesize call.
+            # Cross the wire as a rejected credential (F3) not a
+            # missing one, since the caller HAS configured something.
+            raise ProviderAuthError("polly", None) from exc
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code in {
+                "InvalidSignatureException",
+                "SignatureDoesNotMatch",
+                "ExpiredToken",
+                "ExpiredTokenException",
+                "UnrecognizedClientException",
+                "InvalidClientTokenId",
+                "AuthFailure",
+                "AccessDeniedException",
+            }:
+                # 400/403 for a rejected credential; the exception
+                # carries its own status but the auth-family codes
+                # are the reliable discriminator.
+                status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+                raise ProviderAuthError("polly", status) from exc
+            raise
 
         logger.info(
             "API call: provider=polly, voice=%s, chars=%d",

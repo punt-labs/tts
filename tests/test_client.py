@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from punt_vox.client import (
+    CacheStatus,
     VoxClient,
     read_port_file,
     read_token_file,
@@ -1383,7 +1385,11 @@ class TestVoxClientHealth:
         assert result.uptime_seconds == 42.5
         assert result.port == 8421
         assert result.pid == 4242
-        assert result.provider == "elevenlabs"
+        # ``provider`` is not on the wire (design §3.6 / D4): the daemon
+        # has no provider of its own; per-provider readiness moved to the
+        # ``provider_status`` op delivered by PR 3. An older-daemon
+        # payload that still carries the key is silently ignored.
+        assert not hasattr(result, "provider")
         assert result.daemon_version == "5.0.0"
 
 
@@ -1656,6 +1662,385 @@ class TestVoxClientSync:
             sync_client = VoxClientSync(port=8421, token="tok")
             result = sync_client.voices("say")
             assert result == ["fred"]
+
+
+class TestVoxClientSyncFrameDispatch:
+    """Pin every ``VoxClientSync`` method to the frame it puts on the wire.
+
+    The bug class this class defends against is *wrong arguments reaching
+    the wire*: a swapped positional, a dropped keyword, a default that
+    differs between the sync signature and the async signature, or a
+    lambda that calls the wrong client method entirely. A test that only
+    asserts on the return value is blind to every one of these -- the
+    mocked websocket returns whatever the test told it to regardless of
+    what was sent. Only the sent frame proves the arguments survived
+    both the sync-to-async bridge in ``client_sync.py`` and VoxClient's
+    own message assembly.
+
+    Each test wires ``punt_vox.client.websockets.asyncio.client.connect``
+    to an ``AsyncMock`` websocket that yields the RESPONSE frames the
+    real daemon would send for the op under test. It calls the sync
+    method with concrete arguments, then reads
+    ``mock_ws.send.call_args_list`` to parse every frame that reached
+    the wire. Assertions check the op name and every argument-derived
+    field. Return-value checks appear only where the argument path
+    passes through the return value (e.g. ``set_log_level`` echoes
+    back the effective level).
+
+    Note on the async-context path. ``_SyncRunner._run_in_thread``
+    fires when the caller is already inside a running event loop; a
+    dedicated test at the bottom exercises that branch under
+    ``@pytest.mark.asyncio`` so both runner paths are executed.
+    """
+
+    @staticmethod
+    def _sync() -> VoxClientSync:
+        return VoxClientSync(port=8421, token="tok")
+
+    @staticmethod
+    def _mock_ws_yielding(*frames: dict[str, object]) -> AsyncMock:
+        """Return a mock websocket whose recv() yields *frames* in order.
+
+        Each frame is JSON-encoded to match the wire; the underlying
+        transport reads recv() as a string and json.loads() it.
+        """
+        ws = _make_mock_ws()
+        ws.recv = AsyncMock(side_effect=[json.dumps(f) for f in frames])
+        return ws
+
+    @staticmethod
+    def _sent_frames(mock_ws: AsyncMock) -> list[dict[str, object]]:
+        """Return every frame the client sent, parsed from JSON.
+
+        A single call may put more than one frame on the wire (e.g.
+        ``music_get`` sends manifest + one fetch per part). Order is
+        preserved; each entry is the parsed JSON object.
+        """
+        parsed: list[dict[str, object]] = []
+        for call in mock_ws.send.call_args_list:
+            (payload,) = call.args
+            frame = json.loads(payload)
+            parsed.append(frame)
+        return parsed
+
+    @classmethod
+    def _run(
+        cls,
+        sync_call: Callable[[VoxClientSync], object],
+        response_frames: Sequence[dict[str, object]],
+    ) -> tuple[object, list[dict[str, object]]]:
+        """Drive *sync_call* against a mock ws that yields *response_frames*.
+
+        Returns the sync method's return value and the list of sent
+        frames, parsed. This is the one entry point every test uses so
+        the connect-patch shape lives in one place.
+        """
+        sync = cls._sync()
+        mock_ws = cls._mock_ws_yielding(*response_frames)
+        with patch(
+            "punt_vox.client.websockets.asyncio.client.connect",
+            new_callable=AsyncMock,
+            return_value=mock_ws,
+        ):
+            result = sync_call(sync)
+        return result, cls._sent_frames(mock_ws)
+
+    # -- recordings store surface -----------------------------------------
+
+    def test_play_puts_type_and_ref_on_the_wire(self) -> None:
+        _, sent = self._run(
+            lambda s: s.play("greeting.mp3"),
+            [{"type": "playing", "id": "x"}, {"type": "done", "id": "x"}],
+        )
+        assert len(sent) == 1
+        assert sent[0]["type"] == "play"
+        assert sent[0]["ref"] == "greeting.mp3"
+
+    def test_fetch_puts_type_and_ref_on_the_wire(self) -> None:
+        # fetch reassembles a chunked stream; give the transport a
+        # valid one-chunk sequence so it returns and we can inspect
+        # the request frame that started it.
+        blob = b"payload"
+        chunks = _fetch_frames(blob, chunk=64)
+        chunks[0]["ref"] = "greeting.mp3"
+        chunks[-1]["ref"] = "greeting.mp3"
+        result, sent = self._run(lambda s: s.fetch("greeting.mp3"), chunks)
+        assert result == blob
+        assert len(sent) == 1
+        assert sent[0]["type"] == "fetch"
+        assert sent[0]["ref"] == "greeting.mp3"
+
+    def test_rec_list_puts_type_on_the_wire(self) -> None:
+        _, sent = self._run(
+            lambda s: s.rec_list(),
+            [{"type": "rec_list", "entries": []}],
+        )
+        assert len(sent) == 1
+        assert sent[0]["type"] == "rec_list"
+
+    def test_rec_remove_puts_type_and_ref_on_the_wire(self) -> None:
+        _, sent = self._run(
+            lambda s: s.rec_remove("stale.mp3"),
+            [{"type": "rec_remove"}],
+        )
+        assert len(sent) == 1
+        assert sent[0]["type"] == "rec_remove"
+        assert sent[0]["ref"] == "stale.mp3"
+
+    # -- cache surface ----------------------------------------------------
+
+    def test_cache_status_puts_type_on_the_wire(self) -> None:
+        result, sent = self._run(
+            lambda s: s.cache_status(),
+            [
+                {
+                    "type": "cache_status",
+                    "entries": 3,
+                    "size_bytes": 4096,
+                    "path": "cache",
+                }
+            ],
+        )
+        assert len(sent) == 1
+        assert sent[0]["type"] == "cache_status"
+        assert isinstance(result, CacheStatus)
+
+    def test_cache_clear_puts_type_on_the_wire(self) -> None:
+        result, sent = self._run(
+            lambda s: s.cache_clear(),
+            [{"type": "cache_clear", "cleared": 7}],
+        )
+        assert len(sent) == 1
+        assert sent[0]["type"] == "cache_clear"
+        assert result == 7
+
+    def test_set_log_level_puts_type_and_level_on_the_wire(self) -> None:
+        # set_log_level's level argument is the one the wire carries and
+        # the one the daemon may clamp -- a lambda that dropped it would
+        # silently send an empty request, and the daemon would clamp to
+        # the audit floor and return "info", passing the return-value
+        # check but breaking real callers.
+        result, sent = self._run(
+            lambda s: s.set_log_level("debug"),
+            [{"type": "set_log_level", "level": "debug"}],
+        )
+        assert len(sent) == 1
+        assert sent[0]["type"] == "set_log_level"
+        assert sent[0]["level"] == "debug"
+        assert result == "debug"
+
+    # -- music catalog ----------------------------------------------------
+
+    def test_music_new_puts_prompts_and_name_on_the_wire(self) -> None:
+        # music_new drops the ``name`` field when it is None; supply a
+        # non-None name and assert it makes the trip.
+        prompts = PromptSet(base="lofi hip hop, slow", variations=())
+        result, sent = self._run(
+            lambda s: s.music_new(prompts, "focus-set"),
+            [
+                {"type": "generating", "id": "n1"},
+                {"type": "album", "id": "n1", "album_id": "alb-9"},
+            ],
+        )
+        assert len(sent) == 1
+        assert sent[0]["type"] == "music_new"
+        assert sent[0]["base_prompt"] == "lofi hip hop, slow"
+        assert sent[0]["name"] == "focus-set"
+        assert result == "alb-9"
+
+    def test_music_new_default_name_omits_name_from_the_wire(self) -> None:
+        # music_new(prompts) with name=None must send base_prompt without
+        # a "name" key -- the daemon's spec is omit-the-absent-optional.
+        # A lambda that always forwarded name (even when None) would
+        # serialize a JSON null and change the daemon's parse path.
+        prompts = PromptSet(base="ambient drones", variations=())
+        _, sent = self._run(
+            lambda s: s.music_new(prompts),
+            [
+                {"type": "generating", "id": "n2"},
+                {"type": "album", "id": "n2", "album_id": "alb-10"},
+            ],
+        )
+        assert len(sent) == 1
+        assert sent[0]["type"] == "music_new"
+        assert sent[0]["base_prompt"] == "ambient drones"
+        assert "name" not in sent[0]
+
+    def test_music_remove_puts_type_and_album_on_the_wire(self) -> None:
+        # music_remove's wire key is ``album`` (not album_id) -- easy to
+        # get wrong when the sync signature says album_id. Pin it.
+        _, sent = self._run(
+            lambda s: s.music_remove("alb-2"),
+            [{"type": "music_remove"}],
+        )
+        assert len(sent) == 1
+        assert sent[0]["type"] == "music_remove"
+        assert sent[0]["album"] == "alb-2"
+
+    def test_music_get_puts_manifest_request_on_the_wire(self, tmp_path: Path) -> None:
+        # music_get first requests the album manifest, then chunk-fetches
+        # each part. Give the manifest zero parts so it raises before any
+        # mkdir/fetch happens -- the FIRST sent frame still proves the
+        # album id reached the wire. dest_dir is client-side and never
+        # crosses the wire, so it is not asserted here; the traversal
+        # test in test_client for a real manifest covers that path.
+        sync = self._sync()
+        mock_ws = self._mock_ws_yielding(
+            {"type": "music_manifest", "album": "alb-3", "parts": []}
+        )
+        with (
+            patch(
+                "punt_vox.client.websockets.asyncio.client.connect",
+                new_callable=AsyncMock,
+                return_value=mock_ws,
+            ),
+            pytest.raises(ValueError, match="no ready parts"),
+        ):
+            sync.music_get("alb-3", tmp_path)
+        sent = self._sent_frames(mock_ws)
+        assert len(sent) == 1
+        assert sent[0]["type"] == "music_manifest"
+        assert sent[0]["album"] == "alb-3"
+
+    # -- program transport (session-free command group) -------------------
+
+    def test_program_status_puts_type_on_the_wire(self) -> None:
+        _, sent = self._run(
+            lambda s: s.program_status(),
+            [
+                {
+                    "type": "program_status",
+                    "status": ProgramStatus.idle().to_dict(),
+                }
+            ],
+        )
+        assert len(sent) == 1
+        assert sent[0]["type"] == "program_status"
+
+    def test_program_on_puts_every_provided_kwarg_on_the_wire(self) -> None:
+        # program_on has four keyword-only parameters and the code path
+        # that translates ``prompts`` into two wire fields
+        # (base_prompt + variations). A return-value test would pass
+        # even with all four missing. Assert each present field.
+        prompts = PromptSet(base="lofi base", variations=("v1", "v2"))
+        _, sent = self._run(
+            lambda s: s.program_on(
+                style="lofi", vibe="focus", name="deep-work", prompts=prompts
+            ),
+            [{"type": "program_on"}],
+        )
+        assert len(sent) == 1
+        frame = sent[0]
+        assert frame["type"] == "program_on"
+        assert frame["style"] == "lofi"
+        assert frame["vibe"] == "focus"
+        assert frame["name"] == "deep-work"
+        assert frame["base_prompt"] == "lofi base"
+        assert frame["variations"] == ["v1", "v2"]
+
+    def test_program_on_omits_absent_kwargs_from_the_wire(self) -> None:
+        # program_on with no args must send only ``type`` and ``id``.
+        # A default of None on any of the four kwargs that leaked
+        # through as a JSON null would change the daemon's parse
+        # behaviour -- pin the omit-the-absent-optional contract.
+        _, sent = self._run(
+            lambda s: s.program_on(),
+            [{"type": "program_on"}],
+        )
+        assert len(sent) == 1
+        frame = sent[0]
+        assert frame["type"] == "program_on"
+        for absent in ("style", "vibe", "name", "base_prompt", "variations"):
+            assert absent not in frame
+
+    def test_program_stop_puts_type_on_the_wire(self) -> None:
+        _, sent = self._run(
+            lambda s: s.program_stop(),
+            [{"type": "program_stop"}],
+        )
+        assert len(sent) == 1
+        assert sent[0]["type"] == "program_stop"
+
+    def test_program_next_puts_type_on_the_wire(self) -> None:
+        _, sent = self._run(
+            lambda s: s.program_next(),
+            [{"type": "program_next"}],
+        )
+        assert len(sent) == 1
+        assert sent[0]["type"] == "program_next"
+
+    def test_program_prev_puts_type_on_the_wire(self) -> None:
+        _, sent = self._run(
+            lambda s: s.program_prev(),
+            [{"type": "program_prev"}],
+        )
+        assert len(sent) == 1
+        assert sent[0]["type"] == "program_prev"
+
+    def test_program_pause_puts_type_on_the_wire(self) -> None:
+        _, sent = self._run(
+            lambda s: s.program_pause(),
+            [{"type": "program_pause"}],
+        )
+        assert len(sent) == 1
+        assert sent[0]["type"] == "program_pause"
+
+    def test_program_resume_puts_type_on_the_wire(self) -> None:
+        _, sent = self._run(
+            lambda s: s.program_resume(),
+            [{"type": "program_resume"}],
+        )
+        assert len(sent) == 1
+        assert sent[0]["type"] == "program_resume"
+
+    def test_program_select_puts_every_provided_kwarg_on_the_wire(self) -> None:
+        # program_select has four keyword-only parameters. album_id is
+        # the direct-selection field; style/vibe/name are the tag path.
+        # A single test with all four exercises the whole assembly.
+        _, sent = self._run(
+            lambda s: s.program_select(
+                style="lofi", vibe="focus", name="deep-work", album_id="alb-4"
+            ),
+            [{"type": "program_select"}],
+        )
+        assert len(sent) == 1
+        frame = sent[0]
+        assert frame["type"] == "program_select"
+        assert frame["album_id"] == "alb-4"
+        assert frame["style"] == "lofi"
+        assert frame["vibe"] == "focus"
+        assert frame["name"] == "deep-work"
+
+    def test_program_list_puts_type_on_the_wire(self) -> None:
+        _, sent = self._run(
+            lambda s: s.program_list(),
+            [{"type": "program_list", "programs": []}],
+        )
+        assert len(sent) == 1
+        assert sent[0]["type"] == "program_list"
+
+    # -- runner path when the caller is inside a running event loop -------
+
+    @pytest.mark.asyncio
+    async def test_sync_call_inside_running_loop_uses_thread_pool(self) -> None:
+        # asyncio.get_running_loop().is_running() is True here, so
+        # ``_SyncRunner.run`` takes the ``_run_in_thread`` branch --
+        # the code the bridge refactor rewrote alongside the direct
+        # path. Exercising one method under this branch proves the
+        # generic Callable-factory return path threads a value out
+        # of the worker thread. Every other test in this class uses
+        # the direct ``asyncio.run`` path.
+        _, sent = self._run(
+            lambda s: s.program_status(),
+            [
+                {
+                    "type": "program_status",
+                    "status": ProgramStatus.idle().to_dict(),
+                }
+            ],
+        )
+        assert len(sent) == 1
+        assert sent[0]["type"] == "program_status"
 
 
 # ---------------------------------------------------------------------------
