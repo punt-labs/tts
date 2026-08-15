@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -1660,6 +1660,305 @@ class TestVoxClientSync:
             sync_client = VoxClientSync(port=8421, token="tok")
             result = sync_client.voices("say")
             assert result == ["fred"]
+
+
+class TestVoxClientSyncDispatch:
+    """Verify every ``VoxClientSync`` method dispatches to the correct
+    ``VoxClient`` async method with the arguments the caller supplied.
+
+    These are DISPATCH tests, not synthesis tests. The point is to catch
+    the class of break a generic Callable-factory bridge would leak through
+    the type checker: a lambda that passes positional-when-keyword,
+    calls the wrong method, drops an argument, or reorders positional
+    args. `AsyncMock(spec=VoxClient)` enforces the signature of each
+    method it stands in for -- a wrong keyword or arity raises at call
+    time, and ``assert_awaited_once_with(...)`` pins the exact argument
+    shape the lambda produced.
+
+    Rationale: 18 methods on ``VoxClientSync`` had no end-to-end
+    coverage of the async-to-sync bridge; ``TestVoxClientSync`` above
+    exercises 5 through a mock websocket. This class exercises the
+    remaining 18 (plus ``chime`` again for the sentinel-passthrough
+    shape, and ``_run_in_thread`` once because the thread-pool
+    path is code the bridge refactor rewrote too). Each test runs
+    against ``AsyncMock(spec=VoxClient)`` -- no network, no daemon --
+    which makes them fast and lets ``spec=`` do the signature-enforcement
+    the type checker cannot.
+    """
+
+    @staticmethod
+    def _sync_and_mock_client() -> tuple[VoxClientSync, AsyncMock]:
+        """Return a real ``VoxClientSync`` and the mock its ``_drive`` will get.
+
+        ``patch.object(sync, "_make_client")`` inside each test swaps the
+        real VoxClient construction for the returned AsyncMock, so the
+        lambda inside ``_drive`` calls the mock. ``AsyncMock(spec=VoxClient)``
+        gives every async method on the mock the SIGNATURE of the real
+        VoxClient method -- a lambda that passes a wrong keyword or
+        arity fails at await time rather than passing silently. That is
+        the whole reason this test class exists.
+        """
+        sync = VoxClientSync(port=8421, token="tok")
+        mock_client = AsyncMock(spec=VoxClient)
+        return sync, mock_client
+
+    # -- synthesis surface (chime not repeated; covered above) ------------
+
+    def test_play_dispatches_ref(self) -> None:
+        sync, mock_client = self._sync_and_mock_client()
+        mock_client.play.return_value = None
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            sync.play("recordings/x.mp3")
+        mock_client.play.assert_awaited_once_with("recordings/x.mp3")
+
+    def test_fetch_dispatches_ref_and_returns_bytes(self) -> None:
+        sync, mock_client = self._sync_and_mock_client()
+        mock_client.fetch.return_value = b"audio-bytes"
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            result = sync.fetch("recordings/y.mp3")
+        mock_client.fetch.assert_awaited_once_with("recordings/y.mp3")
+        assert result == b"audio-bytes"
+
+    # -- program transport (11 methods) -----------------------------------
+
+    def test_program_status_dispatches_no_args(self) -> None:
+        sync, mock_client = self._sync_and_mock_client()
+        expected = MagicMock(name="ProgramStatus")
+        mock_client.program_status.return_value = expected
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            result = sync.program_status()
+        mock_client.program_status.assert_awaited_once_with()
+        assert result is expected
+
+    def test_program_on_dispatches_all_keywords(self) -> None:
+        # This is the method with the most argument-shape risk: four
+        # keyword-only parameters that the lambda forwards. A swap or
+        # a dropped keyword would type-check clean and break at runtime.
+        sync, mock_client = self._sync_and_mock_client()
+        expected = MagicMock(name="CommandOutcome")
+        mock_client.program_on.return_value = expected
+        prompts = MagicMock(name="PromptSet")
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            result = sync.program_on(
+                style="lofi", vibe="focus", name="album", prompts=prompts
+            )
+        mock_client.program_on.assert_awaited_once_with(
+            style="lofi", vibe="focus", name="album", prompts=prompts
+        )
+        assert result is expected
+
+    def test_program_stop_dispatches_no_args(self) -> None:
+        sync, mock_client = self._sync_and_mock_client()
+        expected = MagicMock(name="CommandOutcome")
+        mock_client.program_stop.return_value = expected
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            result = sync.program_stop()
+        mock_client.program_stop.assert_awaited_once_with()
+        assert result is expected
+
+    def test_program_next_dispatches_no_args(self) -> None:
+        sync, mock_client = self._sync_and_mock_client()
+        expected = MagicMock(name="CommandOutcome")
+        mock_client.program_next.return_value = expected
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            result = sync.program_next()
+        mock_client.program_next.assert_awaited_once_with()
+        assert result is expected
+
+    def test_program_prev_dispatches_no_args(self) -> None:
+        sync, mock_client = self._sync_and_mock_client()
+        expected = MagicMock(name="CommandOutcome")
+        mock_client.program_prev.return_value = expected
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            result = sync.program_prev()
+        mock_client.program_prev.assert_awaited_once_with()
+        assert result is expected
+
+    def test_program_pause_dispatches_no_args(self) -> None:
+        sync, mock_client = self._sync_and_mock_client()
+        expected = MagicMock(name="CommandOutcome")
+        mock_client.program_pause.return_value = expected
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            result = sync.program_pause()
+        mock_client.program_pause.assert_awaited_once_with()
+        assert result is expected
+
+    def test_program_resume_dispatches_no_args(self) -> None:
+        sync, mock_client = self._sync_and_mock_client()
+        expected = MagicMock(name="CommandOutcome")
+        mock_client.program_resume.return_value = expected
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            result = sync.program_resume()
+        mock_client.program_resume.assert_awaited_once_with()
+        assert result is expected
+
+    def test_program_select_dispatches_all_keywords(self) -> None:
+        # Same shape as program_on: four keyword-only parameters.
+        sync, mock_client = self._sync_and_mock_client()
+        expected = MagicMock(name="CommandOutcome")
+        mock_client.program_select.return_value = expected
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            result = sync.program_select(
+                style="lofi", vibe="focus", name="album", album_id="a1"
+            )
+        mock_client.program_select.assert_awaited_once_with(
+            style="lofi", vibe="focus", name="album", album_id="a1"
+        )
+        assert result is expected
+
+    def test_program_list_dispatches_no_args(self) -> None:
+        sync, mock_client = self._sync_and_mock_client()
+        expected = MagicMock(name="tuple[ProgramSummary, ...]")
+        mock_client.program_list.return_value = expected
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            result = sync.program_list()
+        mock_client.program_list.assert_awaited_once_with()
+        assert result is expected
+
+    # -- recordings store -------------------------------------------------
+
+    def test_rec_list_dispatches_no_args(self) -> None:
+        sync, mock_client = self._sync_and_mock_client()
+        expected = MagicMock(name="tuple[RecordingSummary, ...]")
+        mock_client.rec_list.return_value = expected
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            result = sync.rec_list()
+        mock_client.rec_list.assert_awaited_once_with()
+        assert result is expected
+
+    def test_rec_remove_dispatches_ref(self) -> None:
+        sync, mock_client = self._sync_and_mock_client()
+        mock_client.rec_remove.return_value = None
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            sync.rec_remove("z.mp3")
+        mock_client.rec_remove.assert_awaited_once_with("z.mp3")
+
+    # -- cache ------------------------------------------------------------
+
+    def test_cache_status_dispatches_no_args(self) -> None:
+        sync, mock_client = self._sync_and_mock_client()
+        expected = MagicMock(name="CacheStatus")
+        mock_client.cache_status.return_value = expected
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            result = sync.cache_status()
+        mock_client.cache_status.assert_awaited_once_with()
+        assert result is expected
+
+    def test_cache_clear_dispatches_no_args_and_returns_int(self) -> None:
+        sync, mock_client = self._sync_and_mock_client()
+        mock_client.cache_clear.return_value = 42
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            result = sync.cache_clear()
+        mock_client.cache_clear.assert_awaited_once_with()
+        assert result == 42
+
+    def test_set_log_level_dispatches_level_and_returns_str(self) -> None:
+        sync, mock_client = self._sync_and_mock_client()
+        mock_client.set_log_level.return_value = "info"
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            result = sync.set_log_level("debug")
+        mock_client.set_log_level.assert_awaited_once_with("debug")
+        assert result == "info"
+
+    # -- music catalog ----------------------------------------------------
+
+    def test_music_new_dispatches_prompts_and_name(self) -> None:
+        # music_new(prompts, name=None): positional prompts, optional
+        # positional-or-keyword name. Both my lambda and VoxClient use
+        # positional forwarding; a mismatch (e.g. lambda passing name
+        # by keyword when the SDK expected positional-only) would fail
+        # here at spec-check time.
+        sync, mock_client = self._sync_and_mock_client()
+        mock_client.music_new.return_value = "album-id"
+        prompts = MagicMock(name="PromptSet")
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            result = sync.music_new(prompts, "my-album")
+        mock_client.music_new.assert_awaited_once_with(prompts, "my-album")
+        assert result == "album-id"
+
+    def test_music_new_default_name_forwards_none(self) -> None:
+        # music_new(prompts) with no name: the sync signature has a
+        # default of None, and the lambda captures that default and
+        # forwards it explicitly. Pinning the default's traversal.
+        sync, mock_client = self._sync_and_mock_client()
+        mock_client.music_new.return_value = "album-id"
+        prompts = MagicMock(name="PromptSet")
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            sync.music_new(prompts)
+        mock_client.music_new.assert_awaited_once_with(prompts, None)
+
+    def test_music_get_dispatches_id_and_dest(self) -> None:
+        sync, mock_client = self._sync_and_mock_client()
+        dest = Path("/tmp/x")
+        mock_client.music_get.return_value = dest
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            result = sync.music_get("album-1", dest)
+        mock_client.music_get.assert_awaited_once_with("album-1", dest)
+        assert result == dest
+
+    def test_music_remove_dispatches_album_id(self) -> None:
+        sync, mock_client = self._sync_and_mock_client()
+        mock_client.music_remove.return_value = None
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            sync.music_remove("album-2")
+        mock_client.music_remove.assert_awaited_once_with("album-2")
+
+    # -- bridge lifecycle (verify connect + close bracket every call) -----
+
+    def test_every_dispatch_opens_and_closes_a_connection(self) -> None:
+        # The _drive helper's connect-await-close bracket runs on EVERY
+        # call. This test exercises one arbitrary method and asserts the
+        # bracket, so a refactor that dropped the finally: close (or the
+        # await) is caught even when the method under test does not
+        # otherwise assert on side effects.
+        sync, mock_client = self._sync_and_mock_client()
+        mock_client.program_status.return_value = MagicMock(name="ProgramStatus")
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            sync.program_status()
+        mock_client.connect.assert_awaited_once_with()
+        mock_client.close.assert_awaited_once_with()
+
+    def test_close_awaited_even_when_op_raises(self) -> None:
+        # The finally clause in _drive is load-bearing: a synthesize
+        # that raises must still close the connection, or a hook that
+        # fails silently leaks sockets over a session. A refactor that
+        # dropped the try/finally would pass every happy-path test and
+        # fail this one.
+        sync, mock_client = self._sync_and_mock_client()
+        mock_client.program_status.side_effect = RuntimeError("boom")
+        with (
+            patch.object(VoxClientSync, "_make_client", return_value=mock_client),
+            pytest.raises(RuntimeError, match="boom"),
+        ):
+            sync.program_status()
+        mock_client.close.assert_awaited_once_with()
+
+
+class TestVoxClientSyncRunnerInRunningLoop:
+    """The ``_run_in_thread`` branch runs when the caller is already inside
+    an event loop (e.g. an MCP tool handler). The refactor rewrote both
+    the runner method and its thread-pool sibling to be generic; this
+    test executes the thread-pool path so `pytest --cov` does not report
+    it uncovered.
+    """
+
+    @pytest.mark.asyncio
+    async def test_sync_call_inside_a_running_loop_uses_thread_pool(
+        self,
+    ) -> None:
+        # ``asyncio.get_running_loop().is_running()`` returns True here
+        # because pytest-asyncio has already started a loop for us, so
+        # ``_SyncRunner.run`` takes the ``_run_in_thread`` branch. The
+        # test proves the whole path (spawn thread, asyncio.run in it,
+        # get the result back) still returns the coroutine's value.
+        sync = VoxClientSync(port=8421, token="tok")
+        mock_client = AsyncMock(spec=VoxClient)
+        expected = MagicMock(name="ProgramStatus")
+        mock_client.program_status.return_value = expected
+        with patch.object(VoxClientSync, "_make_client", return_value=mock_client):
+            result = sync.program_status()
+        assert result is expected
+        mock_client.program_status.assert_awaited_once_with()
 
 
 # ---------------------------------------------------------------------------
