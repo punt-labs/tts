@@ -574,6 +574,38 @@ class TestAudioContext:
 
         assert calls == [1]
 
+    def test_launchctl_failed_probe_is_not_cached(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A failed probe must not poison the cache -- retry on the next call.
+
+        Caching ``"unknown"`` would conflate "I asked and the manager is X" with
+        "I could not ask" -- one transient launchctl hiccup would permanently
+        blind the diagnostic for the daemon's lifetime, the same
+        signal-that-stops-reporting failure mode this diagnostic exists to
+        catch.  A subsequent probe that succeeds must supersede the failure.
+        """
+        from punt_vox.voxd.playback import AudioContext
+
+        monkeypatch.setattr(AudioContext, "_MGR_CACHE", None)
+        results = iter(["unknown", "Aqua"])
+
+        def _fake_probe() -> str:
+            return next(results)
+
+        monkeypatch.setattr(
+            AudioContext, "_probe_launchctl_manager", staticmethod(_fake_probe)
+        )
+
+        # First call: probe returns "unknown" (transient failure).
+        assert AudioContext()._launchctl_manager() == "unknown"
+        # Second call: probe MUST re-run and return the healthy value; a cache
+        # that pinned "unknown" would return "unknown" here.
+        assert AudioContext()._launchctl_manager() == "Aqua"
+        # Third call: the successful result IS cached, so the probe is not
+        # rerun a third time (results iterator would raise StopIteration).
+        assert AudioContext()._launchctl_manager() == "Aqua"
+
     def test_launchctl_probe_returns_unknown_on_missing_binary(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

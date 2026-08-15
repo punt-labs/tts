@@ -217,12 +217,20 @@ class AudioContext:
         }
 
     def _launchctl_manager(self) -> str:
-        """Return ``launchctl managername`` output, cached for the process."""
+        """Return ``launchctl managername`` output, cached for the process.
+
+        Cache only on success.  ``"unknown"`` is the absence of an answer, not
+        an answer -- caching it would turn one transient launchctl hiccup into
+        permanent silence, the same "signal that stops reporting" failure mode
+        this diagnostic exists to explain.  A failed probe retries on the next
+        playback failure at a cost of at most one extra 2s probe.
+        """
         cached = type(self)._MGR_CACHE
         if cached is not None:
             return cached
         name = self._probe_launchctl_manager()
-        type(self)._MGR_CACHE = name
+        if name != "unknown":
+            type(self)._MGR_CACHE = name
         return name
 
     @staticmethod
