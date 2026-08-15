@@ -60,8 +60,12 @@ class LaunchdBackend:
         return extras
 
     def _program_args_xml(self) -> str:
-        """Return the ``<string>...</string>`` block for ProgramArguments."""
-        # html.escape encodes each arg XML-safely; shlex.quote adds shell quotes.
+        """Return the ``<string>...</string>`` block for ProgramArguments.
+
+        ``html.escape`` XML-escapes each arg -- launchd reads the ``<string>``
+        content literally, so ``&``, ``<``, ``>`` and quotes in a path or
+        argument have to be entity-encoded, not shell-quoted.
+        """
         return "\n".join(
             f"        <string>{html.escape(a)}</string>"
             for a in self._voxd_exec_args_fn()

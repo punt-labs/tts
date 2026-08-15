@@ -26,9 +26,13 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-# Linux audio backends (PulseAudio, PipeWire, dbus) depend on these vars to
-# reach the user socket; missing values are exactly the failure mode logged
-# in v4.0.3, so the Linux branch of the audio context still captures them.
+# Diagnostic env vars captured in the Linux audio context.  The first five --
+# XDG_RUNTIME_DIR, PULSE_SERVER, DBUS_SESSION_BUS_ADDRESS, DISPLAY, WAYLAND_DISPLAY --
+# are audio-backend vars ffplay needs to reach PulseAudio/PipeWire and dbus;
+# missing values are the v4.0.3 failure mode.  HOME and USER identify which
+# user's session the process is running in -- the question that CoreAudio
+# session membership turned out to hinge on for the macOS side of this
+# diagnostic, and equally worth capturing here.
 _LINUX_AUDIO_ENV_KEYS: tuple[str, ...] = (
     "XDG_RUNTIME_DIR",
     "PULSE_SERVER",
@@ -242,8 +246,12 @@ class AudioContext:
         still shows the other session facts.
         """
         try:
+            # Absolute path so a launchd-inherited PATH cannot substitute a
+            # different binary for ``launchctl`` -- macOS ships it at a stable
+            # location, and voxd runs long-lived from launchd where the PATH is
+            # not the interactive shell PATH.
             result = subprocess.run(
-                ["launchctl", "managername"],  # noqa: S607
+                ["/bin/launchctl", "managername"],
                 capture_output=True,
                 text=True,
                 timeout=AudioContext._MGR_TIMEOUT_S,
