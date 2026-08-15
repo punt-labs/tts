@@ -14,6 +14,7 @@ from punt_vox.client_sync import VoxClientSync
 from punt_vox.doctor import DoctorCheck
 from punt_vox.doctor_result import CheckResult, CheckResults
 from punt_vox.types_health import HealthStatus
+from punt_vox.types_provider import ProviderReadiness, ProviderStatusPayload
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -239,6 +240,87 @@ class TestCheckDaemonHealth:
         assert len(results) == 1
         assert results[0].passed is False
         assert "unhealthy" in results[0].message
+
+
+# ---------------------------------------------------------------------------
+# check_provider_readiness
+# ---------------------------------------------------------------------------
+
+
+class TestCheckProviderReadiness:
+    """The pointer target of every F2 error message; the daemon answers here.
+
+    ``vox doctor`` must not read the caller's environment (design D1
+    correction, §3.5); every case exercises the daemon-authoritative
+    payload rather than a local probe.
+    """
+
+    def _payload(
+        self,
+        rows: tuple[ProviderReadiness, ...],
+        preferred: str | None,
+    ) -> ProviderStatusPayload:
+        return ProviderStatusPayload(rows, preferred=preferred)
+
+    def test_ready_provider_is_a_pass(self) -> None:
+        mock_client = MagicMock(spec=VoxClientSync)
+        mock_client.provider_status.return_value = self._payload(
+            (ProviderReadiness(name="openai", ready=True, reason="ok", detail=""),),
+            preferred="openai",
+        )
+        results = DoctorCheck(client=mock_client).check_provider_readiness()
+        # Head line names the preferred provider; per-provider walk follows.
+        assert "preferred → openai" in results[0].message
+        assert results[0].passed is True
+        assert any("openai: ready" in r.message for r in results[1:])
+
+    def test_unready_provider_is_a_warn_not_a_fail(self) -> None:
+        # A single-provider host is a normal configuration -- only the
+        # state-declared provider being unavailable is a hard failure,
+        # and that surfaces at synthesize time.
+        mock_client = MagicMock(spec=VoxClientSync)
+        mock_client.provider_status.return_value = self._payload(
+            (
+                ProviderReadiness(
+                    name="polly",
+                    ready=False,
+                    reason="no_credentials",
+                    detail="voxd has no AWS credentials",
+                ),
+            ),
+            preferred=None,
+        )
+        results = DoctorCheck(client=mock_client).check_provider_readiness()
+        polly_line = next(r for r in results if "polly" in r.message)
+        assert polly_line.required is False
+        assert polly_line.status_kind == "skip"
+        assert "voxd has no AWS credentials" in polly_line.message
+
+    def test_no_preferred_is_a_hard_fail(self) -> None:
+        mock_client = MagicMock(spec=VoxClientSync)
+        mock_client.provider_status.return_value = self._payload((), preferred=None)
+        results = DoctorCheck(client=mock_client).check_provider_readiness()
+        assert results[0].passed is False
+        assert "no provider is usable" in results[0].message
+
+    def test_daemon_down_reports_optional(self) -> None:
+        # ``check_daemon_health`` already reports the down state as a hard
+        # fail; this section reports informationally so the reader knows
+        # why the walk was skipped.
+        mock_client = MagicMock(spec=VoxClientSync)
+        mock_client.provider_status.side_effect = VoxdConnectionError("refused")
+        results = DoctorCheck(client=mock_client).check_provider_readiness()
+        assert len(results) == 1
+        assert results[0].required is False
+        assert results[0].symbol == "○"
+
+    def test_protocol_error_is_a_warn(self) -> None:
+        mock_client = MagicMock(spec=VoxClientSync)
+        mock_client.provider_status.side_effect = VoxdProtocolError("bad frame")
+        results = DoctorCheck(client=mock_client).check_provider_readiness()
+        assert len(results) == 1
+        assert results[0].symbol == "⚠"
+        assert "unavailable" in results[0].message
 
 
 # ---------------------------------------------------------------------------
