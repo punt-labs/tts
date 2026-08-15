@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -452,6 +453,157 @@ class TestPlayerCommandVolume:
             "80",
             "/tmp/clip.mp3",
         ]
+
+
+class TestAudioContext:
+    """The per-playback diagnostic snapshot must record facts that DIAGNOSE.
+
+    The old snapshot logged five Linux audio-socket env vars on every
+    playback -- on macOS all five were ``<unset>`` and told the operator
+    nothing about the actual failure (72 playbacks in one session recorded
+    the useless dict).  The macOS snapshot now records launchd manager
+    name, ppid, and sid, which reveal whether the process is in the Aqua
+    session where CoreAudio access is granted.
+    """
+
+    def test_macos_snapshot_records_session_facts(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from punt_vox.voxd.playback import AudioContext
+
+        monkeypatch.setattr("punt_vox.voxd.playback._is_darwin", lambda: True)
+        # Reset the per-process manager cache so a stubbed managername runs.
+        monkeypatch.setattr(AudioContext, "_MGR_CACHE", None)
+        monkeypatch.setattr(
+            AudioContext,
+            "_probe_launchctl_manager",
+            staticmethod(lambda: "Aqua"),
+        )
+        snap = AudioContext().snapshot()
+
+        assert snap == {
+            "mgr": "Aqua",
+            "ppid": str(os.getppid()),
+            "sid": str(os.getsid(0)),
+        }
+
+    def test_macos_snapshot_records_unhealthy_manager(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A Background/System manager is the operator-visible failure signal."""
+        from punt_vox.voxd.playback import AudioContext
+
+        monkeypatch.setattr("punt_vox.voxd.playback._is_darwin", lambda: True)
+        monkeypatch.setattr(AudioContext, "_MGR_CACHE", None)
+        monkeypatch.setattr(
+            AudioContext,
+            "_probe_launchctl_manager",
+            staticmethod(lambda: "Background"),
+        )
+        snap = AudioContext().snapshot()
+
+        assert snap["mgr"] == "Background"
+
+    def test_macos_snapshot_omits_useless_linux_env_keys(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The macOS branch must NOT include the Linux audio-backend keys.
+
+        Recording XDG_RUNTIME_DIR/PULSE_SERVER/DBUS_SESSION_BUS_ADDRESS on
+        macOS produced 72 useless log lines before this bead -- the whole
+        point of the replacement is that those keys are gone.
+        """
+        from punt_vox.voxd.playback import AudioContext
+
+        monkeypatch.setattr("punt_vox.voxd.playback._is_darwin", lambda: True)
+        monkeypatch.setattr(AudioContext, "_MGR_CACHE", None)
+        monkeypatch.setattr(
+            AudioContext,
+            "_probe_launchctl_manager",
+            staticmethod(lambda: "Aqua"),
+        )
+        snap = AudioContext().snapshot()
+
+        for linux_only in (
+            "XDG_RUNTIME_DIR",
+            "PULSE_SERVER",
+            "DBUS_SESSION_BUS_ADDRESS",
+            "DISPLAY",
+            "WAYLAND_DISPLAY",
+        ):
+            assert linux_only not in snap
+
+    def test_linux_snapshot_still_captures_audio_env(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Linux keeps the audio-socket env vars ffplay needs."""
+        from punt_vox.voxd.playback import AudioContext
+
+        monkeypatch.setattr("punt_vox.voxd.playback._is_darwin", lambda: False)
+        monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+        monkeypatch.setenv("PULSE_SERVER", "unix:/run/user/1000/pulse/native")
+        monkeypatch.delenv("DBUS_SESSION_BUS_ADDRESS", raising=False)
+        snap = AudioContext().snapshot()
+
+        assert snap["XDG_RUNTIME_DIR"] == "/run/user/1000"
+        assert snap["PULSE_SERVER"] == "unix:/run/user/1000/pulse/native"
+        assert snap["DBUS_SESSION_BUS_ADDRESS"] == "<unset>"
+        # And the macOS-only keys must not leak into the Linux snapshot.
+        assert "mgr" not in snap
+        assert "ppid" not in snap
+
+    def test_launchctl_probe_caches_result_across_calls(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The manager cannot change without re-bootstrap; probe once, cache."""
+        from punt_vox.voxd.playback import AudioContext
+
+        monkeypatch.setattr(AudioContext, "_MGR_CACHE", None)
+        calls: list[int] = []
+
+        def _fake_probe() -> str:
+            calls.append(1)
+            return "Aqua"
+
+        monkeypatch.setattr(
+            AudioContext, "_probe_launchctl_manager", staticmethod(_fake_probe)
+        )
+        AudioContext()._launchctl_manager()
+        AudioContext()._launchctl_manager()
+        AudioContext()._launchctl_manager()
+
+        assert calls == [1]
+
+    def test_launchctl_probe_returns_unknown_on_missing_binary(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A missing launchctl must never raise from the diagnostic path."""
+        import subprocess
+
+        from punt_vox.voxd.playback import AudioContext
+
+        def _raise_oserror(*_args: object, **_kwargs: object) -> object:
+            raise FileNotFoundError("no launchctl")
+
+        monkeypatch.setattr(subprocess, "run", _raise_oserror)
+        assert AudioContext._probe_launchctl_manager() == "unknown"
+
+    def test_launchctl_probe_returns_unknown_on_empty_output(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An empty stdout stripped to nothing surfaces as ``unknown``."""
+        import subprocess
+
+        from punt_vox.voxd.playback import AudioContext
+
+        class _Result:
+            stdout = "\n"
+
+        def _fake_run(*_a: object, **_kw: object) -> _Result:
+            return _Result()
+
+        monkeypatch.setattr(subprocess, "run", _fake_run)
+        assert AudioContext._probe_launchctl_manager() == "unknown"
 
 
 class TestStderrTruncation:
