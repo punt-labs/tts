@@ -10,15 +10,28 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING, final
 
 import pytest
 
+from punt_vox.audible_notify import AudibleNotify
 from punt_vox.claude_md import ClaudeMdImport
+from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import ConfigStore
-from punt_vox.enablement import RepoEnablement
+from punt_vox.deposited_files import DepositedGuide, VoxMarker
+from punt_vox.enablement import (
+    ProviderProposal,
+    RepoEnablement,
+)
 from punt_vox.hook_payload import StopPayload
 from punt_vox.hooks import handle_stop
 from punt_vox.settings_registration import SettingsRegistration
+from punt_vox.types_provider import ProviderReadiness, ProviderStatusPayload
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from punt_vox.client_sync import VoxClientSync
 
 _IMPORT = "@.punt-labs/vox/CLAUDE.md"
 
@@ -339,6 +352,178 @@ def test_enable_refuses_symlink_at_guide_path_leaving_target_intact(
 
 def test_root_property_reports_the_repo_root(tmp_path: Path) -> None:
     assert RepoEnablement.for_repo(tmp_path).root == tmp_path
+
+
+# ---------------------------------------------------------------------------
+# Enable -> daemon-proposed provider (design §3.8, D1 as amended)
+# ---------------------------------------------------------------------------
+
+
+@final
+class _FakeClient:
+    """A :class:`VoxClientSync` stand-in with a canned provider_status reply."""
+
+    def __init__(self, payload: ProviderStatusPayload | None = None) -> None:
+        # A public attribute is fine on a test double, but the state is
+        # tracked through the property below so a caller reads through
+        # the same seam it would on the real client.
+        self._payload = payload
+
+    def provider_status(self, provider: str | None = None) -> ProviderStatusPayload:
+        _ = provider
+        if self._payload is None:
+            msg = "test setup: no payload"
+            raise VoxdConnectionError(msg)
+        return self._payload
+
+
+@final
+class _ConnectionErrorClient:
+    """A :class:`VoxClientSync` stand-in that always fails with the daemon down."""
+
+    def provider_status(self, provider: str | None = None) -> ProviderStatusPayload:
+        _ = provider
+        msg = "connection refused"
+        raise VoxdConnectionError(msg)
+
+
+def _fake_factory(
+    client: _FakeClient | _ConnectionErrorClient,
+) -> Callable[[], VoxClientSync]:
+    """Return a callable that produces *client*, typed as :class:`VoxClientSync`.
+
+    :class:`ProviderProposal` calls its ``client_factory`` and drives
+    the returned object through the ``provider_status`` method the
+    test doubles here implement.  The cast bridges the double to the
+    formal type without an implementation subclass -- structural
+    substitution at the seam, no ``Any`` at either side.
+    """
+    # Local import so the test module keeps the runtime import graph
+    # to the shapes it actually calls (the real class), while the
+    # helper's factory returns the same class the seam expects.
+    from typing import cast
+
+    from punt_vox.client_sync import VoxClientSync as RealClient
+
+    def factory() -> VoxClientSync:
+        return cast("RealClient", client)
+
+    return factory
+
+
+def _wire_enablement(
+    tmp_path: Path,
+    client: _FakeClient | _ConnectionErrorClient,
+) -> RepoEnablement:
+    """Build a :class:`RepoEnablement` bound to *tmp_path* with a fake daemon.
+
+    Wires the six collaborators the way ``for_repo`` would but with the
+    proposal collaborator pointed at the test double, so the enable
+    flow exercises the real file operations against ``tmp_path`` and
+    the fake WebSocket boundary at once.
+    """
+    vox_dir = tmp_path / ".punt-labs" / "vox"
+    proposal = ProviderProposal(
+        ConfigStore(vox_dir), client_factory=_fake_factory(client)
+    )
+    return RepoEnablement(
+        import_writer=ClaudeMdImport(tmp_path / "CLAUDE.md", _IMPORT),
+        marker=VoxMarker(vox_dir / "enabled", tmp_path),
+        guide=DepositedGuide(vox_dir / "CLAUDE.md", tmp_path),
+        settings=SettingsRegistration(tmp_path / ".claude" / "settings.json"),
+        audible=AudibleNotify(vox_dir),
+        proposal=proposal,
+    )
+
+
+def _repo_with_daemon(tmp_path: Path, payload: ProviderStatusPayload) -> RepoEnablement:
+    """Build a :class:`RepoEnablement` whose proposal uses a canned reply."""
+    return _wire_enablement(tmp_path, _FakeClient(payload))
+
+
+def test_enable_writes_the_daemon_s_preferred_provider(tmp_path: Path) -> None:
+    """After enable, ``vox.md`` names the provider the daemon proposed."""
+    payload = ProviderStatusPayload(
+        (ProviderReadiness(name="elevenlabs", ready=True, reason="ok", detail=""),),
+        preferred="elevenlabs",
+    )
+    outcome = _repo_with_daemon(tmp_path, payload).enable()
+    assert outcome.reason == "written"
+    assert outcome.provider_written == "elevenlabs"
+    assert _config_store(tmp_path).read().provider == "elevenlabs"
+
+
+def test_enable_does_not_read_its_own_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The client process's env must not influence enable's proposal.
+
+    D1's whole amendment: doctor used to read the caller environment
+    when the daemon's is the one that matters, and the first draft of
+    enable repeated the mistake.  Here the client process exports
+    ``ELEVENLABS_API_KEY`` and ``TTS_PROVIDER=openai`` while the fake
+    daemon proposes ``polly`` -- enable must write ``polly``, never
+    the ``elevenlabs``/``openai`` a local probe would pick.
+    """
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-client-side")
+    monkeypatch.setenv("TTS_PROVIDER", "openai")
+    payload = ProviderStatusPayload(
+        (ProviderReadiness(name="polly", ready=True, reason="ok", detail=""),),
+        preferred="polly",
+    )
+    outcome = _repo_with_daemon(tmp_path, payload).enable()
+    assert outcome.provider_written == "polly"
+    assert _config_store(tmp_path).read().provider == "polly"
+
+
+def test_enable_writes_nothing_when_voxd_is_unreachable(tmp_path: Path) -> None:
+    """Marker, guide, settings still land; no provider is written; reply names it."""
+    enablement = _wire_enablement(tmp_path, _ConnectionErrorClient())
+    outcome = enablement.enable()
+    assert outcome.reason == "voxd_unavailable"
+    assert outcome.provider_written is None
+    assert "voxd is not reachable" in outcome.detail
+    # The rest of enable STILL lands -- the marker, the guide, the settings.
+    assert _marker_present(tmp_path)
+    assert (tmp_path / ".punt-labs" / "vox" / "CLAUDE.md").is_file()
+    assert _config_store(tmp_path).read().provider is None
+
+
+def test_enable_writes_nothing_when_no_provider_is_ready(tmp_path: Path) -> None:
+    """``preferred is None`` from the daemon reports; it does not silently write."""
+    payload = ProviderStatusPayload(providers=(), preferred=None)
+    outcome = _repo_with_daemon(tmp_path, payload).enable()
+    assert outcome.reason == "no_ready_provider"
+    assert outcome.provider_written is None
+    assert _config_store(tmp_path).read().provider is None
+
+
+def test_enable_does_not_overwrite_a_declared_provider(tmp_path: Path) -> None:
+    """A repo whose ``vox.md`` already declares a provider is left alone.
+
+    Enable's proposal is one-shot: a human's declared choice (or a
+    previous enable's write) is preserved.  Re-running enable takes the
+    ``already_set`` branch, so an upgrade path does not thrash the
+    committed value.
+    """
+    # First enable writes elevenlabs.
+    payload = ProviderStatusPayload(
+        (ProviderReadiness(name="elevenlabs", ready=True, reason="ok", detail=""),),
+        preferred="elevenlabs",
+    )
+    _repo_with_daemon(tmp_path, payload).enable()
+    assert _config_store(tmp_path).read().provider == "elevenlabs"
+
+    # Second enable -- daemon would propose polly, but the file already says
+    # elevenlabs.  Verify we take the ``already_set`` branch.
+    second_payload = ProviderStatusPayload(
+        (ProviderReadiness(name="polly", ready=True, reason="ok", detail=""),),
+        preferred="polly",
+    )
+    outcome = _repo_with_daemon(tmp_path, second_payload).enable()
+    assert outcome.reason == "already_set"
+    assert outcome.provider_written is None
+    assert _config_store(tmp_path).read().provider == "elevenlabs"
 
 
 def test_marker_content_is_deterministic(tmp_path: Path) -> None:
