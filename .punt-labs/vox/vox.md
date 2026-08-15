@@ -1,7 +1,5 @@
 ---
 notify: "y"
-speak: "y"
-voice: "roger"
-provider: "elevenlabs"
-model: ""
+speak: "n"
+voice: "benno"
 ---
