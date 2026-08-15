@@ -258,7 +258,6 @@ class DoctorCheck:
             results.append(_fail(f"Daemon: reachable but unhealthy — {exc}"))
             return results
 
-        provider_name = health.provider
         port = health.port
         running_version = health.daemon_version
         wheel_version = installed_version()
@@ -272,13 +271,11 @@ class DoctorCheck:
                 )
             )
         else:
+            # Provider readiness lives on the ``provider_status`` op (design
+            # §3.6, delivered by PR 3); the daemon has no provider of its
+            # own, so the health line reports the version-and-port fact only.
             version_note = f", version {running_version}" if running_version else ""
-            results.append(
-                _pass(
-                    f"Daemon: running on port {port}"
-                    f" (provider: {provider_name}{version_note})"
-                )
-            )
+            results.append(_pass(f"Daemon: running on port {port}{version_note}"))
         return results
 
     def check_env_overrides(self) -> list[CheckResult]:

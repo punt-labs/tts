@@ -199,18 +199,21 @@ class TestCheckDaemonHealth:
     def test_daemon_running_version_match(self) -> None:
         mock_client = MagicMock(spec=VoxClientSync)
         mock_client.health.return_value = HealthStatus(
-            provider="elevenlabs", port=8421, daemon_version="5.0.0"
+            port=8421, daemon_version="5.0.0"
         )
         with patch("punt_vox.doctor.installed_version", return_value="5.0.0"):
             results = DoctorCheck(client=mock_client).check_daemon_health()
         assert len(results) == 1
         assert results[0].passed is True
         assert "8421" in results[0].message
+        # ``provider`` is deliberately absent from the health line (design
+        # §3.6 / D4); per-provider readiness moves to PR 3's status block.
+        assert "provider:" not in results[0].message
 
     def test_daemon_running_version_mismatch(self) -> None:
         mock_client = MagicMock(spec=VoxClientSync)
         mock_client.health.return_value = HealthStatus(
-            provider="elevenlabs", port=8421, daemon_version="4.8.0"
+            port=8421, daemon_version="4.8.0"
         )
         with patch("punt_vox.doctor.installed_version", return_value="5.0.0"):
             results = DoctorCheck(client=mock_client).check_daemon_health()

@@ -261,6 +261,45 @@ class TestOpenAIProviderSynthesize:
         # Should have been called multiple times (chunked).
         assert mock_openai_client.audio.speech.create.call_count > 1
 
+    def test_synthesize_translates_auth_error_to_provider_auth_error(
+        self,
+        mock_openai_client: MagicMock,
+        tmp_output_dir: Path,
+    ) -> None:
+        """A revoked or wrong-project key at synthesis time crosses as F3.
+
+        The readiness gate catches the credential-absent case at F2 with
+        the message the caller can act on; this test pins the F3 case --
+        credentials WERE present but the SDK rejected them at the
+        ``audio.speech.create`` call. Without this translation the
+        exception would fall through to ``speech_handlers``' broad
+        ``except Exception`` and get laundered to ``"operation failed"``,
+        which is the exact defect vox-w3f8 exists to close.
+        """
+        import openai
+
+        from punt_vox.types_provider_errors import ProviderAuthError
+
+        mock_openai_client.audio.speech.create.side_effect = openai.AuthenticationError(
+            message="invalid api key",
+            response=MagicMock(status_code=401),
+            body=None,
+        )
+
+        provider = OpenAIProvider(client=mock_openai_client)
+        request = SynthesisRequest(text="hello", voice="alloy")
+        with pytest.raises(ProviderAuthError) as exc_info:
+            provider.synthesize(request, tmp_output_dir / "auth.mp3")
+
+        # Full-message assertion, not a substring: BaseException clobbers
+        # args set in __new__, so a substring would silently pass against
+        # a tuple repr if __str__ ever regressed.
+        assert str(exc_info.value) == (
+            "provider 'openai' rejected the credentials (HTTP 401); run `vox doctor`"
+        )
+        assert exc_info.value.provider_name == "openai"
+        assert exc_info.value.status_code == 401
+
 
 class TestOpenAIProviderDefaultModel:
     def test_default_model(self) -> None:
@@ -273,12 +312,19 @@ class TestOpenAIProviderDefaultModel:
         assert provider._model == "tts-1-hd"  # pyright: ignore[reportPrivateUsage]
 
     @patch.dict("os.environ", {"TTS_MODEL": "tts-1-hd"})
-    def test_model_from_env(self) -> None:
+    def test_env_var_does_not_override_default(self) -> None:
+        """State (or an explicit kwarg) is authoritative -- not the env.
+
+        The ``TTS_MODEL`` env probe was the same substitution defect the
+        provider gate closes, one field over (design §3.9). With no
+        explicit ``model=`` and the env var set to a different value, the
+        constructor still picks the provider's own ``_DEFAULT_MODEL``.
+        """
         provider = OpenAIProvider(client=MagicMock())
-        assert provider._model == "tts-1-hd"  # pyright: ignore[reportPrivateUsage]
+        assert provider._model == "tts-1"  # pyright: ignore[reportPrivateUsage]
 
     @patch.dict("os.environ", {"TTS_MODEL": "tts-1-hd"})
-    def test_explicit_overrides_env(self) -> None:
+    def test_explicit_wins_over_env(self) -> None:
         provider = OpenAIProvider(model="tts-1", client=MagicMock())
         assert provider._model == "tts-1"  # pyright: ignore[reportPrivateUsage]
 

@@ -164,6 +164,67 @@ class TestElevenLabsProviderSynthesize:
         assert out.exists()
         assert mock_elevenlabs_client.text_to_speech.stream.call_count > 1
 
+    def test_synthesize_translates_401_to_provider_auth_error(
+        self,
+        mock_elevenlabs_client: MagicMock,
+        tmp_output_dir: Path,
+    ) -> None:
+        """A 401 from ElevenLabs at synthesis time crosses as F3.
+
+        Distinct from F2 (readiness gate catches an absent key): here
+        the key was PRESENT but rejected. Without this translation the
+        SDK's ``ApiError`` falls through to speech_handlers' broad
+        ``except Exception`` and gets laundered to ``"operation
+        failed"`` -- the exact defect vox-w3f8 exists to close.
+        """
+        from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
+
+        from punt_vox.types_provider_errors import ProviderAuthError
+
+        mock_elevenlabs_client.text_to_speech.stream.side_effect = ApiError(
+            status_code=401,
+            body={"detail": {"message": "invalid api key"}},
+        )
+        provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+        request = SynthesisRequest(text="hello", voice="matilda", rate=100)
+        with pytest.raises(ProviderAuthError) as exc_info:
+            provider.synthesize(request, tmp_output_dir / "auth.mp3")
+
+        assert str(exc_info.value) == (
+            "provider 'elevenlabs' rejected the credentials (HTTP 401); "
+            "run `vox doctor`"
+        )
+        assert exc_info.value.provider_name == "elevenlabs"
+        assert exc_info.value.status_code == 401
+
+    def test_synthesize_non_401_api_error_re_raises_unchanged(
+        self,
+        mock_elevenlabs_client: MagicMock,
+        tmp_output_dir: Path,
+    ) -> None:
+        """A rate-limit or upstream 500 is NOT an auth problem; re-raise.
+
+        The translation is 401-only. A 429/500/400 is a genuine SDK or
+        upstream fault and belongs on the fault() path (rendered as
+        ``"operation failed"`` to the client with the detail in the
+        log) -- not on the reject() path with a caller-facing message.
+        Widening the translation would misclassify vendor errors as
+        credential problems, which sends the operator setting keys
+        they already had (the same mistake AwsRequirement's swallowed
+        exception used to make).
+        """
+        from elevenlabs.core import ApiError  # pyright: ignore[reportMissingTypeStubs]
+
+        mock_elevenlabs_client.text_to_speech.stream.side_effect = ApiError(
+            status_code=429,
+            body={"detail": {"message": "rate limited"}},
+        )
+        provider = ElevenLabsProvider(client=mock_elevenlabs_client)
+        request = SynthesisRequest(text="hello", voice="matilda", rate=100)
+        with pytest.raises(ApiError) as exc_info:
+            provider.synthesize(request, tmp_output_dir / "rate.mp3")
+        assert exc_info.value.status_code == 429
+
 
 class TestElevenLabsProviderCheckHealth:
     @patch.dict("os.environ", {"ELEVENLABS_API_KEY": "test-key"})
@@ -245,12 +306,19 @@ class TestElevenLabsProviderDefaultModel:
         assert provider._model == "eleven_turbo_v2_5"  # pyright: ignore[reportPrivateUsage]
 
     @patch.dict("os.environ", {"TTS_MODEL": "eleven_turbo_v2"})
-    def test_model_from_env(self) -> None:
+    def test_env_var_does_not_override_default(self) -> None:
+        """State (or an explicit kwarg) is authoritative -- not the env.
+
+        The ``TTS_MODEL`` env probe was the same substitution defect
+        the provider gate closes, one field over (design §3.9). With
+        no explicit ``model=`` and the env var set to a different
+        value, the constructor still picks ``_DEFAULT_MODEL``.
+        """
         provider = ElevenLabsProvider(client=MagicMock())
-        assert provider._model == "eleven_turbo_v2"  # pyright: ignore[reportPrivateUsage]
+        assert provider._model == "eleven_v3"  # pyright: ignore[reportPrivateUsage]
 
     @patch.dict("os.environ", {"TTS_MODEL": "eleven_turbo_v2"})
-    def test_explicit_overrides_env(self) -> None:
+    def test_explicit_wins_over_env(self) -> None:
         provider = ElevenLabsProvider(model="eleven_v3", client=MagicMock())
         assert provider._model == "eleven_v3"  # pyright: ignore[reportPrivateUsage]
 
@@ -287,16 +355,19 @@ class TestElevenLabsProviderDefaultModel:
         monkeypatch.delenv("TTS_MODEL", raising=False)
         assert ElevenLabsProvider.model_supports_expressive_tags(None) is True
 
-    def test_model_supports_expressive_tags_classmethod_env_override(
+    def test_model_supports_expressive_tags_env_does_not_override(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """``TTS_MODEL`` is not consulted (design §3.9): with the env set
+        to a non-expressive model and no arg, the classmethod still uses
+        the provider default (``eleven_v3``), which IS expressive."""
         monkeypatch.setenv("TTS_MODEL", "eleven_flash_v2_5")
-        assert ElevenLabsProvider.model_supports_expressive_tags(None) is False
+        assert ElevenLabsProvider.model_supports_expressive_tags(None) is True
 
-    def test_model_supports_expressive_tags_classmethod_explicit_beats_env(
+    def test_model_supports_expressive_tags_explicit_beats_absent_env(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setenv("TTS_MODEL", "eleven_flash_v2_5")
+        monkeypatch.delenv("TTS_MODEL", raising=False)
         assert ElevenLabsProvider.model_supports_expressive_tags("eleven_v3") is True
 
 

@@ -671,17 +671,18 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
     cfg = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
 
-    # Try to get provider from voxd health
-    daemon_provider: str | None = None
+    # Ping voxd for liveness only; the provider comes from state, not
+    # from the daemon (design §3.6 -- the daemon owns no provider of its
+    # own, and the health probe used to invent one, which was the
+    # substitution defect this bead closes).
     daemon_status = "not running"
     try:
-        health = VoxClientSync().health()
-        daemon_provider = health.provider
+        VoxClientSync().health()
         daemon_status = "running"
     except (VoxdConnectionError, VoxdProtocolError):
         pass
 
-    provider_name = daemon_provider or "unknown"
+    provider_name = cfg.provider or "unknown"
     display_name = _PROVIDER_DISPLAY.get(provider_name, provider_name)
     desktop_reg = _desktop_registration()
 
