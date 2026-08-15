@@ -42,13 +42,13 @@ import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Literal, Self, final
 
 from punt_vox.audible_notify import AudibleNotify
 from punt_vox.claude_md import ClaudeMdImport
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.config import ConfigStore
+from punt_vox.config import DURABLE_FILENAME, ConfigStore
 from punt_vox.deposited_files import DepositedGuide, VoxMarker
 from punt_vox.dirs import find_repo_root
 from punt_vox.settings_registration import SettingsRegistration
@@ -58,21 +58,72 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["EnableOutcome", "ProviderProposal", "RepoEnablement"]
+__all__ = [
+    "ENABLE_OUTCOME_REASONS",
+    "EnableOutcome",
+    "EnableOutcomeReason",
+    "ProviderProposal",
+    "RepoEnablement",
+]
 
 # The exact canonical repo-scope import line (§ 2.4). Byte-identical across all
 # tools and both surfaces; what ``enable`` writes and ``disable`` prunes.
 _IMPORT_LINE = "@.punt-labs/vox/CLAUDE.md"
 
 # The transport-side faults ``ProviderProposal`` treats as "voxd not reachable".
-# Mirrors the tuple ``server.py`` uses for the same reason -- one contract, so
-# a network glitch never surfaces at one surface and not another.  ``OSError``
-# is included so a socket-level failure (address in use, no route to host)
-# folds into the same reply rather than escaping the tool boundary.
+# Deliberately narrower than the tuple ``server.py`` uses: this catch sits ABOVE
+# :class:`~punt_vox.client_sync.VoxClientSync`, which already wraps a
+# ``websockets.exceptions.WebSocketException`` into
+# :class:`~punt_vox.client_errors.VoxdConnectionError` before it reaches here, so
+# adding ``WebSocketException`` to this tuple would catch nothing new -- the
+# client boundary has already normalised it.  ``server.py`` sits BELOW that
+# boundary (some server paths open the socket directly) and therefore still has
+# to name it.  ``OSError`` is included on both sides so a socket-level failure
+# (address in use, no route to host) folds into the same reply rather than
+# escaping the tool boundary.
 _DAEMON_ERRORS: tuple[type[BaseException], ...] = (
     VoxdConnectionError,
     VoxdProtocolError,
     OSError,
+)
+
+
+# The closed set of reasons ``EnableOutcome`` can carry, and where each
+# value is produced.  Same enumeration discipline as
+# :data:`~punt_vox.types_provider.ProviderStatusReason`: prose next to a
+# Literal rots the first time a new producer is added under review
+# pressure, so the runtime frozenset below is the load-bearing check and
+# :meth:`EnableOutcome.__post_init__` refuses a value not in either.  A
+# new reason -- or a new producer of an existing reason -- must land at
+# the same time in the Literal, the frozenset, the site that produces
+# it, and every consumer that branches on it (currently
+# :meth:`ProviderProposal.propose_and_write` is the only in-tree
+# brancher, on ``reason != "written"``).
+#     written           ProviderProposal.propose_and_write on a successful
+#                       daemon proposal + vox.md write
+#     already_set       ProviderProposal.propose_and_write when vox.md
+#                       already declares a provider (never overrule a
+#                       human's choice)
+#     voxd_unavailable  ProviderProposal._ask_daemon on _DAEMON_ERRORS
+#                       (the provider_status op could not be reached)
+#     no_ready_provider ProviderProposal._ask_daemon when the daemon
+#                       replied but ``preferred is None``
+#     write_failed      ProviderProposal.propose_and_write on OSError
+#                       writing the proposed provider into vox.md; the
+#                       daemon answered correctly, the local disk write
+#                       is what failed (permission denied, ENOSPC, ...)
+type EnableOutcomeReason = Literal[
+    "written",
+    "already_set",
+    "voxd_unavailable",
+    "no_ready_provider",
+    "write_failed",
+]
+
+# Runtime mirror of the Literal above; the guard on
+# :meth:`EnableOutcome.__post_init__` refuses a mismatch.
+ENABLE_OUTCOME_REASONS: frozenset[str] = frozenset(
+    {"written", "already_set", "voxd_unavailable", "no_ready_provider", "write_failed"}
 )
 
 
@@ -86,19 +137,34 @@ class EnableOutcome:
     marker land regardless -- and reports only what happened at the
     daemon-proposal step.
 
-    ``reason`` is a closed set (see the docstring alternatives on the
-    ``Literal`` cousin :data:`~punt_vox.types_provider.ProviderStatusReason`
-    for the discipline): ``"written"`` when the daemon proposed a
-    provider and it landed in ``vox.md``; ``"already_set"`` when the
-    file already names a provider (enable never overwrites a human's
-    choice); ``"voxd_unavailable"`` when the ``provider_status`` op
-    could not be reached; ``"no_ready_provider"`` when the daemon
-    answered but every provider on it is unready.
+    ``reason`` is one of :data:`EnableOutcomeReason`; the comment
+    above the Literal names each value's producer.  Do not widen this
+    field to cover two failure classes with one string:
+    ``voxd_unavailable`` means the daemon could not be reached and
+    the fix is to start it, whereas ``write_failed`` means the daemon
+    answered fine but the local ``vox.md`` write failed and the fix
+    is a local one (permissions, disk space).  Conflating them once
+    sent a user to restart a healthy daemon -- the PR 2 misdiagnosis
+    shape.
     """
 
-    reason: str
+    reason: EnableOutcomeReason
     provider_written: str | None
     detail: str
+
+    def __post_init__(self) -> None:
+        """Refuse a ``reason`` not in :data:`ENABLE_OUTCOME_REASONS`.
+
+        A novel string would slip past ``mypy`` (which only knows the
+        Literal) and land at a consumer with no branch for it -- the
+        same shape as the F4 defect this discipline exists to prevent.
+        """
+        if self.reason not in ENABLE_OUTCOME_REASONS:
+            msg = (
+                f"unknown enable outcome reason {self.reason!r}; "
+                f"expected one of {sorted(ENABLE_OUTCOME_REASONS)}"
+            )
+            raise ValueError(msg)
 
 
 @final
@@ -143,12 +209,14 @@ class ProviderProposal:
         raised the failure surface (a daemon glitch would flip
         ``already_set`` to ``voxd_unavailable`` for no gain).
 
-        Every :class:`OSError` at the write path becomes a
-        ``voxd_unavailable`` outcome carrying the OSError text; the
-        distinction between "daemon down" and "disk full" is captured
-        in ``detail`` rather than a fifth reason string, because both
-        end in "no provider was selected" from the caller's point of
-        view.
+        An :class:`OSError` at the local write path becomes a
+        ``write_failed`` outcome, distinct from ``voxd_unavailable``:
+        the daemon answered fine, the failure is on the local disk.
+        The detail carries the target path and the ``OSError`` text so
+        the user can act on it (a bare "could not write" without the
+        path sends them to hunt for the file).  Reporting the two
+        failures under one name once misdirected a user to restart a
+        healthy daemon -- the PR 2 rate-limit-as-auth-failure shape.
         """
         existing = self._existing_provider()
         if existing is not None:
@@ -165,14 +233,18 @@ class ProviderProposal:
             # past the boundary (PY-EH-3, ruff S101).
             return preferred
         provider = preferred.provider_written
+        target = self._store.dir / DURABLE_FILENAME
         try:
             self._store.write_field("provider", provider)
         except OSError as exc:
             logger.exception("enable: failed to write proposed provider")
             return EnableOutcome(
-                reason="voxd_unavailable",
+                reason="write_failed",
                 provider_written=None,
-                detail=f"could not write provider to vox.md: {exc}",
+                detail=(
+                    f"could not write provider={provider!r} to {target}: "
+                    f"{exc.__class__.__name__}: {exc}"
+                ),
             )
         return EnableOutcome(
             reason="written",

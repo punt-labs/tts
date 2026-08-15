@@ -260,7 +260,7 @@
   },
   "src/punt_vox/enablement.py": {
     "efferent_coupling": 8.0,
-    "public_names": 3.0,
+    "public_names": 5.0,
     "circular_imports": 0.0,
     "max_lcom": 0.333,
     "avg_lcom": 0.333

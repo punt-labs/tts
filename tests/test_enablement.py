@@ -20,6 +20,8 @@ from punt_vox.client_errors import VoxdConnectionError
 from punt_vox.config import ConfigStore
 from punt_vox.deposited_files import DepositedGuide, VoxMarker
 from punt_vox.enablement import (
+    ENABLE_OUTCOME_REASONS,
+    EnableOutcome,
     ProviderProposal,
     RepoEnablement,
 )
@@ -387,6 +389,22 @@ class _ConnectionErrorClient:
         raise VoxdConnectionError(msg)
 
 
+@final
+class _RaisingStore(ConfigStore):
+    """A :class:`ConfigStore` whose ``write_field`` always raises ``PermissionError``.
+
+    Used to exercise the ``write_failed`` branch of
+    :meth:`ProviderProposal.propose_and_write` without mutating the real
+    filesystem's permission bits (which would be host-specific and can be
+    bypassed by root in some CI environments).
+    """
+
+    def write_field(self, key: str, value: str) -> None:
+        _ = (key, value)
+        msg = "disk write refused"
+        raise PermissionError(msg)
+
+
 def _fake_factory(
     client: _FakeClient | _ConnectionErrorClient,
 ) -> Callable[[], VoxClientSync]:
@@ -498,6 +516,35 @@ def test_enable_writes_nothing_when_no_provider_is_ready(tmp_path: Path) -> None
     assert _config_store(tmp_path).read().provider is None
 
 
+def test_enable_reports_write_failed_distinct_from_voxd_unavailable(
+    tmp_path: Path,
+) -> None:
+    """A vox.md write failure surfaces as ``write_failed``, not ``voxd_unavailable``.
+
+    The daemon answered fine; the local disk write is what failed.  Reporting
+    this as ``voxd_unavailable`` would send the user to restart a healthy
+    daemon.  The detail must carry the target path and the underlying
+    ``OSError`` class + text so the user can act on the real fault.
+    """
+    payload = ProviderStatusPayload(
+        (ProviderReadiness(name="polly", ready=True, reason="ok", detail=""),),
+        preferred="polly",
+    )
+    proposal = ProviderProposal(
+        _RaisingStore(tmp_path / ".punt-labs" / "vox"),
+        client_factory=_fake_factory(_FakeClient(payload)),
+    )
+    outcome = proposal.propose_and_write()
+    assert outcome.reason == "write_failed"
+    assert outcome.provider_written is None
+    # The vox.md target path is named -- a bare "could not write" without
+    # the path is another dead end.
+    assert str(tmp_path / ".punt-labs" / "vox" / "vox.md") in outcome.detail
+    # And the OSError class + text so the user sees the actual fault.
+    assert "PermissionError" in outcome.detail
+    assert "disk write refused" in outcome.detail
+
+
 def test_enable_does_not_overwrite_a_declared_provider(tmp_path: Path) -> None:
     """A repo whose ``vox.md`` already declares a provider is left alone.
 
@@ -524,6 +571,43 @@ def test_enable_does_not_overwrite_a_declared_provider(tmp_path: Path) -> None:
     assert outcome.reason == "already_set"
     assert outcome.provider_written is None
     assert _config_store(tmp_path).read().provider == "elevenlabs"
+
+
+def test_enable_outcome_reason_enumeration_is_closed() -> None:
+    """Every reason named in the enumeration comment is a member of the frozenset.
+
+    A change to the ``EnableOutcomeReason`` Literal must land in
+    :data:`ENABLE_OUTCOME_REASONS` in the same edit; this test proves
+    the frozenset is what the Literal claims to be.
+    """
+    assert (
+        frozenset(
+            {
+                "written",
+                "already_set",
+                "voxd_unavailable",
+                "no_ready_provider",
+                "write_failed",
+            }
+        )
+        == ENABLE_OUTCOME_REASONS
+    )
+
+
+def test_enable_outcome_refuses_unknown_reason() -> None:
+    """A novel reason string would slip past ``mypy`` (which only knows the Literal).
+
+    The runtime guard on ``__post_init__`` is the closing catch, so a
+    consumer branching on ``reason`` never sees a value no branch was
+    written for -- the same F4 shape the ``ProviderReadiness`` guard
+    exists to prevent.
+    """
+    with pytest.raises(ValueError, match="unknown enable outcome reason"):
+        EnableOutcome(
+            reason="mystery",  # type: ignore[arg-type]  # test intent: raise
+            provider_written=None,
+            detail="",
+        )
 
 
 def test_marker_content_is_deterministic(tmp_path: Path) -> None:

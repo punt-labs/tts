@@ -40,18 +40,22 @@ __all__ = [
 # each value comes from.  This is the enumeration lesson from PR 1 and
 # PR 2: a boundary that looks complete because everything it names is
 # correct is still defective when it never states which values it must
-# handle.  Every reason on this type is produced by exactly one code
-# path; the paired :data:`PROVIDER_STATUS_REASONS` frozenset is the
+# handle.  Each reason is produced by one or more code paths named
+# below; the paired :data:`PROVIDER_STATUS_REASONS` frozenset is the
 # runtime mirror, and :meth:`ProviderReadiness.__post_init__` refuses a
-# value not in either.  A new reason must land at the same time in the
-# Literal, the frozenset, the raise/assemble site that produces it, and
-# every render branch in :mod:`punt_vox.doctor` and :mod:`punt_vox.server`.
-# Each producer, named on one line so a grep finds all four together:
+# value not in either.  A new reason -- or a new producer of an
+# existing reason -- must land at the same time in the Literal, the
+# frozenset, the raise/assemble site that produces it, and every render
+# branch in :mod:`punt_vox.doctor` and :mod:`punt_vox.server`.  Grep
+# ``ProviderReadiness(\n\s*reason=`` and ``reason="<value>"`` to verify
+# every construction site is one of the producers listed here.
 #     ok               ProviderCredentials.report when satisfied() True
 #     unconfigured     server._provider_status_block when session.provider None
 #     unknown_provider ProviderCredentials.report on a name with no requirement
 #     no_credentials   ProviderCredentials.report when satisfied() False
 #     voxd_unavailable server._provider_status_block on _DAEMON_ERRORS
+#     voxd_unavailable server._provider_status_block when the daemon reply
+#                      omits the requested provider row (protocol-bug path)
 type ProviderStatusReason = Literal[
     "ok",
     "unconfigured",
