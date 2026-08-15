@@ -101,13 +101,20 @@ class GuideStamp:
     def read(self, deposited: Path) -> str | None:
         """Return the embedded digest from *deposited*, or ``None`` if unstamped.
 
-        ``None`` is the documented contract for a deposited guide that carries
-        no recognisable stamp -- a copy written before this stamping existed, a
-        hand-edited copy, or one with a garbled tail. Callers surface this as
-        the ``absent stamp`` verdict; it is reported state, not an error to
-        swallow.
+        ``None`` is the documented contract for a deposited guide whose stamp
+        cannot be recovered -- a copy written before this stamping existed, a
+        hand-edited copy, one with a garbled tail, one whose bytes are not
+        valid UTF-8, or one the process cannot read at all (permission-denied,
+        vanished mid-check). Callers surface this as the ``absent stamp``
+        verdict; it is reported state, not an error to swallow. A tool whose
+        job is to say a file is in a bad state must never be the thing that
+        crashes on that same bad state -- so a broken deposit lands on the
+        same code path a merely unstamped one does.
         """
-        text = deposited.read_text(encoding="utf-8")
+        try:
+            text = deposited.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
         match = self._STAMP_RE.search(text)
         return None if match is None else match.group(1)
 

@@ -498,6 +498,44 @@ class TestCheckDepositedGuide:
         assert "unstamped" in results[0].message
         assert "vox enable" in results[0].message
 
+    def test_unreadable_deposit_falls_to_absent_stamp(self, tmp_path: Path) -> None:
+        # A deposit whose bytes cannot be decoded (a corrupt or truncated
+        # write) must reach the ABSENT_STAMP verdict rather than crashing the
+        # diagnostic that exists to say the deposit is in a bad state.
+        from punt_vox.guide_stamp import GuideStamp
+
+        repo = self._make_repo(tmp_path)
+        packaged = self._packaged(tmp_path)
+        stamp = GuideStamp(packaged)
+        deposited = repo / ".punt-labs" / "vox" / "CLAUDE.md"
+        deposited.write_bytes(b"\xff\xfe undecodable \x80\x81")
+
+        with (
+            patch("punt_vox.doctor.find_repo_root", return_value=repo),
+            patch.object(GuideStamp, "for_packaged_asset", return_value=stamp),
+        ):
+            results = DoctorCheck().check_deposited_guide()
+        assert len(results) == 1
+        assert results[0].symbol == "⚠"
+        assert "unstamped" in results[0].message
+
+    def test_is_file_oserror_reports_not_applicable(self, tmp_path: Path) -> None:
+        # A rare failure of ``is_file`` (permission-denied on the parent, a
+        # racing removal returning an odd errno) must not tear down the whole
+        # ``vox doctor`` run -- treat "cannot see the deposit" as N/A, same
+        # as "vox not enabled here".
+        repo = self._make_repo(tmp_path)
+
+        def raise_permission(*_args: object, **_kwargs: object) -> bool:
+            raise PermissionError("simulated parent-dir permission denied")
+
+        with (
+            patch("punt_vox.doctor.find_repo_root", return_value=repo),
+            patch.object(Path, "is_file", raise_permission),
+        ):
+            results = DoctorCheck().check_deposited_guide()
+        assert results == []
+
 
 # ---------------------------------------------------------------------------
 # check_claude_desktop

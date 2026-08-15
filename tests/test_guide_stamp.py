@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from punt_vox.guide_stamp import GuideStamp, GuideStampVerdict
+
+if TYPE_CHECKING:
+    import pytest
 
 # ---------------------------------------------------------------------------
 # packaged_hash
@@ -79,6 +83,36 @@ def test_read_ignores_garbled_stamp(tmp_path: Path) -> None:
         "body\n<!-- vox-guide-source-sha256: notahash -->\n",
         encoding="utf-8",
     )
+    assert GuideStamp(asset).read(deposited) is None
+
+
+def test_read_returns_none_when_bytes_are_not_utf8(tmp_path: Path) -> None:
+    # A corrupted deposit whose bytes cannot be decoded must not crash the
+    # check whose job is to say the deposit is in a bad state -- it lands on
+    # the same ABSENT_STAMP path (via ``verify``) as a merely unstamped file.
+    asset = tmp_path / "asset.md"
+    asset.write_text("body\n", encoding="utf-8")
+    deposited = tmp_path / "deposited.md"
+    deposited.write_bytes(b"\xff\xfe not valid utf-8 \x80\x81")
+    assert GuideStamp(asset).read(deposited) is None
+    assert GuideStamp(asset).verify(deposited) is GuideStampVerdict.ABSENT_STAMP
+
+
+def test_read_returns_none_when_read_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # PermissionError (or any other OSError) from ``read_text`` -- e.g. an
+    # unreadable deposit or one that vanished mid-check -- surfaces the same
+    # way rather than tearing down the diagnostic.
+    asset = tmp_path / "asset.md"
+    asset.write_text("body\n", encoding="utf-8")
+    deposited = tmp_path / "deposited.md"
+    deposited.write_text("body\n", encoding="utf-8")
+
+    def raise_permission(*_args: object, **_kwargs: object) -> str:
+        raise PermissionError("simulated permission denied")
+
+    monkeypatch.setattr(Path, "read_text", raise_permission)
     assert GuideStamp(asset).read(deposited) is None
 
 

@@ -385,7 +385,18 @@ class DoctorCheck:
         if root is None:
             return []
         deposited = root / ".punt-labs" / "vox" / "CLAUDE.md"
-        if not deposited.is_file():
+        # ``is_file`` swallows ENOENT / ENOTDIR / EBADF / ELOOP but propagates
+        # OSError variants like PermissionError (e.g. an unreadable parent
+        # directory) -- the same class of failure the deposit-read guard in
+        # ``GuideStamp.read`` handles. A check whose job is to say the deposit
+        # is in a bad state must not crash the whole ``vox doctor`` run when
+        # it hits one; treat "cannot see the deposit" as not-applicable, the
+        # same as "vox not enabled here".
+        try:
+            deposited_present = deposited.is_file()
+        except OSError:
+            return []
+        if not deposited_present:
             return []
         verdict = GuideStamp.for_packaged_asset().verify(deposited)
         return [self._verdict_to_result(verdict)]

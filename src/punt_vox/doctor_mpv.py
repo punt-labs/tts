@@ -11,8 +11,8 @@ The version-detection dance (subprocess call, parse ``mpv --version``, gate
 against the pinned minimum) clustered enough logic to earn its own module;
 ``doctor.py`` was tracking well past the 300-line module_size threshold and this
 class was one of its natural fault lines. The public :meth:`MpvCheck.run`
-returns a :class:`~punt_vox.doctor.CheckResult` the way every other doctor
-sub-check does, so extraction is behaviour-preserving.
+returns a :class:`~punt_vox.doctor_result.CheckResult` the way every other
+doctor sub-check does, so extraction is behaviour-preserving.
 """
 
 from __future__ import annotations
