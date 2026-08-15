@@ -35,6 +35,7 @@ from punt_vox.server_music_tool import MusicTool
 from punt_vox.server_switches import ModelTool, ProviderTool, VoiceTool
 from punt_vox.session_spec import SessionSpec
 from punt_vox.synthesis_batch import SegmentBatch
+from punt_vox.types_provider import ProviderReadiness
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.types_synthesis_errors import (
     ModelNotAvailableError,
@@ -651,20 +652,29 @@ def speak(
 def status() -> str:
     """Show current vox state (provider, voice, notify, vibe) and the Program.
 
-    Both the ``program`` block and the ``music_mode`` label are the daemon's
-    *authoritative* Program status, read fresh from ``voxd`` on every call --
-    never a server-side cache, which could serve a stale music shadow. The two
-    fields come from one :class:`MusicStateView`, the same projection
-    ``music`` with ``subcommand="status"`` reports, so no two surfaces can tell a
-    caller a different music state.
+    Every daemon-authoritative block -- ``program`` / ``music_mode`` from
+    :class:`MusicStateView`, ``provider_status`` from the daemon's
+    ``provider_status`` op -- is read fresh from ``voxd`` on every
+    call, never cached server-side, so a switched provider or a stopped
+    music program shows the truth on the very next status call rather
+    than a stale shadow.  The ``provider_status`` block mirrors
+    :meth:`MusicStateView.unavailable` when voxd is unreachable
+    (``reason == "voxd_unavailable"``) and reports the F1 refusal
+    inline (``reason == "unconfigured"``) when the session declares
+    no provider, so a caller can learn "your notifications are
+    silently failing" without first attempting a synthesis -- the one
+    channel the design's §3.6 argument rests on.
 
     Returns:
-        JSON string with the session display fields plus the authoritative
-        ``program`` status and its derived ``music_mode``.
+        JSON string with the session display fields plus the daemon
+        Program status, the derived ``music_mode``, the model, and the
+        daemon-authoritative ``provider_status`` for the state-declared
+        provider.
     """
     _session.refresh_from_config()
     payload: dict[str, object] = {
         "provider": _session.provider,
+        "model": _session.model,
         "voice": _session.voice,
         "notify": _session.notify,
         "speak": _session.speak,
@@ -675,12 +685,69 @@ def status() -> str:
         "vibe_trace": VibeTraceLog.default().health(),
         "log": log_health(),
         "log_level": ConfigStore.resolve_log_level(),
+        "provider_status": _provider_status_block(_session.provider).to_dict(),
     }
     try:
         view = MusicStateView.of(_program_tools.status())
     except _DAEMON_ERRORS as exc:
         view = MusicStateView.unavailable(str(exc))
     return json.dumps(payload | view.to_dict())
+
+
+def _provider_status_block(provider: str | None) -> ProviderReadiness:
+    """Return the ``provider_status`` block for the state-declared provider.
+
+    Three cases, each a distinct :attr:`ProviderReadiness.reason` from
+    the closed :data:`~punt_vox.types_provider.ProviderStatusReason`
+    set (whose enumeration comment lists which code path produces
+    each value):
+
+    * ``unconfigured`` -- the session declares no provider (F1).
+      Answered here without a daemon round-trip because the missing
+      provider is a client-side fact; asking voxd would be a wasted
+      call.
+    * ``voxd_unavailable`` -- the ``provider_status`` op cannot be
+      reached (F6).  Mirrors :meth:`MusicStateView.unavailable`: the
+      client sees an ``unavailable`` block rather than an exception
+      across the ``mic:status`` boundary.
+    * ``ok`` / ``no_credentials`` / ``unknown_provider`` -- built by
+      the daemon in :meth:`ProviderCredentials.report` and carried
+      through :class:`~punt_vox.types_provider.ProviderStatusPayload`
+      verbatim (see F2, F4).  The daemon owns the verdict; the server
+      just picks out the row for the declared provider.
+    """
+    if provider is None:
+        return ProviderReadiness(
+            name="",
+            ready=False,
+            reason="unconfigured",
+            detail=(
+                "no TTS provider is configured for this repo; "
+                "set one with mic:provider <name>"
+            ),
+        )
+    try:
+        payload = _voxd_client().provider_status(provider)
+    except _DAEMON_ERRORS as exc:
+        return ProviderReadiness(
+            name=provider,
+            ready=False,
+            reason="voxd_unavailable",
+            detail=str(exc),
+        )
+    row = payload.find(provider)
+    if row is None:
+        # ``ProviderStatusHandler`` returns a one-row list for a
+        # named request, so a missing row is a daemon-side protocol
+        # bug rather than a routine outcome -- rare, but honest to
+        # report rather than fabricate a verdict.
+        return ProviderReadiness(
+            name=provider,
+            ready=False,
+            reason="voxd_unavailable",
+            detail=f"daemon returned no provider_status row for {provider!r}",
+        )
+    return row
 
 
 # ---------------------------------------------------------------------------
