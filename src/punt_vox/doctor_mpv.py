@@ -23,7 +23,7 @@ import shutil
 import subprocess
 from typing import Self, final
 
-from punt_vox.doctor_result import CheckResult, fail_, pass_
+from punt_vox.doctor_result import CheckResult
 from punt_vox.voxd.programs.mpv import MPV_MIN_VERSION
 
 __all__ = ["MPV_HINTS", "MPV_MIN_STR", "MpvCheck"]
@@ -61,17 +61,19 @@ class MpvCheck:
         """Return the ``mpv`` verdict as a doctor :class:`CheckResult`."""
         hint = MPV_HINTS.get(platform.system(), MPV_HINTS["default"])
         if shutil.which("mpv") is None:
-            return fail_(f"mpv: not found — {hint}")
+            return CheckResult.fail(f"mpv: not found — {hint}")
         version = self._detect_version()
         if version is None:
-            return fail_(
+            return CheckResult.fail(
                 "mpv: present but version unreadable —"
                 f" verify 'mpv --version' is >= {MPV_MIN_STR}"
             )
         detected = ".".join(str(part) for part in version)
         if version < MPV_MIN_VERSION:
-            return fail_(f"mpv {detected}: too old (needs >= {MPV_MIN_STR}) — {hint}")
-        return pass_(f"mpv: present ({detected})")
+            return CheckResult.fail(
+                f"mpv {detected}: too old (needs >= {MPV_MIN_STR}) — {hint}"
+            )
+        return CheckResult.ok(f"mpv: present ({detected})")
 
     def _detect_version(self) -> tuple[int, int, int] | None:
         # ``None`` is the documented "cannot determine" outcome at this

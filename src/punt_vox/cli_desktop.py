@@ -4,7 +4,7 @@ Nested subcommand group matching ``vox daemon`` (single-verb subcommand names,
 cli.md §Subcommand naming; ``install-desktop`` was retired for this form).
 :class:`DesktopCli` is a humble object: each verb parses ``--json`` /
 ``--verbose`` / ``--quiet``, resolves the Claude Desktop config path via
-``doctor.claude_desktop_config_path``, drives :class:`DesktopInstaller` for the
+:meth:`DesktopInstaller.config_path`, drives :class:`DesktopInstaller` for the
 non-secret ``env`` map, and formats via the shared :class:`OutputFormatter`.
 ``install`` and ``uninstall`` are symmetric so nothing the CLI can register
 requires manual editing of ``claude_desktop_config.json`` to undo.
@@ -22,7 +22,6 @@ import typer
 
 from punt_vox.desktop_install import DesktopInstaller
 from punt_vox.dirs import default_output_dir
-from punt_vox.doctor import claude_desktop_config_path
 
 if TYPE_CHECKING:
     from punt_vox.cli_io import OutputFlags
@@ -139,7 +138,7 @@ class DesktopCli:
             typer.echo(f"Error: {exc}", err=True)
             raise typer.Exit(code=1) from exc
 
-        config_path = claude_desktop_config_path()
+        config_path = DesktopInstaller.config_path()
         config_path.parent.mkdir(parents=True, exist_ok=True)
 
         data = self._load_config(config_path)
@@ -189,7 +188,7 @@ class DesktopCli:
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
 
-        config_path = claude_desktop_config_path()
+        config_path = DesktopInstaller.config_path()
         if not config_path.exists():
             self._formatter.emit(
                 {"unregistered": False, "reason": "config_absent"},

@@ -11,11 +11,8 @@ import pytest
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.doctor import (
-    CheckResult,
-    DoctorCheck,
-    format_results,
-)
+from punt_vox.doctor import DoctorCheck
+from punt_vox.doctor_result import CheckResult, CheckResults
 from punt_vox.types_health import HealthStatus
 
 # ---------------------------------------------------------------------------
@@ -429,7 +426,7 @@ class TestCheckClaudeDesktop:
     def test_config_not_found(self, tmp_path: Path) -> None:
         fake_path = tmp_path / "nonexistent" / "config.json"
         with patch(
-            "punt_vox.doctor.claude_desktop_config_path",
+            "punt_vox.desktop_install.DesktopInstaller.config_path",
             return_value=fake_path,
         ):
             results = DoctorCheck().check_claude_desktop()
@@ -443,7 +440,7 @@ class TestCheckClaudeDesktop:
             encoding="utf-8",
         )
         with patch(
-            "punt_vox.doctor.claude_desktop_config_path",
+            "punt_vox.desktop_install.DesktopInstaller.config_path",
             return_value=config,
         ):
             results = DoctorCheck().check_claude_desktop()
@@ -458,7 +455,7 @@ class TestCheckClaudeDesktop:
             encoding="utf-8",
         )
         with patch(
-            "punt_vox.doctor.claude_desktop_config_path",
+            "punt_vox.desktop_install.DesktopInstaller.config_path",
             return_value=config,
         ):
             results = DoctorCheck().check_claude_desktop()
@@ -468,47 +465,77 @@ class TestCheckClaudeDesktop:
 
 
 # ---------------------------------------------------------------------------
-# format_results
+# CheckResults.format
 # ---------------------------------------------------------------------------
 
 
-class TestFormatResults:
+class TestCheckResultsFormat:
+    """CheckResults owns the render into (JSON payload, display text)."""
+
     def test_all_pass(self) -> None:
-        results = [
-            CheckResult(name="a", passed=True, message="a ok"),
-            CheckResult(name="b", passed=True, message="b ok"),
-        ]
-        payload, text = format_results(results)
+        results = CheckResults(
+            [
+                CheckResult.ok("a ok"),
+                CheckResult.ok("b ok"),
+            ]
+        )
+        payload, text = results.format()
         assert payload["passed"] == 2
         assert payload["failed"] == 0
         assert "2 passed, 0 failed" in text
 
     def test_one_fail(self) -> None:
-        results = [
-            CheckResult(
-                name="bad",
-                passed=False,
-                message="bad",
-                symbol="✗",
-                status_kind="fail",
-            ),
-        ]
-        payload, _text = format_results(results)
+        results = CheckResults([CheckResult.fail("bad")])
+        payload, _text = results.format()
         assert payload["failed"] == 1
 
     def test_warnings_counted(self) -> None:
-        results = [
-            CheckResult(
-                name="warn",
-                passed=False,
-                message="warning msg",
-                symbol="⚠",
-                status_kind="warn",
-            ),
-        ]
-        payload, text = format_results(results)
+        results = CheckResults([CheckResult.warn("warning msg")])
+        payload, text = results.format()
         assert payload["warned"] == 1
         assert "1 warning" in text
+
+    def test_len_and_iter(self) -> None:
+        entries = [CheckResult.ok("a"), CheckResult.fail("b")]
+        results = CheckResults(entries)
+        assert len(results) == 2
+        assert list(results) == entries
+
+
+class TestCheckResultConstructors:
+    """The four alternate constructors set the wire fields consistently."""
+
+    def test_ok(self) -> None:
+        r = CheckResult.ok("all good")
+        assert r.passed is True
+        assert r.symbol == "✓"
+        assert r.status_kind == "pass"
+        assert r.required is True
+
+    def test_fail(self) -> None:
+        r = CheckResult.fail("nope")
+        assert r.passed is False
+        assert r.symbol == "✗"
+        assert r.status_kind == "fail"
+        assert r.required is True
+
+    def test_warn(self) -> None:
+        r = CheckResult.warn("careful")
+        assert r.passed is False
+        assert r.symbol == "⚠"
+        assert r.status_kind == "warn"
+
+    def test_of_optional_row(self) -> None:
+        r = CheckResult.of("○", "uvx: not found", required=False)
+        assert r.passed is False
+        assert r.symbol == "○"
+        assert r.status_kind == "skip"
+        assert r.required is False
+
+    def test_of_ok_symbol_marks_pass(self) -> None:
+        r = CheckResult.of("✓", "uvx: present", required=False)
+        assert r.passed is True
+        assert r.status_kind == "pass"
 
 
 # ---------------------------------------------------------------------------
@@ -539,7 +566,8 @@ class TestRunAll:
             patch("punt_vox.doctor.shutil.which", return_value=which_path),
             patch("punt_vox.doctor.default_output_dir", return_value=tmp_path),
             patch(
-                "punt_vox.doctor.claude_desktop_config_path", return_value=config_path
+                "punt_vox.desktop_install.DesktopInstaller.config_path",
+                return_value=config_path,
             ),
         ):
             results = DoctorCheck(client=mock_client).run_all()

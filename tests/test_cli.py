@@ -1332,7 +1332,10 @@ class TestDoctorCommand:
                 f"{_doc}.installed_version",
                 return_value=installed_version,
             ),
-            patch(f"{_doc}.claude_desktop_config_path", return_value=config_path),
+            patch(
+                "punt_vox.desktop_install.DesktopInstaller.config_path",
+                return_value=config_path,
+            ),
             patch(
                 f"{_doc}.default_output_dir",
                 return_value=tmp_path / "audio",
@@ -1340,7 +1343,8 @@ class TestDoctorCommand:
             patch(f"{_doc}.platform.system", return_value=system_platform),
             patch(f"{_mpv}.platform.system", return_value=system_platform),
             # Isolate the config-path helper from the real filesystem.
-            patch(f"{_res}.Path.home", return_value=tmp_path),
+            patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
+            patch("punt_vox.doctor.find_repo_root", return_value=None),
             patch(
                 "punt_vox.dirs._resolve_music_dir",
                 return_value=tmp_path / "Music",
@@ -1487,7 +1491,7 @@ class TestDoctorCommand:
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
             patch(f"{_doc}.installed_version", return_value="4.2.0"),
             patch(
-                f"{_doc}.claude_desktop_config_path",
+                "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=tmp_path / "nope.json",
             ),
             patch(
@@ -1496,7 +1500,8 @@ class TestDoctorCommand:
             ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
             patch(f"{_mpv}.platform.system", return_value="Darwin"),
-            patch(f"{_res}.Path.home", return_value=tmp_path),
+            patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
+            patch("punt_vox.doctor.find_repo_root", return_value=None),
             patch(
                 "punt_vox.dirs._resolve_music_dir",
                 return_value=tmp_path / "Music",
@@ -1574,7 +1579,7 @@ class TestDoctorCommand:
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
             patch(f"{_doc}.installed_version", return_value="4.2.0"),
             patch(
-                f"{_doc}.claude_desktop_config_path",
+                "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=tmp_path / "nope.json",
             ),
             patch(
@@ -1583,7 +1588,8 @@ class TestDoctorCommand:
             ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
             patch(f"{_mpv}.platform.system", return_value="Darwin"),
-            patch(f"{_res}.Path.home", return_value=tmp_path),
+            patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
+            patch("punt_vox.doctor.find_repo_root", return_value=None),
             patch(
                 "punt_vox.dirs._resolve_music_dir",
                 return_value=tmp_path / "Music",
@@ -1647,7 +1653,7 @@ class TestDoctorCommand:
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
             patch(f"{_doc}.installed_version", return_value="4.2.0"),
             patch(
-                f"{_doc}.claude_desktop_config_path",
+                "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=tmp_path / "nope.json",
             ),
             patch(
@@ -1656,7 +1662,8 @@ class TestDoctorCommand:
             ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
             patch(f"{_mpv}.platform.system", return_value="Darwin"),
-            patch(f"{_res}.Path.home", return_value=tmp_path),
+            patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
+            patch("punt_vox.doctor.find_repo_root", return_value=None),
             patch(
                 "punt_vox.dirs._resolve_music_dir",
                 return_value=tmp_path / "Music",
@@ -1918,7 +1925,7 @@ class TestDesktopInstallCommand:
                 ),
             ),
             patch(
-                "punt_vox.cli_desktop.claude_desktop_config_path",
+                "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=config_path,
             ),
             # Design §3.8: ``DesktopInstaller`` asks ``ProviderCredentials``
@@ -1967,7 +1974,7 @@ class TestDesktopInstallCommand:
         with (
             patch(f"{_CLI_DESKTOP}.shutil.which", return_value=_UVX),
             patch(
-                "punt_vox.cli_desktop.claude_desktop_config_path",
+                "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=config_path,
             ),
         ):
@@ -1994,7 +2001,7 @@ class TestDesktopInstallCommand:
         with (
             patch(f"{_CLI_DESKTOP}.shutil.which", return_value=_UVX),
             patch(
-                "punt_vox.cli_desktop.claude_desktop_config_path",
+                "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=config_path,
             ),
             # ``providers.platform`` is gone with the auto-detect probe
@@ -2035,7 +2042,7 @@ class TestDesktopInstallCommand:
         with (
             patch(f"{_CLI_DESKTOP}.shutil.which", return_value=_UVX),
             patch(
-                "punt_vox.cli_desktop.claude_desktop_config_path",
+                "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=config_path,
             ),
             patch(
@@ -2086,7 +2093,7 @@ class TestDesktopInstallCommand:
         with (
             patch(f"{_CLI_DESKTOP}.shutil.which", return_value=_UVX),
             patch(
-                "punt_vox.cli_desktop.claude_desktop_config_path",
+                "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=config_path,
             ),
             patch(
@@ -2121,7 +2128,8 @@ class TestDesktopUninstallCommand:
 
         runner = CliRunner()
         with patch(
-            "punt_vox.cli_desktop.claude_desktop_config_path", return_value=config_path
+            "punt_vox.desktop_install.DesktopInstaller.config_path",
+            return_value=config_path,
         ):
             result = runner.invoke(app, ["desktop", "uninstall"])
 
@@ -2137,7 +2145,8 @@ class TestDesktopUninstallCommand:
 
         runner = CliRunner()
         with patch(
-            "punt_vox.cli_desktop.claude_desktop_config_path", return_value=config_path
+            "punt_vox.desktop_install.DesktopInstaller.config_path",
+            return_value=config_path,
         ):
             result = runner.invoke(app, ["desktop", "uninstall"])
 
@@ -2154,7 +2163,8 @@ class TestDesktopUninstallCommand:
 
         runner = CliRunner()
         with patch(
-            "punt_vox.cli_desktop.claude_desktop_config_path", return_value=config_path
+            "punt_vox.desktop_install.DesktopInstaller.config_path",
+            return_value=config_path,
         ):
             result = runner.invoke(app, ["desktop", "uninstall"])
 
@@ -2174,7 +2184,8 @@ class TestDesktopUninstallCommand:
 
         runner = CliRunner()
         with patch(
-            "punt_vox.cli_desktop.claude_desktop_config_path", return_value=config_path
+            "punt_vox.desktop_install.DesktopInstaller.config_path",
+            return_value=config_path,
         ):
             result = runner.invoke(app, ["desktop", "uninstall", "--json"])
 

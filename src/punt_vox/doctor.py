@@ -1,11 +1,10 @@
 """Diagnostic health checks for the vox system.
 
-The :class:`CheckResult` type, its display constants, the result-constructor
-helpers, ``claude_desktop_config_path``, and ``format_results`` live in
+:class:`DoctorCheck` runs each sub-check and gathers a list of
+:class:`CheckResult` values. The result type and the render-into-JSON
+collection (:class:`~punt_vox.doctor_result.CheckResults`) live in
 :mod:`punt_vox.doctor_result`; the mpv sub-check lives in
-:mod:`punt_vox.doctor_mpv`. This module is re-exported for callers that used
-their previous public locations so the split is invisible to the CLI and to
-the test suite's import surface.
+:mod:`punt_vox.doctor_mpv`.
 """
 
 from __future__ import annotations
@@ -19,28 +18,14 @@ from typing import Self
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
+from punt_vox.desktop_install import DesktopInstaller
 from punt_vox.dirs import default_output_dir, find_repo_root
 from punt_vox.doctor_mpv import MpvCheck
-from punt_vox.doctor_result import (
-    OK as _OK,
-    OPTIONAL as _OPTIONAL,
-    CheckResult,
-    claude_desktop_config_path,
-    fail_ as _fail,
-    format_results,
-    pass_ as _pass,
-    result as _result,
-    warn_ as _warn,
-)
+from punt_vox.doctor_result import OK, OPTIONAL, CheckResult
 from punt_vox.guide_stamp import GuideStamp, GuideStampVerdict
 from punt_vox.paths import installed_version
 
-__all__ = [
-    "CheckResult",
-    "DoctorCheck",
-    "claude_desktop_config_path",
-    "format_results",
-]
+__all__ = ["DoctorCheck"]
 
 
 # ---------------------------------------------------------------------------
@@ -84,8 +69,8 @@ class DoctorCheck:
         v = sys.version_info
         version_str = f"{v.major}.{v.minor}.{v.micro}"
         if v >= (3, 13):
-            return _pass(f"Python {version_str}")
-        return _fail(
+            return CheckResult.ok(f"Python {version_str}")
+        return CheckResult.fail(
             f"Python {version_str} (requires 3.13+)"
             " — install from https://www.python.org/downloads/"
         )
@@ -103,8 +88,8 @@ class DoctorCheck:
                 "default": "see https://ffmpeg.org/download.html",
             }
             hint = hints.get(platform.system(), hints["default"])
-            return _fail(f"ffmpeg: not found — {hint}")
-        return _pass("ffmpeg: present")
+            return CheckResult.fail(f"ffmpeg: not found — {hint}")
+        return CheckResult.ok("ffmpeg: present")
 
     def check_mpv(self) -> CheckResult:
         """Check mpv is installed AND at or above the pinned minimum version.
@@ -122,10 +107,10 @@ class DoctorCheck:
             return []
         if shutil.which("espeak-ng") or shutil.which("espeak"):
             # Out of jail: report presence, never the binary's install path.
-            return [_pass("espeak: present (offline fallback)")]
+            return [CheckResult.ok("espeak: present (offline fallback)")]
         return [
-            _result(
-                _OPTIONAL,
+            CheckResult.of(
+                OPTIONAL,
                 "espeak-ng/espeak: not found — install for offline TTS:"
                 " sudo apt-get install espeak-ng",
                 required=False,
@@ -140,11 +125,13 @@ class DoctorCheck:
             health = client.health()
         except VoxdConnectionError:
             results.append(
-                _fail("Daemon: not running — start with 'vox daemon install'")
+                CheckResult.fail(
+                    "Daemon: not running — start with 'vox daemon install'"
+                )
             )
             return results
         except VoxdProtocolError as exc:
-            results.append(_fail(f"Daemon: reachable but unhealthy — {exc}"))
+            results.append(CheckResult.fail(f"Daemon: reachable but unhealthy — {exc}"))
             return results
 
         port = health.port
@@ -153,7 +140,7 @@ class DoctorCheck:
 
         if running_version and running_version != wheel_version:
             results.append(
-                _warn(
+                CheckResult.warn(
                     f"Daemon: running on port {port} (version {running_version}"
                     f" — wheel has {wheel_version},"
                     f" run 'vox daemon restart' to refresh)"
@@ -164,7 +151,9 @@ class DoctorCheck:
             # §3.6, delivered by PR 3); the daemon has no provider of its
             # own, so the health line reports the version-and-port fact only.
             version_note = f", version {running_version}" if running_version else ""
-            results.append(_pass(f"Daemon: running on port {port}{version_note}"))
+            results.append(
+                CheckResult.ok(f"Daemon: running on port {port}{version_note}")
+            )
         return results
 
     def check_env_overrides(self) -> list[CheckResult]:
@@ -176,7 +165,7 @@ class DoctorCheck:
                 display = "***" if env_name == "VOXD_TOKEN" else env_val
                 overrides.append(f"{env_name}={display}")
         if overrides:
-            return [_pass(f"Remote config: {', '.join(overrides)}")]
+            return [CheckResult.ok(f"Remote config: {', '.join(overrides)}")]
         return []
 
     def check_music_dir(self) -> list[CheckResult]:
@@ -191,15 +180,19 @@ class DoctorCheck:
 
         music_dir = _resolve_music_dir()  # pyright: ignore[reportPrivateUsage]
         if not music_dir.is_dir():
-            return [_warn("output music dir: absent — created on first 'vox record'")]
+            return [
+                CheckResult.warn(
+                    "output music dir: absent — created on first 'vox record'"
+                )
+            ]
         return []
 
     def check_uvx(self) -> CheckResult:
         """Check for uvx -- present/absent verdict, no host path (out of jail)."""
         if shutil.which("uvx"):
-            return _result(_OK, "uvx: present", required=False)
-        return _result(
-            _OPTIONAL,
+            return CheckResult.of(OK, "uvx: present", required=False)
+        return CheckResult.of(
+            OPTIONAL,
             "uvx: not found (needed for MCP server)",
             required=False,
         )
@@ -207,19 +200,19 @@ class DoctorCheck:
     def check_claude_desktop(self) -> list[CheckResult]:
         """Check Claude Desktop config and MCP registration."""
         results: list[CheckResult] = []
-        config_path = claude_desktop_config_path()
+        config_path = DesktopInstaller.config_path()
 
         if not config_path.exists():
             results.append(
-                _result(
-                    _OPTIONAL,
+                CheckResult.of(
+                    OPTIONAL,
                     "Claude Desktop config: not found",
                     required=False,
                 )
             )
             results.append(
-                _result(
-                    _OPTIONAL,
+                CheckResult.of(
+                    OPTIONAL,
                     "Claude Desktop MCP: not registered (run 'vox desktop install')",
                     required=False,
                 )
@@ -228,23 +221,25 @@ class DoctorCheck:
 
         # Out of jail (under ~/Library, neither data root): present/absent
         # verdict only -- the absolute config path never crosses to a client.
-        results.append(_result(_OK, "Claude Desktop config: present", required=False))
+        results.append(
+            CheckResult.of(OK, "Claude Desktop config: present", required=False)
+        )
 
         try:
             data = json.loads(config_path.read_text(encoding="utf-8"))
             servers = data.get("mcpServers", {})
             if "vox" in servers:
                 results.append(
-                    _result(
-                        _OK,
+                    CheckResult.of(
+                        OK,
                         "Claude Desktop MCP: registered",
                         required=False,
                     )
                 )
             else:
                 results.append(
-                    _result(
-                        _OPTIONAL,
+                    CheckResult.of(
+                        OPTIONAL,
                         "Claude Desktop MCP: not registered"
                         " (run 'vox desktop install')",
                         required=False,
@@ -252,8 +247,8 @@ class DoctorCheck:
                 )
         except (json.JSONDecodeError, OSError):
             results.append(
-                _result(
-                    _OPTIONAL,
+                CheckResult.of(
+                    OPTIONAL,
                     "Claude Desktop MCP: could not read config",
                     required=False,
                 )
@@ -272,10 +267,10 @@ class DoctorCheck:
                 test_file = out_dir / ".doctor_test"
                 test_file.write_text("ok")
                 test_file.unlink()
-                return [_pass("output: writable")]
+                return [CheckResult.ok("output: writable")]
             except OSError:
-                return [_fail("output: not writable — check permissions")]
-        return [_warn("output: absent — created on first 'vox record'")]
+                return [CheckResult.fail("output: not writable — check permissions")]
+        return [CheckResult.warn("output: absent — created on first 'vox record'")]
 
     def check_deposited_guide(self) -> list[CheckResult]:
         """Check the per-repo deposited guide against the packaged asset.
@@ -312,7 +307,9 @@ class DoctorCheck:
         """Turn a :class:`GuideStampVerdict` into the matching check line."""
         remediation = " — run 'vox enable' (or mic:enablement action=enable) to refresh"
         if verdict is GuideStampVerdict.AGREE:
-            return _pass("deposited guide: up to date")
+            return CheckResult.ok("deposited guide: up to date")
         if verdict is GuideStampVerdict.DIVERGE:
-            return _fail(f"deposited guide: out of date{remediation}")
-        return _warn(f"deposited guide: unstamped, freshness unknown{remediation}")
+            return CheckResult.fail(f"deposited guide: out of date{remediation}")
+        return CheckResult.warn(
+            f"deposited guide: unstamped, freshness unknown{remediation}"
+        )
