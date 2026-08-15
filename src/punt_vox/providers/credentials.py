@@ -25,7 +25,6 @@ declared here alongside the facade that consumes them.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from typing import Protocol, Self, final, runtime_checkable
 
 from punt_vox.providers.credential_requirements import (
@@ -33,13 +32,13 @@ from punt_vox.providers.credential_requirements import (
     AwsRequirement,
     BinaryRequirement,
 )
+from punt_vox.types_provider import ProviderReadiness
 from punt_vox.types_provider_errors import ProviderUnavailableError
 
 __all__ = [
     "PROVIDER_KEY_NAMES",
     "CredentialRequirement",
     "ProviderCredentials",
-    "ProviderReadiness",
 ]
 
 
@@ -69,25 +68,6 @@ class CredentialRequirement(Protocol):
     def unmet_message(self, provider: str) -> str:
         """Return the message reported when the credential is missing."""
         ...
-
-
-@dataclass(frozen=True, slots=True)
-class ProviderReadiness:
-    """A single provider's readiness verdict for the status/report path.
-
-    ``reason`` is the closed set the design's §3.6 wire block uses:
-    ``ok`` when :attr:`ready` is True, ``no_credentials`` when a known
-    provider's requirement is unmet, ``unknown_provider`` when the
-    name is not registered. ``detail`` is the same sentence
-    :meth:`CredentialRequirement.unmet_message` would raise -- one
-    text, whether the caller sees it in a status frame or a wire
-    error, so status cannot drift from behaviour.
-    """
-
-    name: str
-    ready: bool
-    reason: str
-    detail: str
 
 
 @final
