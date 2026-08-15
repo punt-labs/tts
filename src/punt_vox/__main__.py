@@ -26,8 +26,8 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.commands import CommandResult, Ctx
 from punt_vox.config import ConfigStore
+from punt_vox.desktop_install import DesktopInstaller
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
-from punt_vox.doctor import claude_desktop_config_path
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.session_spec import SessionSpec
@@ -733,7 +733,7 @@ def _desktop_registration() -> str:
       because the operator cannot conclude anything about the
       registration from a file the CLI cannot parse.
     """
-    config_path = claude_desktop_config_path()
+    config_path = DesktopInstaller.config_path()
     if not config_path.exists():
         return "no config"
     try:
@@ -756,11 +756,11 @@ def _desktop_registration() -> str:
 @app.command()
 def doctor() -> None:  # pyright: ignore[reportUnusedFunction]
     """Check system health for vox."""
-    from punt_vox.doctor import DoctorCheck, format_results
+    from punt_vox.doctor import DoctorCheck
+    from punt_vox.doctor_result import CheckResults
 
     check = DoctorCheck(client=VoxClientSync())
-    results = check.run_all()
-    payload, text = format_results(results)
+    payload, text = CheckResults(check.run_all()).format()
     _formatter.emit(payload, text)
 
     if payload.get("failed", 0):

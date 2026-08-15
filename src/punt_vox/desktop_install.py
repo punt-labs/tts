@@ -69,6 +69,22 @@ class DesktopInstaller:
         return self
 
     @classmethod
+    def config_path(cls) -> Path:
+        """Return the Claude Desktop config file path this installer writes.
+
+        The path is a per-user constant of the Claude Desktop app, so it lives
+        on the installer as an alternate constructor -- the class that owns
+        writing (and doctor's read-back) is the class that names the location.
+        """
+        return (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "Claude"
+            / "claude_desktop_config.json"
+        )
+
+    @classmethod
     def detect(cls, provider_name: str | None, audio_dir: Path) -> Self:
         """Build from an explicit provider or the credential dispatch's proposal.
 

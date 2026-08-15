@@ -1,92 +1,37 @@
-"""Diagnostic health checks for the vox system."""
+"""Diagnostic health checks for the vox system.
+
+:class:`DoctorCheck` runs each sub-check and gathers a list of
+:class:`CheckResult` values. The result type and the render-into-JSON
+collection (:class:`~punt_vox.doctor_result.CheckResults`) live in
+:mod:`punt_vox.doctor_result`; the mpv sub-check lives in
+:mod:`punt_vox.doctor_mpv`.
+"""
 
 from __future__ import annotations
 
 import json
 import os
 import platform
-import re
 import shutil
-import subprocess
 import sys
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Self
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.dirs import default_output_dir
+from punt_vox.desktop_install import DesktopInstaller
+from punt_vox.dirs import default_output_dir, find_repo_root
+from punt_vox.doctor_mpv import MpvCheck
+from punt_vox.doctor_result import OK, OPTIONAL, CheckResult
+from punt_vox.guide_stamp import GuideStamp, GuideStampVerdict
 from punt_vox.paths import installed_version
 from punt_vox.types_provider import ProviderStatusPayload
-from punt_vox.voxd.programs.mpv import MPV_MIN_VERSION
 
-__all__ = [
-    "CheckResult",
-    "DoctorCheck",
-]
+# ``MPV_MIN_VERSION`` is not imported here after the doctor_mpv split (the
+# constant is used only by :class:`MpvCheck`); doctor.py delegates the mpv
+# verdict, so the direct import from ``punt_vox.voxd.programs.mpv`` that
+# vox-w3f8 PR 3 re-added does not belong on this side of the split.
 
-# ---------------------------------------------------------------------------
-# Display constants
-# ---------------------------------------------------------------------------
-
-_OK = "✓"
-_FAIL = "✗"
-_OPTIONAL = "○"
-_WARN = "⚠"
-
-_STATUS_KIND: dict[str, str] = {
-    _OK: "pass",
-    _FAIL: "fail",
-    _OPTIONAL: "skip",
-    _WARN: "warn",
-}
-
-# ---------------------------------------------------------------------------
-# Required host binaries
-# ---------------------------------------------------------------------------
-
-# The authoritative minimum mpv version lives with the mpv program player
-# (``MPV_MIN_VERSION`` in ``punt_vox.voxd.programs.mpv``): the IPC command set,
-# the ``end-file`` reason values, and the per-file ``pause`` load option hold
-# only at or above it. ``doctor`` imports that one source of truth and derives
-# the display string from it.
-_MPV_MIN_STR: str = ".".join(str(part) for part in MPV_MIN_VERSION)
-
-# Per-platform remediation hints. ``default`` covers any host not named.
-_FFMPEG_HINTS: dict[str, str] = {
-    "Darwin": "brew install ffmpeg",
-    "Windows": "winget install --id Gyan.FFmpeg",
-    "default": "see https://ffmpeg.org/download.html",
-}
-_MPV_HINTS: dict[str, str] = {
-    "Darwin": "brew install mpv",
-    "Linux": "sudo apt-get install mpv (or dnf/pacman)",
-    "Windows": "see https://mpv.io/installation/",
-    "default": "see https://mpv.io/installation/",
-}
-# Absence hints keyed by binary, so the absence verdict needs only the name.
-_REQUIRED_HINTS: dict[str, dict[str, str]] = {
-    "ffmpeg": _FFMPEG_HINTS,
-    "mpv": _MPV_HINTS,
-}
-
-
-# ---------------------------------------------------------------------------
-# Result type
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class CheckResult:
-    """Outcome of a single diagnostic check."""
-
-    name: str
-    passed: bool
-    message: str
-    detail: str = ""
-    required: bool = True
-    symbol: str = _OK
-    status_kind: str = "pass"
+__all__ = ["DoctorCheck"]
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +66,7 @@ class DoctorCheck:
         results.append(self.check_uvx())
         results.extend(self.check_claude_desktop())
         results.extend(self.check_output_dir())
+        results.extend(self.check_deposited_guide())
         return results
 
     # -- individual checks -------------------------------------------------
@@ -130,8 +76,8 @@ class DoctorCheck:
         v = sys.version_info
         version_str = f"{v.major}.{v.minor}.{v.micro}"
         if v >= (3, 13):
-            return _pass(f"Python {version_str}")
-        return _fail(
+            return CheckResult.ok(f"Python {version_str}")
+        return CheckResult.fail(
             f"Python {version_str} (requires 3.13+)"
             " — install from https://www.python.org/downloads/"
         )
@@ -143,89 +89,22 @@ class DoctorCheck:
         error that fails ``vox doctor``.
         """
         if shutil.which("ffmpeg") is None:
-            return self._missing_binary("ffmpeg")
-        return _pass("ffmpeg: present")
+            hints: dict[str, str] = {
+                "Darwin": "brew install ffmpeg",
+                "Windows": "winget install --id Gyan.FFmpeg",
+                "default": "see https://ffmpeg.org/download.html",
+            }
+            hint = hints.get(platform.system(), hints["default"])
+            return CheckResult.fail(f"ffmpeg: not found — {hint}")
+        return CheckResult.ok("ffmpeg: present")
 
     def check_mpv(self) -> CheckResult:
         """Check mpv is installed AND at or above the pinned minimum version.
 
-        ``mpv`` plays the program audio tier (music, and later audiobooks and
-        podcasts) over its JSON IPC socket. It is a hard dependency with no
-        fallback -- notifications keep the built-in ``afplay``/``say``/
-        ``espeak``, but program audio needs ``mpv``, and the IPC contract (the
-        command set, the ``end-file`` reasons, the per-file ``pause`` option)
-        holds only at or above ``MPV_MIN_VERSION`` (docs/mpv-program-player.md
-        §1). A missing OR too-old binary is a hard error that fails
-        ``vox doctor``.
+        The check lives in :class:`~punt_vox.doctor_mpv.MpvCheck`; ``doctor``
+        holds the run_all schedule and delegates the mpv verdict there.
         """
-        if shutil.which("mpv") is None:
-            return self._missing_binary("mpv")
-        return self._check_mpv_version()
-
-    def _missing_binary(self, name: str) -> CheckResult:
-        """Verdict for an absent required host binary -- no host path leaks.
-
-        ``ffmpeg`` and ``mpv`` are both out of jail (host binary locations), so
-        the reply is a verdict, never the ``which`` path. Absence is a hard
-        error (a red ``✗``): both are required with no fallback. The remediation
-        hint is resolved from ``_REQUIRED_HINTS`` by name, so the verdict needs
-        only the binary name.
-        """
-        hints = _REQUIRED_HINTS[name]
-        hint = hints.get(platform.system(), hints["default"])
-        return _fail(f"{name}: not found — {hint}")
-
-    def _check_mpv_version(self) -> CheckResult:
-        """Gate an installed mpv against ``MPV_MIN_VERSION``.
-
-        A present mpv whose ``--version`` cannot be read, or that is older than
-        the pinned minimum the program player's IPC contract needs, is a hard
-        error carrying a per-platform upgrade hint -- the versioned form of the
-        hard dependency (docs/mpv-program-player.md §1).
-        """
-        version = self._mpv_version()
-        if version is None:
-            return _fail(
-                "mpv: present but version unreadable —"
-                f" verify 'mpv --version' is >= {_MPV_MIN_STR}"
-            )
-        detected = ".".join(str(part) for part in version)
-        if version < MPV_MIN_VERSION:
-            hint = _MPV_HINTS.get(platform.system(), _MPV_HINTS["default"])
-            return _fail(f"mpv {detected}: too old (needs >= {_MPV_MIN_STR}) — {hint}")
-        return _pass(f"mpv: present ({detected})")
-
-    def _mpv_version(self) -> tuple[int, int, int] | None:
-        # ``None`` is the documented "cannot determine" outcome at this
-        # subprocess boundary (mpv vanished from PATH mid-check, a broken
-        # binary, a timeout, or unparseable output). The caller surfaces it as
-        # a failing check, so this is absence-as-contract, not a value a caller
-        # must defensively treat as success (PY-TS-14). The binary is resolved
-        # to an absolute path first, mirroring the provider subprocess callers.
-        mpv_path = shutil.which("mpv")
-        if mpv_path is None:
-            return None
-        try:
-            proc = subprocess.run(
-                [mpv_path, "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-                check=False,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return None
-        return self._parse_mpv_version(proc.stdout)
-
-    @staticmethod
-    def _parse_mpv_version(output: str) -> tuple[int, int, int] | None:
-        # mpv prints ``mpv <major>.<minor>.<patch> Copyright ...`` on line one;
-        # some builds prefix a ``v`` or append ``-git-<hash>``. ``None`` when no
-        # version token is present (absence-as-contract, see ``_mpv_version``).
-        match = re.search(r"\bmpv\s+v?(\d+)\.(\d+)(?:\.(\d+))?", output)
-        if match is None:
-            return None
-        return (int(match.group(1)), int(match.group(2)), int(match.group(3) or 0))
+        return MpvCheck().run()
 
     def check_espeak_fallback(self) -> list[CheckResult]:
         """Check espeak on Linux when no cloud API keys are set."""
@@ -235,10 +114,10 @@ class DoctorCheck:
             return []
         if shutil.which("espeak-ng") or shutil.which("espeak"):
             # Out of jail: report presence, never the binary's install path.
-            return [_pass("espeak: present (offline fallback)")]
+            return [CheckResult.ok("espeak: present (offline fallback)")]
         return [
-            _result(
-                _OPTIONAL,
+            CheckResult.of(
+                OPTIONAL,
                 "espeak-ng/espeak: not found — install for offline TTS:"
                 " sudo apt-get install espeak-ng",
                 required=False,
@@ -253,11 +132,13 @@ class DoctorCheck:
             health = client.health()
         except VoxdConnectionError:
             results.append(
-                _fail("Daemon: not running — start with 'vox daemon install'")
+                CheckResult.fail(
+                    "Daemon: not running — start with 'vox daemon install'"
+                )
             )
             return results
         except VoxdProtocolError as exc:
-            results.append(_fail(f"Daemon: reachable but unhealthy — {exc}"))
+            results.append(CheckResult.fail(f"Daemon: reachable but unhealthy — {exc}"))
             return results
 
         port = health.port
@@ -266,7 +147,7 @@ class DoctorCheck:
 
         if running_version and running_version != wheel_version:
             results.append(
-                _warn(
+                CheckResult.warn(
                     f"Daemon: running on port {port} (version {running_version}"
                     f" — wheel has {wheel_version},"
                     f" run 'vox daemon restart' to refresh)"
@@ -277,7 +158,9 @@ class DoctorCheck:
             # §3.6, delivered by PR 3); the daemon has no provider of its
             # own, so the health line reports the version-and-port fact only.
             version_note = f", version {running_version}" if running_version else ""
-            results.append(_pass(f"Daemon: running on port {port}{version_note}"))
+            results.append(
+                CheckResult.ok(f"Daemon: running on port {port}{version_note}")
+            )
         return results
 
     def check_provider_readiness(self) -> list[CheckResult]:
@@ -312,14 +195,14 @@ class DoctorCheck:
             # explains why it is empty rather than pretending nothing
             # was asked.
             return [
-                _result(
-                    _OPTIONAL,
+                CheckResult.of(
+                    OPTIONAL,
                     "Provider readiness: skipped (voxd not running)",
                     required=False,
                 )
             ]
         except VoxdProtocolError as exc:
-            return [_warn(f"Provider readiness: unavailable — {exc}")]
+            return [CheckResult.warn(f"Provider readiness: unavailable — {exc}")]
         return self._render_provider_readiness(payload)
 
     @staticmethod
@@ -337,7 +220,7 @@ class DoctorCheck:
         results: list[CheckResult] = []
         if payload.preferred is None:
             results.append(
-                _fail(
+                CheckResult.fail(
                     "Provider readiness: no provider is usable on this daemon"
                     " — set at least one credential (e.g. ELEVENLABS_API_KEY,"
                     " OPENAI_API_KEY, or AWS credentials)"
@@ -345,11 +228,11 @@ class DoctorCheck:
             )
         else:
             results.append(
-                _pass(f"Provider readiness: preferred → {payload.preferred}")
+                CheckResult.ok(f"Provider readiness: preferred → {payload.preferred}")
             )
         for row in payload.providers:
             if row.ready:
-                results.append(_pass(f"  {row.name}: ready"))
+                results.append(CheckResult.ok(f"  {row.name}: ready"))
             else:
                 # ``detail`` names the missing variables (F2) or is empty for
                 # ``unknown_provider`` (F4); either way it is the same string
@@ -358,7 +241,7 @@ class DoctorCheck:
                 message = f"  {row.name}: not ready"
                 if row.detail:
                     message = f"{message} — {row.detail}"
-                results.append(_result(_OPTIONAL, message, required=False))
+                results.append(CheckResult.of(OPTIONAL, message, required=False))
         return results
 
     def check_env_overrides(self) -> list[CheckResult]:
@@ -370,7 +253,7 @@ class DoctorCheck:
                 display = "***" if env_name == "VOXD_TOKEN" else env_val
                 overrides.append(f"{env_name}={display}")
         if overrides:
-            return [_pass(f"Remote config: {', '.join(overrides)}")]
+            return [CheckResult.ok(f"Remote config: {', '.join(overrides)}")]
         return []
 
     def check_music_dir(self) -> list[CheckResult]:
@@ -385,15 +268,19 @@ class DoctorCheck:
 
         music_dir = _resolve_music_dir()  # pyright: ignore[reportPrivateUsage]
         if not music_dir.is_dir():
-            return [_warn("output music dir: absent — created on first 'vox record'")]
+            return [
+                CheckResult.warn(
+                    "output music dir: absent — created on first 'vox record'"
+                )
+            ]
         return []
 
     def check_uvx(self) -> CheckResult:
         """Check for uvx -- present/absent verdict, no host path (out of jail)."""
         if shutil.which("uvx"):
-            return _result(_OK, "uvx: present", required=False)
-        return _result(
-            _OPTIONAL,
+            return CheckResult.of(OK, "uvx: present", required=False)
+        return CheckResult.of(
+            OPTIONAL,
             "uvx: not found (needed for MCP server)",
             required=False,
         )
@@ -401,19 +288,19 @@ class DoctorCheck:
     def check_claude_desktop(self) -> list[CheckResult]:
         """Check Claude Desktop config and MCP registration."""
         results: list[CheckResult] = []
-        config_path = claude_desktop_config_path()
+        config_path = DesktopInstaller.config_path()
 
         if not config_path.exists():
             results.append(
-                _result(
-                    _OPTIONAL,
+                CheckResult.of(
+                    OPTIONAL,
                     "Claude Desktop config: not found",
                     required=False,
                 )
             )
             results.append(
-                _result(
-                    _OPTIONAL,
+                CheckResult.of(
+                    OPTIONAL,
                     "Claude Desktop MCP: not registered (run 'vox desktop install')",
                     required=False,
                 )
@@ -422,23 +309,25 @@ class DoctorCheck:
 
         # Out of jail (under ~/Library, neither data root): present/absent
         # verdict only -- the absolute config path never crosses to a client.
-        results.append(_result(_OK, "Claude Desktop config: present", required=False))
+        results.append(
+            CheckResult.of(OK, "Claude Desktop config: present", required=False)
+        )
 
         try:
             data = json.loads(config_path.read_text(encoding="utf-8"))
             servers = data.get("mcpServers", {})
             if "vox" in servers:
                 results.append(
-                    _result(
-                        _OK,
+                    CheckResult.of(
+                        OK,
                         "Claude Desktop MCP: registered",
                         required=False,
                     )
                 )
             else:
                 results.append(
-                    _result(
-                        _OPTIONAL,
+                    CheckResult.of(
+                        OPTIONAL,
                         "Claude Desktop MCP: not registered"
                         " (run 'vox desktop install')",
                         required=False,
@@ -446,8 +335,8 @@ class DoctorCheck:
                 )
         except (json.JSONDecodeError, OSError):
             results.append(
-                _result(
-                    _OPTIONAL,
+                CheckResult.of(
+                    OPTIONAL,
                     "Claude Desktop MCP: could not read config",
                     required=False,
                 )
@@ -466,117 +355,60 @@ class DoctorCheck:
                 test_file = out_dir / ".doctor_test"
                 test_file.write_text("ok")
                 test_file.unlink()
-                return [_pass("output: writable")]
+                return [CheckResult.ok("output: writable")]
             except OSError:
-                return [_fail("output: not writable — check permissions")]
-        return [_warn("output: absent — created on first 'vox record'")]
+                return [CheckResult.fail("output: not writable — check permissions")]
+        return [CheckResult.warn("output: absent — created on first 'vox record'")]
 
+    def check_deposited_guide(self) -> list[CheckResult]:
+        """Check the per-repo deposited guide against the packaged asset.
 
-# ---------------------------------------------------------------------------
-# Helpers shared between DoctorCheck and __main__.py
-# ---------------------------------------------------------------------------
+        The deposited guide (``.punt-labs/vox/CLAUDE.md``) is @-imported by the
+        repo's own ``CLAUDE.md``, so it is what every agent working in the repo
+        actually reads. Nothing else surfaces whether it has fallen behind the
+        packaged source; a stale copy silently teaches agents tools that have
+        been retired. This check reads the source-hash stamp
+        (:class:`~punt_vox.guide_stamp.GuideStamp`) embedded on deposit and
+        compares it to a fresh hash of the packaged asset.
 
+        Four verdicts, distinct on purpose:
 
-def claude_desktop_config_path() -> Path:
-    """Return the Claude Desktop config file path."""
-    return (
-        Path.home()
-        / "Library"
-        / "Application Support"
-        / "Claude"
-        / "claude_desktop_config.json"
-    )
+        * outside a repo, or in a repo with no deposited guide (vox not
+          enabled): return an empty list -- not applicable, not a failure;
+        * ``AGREE``: pass -- the deposited copy matches the packaged asset;
+        * ``ABSENT_STAMP``: warn -- a copy from before this stamping existed
+          (or one hand-edited beyond recognition). Unknown, not a false pass;
+        * ``DIVERGE``: fail -- the deposit is provably behind the packaged
+          source and re-``enable`` is needed.
+        """
+        root = find_repo_root()
+        if root is None:
+            return []
+        deposited = root / ".punt-labs" / "vox" / "CLAUDE.md"
+        # ``is_file`` swallows ENOENT / ENOTDIR / EBADF / ELOOP but propagates
+        # OSError variants like PermissionError (e.g. an unreadable parent
+        # directory) -- the same class of failure the deposit-read guard in
+        # ``GuideStamp.read`` handles. A check whose job is to say the deposit
+        # is in a bad state must not crash the whole ``vox doctor`` run when
+        # it hits one; treat "cannot see the deposit" as not-applicable, the
+        # same as "vox not enabled here".
+        try:
+            deposited_present = deposited.is_file()
+        except OSError:
+            return []
+        if not deposited_present:
+            return []
+        verdict = GuideStamp.for_packaged_asset().verify(deposited)
+        return [self._verdict_to_result(verdict)]
 
-
-def format_results(results: list[CheckResult]) -> tuple[dict[str, object], str]:
-    """Format check results into JSON payload and display text.
-
-    Returns a (payload, text) tuple matching the existing ``doctor``
-    command output format.
-    """
-    passed = 0
-    failed = 0
-    warned = 0
-    lines: list[str] = []
-    checks: list[dict[str, object]] = []
-
-    for r in results:
-        lines.append(f"{r.symbol} {r.message}")
-        checks.append(
-            {
-                "status": r.symbol,
-                "status_kind": r.status_kind,
-                "message": r.message,
-                "required": r.required,
-                "passed": r.passed,
-            }
+    @staticmethod
+    def _verdict_to_result(verdict: GuideStampVerdict) -> CheckResult:
+        """Turn a :class:`GuideStampVerdict` into the matching check line."""
+        remediation = " — run 'vox enable' (or mic:enablement action=enable) to refresh"
+        if verdict is GuideStampVerdict.AGREE:
+            return CheckResult.ok("deposited guide: up to date")
+        if verdict is GuideStampVerdict.DIVERGE:
+            return CheckResult.fail(f"deposited guide: out of date{remediation}")
+        return CheckResult.warn(
+            f"deposited guide: unstamped, freshness unknown{remediation}"
         )
-        if r.passed:
-            passed += 1
-        elif r.symbol == _FAIL and r.required:
-            failed += 1
-        elif r.symbol == _WARN:
-            warned += 1
-
-    summary = f"{passed} passed, {failed} failed"
-    if warned > 0:
-        summary += f", {warned} warning" + ("s" if warned > 1 else "")
-    text_parts = ["=" * 40, *lines, "=" * 40, summary]
-
-    payload: dict[str, object] = {
-        "passed": passed,
-        "failed": failed,
-        "warned": warned,
-        "checks": checks,
-    }
-    return payload, "\n".join(text_parts)
-
-
-# ---------------------------------------------------------------------------
-# Private result constructors
-# ---------------------------------------------------------------------------
-
-
-def _pass(message: str) -> CheckResult:
-    """Create a passing check result."""
-    return CheckResult(
-        name=message,
-        passed=True,
-        message=message,
-        symbol=_OK,
-        status_kind="pass",
-    )
-
-
-def _fail(message: str) -> CheckResult:
-    """Create a failing check result."""
-    return CheckResult(
-        name=message,
-        passed=False,
-        message=message,
-        symbol=_FAIL,
-        status_kind="fail",
-    )
-
-
-def _warn(message: str) -> CheckResult:
-    """Create a warning check result."""
-    return CheckResult(
-        name=message,
-        passed=False,
-        message=message,
-        symbol=_WARN,
-        status_kind="warn",
-    )
-
-
-def _result(symbol: str, message: str, *, required: bool = True) -> CheckResult:
-    """Create a check result with an explicit symbol."""
-    return CheckResult(
-        name=message,
-        passed=symbol == _OK,
-        message=message,
-        symbol=symbol,
-        status_kind=_STATUS_KIND.get(symbol, "fail"),
-        required=required,
-    )
