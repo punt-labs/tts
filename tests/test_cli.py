@@ -1318,11 +1318,14 @@ class TestDoctorCommand:
 
         runner = CliRunner()
         _doc = "punt_vox.doctor"
+        _mpv = "punt_vox.doctor_mpv"
+        _res = "punt_vox.doctor_result"
         with (
             patch(f"{_doc}.shutil.which", side_effect=which_side_effect),
+            patch(f"{_mpv}.shutil.which", side_effect=which_side_effect),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
             patch(
-                f"{_doc}.subprocess.run",
+                f"{_mpv}.subprocess.run",
                 return_value=MagicMock(stdout=f"mpv {mpv_version} Copyright"),
             ),
             patch(
@@ -1335,8 +1338,9 @@ class TestDoctorCommand:
                 return_value=tmp_path / "audio",
             ),
             patch(f"{_doc}.platform.system", return_value=system_platform),
-            # Isolate legacy-path doctor checks from the real filesystem.
-            patch(f"{_doc}.Path.home", return_value=tmp_path),
+            patch(f"{_mpv}.platform.system", return_value=system_platform),
+            # Isolate the config-path helper from the real filesystem.
+            patch(f"{_res}.Path.home", return_value=tmp_path),
             patch(
                 "punt_vox.dirs._resolve_music_dir",
                 return_value=tmp_path / "Music",
@@ -1471,10 +1475,13 @@ class TestDoctorCommand:
         (tmp_path / "audio").mkdir(exist_ok=True)
 
         _doc = "punt_vox.doctor"
+        _mpv = "punt_vox.doctor_mpv"
+        _res = "punt_vox.doctor_result"
         with (
             patch(f"{_doc}.shutil.which", side_effect=which_side_effect),
+            patch(f"{_mpv}.shutil.which", side_effect=which_side_effect),
             patch(
-                f"{_doc}.subprocess.run",
+                f"{_mpv}.subprocess.run",
                 return_value=MagicMock(stdout="mpv 0.38.0 Copyright"),
             ),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
@@ -1488,7 +1495,8 @@ class TestDoctorCommand:
                 return_value=tmp_path / "audio",
             ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
-            patch(f"{_doc}.Path.home", return_value=tmp_path),
+            patch(f"{_mpv}.platform.system", return_value="Darwin"),
+            patch(f"{_res}.Path.home", return_value=tmp_path),
             patch(
                 "punt_vox.dirs._resolve_music_dir",
                 return_value=tmp_path / "Music",
@@ -1554,10 +1562,13 @@ class TestDoctorCommand:
         (tmp_path / "audio").mkdir(exist_ok=True)
 
         _doc = "punt_vox.doctor"
+        _mpv = "punt_vox.doctor_mpv"
+        _res = "punt_vox.doctor_result"
         with (
             patch(f"{_doc}.shutil.which", side_effect=which_side_effect),
+            patch(f"{_mpv}.shutil.which", side_effect=which_side_effect),
             patch(
-                f"{_doc}.subprocess.run",
+                f"{_mpv}.subprocess.run",
                 return_value=MagicMock(stdout="mpv 0.38.0 Copyright"),
             ),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
@@ -1571,7 +1582,8 @@ class TestDoctorCommand:
                 return_value=tmp_path / "audio",
             ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
-            patch(f"{_doc}.Path.home", return_value=tmp_path),
+            patch(f"{_mpv}.platform.system", return_value="Darwin"),
+            patch(f"{_res}.Path.home", return_value=tmp_path),
             patch(
                 "punt_vox.dirs._resolve_music_dir",
                 return_value=tmp_path / "Music",
@@ -1623,10 +1635,13 @@ class TestDoctorCommand:
         (tmp_path / "audio").mkdir(exist_ok=True)
 
         _doc = "punt_vox.doctor"
+        _mpv = "punt_vox.doctor_mpv"
+        _res = "punt_vox.doctor_result"
         with (
             patch(f"{_doc}.shutil.which", side_effect=which_side_effect),
+            patch(f"{_mpv}.shutil.which", side_effect=which_side_effect),
             patch(
-                f"{_doc}.subprocess.run",
+                f"{_mpv}.subprocess.run",
                 return_value=MagicMock(stdout="mpv 0.38.0 Copyright"),
             ),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
@@ -1640,7 +1655,8 @@ class TestDoctorCommand:
                 return_value=tmp_path / "audio",
             ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
-            patch(f"{_doc}.Path.home", return_value=tmp_path),
+            patch(f"{_mpv}.platform.system", return_value="Darwin"),
+            patch(f"{_res}.Path.home", return_value=tmp_path),
             patch(
                 "punt_vox.dirs._resolve_music_dir",
                 return_value=tmp_path / "Music",

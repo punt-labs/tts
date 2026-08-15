@@ -89,9 +89,21 @@ def test_doc_content_round_trips_from_asset(tmp_path: Path) -> None:
         / "assets"
         / "global-guidance.md"
     )
-    assert guide.doc_path.read_text(encoding="utf-8") == asset.read_text(
-        encoding="utf-8"
-    )
+    # Install appends a source-hash stamp so vox doctor can detect a stale
+    # deposit; the packaged asset text still lands verbatim as the prefix.
+    deposited = guide.doc_path.read_text(encoding="utf-8")
+    assert deposited.startswith(asset.read_text(encoding="utf-8"))
+
+
+def test_install_writes_source_hash_stamp(tmp_path: Path) -> None:
+    from punt_vox.guide_stamp import GuideStamp, GuideStampVerdict
+
+    guide = _guidance(tmp_path)
+    guide.install()
+    stamp = GuideStamp.for_packaged_asset()
+    # The stamp survives write and matches the fresh packaged hash.
+    assert stamp.verify(guide.doc_path) is GuideStampVerdict.AGREE
+    assert stamp.read(guide.doc_path) == stamp.packaged_hash()
 
 
 def test_uninstall_deletes_doc_and_prunes(tmp_path: Path) -> None:

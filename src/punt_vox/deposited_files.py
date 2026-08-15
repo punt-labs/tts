@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Self, final
 
+from punt_vox.guide_stamp import GuideStamp
 from punt_vox.tool_owned_file import ToolOwnedFile
 
 __all__ = ["DepositedGuide", "VoxMarker"]
@@ -88,8 +89,16 @@ class DepositedGuide:
         return self._file.is_present()
 
     def deposit(self) -> None:
-        """Write the guide wholesale, making the dir if absent; refuse a symlink."""
-        self._file.write(self._asset_text())
+        """Write the guide wholesale, making the dir if absent; refuse a symlink.
+
+        The deposit is the packaged asset plus a trailing source-hash stamp
+        (:class:`~punt_vox.guide_stamp.GuideStamp`), so ``vox doctor`` can
+        detect a copy that has fallen behind the packaged source without
+        re-hashing the whole file. The stamp is an HTML comment, invisible to a
+        Markdown reader.
+        """
+        stamp = GuideStamp.for_packaged_asset()
+        self._file.write(stamp.stamped(self._asset_text()))
 
     @classmethod
     def _asset_text(cls) -> str:

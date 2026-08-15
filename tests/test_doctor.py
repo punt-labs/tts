@@ -123,10 +123,10 @@ class TestCheckMpv:
     def _proc(stdout: str) -> MagicMock:
         return MagicMock(stdout=stdout)
 
-    @patch("punt_vox.doctor.shutil.which", return_value="/usr/bin/mpv")
+    @patch("punt_vox.doctor_mpv.shutil.which", return_value="/usr/bin/mpv")
     def test_present_recent_passes(self, _which: MagicMock) -> None:
         with patch(
-            "punt_vox.doctor.subprocess.run",
+            "punt_vox.doctor_mpv.subprocess.run",
             return_value=self._proc("mpv 0.38.0 Copyright"),
         ):
             result = DoctorCheck().check_mpv()
@@ -134,17 +134,17 @@ class TestCheckMpv:
         assert result.message == "mpv: present (0.38.0)"
         assert "/usr/bin/mpv" not in result.message  # out-of-jail path dropped
 
-    @patch("punt_vox.doctor.shutil.which", return_value=None)
+    @patch("punt_vox.doctor_mpv.shutil.which", return_value=None)
     def test_missing_fails(self, _which: MagicMock) -> None:
         result = DoctorCheck().check_mpv()
         assert result.passed is False
         assert result.symbol == "✗"
         assert "not found" in result.message
 
-    @patch("punt_vox.doctor.shutil.which", return_value="/usr/bin/mpv")
+    @patch("punt_vox.doctor_mpv.shutil.which", return_value="/usr/bin/mpv")
     def test_too_old_fails(self, _which: MagicMock) -> None:
         with patch(
-            "punt_vox.doctor.subprocess.run",
+            "punt_vox.doctor_mpv.subprocess.run",
             return_value=self._proc("mpv 0.30.0 Copyright"),
         ):
             result = DoctorCheck().check_mpv()
@@ -154,10 +154,10 @@ class TestCheckMpv:
         assert "0.30.0" in result.message
         assert "0.35.0" in result.message  # names the required floor
 
-    @patch("punt_vox.doctor.shutil.which", return_value="/usr/bin/mpv")
+    @patch("punt_vox.doctor_mpv.shutil.which", return_value="/usr/bin/mpv")
     def test_unparseable_version_fails(self, _which: MagicMock) -> None:
         with patch(
-            "punt_vox.doctor.subprocess.run",
+            "punt_vox.doctor_mpv.subprocess.run",
             return_value=self._proc("not a version line"),
         ):
             result = DoctorCheck().check_mpv()
@@ -165,9 +165,9 @@ class TestCheckMpv:
         assert result.symbol == "✗"
         assert "unreadable" in result.message
 
-    @patch("punt_vox.doctor.shutil.which", return_value="/usr/bin/mpv")
+    @patch("punt_vox.doctor_mpv.shutil.which", return_value="/usr/bin/mpv")
     def test_subprocess_error_fails(self, _which: MagicMock) -> None:
-        with patch("punt_vox.doctor.subprocess.run", side_effect=OSError("boom")):
+        with patch("punt_vox.doctor_mpv.subprocess.run", side_effect=OSError("boom")):
             result = DoctorCheck().check_mpv()
         assert result.passed is False
         assert "unreadable" in result.message
@@ -184,10 +184,14 @@ class TestParseMpvVersion:
         ],
     )
     def test_parses_version(self, output: str, expected: tuple[int, int, int]) -> None:
-        assert DoctorCheck._parse_mpv_version(output) == expected
+        from punt_vox.doctor_mpv import MpvCheck
+
+        assert MpvCheck.parse_version(output) == expected
 
     def test_no_version_returns_none(self) -> None:
-        assert DoctorCheck._parse_mpv_version("no version here") is None
+        from punt_vox.doctor_mpv import MpvCheck
+
+        assert MpvCheck.parse_version("no version here") is None
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +319,105 @@ class TestCheckOutputDir:
         assert results[0].symbol == "⚠"
         assert "absent" in results[0].message
         assert str(missing) not in results[0].message  # no absolute path
+
+
+# ---------------------------------------------------------------------------
+# check_deposited_guide
+# ---------------------------------------------------------------------------
+
+
+class TestCheckDepositedGuide:
+    """The staleness check compares the deposited guide's source-hash stamp
+    to a fresh hash of the packaged asset. The four verdicts are distinct
+    on purpose -- absent stamp must not read as a false pass, and being
+    outside a repo (or in a repo with vox not enabled) is not applicable,
+    not a failure. See ``docs/bd/vox-prfr`` for the rot this guards.
+    """
+
+    def _make_repo(self, tmp_path: Path) -> Path:
+        (tmp_path / ".git").mkdir()
+        (tmp_path / ".punt-labs" / "vox").mkdir(parents=True)
+        return tmp_path
+
+    def _packaged(self, tmp_path: Path) -> Path:
+        asset = tmp_path / "packaged.md"
+        asset.write_text("packaged body\n", encoding="utf-8")
+        return asset
+
+    def test_no_repo_is_not_applicable(self, tmp_path: Path) -> None:
+        with patch("punt_vox.doctor.find_repo_root", return_value=None):
+            results = DoctorCheck().check_deposited_guide()
+        assert results == []
+
+    def test_repo_without_deposited_guide_is_not_applicable(
+        self, tmp_path: Path
+    ) -> None:
+        repo = self._make_repo(tmp_path)
+        with patch("punt_vox.doctor.find_repo_root", return_value=repo):
+            results = DoctorCheck().check_deposited_guide()
+        # vox not enabled here -- no deposited guide -- reported as N/A.
+        assert results == []
+
+    def test_agree_passes(self, tmp_path: Path) -> None:
+        from punt_vox.guide_stamp import GuideStamp
+
+        repo = self._make_repo(tmp_path)
+        packaged = self._packaged(tmp_path)
+        stamp = GuideStamp(packaged)
+        deposited = repo / ".punt-labs" / "vox" / "CLAUDE.md"
+        deposited.write_text(stamp.stamped("packaged body\n"), encoding="utf-8")
+
+        with (
+            patch("punt_vox.doctor.find_repo_root", return_value=repo),
+            patch.object(GuideStamp, "for_packaged_asset", return_value=stamp),
+        ):
+            results = DoctorCheck().check_deposited_guide()
+        assert len(results) == 1
+        assert results[0].passed is True
+        assert "up to date" in results[0].message
+
+    def test_diverge_fails(self, tmp_path: Path) -> None:
+        from punt_vox.guide_stamp import GuideStamp
+
+        repo = self._make_repo(tmp_path)
+        packaged = self._packaged(tmp_path)
+        stamp = GuideStamp(packaged)
+        deposited = repo / ".punt-labs" / "vox" / "CLAUDE.md"
+        deposited.write_text(stamp.stamped("packaged body\n"), encoding="utf-8")
+        # Packaged asset drifts after the deposit was stamped.
+        packaged.write_text("new packaged body\n", encoding="utf-8")
+
+        with (
+            patch("punt_vox.doctor.find_repo_root", return_value=repo),
+            patch.object(GuideStamp, "for_packaged_asset", return_value=stamp),
+        ):
+            results = DoctorCheck().check_deposited_guide()
+        assert len(results) == 1
+        assert results[0].passed is False
+        assert results[0].symbol == "✗"
+        assert "out of date" in results[0].message
+        assert "vox enable" in results[0].message
+
+    def test_absent_stamp_warns_and_does_not_pass(self, tmp_path: Path) -> None:
+        from punt_vox.guide_stamp import GuideStamp
+
+        repo = self._make_repo(tmp_path)
+        packaged = self._packaged(tmp_path)
+        stamp = GuideStamp(packaged)
+        deposited = repo / ".punt-labs" / "vox" / "CLAUDE.md"
+        # A guide deposited before this stamping existed -- no HTML-comment tail.
+        deposited.write_text("unstamped body\n", encoding="utf-8")
+
+        with (
+            patch("punt_vox.doctor.find_repo_root", return_value=repo),
+            patch.object(GuideStamp, "for_packaged_asset", return_value=stamp),
+        ):
+            results = DoctorCheck().check_deposited_guide()
+        assert len(results) == 1
+        assert results[0].passed is False
+        assert results[0].symbol == "⚠"
+        assert "unstamped" in results[0].message
+        assert "vox enable" in results[0].message
 
 
 # ---------------------------------------------------------------------------

@@ -299,8 +299,9 @@ class VoiceTool:
 
         Returns:
             JSON string. No arg: ``{"provider", "current", "available",
-            "featured"}`` (the current ``mic:who`` payload with ``all``
-            renamed to ``available``; ``featured`` carries the blurbs).
+            "featured"}`` (the shape the retired ``mic:who`` tool produced,
+            with ``all`` renamed to ``available``; ``featured`` carries the
+            blurbs).
             Name given: ``{"voice": "<normalized-name>"}``. A daemon fault on
             the roster returns ``{"error": ...}``; a blank/lone-``@`` write
             returns ``{"error": "voice name is empty"}``; a filesystem or
