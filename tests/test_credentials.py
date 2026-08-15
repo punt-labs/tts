@@ -26,8 +26,8 @@ from punt_vox.providers.credential_requirements import (
 from punt_vox.providers.credentials import (
     PROVIDER_KEY_NAMES,
     ProviderCredentials,
-    ProviderReadiness,
 )
+from punt_vox.types_provider import ProviderReadiness
 from punt_vox.types_provider_errors import ProviderUnavailableError
 
 _ELEVEN_MSG = (
@@ -357,3 +357,78 @@ def test_stubs_satisfy_the_protocol() -> None:
     assert creds.report("one").ready is True
     assert creds.report("two").ready is False
     _ = os.environ.get("PATH")
+
+
+class TestRequireAndReportShareOneMap:
+    """The design's load-bearing property: status cannot drift from behaviour.
+
+    ``require`` (the daemon gate that raises for the F2 refusal) and
+    ``report`` (the readiness verdict for status/doctor) are one function
+    called two ways -- they walk the same
+    :class:`~punt_vox.providers.credentials.CredentialRequirement` dispatch
+    -- so a provider that ``require`` rejects must ``report`` as
+    not-ready, and every provider ``report`` calls ready must be one
+    ``require`` lets through.  Two-way property, asserted per provider
+    over every satisfied/unsatisfied combination the requirement stubs
+    can express.
+    """
+
+    def _walk_every_combination(
+        self, satisfied: dict[str, bool]
+    ) -> ProviderCredentials:
+        return ProviderCredentials(
+            requirements={
+                name: (_AlwaysReady() if satisfied[name] else _AlwaysUnready())
+                for name in _KNOWN
+            }
+        )
+
+    def test_require_rejects_iff_report_reports_not_ready(self) -> None:
+        # Sweep across every 2**5 = 32 satisfied/unsatisfied combination and
+        # assert the biconditional in BOTH directions per provider.  A
+        # sample-based property test would miss a provider whose report
+        # branch stops calling satisfied()'s answer; the exhaustive walk
+        # closes the drift surface entirely.
+        combos = 2 ** len(_KNOWN)
+        for bits in range(combos):
+            satisfied = {name: bool((bits >> i) & 1) for i, name in enumerate(_KNOWN)}
+            creds = self._walk_every_combination(satisfied)
+            for name in _KNOWN:
+                readiness = creds.report(name)
+                if satisfied[name]:
+                    # ready -> require passes
+                    assert readiness.ready is True, (name, satisfied)
+                    creds.require(name)  # must not raise
+                else:
+                    # not ready -> require raises
+                    assert readiness.ready is False, (name, satisfied)
+                    with pytest.raises(ProviderUnavailableError):
+                        creds.require(name)
+
+    def test_unknown_provider_reports_not_ready_and_require_lets_through(
+        self,
+    ) -> None:
+        # F4 has its own error type ``UnknownProviderError`` raised by
+        # ``ProviderRegistry.get`` (§3.3, §3.5), so the credentials gate
+        # deliberately lets an unknown name through here -- one place, one
+        # verdict.  ``report`` still reports it as not-ready, which is what
+        # the status surface needs.
+        creds = ProviderCredentials()
+        readiness = creds.report("ploly")
+        assert readiness.ready is False
+        assert readiness.reason == "unknown_provider"
+        creds.require("ploly")  # must not raise -- F4 lives elsewhere
+
+    def test_detail_is_the_same_text_require_would_raise(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The same sentence a caller sees through ``mic:status`` also
+        # appears in the wire error at the synthesize gate, because both
+        # come from ``CredentialRequirement.unmet_message`` verbatim.  A
+        # divergence here is what §3.4 forbids.
+        monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+        creds = ProviderCredentials()
+        readiness = creds.report("elevenlabs")
+        with pytest.raises(ProviderUnavailableError) as exc_info:
+            creds.require("elevenlabs")
+        assert readiness.detail == str(exc_info.value)

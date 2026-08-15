@@ -39,6 +39,7 @@ from punt_vox.types_programs import (
     ProgramSummary,
     PromptSet,
 )
+from punt_vox.types_provider import ProviderStatusPayload
 from punt_vox.types_synthesis import SynthesisSpec
 
 logger = logging.getLogger(__name__)
@@ -928,6 +929,38 @@ class VoxClient:
             {"type": "health"}, timeout=_TIMEOUT_SHORT
         )
         return HealthStatus.from_wire(resp)
+
+    async def provider_status(
+        self, provider: str | None = None
+    ) -> ProviderStatusPayload:
+        """Return the daemon's per-provider readiness verdict and its preferred name.
+
+        With *provider* omitted (or ``None``) the reply carries every
+        registered provider's readiness plus the daemon's ``preferred``
+        proposal -- the shape :mod:`punt_vox.doctor` renders and
+        :mod:`punt_vox.enablement` consults.  With *provider* set, the
+        reply carries just that one row (still a
+        :class:`~punt_vox.types_provider.ProviderStatusPayload`, so the
+        parsing path does not fork); ``preferred`` rides on both shapes
+        because it is answered from the same requirement map and costs
+        nothing to include.
+
+        Never cached client-side: the readiness answer moves with the
+        daemon's environment (a fresh ``AWS_PROFILE`` export, a key
+        removed from ``keys.env``), so a status surface reading a
+        cached value would tell the user "yes, ready" long after the
+        credential vanished.  The daemon's check is cheap enough that
+        one WebSocket round-trip per ``mic:status`` call is the right
+        cost for a live answer.
+        """
+        fields: dict[str, object] = {}
+        if provider is not None:
+            fields["provider"] = provider
+        resp = await self._command("provider_status", **fields)
+        with self._wire_guard():
+            return ProviderStatusPayload.from_wire(
+                JsonObject.coerce(resp, "provider_status")
+            )
 
     # -- program surface (session-free; the daemon-facing wire, design section 4)
 
