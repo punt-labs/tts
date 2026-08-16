@@ -135,13 +135,13 @@ Run it as your normal user, **not** under `sudo`. On **macOS** this is fully sud
 ### 4. Verify
 
 ```bash
-vox doctor                         # report system checks and the daemon's active provider
+vox doctor                         # report system checks and per-provider readiness
 vox voice                          # list the voices your provider offers (marks current)
 vox say "hello from vox"           # speak through the default provider
 echo "piped too" | vox say         # ...or read the text from stdin
 ```
 
-`vox doctor` reports the Python version, ffmpeg/espeak presence, daemon status, and which provider the running daemon is currently using. `vox say` should speak the phrase through your speakers within a few seconds.
+`vox doctor` reports the Python version, ffmpeg/espeak presence, daemon status, and the daemon's per-provider readiness verdict (which providers have credentials, which are missing them, and which provider the daemon proposes as `preferred`). The readiness check reads the *daemon's* environment, never the caller's shell -- so an `ELEVENLABS_API_KEY` you export in your terminal has no bearing on the report; edit `keys.env` and `vox daemon restart` to change what the daemon can see. `vox say` should speak the phrase through your speakers within a few seconds.
 
 If something doesn't work, the daemon log at `~/.punt-labs/vox/logs/vox.log` captures the spawn command, audio session env, exit code, elapsed time, and player stderr — enough detail to diagnose most failures without any extra tooling.
 
@@ -250,11 +250,13 @@ except VoxError as exc:  # VoxdConnectionError (daemon down) or VoxdProtocolErro
 import asyncio
 from punt_vox import VoxClient, SynthesisSpec
 
+
 async def main() -> None:
-    async with VoxClient() as vox:      # connect on enter, close on exit
+    async with VoxClient() as vox:  # connect on enter, close on exit
         await vox.synthesize("Tests green", SynthesisSpec(voice="sarah"))
-        health = await vox.health()     # typed HealthStatus, not a bare dict
+        health = await vox.health()  # typed HealthStatus, not a bare dict
         print(health.provider, health.daemon_version)
+
 
 asyncio.run(main())
 ```

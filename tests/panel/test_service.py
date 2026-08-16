@@ -109,9 +109,19 @@ class _FakeRest:
 
 def _config(
     voice: str | None = "roger",
-    provider: str | None = None,
+    provider: str | None = "elevenlabs",
     model: str | None = None,
 ) -> VoxConfig:
+    """Return a ``VoxConfig`` for panel tests.
+
+    The default provider is ``"elevenlabs"`` because :class:`PanelState.read`
+    no longer fetches a roster when ``cfg.provider`` is unset (state is the
+    sole authority on which provider voxd runs, per ``session_spec``). A
+    default-provider config lets tests that exercise the daemon-side
+    roster-fetch path (broken client, misbehaving client, cascade) hit that
+    path; a test that specifically means to exercise the unset-provider
+    branch overrides with ``provider=None``.
+    """
     from punt_vox.config import VoxConfig
 
     return VoxConfig(
@@ -201,7 +211,14 @@ class TestApplyEvent:
         service.prefetch()
         changed = service.apply_event(PanelTopic.VOICE_PREVIEW, {})
         assert changed is False
-        expected = ("This is my voice.", SynthesisSpec(voice="roger"))
+        # The preview spec now fills provider from state through SessionSpec,
+        # so the wire message carries the configured provider alongside the
+        # candidate voice -- previously the preview sent no provider at all
+        # and let the daemon guess.
+        expected = (
+            "This is my voice.",
+            SynthesisSpec(voice="roger", provider="elevenlabs"),
+        )
         assert client.synth_calls == [expected]
 
     def test_voice_preview_with_no_voice_selected_is_a_silent_no_op(self) -> None:

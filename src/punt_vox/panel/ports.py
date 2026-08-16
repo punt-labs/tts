@@ -81,8 +81,13 @@ class SettingsSource(Protocol):
 class VoiceRoster(Protocol):
     """The daemon read :class:`~punt_vox.panel.state.PanelState` needs."""
 
-    def voices(self, provider: str | None = None) -> list[str]:
-        """Return the named provider's voice names, or the active one's if absent."""
+    def voices(self, provider: str) -> list[str]:
+        """Return *provider*'s voice names.
+
+        The provider is required now: state is the sole authority on which
+        provider voxd runs, so the caller names it explicitly rather than
+        relying on the daemon to substitute one.
+        """
         ...
 
 

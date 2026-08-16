@@ -30,7 +30,7 @@ WITH_SUPPRESSIONS = (
 )
 
 # A multiline docstring interior and a bare comment line -- both excluded from
-# the code-line scan, so their `# noqa` markers must not be counted.
+# the code-line scan, so their `noqa` markers must not be counted.
 DOCSTRING_AND_COMMENT = '"""\n# noqa\ndocstring body\n"""\n\n# noqa\nvalue = 1\n'
 
 

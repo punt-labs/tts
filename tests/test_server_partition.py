@@ -64,7 +64,7 @@ def _set_state(
         srv._session.voice = voice
 
 
-def _read_state() -> dict[str, str | None | bool]:
+def _read_state() -> dict[str, str | bool | None]:
     """Read the full post-state from session."""
     import punt_vox.server as srv
 

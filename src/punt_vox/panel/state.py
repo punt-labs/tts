@@ -18,6 +18,28 @@ if TYPE_CHECKING:
 __all__ = ["PanelState"]
 
 
+def _normalise(raw: str | None) -> str | None:
+    """Return ``raw`` stripped, or ``None`` if the result is empty.
+
+    Panel state is the panel's single normalisation point for the provider
+    and model fields. Every downstream site (``_model_for``,
+    ``_commit_model``, ``_commit_provider``, the scene projection, the
+    daemon roster fetch) then trusts one invariant: the stored value is
+    either a non-empty stripped string OR ``None``.
+
+    Without this normalisation, a hand-edited ``provider: "   "`` in
+    ``vox.md`` is truthy and slips every ``if provider:`` guard the panel
+    holds, re-triggering the daemon-side guessing this bead exists to
+    remove. Stripping at the boundary means one guard rather than three,
+    and the same argument that produced ``SessionSpec`` in the first
+    place (one place to normalise, not five).
+    """
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    return stripped if stripped else None
+
+
 @final
 @dataclass(frozen=True, slots=True)
 class PanelState:
@@ -39,20 +61,31 @@ class PanelState:
     def read(cls, client: VoiceRoster, store: SettingsSource) -> Self:
         """Read the config fields fresh from disk and the voice roster from voxd.
 
-        The roster is fetched for the current session provider (or the daemon's
-        default when unset) so a mid-session switch is seen after the next
-        resync -- the panel does not display an elevenlabs roster while the
-        session is configured to speak through espeak.
+        Provider and model are normalised at this boundary: a raw
+        ``cfg.provider`` of ``""`` or ``"   "`` becomes ``None``, and a
+        padded ``"elevenlabs "`` becomes ``"elevenlabs"``. Every downstream
+        panel site then trusts the invariant that ``state.provider`` is
+        either a non-empty stripped string or ``None`` -- no ``if provider:``
+        guard needs to re-strip, and the daemon never sees a whitespace
+        provider on the roster wire.
+
+        The roster is fetched for the normalised provider only. An unset or
+        whitespace-only ``cfg.provider`` returns an empty roster rather
+        than borrowing a different provider's voices; the panel does not
+        display any roster at all until the caller has chosen a real
+        provider.
         """
         cfg = store.read()
-        roster = tuple(client.voices(cfg.provider))
+        provider = _normalise(cfg.provider)
+        model = _normalise(cfg.model)
+        roster = tuple(client.voices(provider)) if provider else ()
         return cls(
             notify=cfg.notify,
             speak=cfg.speak,
             voice=cfg.voice,
             roster=roster,
-            provider=cfg.provider,
-            model=cfg.model,
+            provider=provider,
+            model=model,
         )
 
     def with_notify(self, code: str) -> Self:

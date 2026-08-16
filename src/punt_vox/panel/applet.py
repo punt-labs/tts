@@ -12,7 +12,7 @@ import asyncio
 import logging
 import os
 import sys
-from typing import Self, final
+from typing import Final, Self, final
 
 import typer
 from punt_lux.applets import AppletIdentity
@@ -41,6 +41,12 @@ app = typer.Typer(
 # What this program is called wherever a session's files are named after it: its
 # console script and the claim it takes on the session it serves.
 _PROGRAM = "vox-panel"
+
+# The full set of pub-sub topics the panel subscribes to on every fresh Hub
+# connection, resolved once at import: the PanelTopic enum is exhaustive by
+# construction, and the topic strings never change at runtime, so rebuilding
+# the tuple on every _leg_for call would waste work for no gain.
+_TOPICS: Final[tuple[str, ...]] = tuple(topic.value for topic in PanelTopic)
 
 
 @final
@@ -73,12 +79,20 @@ class VoxPanelApplet:
 
     @staticmethod
     def _leg_for(session_pid: int) -> VoxPanelLeg:
-        """The leg this applet serves on, identified to the Hub by its session."""
-        identity = AppletIdentity.for_session(session_pid)
-        topics = tuple(topic.value for topic in PanelTopic)
+        """The leg this applet serves on, identified to the Hub by its session.
+
+        The program token rides in front of the pid so ``AppletIdentity``
+        derives a name that distinguishes ``vox-panel`` from any sibling
+        applet the session also spawns (``lux-beads`` first among them).
+        Without it, ``punt_lux.connection_identity.connection_for`` seeds
+        its hash from four fields two programs in one repository would
+        agree on, and the second to connect silently takes the first's
+        Hub connection over.
+        """
+        identity = AppletIdentity.for_session(_PROGRAM, session_pid)
         store = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR)
         service = VoxPanelService(VoxClientSync(), store)
-        return VoxPanelLeg(identity.client, service, topics=topics)
+        return VoxPanelLeg(identity.client, service, topics=_TOPICS)
 
     async def run(self) -> None:
         """Run the applet, which is to say run its program."""

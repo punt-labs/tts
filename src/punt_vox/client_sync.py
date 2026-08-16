@@ -3,18 +3,23 @@
 ``VoxClientSync`` creates a fresh connection per call and drives the async client
 to completion -- simple and correct, because hooks and CLI commands are
 short-lived so connection pooling adds no value. It is a thin humble object: each
-method delegates to the matching :class:`VoxClient` coroutine through ``_call``,
-which connects, invokes, and closes. The event-loop plumbing lives in a composed
-:class:`_SyncRunner` so the facade owns only the "which method, which args"
-concern.
+method delegates to the matching :class:`VoxClient` coroutine through
+:meth:`VoxClientSync._drive`, which takes a Callable factory (``lambda c:
+c.synthesize(...)``), opens a connection, awaits the operation, and closes.
+The Callable-factory shape preserves each ``VoxClient`` method's precise return
+type through the bridge; a ``getattr``-based dispatch would have forced every
+method to carry a ``# type: ignore[no-any-return]``. The event-loop plumbing
+lives in a composed :class:`_SyncRunner`, generic over the coroutine return
+type, so the facade owns only the "which async op, on which connection" concern.
 """
 
 from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import Any, Self, cast
+from typing import Any, Self
 
 from punt_vox.client import (
     CacheStatus,
@@ -31,6 +36,7 @@ from punt_vox.types_programs import (
     ProgramSummary,
     PromptSet,
 )
+from punt_vox.types_provider import ProviderStatusPayload
 from punt_vox.types_synthesis import SynthesisSpec
 
 __all__ = ["VoxClientSync"]
@@ -42,11 +48,17 @@ class _SyncRunner:
     When the caller is already inside a running event loop (e.g. the MCP
     server), ``asyncio.run`` would raise, so the coroutine is driven on a
     fresh loop in a worker thread instead.
+
+    Generic over the coroutine's return type ``T`` so a typed
+    ``Coroutine[..., SynthesizeResult]`` passed in emerges as a
+    ``SynthesizeResult`` at the call site -- the untyped bridge that
+    forced every :class:`VoxClientSync` method to carry a
+    ``# type: ignore[no-any-return]`` is retired.
     """
 
     __slots__ = ()
 
-    def run(self, coro: Any) -> Any:
+    def run[T](self, coro: Coroutine[Any, Any, T]) -> T:
         """Run *coro* to completion, on this loop or a worker-thread loop."""
         if self._loop_is_running():
             return self._run_in_thread(coro)
@@ -61,7 +73,7 @@ class _SyncRunner:
             return False
 
     @staticmethod
-    def _run_in_thread(coro: Any) -> Any:
+    def _run_in_thread[T](coro: Coroutine[Any, Any, T]) -> T:
         """Drive *coro* to completion on a fresh loop in a worker thread."""
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             return pool.submit(asyncio.run, coro).result()
@@ -112,15 +124,31 @@ class VoxClientSync:
     def _make_client(self) -> VoxClient:
         return VoxClient(host=self._host, port=self._port, token=self._token)
 
-    async def _call(self, method: str, *args: Any, **kwargs: Any) -> Any:
-        """Connect, call method, close."""
-        client = self._make_client()
-        await client.connect()
-        try:
-            func = getattr(client, method)
-            return await func(*args, **kwargs)
-        finally:
-            await client.close()
+    def _drive[T](self, op: Callable[[VoxClient], Coroutine[Any, Any, T]]) -> T:
+        """Open a connection, drive *op* on it, close, return the value.
+
+        The old ``_call(method_name, *args)`` used ``getattr(client,
+        method)`` which loses the method's precise return type -- every
+        caller then carried a ``# type: ignore[no-any-return]`` to
+        reconcile a ``-> ExactType`` annotation with the ``Any`` that
+        came back. This helper takes a Callable factory instead, so
+        the caller's ``lambda c: c.synthesize(...)`` preserves the
+        return type through the bridge and the ignore is unnecessary.
+
+        Same connection lifecycle as before: one fresh connection per
+        call, opened, awaited, closed in a ``finally``. Sync callers
+        are short-lived so pooling would add complexity for no gain.
+        """
+
+        async def _op() -> T:
+            client = self._make_client()
+            await client.connect()
+            try:
+                return await op(client)
+            finally:
+                await client.close()
+
+        return self._runner.run(_op())
 
     def synthesize(
         self, text: str, spec: SynthesisSpec | None = None, *, once: int | None = None
@@ -132,13 +160,11 @@ class VoxClientSync:
         particular the ``deduped`` flag that surfaces when ``once=<ttl>`` matches
         an identical text already played within the window.
         """
-        return self._runner.run(  # type: ignore[no-any-return]
-            self._call("synthesize", text, spec, once=once)
-        )
+        return self._drive(lambda c: c.synthesize(text, spec, once=once))
 
     def chime(self, signal: str) -> None:
         """Play a bundled chime asset."""
-        self._runner.run(self._call("chime", signal))
+        self._drive(lambda c: c.chime(signal))
 
     def record(
         self,
@@ -153,31 +179,41 @@ class VoxClientSync:
         byte count). The daemon owns the file; no audio crosses the wire and the
         client names no daemon path.
         """
-        return self._runner.run(  # type: ignore[no-any-return]
-            self._call("record", text, spec, name=name)
-        )
+        return self._drive(lambda c: c.record(text, spec, name=name))
 
     def play(self, ref: str) -> None:
         """Play a stored recording on the daemon host by its store reference."""
-        self._runner.run(self._call("play", ref))
+        self._drive(lambda c: c.play(ref))
 
     def fetch(self, ref: str) -> bytes:
         """Return a stored recording's bytes by its store reference."""
-        return cast("bytes", self._runner.run(self._call("fetch", ref)))
+        return self._drive(lambda c: c.fetch(ref))
 
-    def voices(self, provider: str | None = None) -> list[str]:
-        """List available voices."""
-        return self._runner.run(self._call("voices", provider))  # type: ignore[no-any-return]
+    def voices(self, provider: str) -> list[str]:
+        """List *provider*'s voice roster; the wire always carries a provider."""
+        return self._drive(lambda c: c.voices(provider))
 
     def health(self) -> HealthStatus:
         """Return the daemon's health snapshot (liveness, port, version)."""
-        return self._runner.run(self._call("health"))  # type: ignore[no-any-return]
+        return self._drive(lambda c: c.health())
+
+    def provider_status(self, provider: str | None = None) -> ProviderStatusPayload:
+        """Return the daemon's provider readiness set + its preferred proposal.
+
+        Sync twin of :meth:`VoxClient.provider_status`; the daemon
+        answer is fetched fresh on every call so ``mic:status`` and
+        ``vox doctor`` report the current environment rather than a
+        cached snapshot.  With *provider* omitted, the reply carries
+        every registered verdict; with it set, the reply carries just
+        that one row.
+        """
+        return self._drive(lambda c: c.provider_status(provider))
 
     # -- program surface (session-free; the daemon-facing wire, design section 4)
 
     def program_status(self) -> ProgramStatus:
         """Return the daemon's authoritative Program status."""
-        return self._runner.run(self._call("program_status"))  # type: ignore[no-any-return]
+        return self._drive(lambda c: c.program_status())
 
     def program_on(
         self,
@@ -188,29 +224,29 @@ class VoxClientSync:
         prompts: PromptSet | None = None,
     ) -> CommandOutcome:
         """Turn a Program on from the session vibe and authored prompts."""
-        return self._runner.run(  # type: ignore[no-any-return]
-            self._call("program_on", style=style, vibe=vibe, name=name, prompts=prompts)
+        return self._drive(
+            lambda c: c.program_on(style=style, vibe=vibe, name=name, prompts=prompts)
         )
 
     def program_stop(self) -> CommandOutcome:
         """Halt the active Program."""
-        return self._runner.run(self._call("program_stop"))  # type: ignore[no-any-return]
+        return self._drive(lambda c: c.program_stop())
 
     def program_next(self) -> CommandOutcome:
         """User transport next: step the replay cursor forward, or skip a Program."""
-        return self._runner.run(self._call("program_next"))  # type: ignore[no-any-return]
+        return self._drive(lambda c: c.program_next())
 
     def program_prev(self) -> CommandOutcome:
         """User transport prev: step the replay cursor back one part."""
-        return self._runner.run(self._call("program_prev"))  # type: ignore[no-any-return]
+        return self._drive(lambda c: c.program_prev())
 
     def program_pause(self) -> CommandOutcome:
         """Suspend the active source in place (transport pause)."""
-        return self._runner.run(self._call("program_pause"))  # type: ignore[no-any-return]
+        return self._drive(lambda c: c.program_pause())
 
     def program_resume(self) -> CommandOutcome:
         """Continue a suspended source (transport resume)."""
-        return self._runner.run(self._call("program_resume"))  # type: ignore[no-any-return]
+        return self._drive(lambda c: c.program_resume())
 
     def program_select(
         self,
@@ -221,37 +257,35 @@ class VoxClientSync:
         album_id: str | None = None,
     ) -> CommandOutcome:
         """Replay a Selection resolved by album id (direct) or by tags."""
-        return self._runner.run(  # type: ignore[no-any-return]
-            self._call(
-                "program_select", style=style, vibe=vibe, name=name, album_id=album_id
+        return self._drive(
+            lambda c: c.program_select(
+                style=style, vibe=vibe, name=name, album_id=album_id
             )
         )
 
     def program_list(self) -> tuple[ProgramSummary, ...]:
         """Return every album as a catalogue summary."""
-        return self._runner.run(self._call("program_list"))  # type: ignore[no-any-return]
+        return self._drive(lambda c: c.program_list())
 
     # -- recordings store (rec group) ---------------------------------------
 
     def rec_list(self) -> tuple[RecordingSummary, ...]:
         """Return the store's recordings (name + bytes)."""
-        return cast(
-            "tuple[RecordingSummary, ...]", self._runner.run(self._call("rec_list"))
-        )
+        return self._drive(lambda c: c.rec_list())
 
     def rec_remove(self, ref: str) -> None:
         """Delete recording *ref* from the store."""
-        self._runner.run(self._call("rec_remove", ref))
+        self._drive(lambda c: c.rec_remove(ref))
 
     # -- cache (daemon-owned MP3 quip cache) --------------------------------
 
     def cache_status(self) -> CacheStatus:
         """Return the daemon cache's entry count, size, and path."""
-        return cast("CacheStatus", self._runner.run(self._call("cache_status")))
+        return self._drive(lambda c: c.cache_status())
 
     def cache_clear(self) -> int:
         """Delete every entry in the daemon cache; return the count deleted."""
-        return cast("int", self._runner.run(self._call("cache_clear")))
+        return self._drive(lambda c: c.cache_clear())
 
     def set_log_level(self, level: str) -> str:
         """Set the daemon's log level; return the effective level it applied.
@@ -259,7 +293,7 @@ class VoxClientSync:
         The daemon clamps *level* to the INFO audit floor, so a stricter request
         comes back as ``info`` -- the audit trail is never blinded.
         """
-        return cast("str", self._runner.run(self._call("set_log_level", level)))
+        return self._drive(lambda c: c.set_log_level(level))
 
     # -- music catalog (music group) ----------------------------------------
 
@@ -270,13 +304,12 @@ class VoxClientSync:
         so the daemon receives the authored-input object (its ``base`` as the wire
         ``base_prompt``), never a bare string.
         """
-        return cast("str", self._runner.run(self._call("music_new", prompts, name)))
+        return self._drive(lambda c: c.music_new(prompts, name))
 
     def music_get(self, album_id: str, dest_dir: Path) -> Path:
         """Copy an album into *dest_dir* as a directory of its parts."""
-        coro = self._call("music_get", album_id, dest_dir)
-        return cast("Path", self._runner.run(coro))
+        return self._drive(lambda c: c.music_get(album_id, dest_dir))
 
     def music_remove(self, album_id: str) -> None:
         """Delete a catalog album by id (a playing album is refused)."""
-        self._runner.run(self._call("music_remove", album_id))
+        self._drive(lambda c: c.music_remove(album_id))

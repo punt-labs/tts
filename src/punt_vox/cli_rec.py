@@ -31,8 +31,15 @@ from punt_vox.bare_name import BareName
 from punt_vox.cli_io import OutputFlags, TextInput
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
+from punt_vox.config import ConfigStore
+from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.output_formatter import OutputFormatter
+from punt_vox.session_spec import SessionSpec
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.types_synthesis_errors import (
+    ModelNotAvailableError,
+    ProviderNotConfiguredError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -226,17 +233,19 @@ class RecCli:
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
         boost = speaker_boost if speaker_boost else None
-        spec = self._validated_spec(
-            SynthesisSpec(
-                voice=voice,
-                language=language,
-                rate=rate,
-                provider=provider,
-                model=model,
-                stability=stability,
-                similarity=similarity,
-                style=style,
-                speaker_boost=boost,
+        spec = self._fill_from_state(
+            self._validated_spec(
+                SynthesisSpec(
+                    voice=voice,
+                    language=language,
+                    rate=rate,
+                    provider=provider,
+                    model=model,
+                    stability=stability,
+                    similarity=similarity,
+                    style=style,
+                    speaker_boost=boost,
+                )
             )
         )
         segments = TextInput(self._formatter).resolve(text, from_file)
@@ -333,6 +342,26 @@ class RecCli:
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
         return spec
+
+    def _fill_from_state(self, spec: SynthesisSpec) -> SynthesisSpec:
+        """Fill unset fields from ``vox.md`` through :class:`SessionSpec`.
+
+        The recording surface twin of :func:`punt_vox.__main__._fill_from_state`.
+        ``vox rec new`` used to build a ``SynthesisSpec`` directly, leaving
+        the wire ``provider`` empty when ``--provider`` was absent and letting
+        the daemon guess -- the very substitution this bead exists to prevent
+        (design §3.7's five-surface enumeration). Routing through
+        :class:`SessionSpec` makes state the sole authority on provider and
+        model for recordings too. An unconfigured provider is the F1
+        refusal; a hand-edited provider/model pair is F7. Both exit 1
+        cleanly through :meth:`_fail`, matching the CLI's other
+        gateway-error path.
+        """
+        config = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
+        try:
+            return SessionSpec(config).fill(spec)
+        except (ProviderNotConfiguredError, ModelNotAvailableError) as exc:
+            self._fail(str(exc))
 
     def _bare_ref(self, ref: str) -> str:
         """Return *ref* as a bare filename, failing cleanly if it escapes the CWD.

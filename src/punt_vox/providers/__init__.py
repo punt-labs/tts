@@ -1,18 +1,21 @@
-"""TTS provider registry and auto-detection."""
+"""TTS provider registry and resolution.
+
+State on disk (or the in-memory session it seeded) is the source of truth
+for which provider voxd runs. The registry no longer reads a repo config
+and no longer probes the environment: it constructs the named provider
+after :class:`ProviderCredentials` confirms the credentials are present,
+or raises :class:`ProviderUnavailableError` with a message that names the
+missing variable(s). One question, one answer, one place.
+"""
 
 from __future__ import annotations
 
-import logging
-import os
-import platform
-import shutil
-import subprocess
 import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Self
 
 # elevenlabs SDK imports pydantic.v1 which warns on Python 3.14+.
-# Their issue, not ours — suppress until they ship a fix.
+# Their issue, not ours -- suppress until they ship a fix.
 warnings.filterwarnings(
     "ignore",
     message="Core Pydantic V1 functionality isn't compatible with Python 3.14",
@@ -21,14 +24,12 @@ warnings.filterwarnings(
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
+    from punt_vox.providers.credentials import ProviderCredentials
     from punt_vox.types import TTSProvider
 
 __all__ = [
     "DEFAULT_VOICES",
     "ProviderRegistry",
-    "auto_detect_provider",
     "format_voice_hint",
     "get_provider",
 ]
@@ -53,139 +54,75 @@ def format_voice_hint(names: list[str], limit: int = 10) -> str:
     return hint
 
 
-logger = logging.getLogger(__name__)
-
-
 class ProviderRegistry:
-    """Provider registration, auto-detection, and resolution."""
+    """Register provider factories; resolve a named provider to an instance.
 
-    __slots__ = ("_factories", "_last_logged")
+    The registry owns two things: the factory map (name -> callable that
+    builds a provider) and the credentials gate that runs before every
+    construction. It owns *no* session, no config-file reader, and no
+    environment probe -- state is the caller's responsibility, and
+    :class:`ProviderCredentials` is the only answer to "is this provider
+    ready". :meth:`get` therefore requires an explicit provider name and
+    trusts the caller has already opened any per-call ``api_key`` context
+    the credentials check needs to see.
+    """
+
+    __slots__ = ("_credentials", "_factories")
 
     _factories: dict[str, Callable[..., TTSProvider]]
-    # The full outcome last logged -- (provider, reason, detected) -- so a real
-    # state change with the SAME provider (the none->polly WARNING then a later
-    # auto-detected-polly INFO) still emits, while a true repeat stays silent.
-    _last_logged: tuple[str, str, bool] | None
+    _credentials: ProviderCredentials
 
-    def __new__(cls) -> Self:
+    def __new__(
+        cls,
+        credentials: ProviderCredentials | None = None,
+    ) -> Self:
+        # Deferred import to keep credentials -> types_provider_errors ->
+        # types_errors dependency chain out of this module's header, which
+        # is a load-bearing entry point re-exported from ``punt_vox`` top-level.
+        from punt_vox.providers.credentials import ProviderCredentials
+
         self = super().__new__(cls)
         self._factories = {}
-        self._last_logged = None
+        self._credentials = credentials or ProviderCredentials()
         return self
 
     def register(self, name: str, factory: Callable[..., TTSProvider]) -> None:
         """Register a provider factory by name."""
         self._factories[name] = factory
 
-    def get(
-        self,
-        name: str | None = None,
-        *,
-        config_dir: Path | None = None,
-        **kwargs: str | None,
-    ) -> TTSProvider:
-        """Resolve provider by name or auto-detect.
+    def get(self, name: str, *, model: str | None = None) -> TTSProvider:
+        """Return a fresh provider instance for *name*.
 
-        Resolution priority for provider name:
-          1. Explicit ``name`` argument
-          2. Session config (``.punt-labs/vox/`` provider field)
-          3. ``TTS_PROVIDER`` env var / API key auto-detection
+        Raises :class:`UnknownProviderError` when *name* is not a
+        registered provider (F4) and :class:`ProviderUnavailableError`
+        when the daemon has no credentials for a known provider (F2).
+        Both are :class:`ValueError` subclasses so
+        ``WireReply.reject_or_fault`` routes their messages verbatim --
+        but they are typed rather than plain ``ValueError`` so the
+        synthesize handler can catch them explicitly without widening
+        to every ``ValueError`` under the pipeline.
 
-        Resolution priority for model (passed via kwargs):
-          1. Explicit ``model`` kwarg
-          2. Session config (``.punt-labs/vox/`` model field)
-          3. ``TTS_MODEL`` env var / provider default
+        The credentials check runs BEFORE the factory so an
+        uncredentialed provider never reaches SDK construction (where
+        the failure would arrive as whichever SDK exception the
+        provider happens to raise, at whichever moment). The check
+        must sit INSIDE any per-call ``api_key`` context the caller
+        has opened around this call -- :class:`ApiKeyRequirement`
+        reads ``os.environ`` and a caller supplying ``api_key=``
+        deserves to be allowed through.
         """
-        from punt_vox.config import ConfigStore
+        # Deferred so this module's header stays importable without the
+        # types_provider_errors -> types_errors chain (matches the
+        # ProviderCredentials import in __new__).
+        from punt_vox.types_provider_errors import UnknownProviderError
 
-        config = ConfigStore(config_dir).read()
-
-        if name is not None:
-            resolved = name.lower()
-        elif config.provider:
-            resolved = config.provider.lower()
-        else:
-            resolved = self.auto_detect()
-
-        # Fall back to config model only when the config provider matches
-        # the resolved provider. An ElevenLabs model name passed to OpenAI
-        # (or vice-versa) would cause API errors.
-        if kwargs.get("model") is None and config.model:
-            config_provider = config.provider.lower() if config.provider else None
-            if config_provider is None or config_provider == resolved:
-                kwargs["model"] = config.model
-
-        factory = self._factories.get(resolved)
-        if factory is None:
-            available = ", ".join(sorted(self._factories))
-            msg = f"Unknown provider '{resolved}'. Available: {available}"
-            raise ValueError(msg)
-        return factory(**kwargs)
-
-    def auto_detect(self) -> str:
-        """Detect the provider from environment, logging the decision once.
-
-        Checks TTS_PROVIDER env var first, then probes for API keys:
-        ElevenLabs > OpenAI > Polly (if AWS credentials valid) >
-        system fallback (say on macOS, espeak on Linux). The INFO decision line
-        is deduplicated -- a stable choice logs once per process, not per call.
-        """
-        choice, reason, detected = self._resolve_choice()
-        # Dedup on the FULL outcome (provider, reason, detected): emit only when it
-        # changes, so a long-lived daemon logs ~1 line per distinct outcome, yet a
-        # genuine transition with the same provider (none->polly WARNING, then a
-        # later auto-detected-polly INFO) still surfaces the second line.
-        outcome = (choice, reason, detected)
-        if outcome != self._last_logged:
-            if detected:
-                logger.info("provider: auto-detected %s (%s)", choice, reason)
-            else:
-                logger.warning("provider: none detected, falling back to %s", choice)
-            self._last_logged = outcome
-        return choice
-
-    def _resolve_choice(self) -> tuple[str, str, bool]:
-        """Return the provider name, the reason chosen, and whether one was detected.
-
-        The ``detected`` flag distinguishes a real detection (INFO) from the
-        no-provider fallback (WARNING) without either branch logging directly --
-        so the caller can deduplicate both the same way.
-        """
-        env = os.environ.get("TTS_PROVIDER")
-        if env:
-            return env.lower(), "TTS_PROVIDER env var", True
-        if os.environ.get("ELEVENLABS_API_KEY"):
-            return "elevenlabs", "ELEVENLABS_API_KEY set", True
-        if os.environ.get("OPENAI_API_KEY"):
-            return "openai", "OPENAI_API_KEY set", True
-        if self._has_aws_credentials():
-            return "polly", "AWS credentials valid", True
-        if platform.system() == "Darwin" and shutil.which("say"):
-            return "say", "system fallback (macOS)", True
-        if platform.system() == "Linux" and (
-            shutil.which("espeak-ng") or shutil.which("espeak")
-        ):
-            return "espeak", "system fallback (Linux)", True
-        return "polly", "no provider detected", False
-
-    @staticmethod
-    def _has_aws_credentials() -> bool:
-        """Check whether AWS credentials are configured; DEBUG why Polly is skipped."""
-        if not shutil.which("aws"):
-            logger.debug("provider: polly not chosen (aws cli absent)")
-            return False
-        try:
-            result = subprocess.run(
-                ["aws", "sts", "get-caller-identity"],
-                capture_output=True,
-                timeout=5,
-            )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-            logger.debug("provider: polly not chosen (aws probe error: %s)", exc)
-            return False
-        if result.returncode != 0:
-            logger.debug("provider: polly not chosen (aws probe: nonzero exit)")
-        return result.returncode == 0
+        resolved = name.lower()
+        if resolved not in self._factories:
+            raise UnknownProviderError(resolved, sorted(self._factories))
+        # Gate BEFORE the factory: keep uncredentialed providers off the
+        # SDK path so no billable call, no temp file, no cache entry.
+        self._credentials.require(resolved)
+        return self._factories[resolved](model=model)
 
 
 # -- Default registry with all 5 providers --------------------------------
@@ -231,15 +168,12 @@ _default_registry.register("say", _register_say)
 _default_registry.register("espeak", _register_espeak)
 
 
-def get_provider(
-    name: str | None = None,
-    config_dir: Path | None = None,
-    **kwargs: str | None,
-) -> TTSProvider:
-    """Look up a provider by name, or auto-detect."""
-    return _default_registry.get(name, config_dir=config_dir, **kwargs)
+def get_provider(name: str, *, model: str | None = None) -> TTSProvider:
+    """Look up a provider by name.
 
-
-def auto_detect_provider() -> str:
-    """Detect the best available provider from environment."""
-    return _default_registry.auto_detect()
+    The module-level entry point every daemon-side call site uses.
+    Provider is required -- there is no fallback, no probe, no config
+    read; state is the caller's responsibility (see
+    ``docs/provider-authority.md`` §3.3).
+    """
+    return _default_registry.get(name, model=model)
