@@ -612,7 +612,9 @@ def _refresh_marketplace() -> StepResult:
         return StepResult("Marketplace refresh", False, "claude CLI not found on PATH")
     result = subprocess.run(
         [claude, "plugin", "marketplace", "update", MARKETPLACE_KEY],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     ...
 ```
@@ -866,6 +868,7 @@ Prepend 500ms of silence to audio before playback:
 
 ```python
 from pydub import AudioSegment
+
 silence = AudioSegment.silent(duration=500)
 speech = AudioSegment.from_mp3(audio_path)
 combined = silence + speech

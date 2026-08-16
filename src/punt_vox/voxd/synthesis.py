@@ -32,7 +32,6 @@ from punt_vox.voxd.synthesis_result import SynthesisOutcome
 __all__ = [
     "_LOCAL_PROVIDERS",
     "SynthesisPipeline",
-    "_build_audio_request",
     "_run_play_directly_sync",
 ]
 
@@ -79,34 +78,6 @@ def _api_key_context(api_key: str | None, provider_name: str) -> Generator[None]
 # ---------------------------------------------------------------------------
 # Pure helpers
 # ---------------------------------------------------------------------------
-
-
-def _build_audio_request(
-    normalized_text: str,
-    voice: str | None,
-    language: str | None,
-    rate: int | None,
-    stability: float | None,
-    similarity: float | None,
-    style: float | None,
-    *,
-    speaker_boost: bool | None,
-    provider_id: str,
-) -> AudioRequest:
-    """Build an AudioRequest from parsed message fields."""
-    return AudioRequest(
-        text=normalized_text,
-        voice=voice,
-        language=language,
-        rate=rate,
-        stability=stability,
-        similarity=similarity,
-        style=style,
-        speaker_boost=speaker_boost,
-        provider=AudioProviderId(provider_id)
-        if provider_id in AudioProviderId.__members__
-        else None,
-    )
 
 
 def _run_play_directly_sync(
@@ -197,6 +168,34 @@ class SynthesisPipeline:
 
             return ElevenLabsProvider.model_supports_expressive_tags(model)
         return False
+
+    @staticmethod
+    def _build_audio_request(
+        normalized_text: str,
+        voice: str | None,
+        language: str | None,
+        rate: int | None,
+        stability: float | None,
+        similarity: float | None,
+        style: float | None,
+        *,
+        speaker_boost: bool | None,
+        provider_id: str,
+    ) -> AudioRequest:
+        """Build an AudioRequest from parsed message fields."""
+        return AudioRequest(
+            text=normalized_text,
+            voice=voice,
+            language=language,
+            rate=rate,
+            stability=stability,
+            similarity=similarity,
+            style=style,
+            speaker_boost=speaker_boost,
+            provider=AudioProviderId(provider_id)
+            if provider_id in AudioProviderId.__members__
+            else None,
+        )
 
     @staticmethod
     def apply_vibe_for_synthesis(
@@ -309,7 +308,7 @@ class SynthesisPipeline:
         async with self._env_lock:
             with _api_key_context(api_key, provider_name):
                 provider = get_provider(provider_name, model=model)
-                request = _build_audio_request(
+                request = self._build_audio_request(
                     normalized,
                     voice,
                     spec.language,
@@ -367,7 +366,7 @@ class SynthesisPipeline:
         spec: SynthesisSpec,
         *,
         record_result: Callable[..., None],
-    ) -> int | None | Exception:
+    ) -> int | Exception | None:
         """Attempt direct-to-device playback via the provider.
 
         Returns one of:
@@ -392,7 +391,7 @@ class SynthesisPipeline:
             text, spec.vibe_tags, provider_name, model
         )
 
-        request = _build_audio_request(
+        request = self._build_audio_request(
             normalized,
             voice,
             spec.language,
