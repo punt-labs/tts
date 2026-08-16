@@ -76,7 +76,7 @@ class TestTryDirectPlay:
         provider: MagicMock,
         pipeline: SynthesisPipeline,
         results: list[dict[str, object]],
-    ) -> int | None | Exception:
+    ) -> int | Exception | None:
         with patch("punt_vox.voxd.synthesis.get_provider", return_value=provider):
             return asyncio.run(
                 pipeline.try_direct_play(

@@ -126,9 +126,29 @@ class TestDetect:
     def test_explicit_provider_is_lowercased(self, tmp_path: Path) -> None:
         assert DesktopInstaller.detect("ElevenLabs", tmp_path).provider == "elevenlabs"
 
-    def test_none_provider_auto_detects(self, tmp_path: Path) -> None:
-        with patch(f"{_MOD}.auto_detect_provider", return_value="say"):
-            assert DesktopInstaller.detect(None, tmp_path).provider == "say"
+    def test_none_provider_uses_credentials_preferred(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Design §3.8: ``vox desktop install`` asks ``ProviderCredentials``
+        which provider to route to, so the installer and the daemon gate
+        share one answer. On a host with only an ``OPENAI_API_KEY`` in
+        view, the installer picks ``openai``."""
+        for key in ("TTS_PROVIDER", "ELEVENLABS_API_KEY"):
+            monkeypatch.delenv(key, raising=False)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        assert DesktopInstaller.detect(None, tmp_path).provider == "openai"
+
+    def test_none_provider_refuses_when_nothing_ready(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No credentials in the installer's env, no platform binaries the
+        credentials dispatch would pick: there is nothing sensible to
+        write. Fail loud instead of silently guessing."""
+        with patch(f"{_MOD}.ProviderCredentials") as mock_creds:
+            mock_creds.return_value.preferred.return_value = None
+            mock_creds.return_value.api_key_env_vars.return_value = {}
+            with pytest.raises(ValueError, match="No TTS provider credentials"):
+                DesktopInstaller.detect(None, tmp_path)
 
 
 class TestDaemonReadsKeysEnv:

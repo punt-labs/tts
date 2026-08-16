@@ -66,11 +66,16 @@ class TestHealthPayloadFull:
         assert "player_binary" not in payload
         assert "last_playback" in payload
 
-    def test_carries_provider_on_authenticated_payload(self) -> None:
-        """D1: provider stays on the authenticated WS health (doctor reads it)."""
+    def test_no_provider_on_authenticated_payload(self) -> None:
+        """D4: the daemon reports no provider of its own.
+
+        The old auto-detect probe was the same substitution defect this
+        bead closes in a third place; per-provider readiness moved to
+        the ``provider_status`` op (design §3.6, delivered by PR 3).
+        """
         health = _make_health()
         payload = health.full_payload()
-        assert "provider" in payload
+        assert "provider" not in payload
 
     def test_includes_daemon_version_matching_installed_package(self) -> None:
         """Authenticated payload carries daemon_version from importlib.metadata."""

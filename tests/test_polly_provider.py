@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -153,6 +153,115 @@ class TestPollyProviderSynthesize:
         result = polly_provider.synthesize(request, out)
         assert result.text == "hello"
         assert result.voice == "Seoyeon"
+
+    def test_synthesize_translates_no_credentials_to_provider_auth_error(
+        self,
+        mock_boto_client: MagicMock,
+        polly_provider: PollyProvider,
+        tmp_output_dir: Path,
+    ) -> None:
+        """``NoCredentialsError`` at synthesis time crosses as F3.
+
+        The readiness gate saw a credential chain at F2 (env, profile,
+        config file) but boto3 could not resolve one by call time --
+        most likely an SSO session that expired between the check and
+        the synthesize call. This is a rejected credential (F3), not
+        a missing configuration (F2), so it crosses through
+        ``WireReply.error`` verbatim rather than the fault path.
+        """
+        from botocore.exceptions import NoCredentialsError
+
+        from punt_vox.types_provider_errors import ProviderAuthError
+
+        mock_boto_client.synthesize_speech.side_effect = NoCredentialsError()
+        request = SynthesisRequest(text="hello", voice="joanna")
+        with pytest.raises(ProviderAuthError) as exc_info:
+            polly_provider.synthesize(request, tmp_output_dir / "auth.mp3")
+
+        assert str(exc_info.value) == (
+            "provider 'polly' rejected the credentials; run `vox doctor`"
+        )
+        assert exc_info.value.provider_name == "polly"
+        assert exc_info.value.status_code is None
+
+    def test_synthesize_translates_expired_token_to_provider_auth_error(
+        self,
+        mock_boto_client: MagicMock,
+        polly_provider: PollyProvider,
+        tmp_output_dir: Path,
+    ) -> None:
+        """An ``ExpiredToken`` ClientError crosses as F3 with HTTP 403.
+
+        The AWS auth-family codes are the reliable discriminator --
+        ExpiredToken, ExpiredTokenException, InvalidClientTokenId,
+        UnrecognizedClientException all mean the credentials were
+        rejected. Non-auth codes (ThrottlingException, InternalFailure)
+        re-raise unchanged so the broad guard renders them opaquely --
+        widening the translation would misclassify SDK/upstream faults
+        as credential problems.
+        """
+        from botocore.exceptions import ClientError
+
+        from punt_vox.types_provider_errors import ProviderAuthError
+
+        mock_boto_client.synthesize_speech.side_effect = ClientError(
+            # partial payload is fine at runtime; type stub is strict
+            error_response=cast(
+                "Any",
+                {
+                    "Error": {"Code": "ExpiredToken", "Message": "token expired"},
+                    "ResponseMetadata": {"HTTPStatusCode": 403},
+                },
+            ),
+            operation_name="SynthesizeSpeech",
+        )
+        request = SynthesisRequest(text="hello", voice="joanna")
+        with pytest.raises(ProviderAuthError) as exc_info:
+            polly_provider.synthesize(request, tmp_output_dir / "expired.mp3")
+
+        assert str(exc_info.value) == (
+            "provider 'polly' rejected the credentials (HTTP 403); run `vox doctor`"
+        )
+        assert exc_info.value.provider_name == "polly"
+        assert exc_info.value.status_code == 403
+
+    def test_synthesize_non_auth_client_error_re_raises_unchanged(
+        self,
+        mock_boto_client: MagicMock,
+        polly_provider: PollyProvider,
+        tmp_output_dir: Path,
+    ) -> None:
+        """A ThrottlingException is NOT an auth problem; re-raise unchanged.
+
+        Same discipline as the ElevenLabs non-401 case: only auth-code
+        errors translate to ProviderAuthError; genuine SDK/upstream
+        faults keep their original exception and fall through to the
+        broad guard.
+        """
+        from botocore.exceptions import ClientError
+
+        mock_boto_client.synthesize_speech.side_effect = ClientError(
+            # partial payload is fine at runtime; type stub is strict
+            error_response=cast(
+                "Any",
+                {
+                    "Error": {
+                        "Code": "ThrottlingException",
+                        "Message": "slow down",
+                    },
+                    "ResponseMetadata": {"HTTPStatusCode": 429},
+                },
+            ),
+            operation_name="SynthesizeSpeech",
+        )
+        request = SynthesisRequest(text="hello", voice="joanna")
+        with pytest.raises(ClientError) as exc_info:
+            polly_provider.synthesize(request, tmp_output_dir / "throttled.mp3")
+        # TypedDict access on the SDK stub is nullable; cast to plain
+        # object for the assertion since we constructed the payload in
+        # the test and know the shape.
+        response: Any = exc_info.value.response
+        assert response["Error"]["Code"] == "ThrottlingException"
 
 
 class TestPollyProviderName:

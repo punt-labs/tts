@@ -10,10 +10,11 @@ import logging
 import math
 import os
 import platform
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Self
+from typing import ClassVar, Self, final
 
 from punt_vox.voxd.data_root_boundary import relativize_to_data_root
 from punt_vox.voxd.wire_text import SafeText
@@ -25,10 +26,14 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-# Audio environment variables we capture for every playback. These determine
-# whether ffplay can reach PulseAudio/PipeWire and dbus at the moment of the
-# call, which is exactly the failure mode we saw on Linux in v4.0.3.
-_AUDIO_ENV_KEYS: tuple[str, ...] = (
+# Diagnostic env vars captured in the Linux audio context.  The first five --
+# XDG_RUNTIME_DIR, PULSE_SERVER, DBUS_SESSION_BUS_ADDRESS, DISPLAY, WAYLAND_DISPLAY --
+# are audio-backend vars ffplay needs to reach PulseAudio/PipeWire and dbus;
+# missing values are the v4.0.3 failure mode.  HOME and USER identify which
+# user's session the process is running in -- the question that CoreAudio
+# session membership turned out to hinge on for the macOS side of this
+# diagnostic, and equally worth capturing here.
+_LINUX_AUDIO_ENV_KEYS: tuple[str, ...] = (
     "XDG_RUNTIME_DIR",
     "PULSE_SERVER",
     "DBUS_SESSION_BUS_ADDRESS",
@@ -153,11 +158,6 @@ def _monotonic() -> float:
     return time.monotonic()
 
 
-def _snapshot_env(keys: tuple[str, ...]) -> dict[str, str]:
-    """Return a dict of env var values, using <unset> for missing keys."""
-    return {k: os.environ.get(k, "<unset>") for k in keys}
-
-
 def _is_darwin() -> bool:
     """Return True on macOS.
 
@@ -166,6 +166,106 @@ def _is_darwin() -> bool:
     branch as unreachable for cross-platform development.
     """
     return platform.system() == "Darwin"
+
+
+@final
+class AudioContext:
+    """Per-platform diagnostic snapshot logged with every playback attempt.
+
+    A Linux build captures the audio-socket env vars ffplay needs to reach
+    PulseAudio/PipeWire (the v4.0.3 failure mode).  A macOS build captures
+    the facts that actually diagnose CoreAudio access -- the launchd
+    manager name, the parent pid, and the session id -- because a
+    LaunchAgent bootstrapped into a Background context loses CoreAudio
+    session membership and afplay starts hanging 15s then failing with
+    ``AudioQueueStart failed (-66681)``.  The previous macOS branch logged
+    the Linux vars, all ``<unset>``, which told the operator nothing about
+    the actual cause and let 72 failures accrue in one session before ps
+    surfaced the diagnosis.
+
+    ``launchctl managername`` shells out once and the result is cached in
+    ``_MGR_CACHE`` for the daemon's lifetime -- the manager cannot change
+    without a re-bootstrap, so re-shelling per playback would burn a
+    subprocess for no new information.
+    """
+
+    __slots__ = ()
+
+    _MGR_CACHE: ClassVar[str | None] = None
+    _MGR_TIMEOUT_S: ClassVar[float] = 2.0
+
+    def snapshot(self) -> dict[str, str]:
+        """Return a diagnostic dict for the current platform."""
+        if _is_darwin():
+            return self._macos_snapshot()
+        return self._linux_snapshot()
+
+    def _linux_snapshot(self) -> dict[str, str]:
+        """Return audio-backend env vars with ``<unset>`` for missing keys."""
+        return {k: os.environ.get(k, "<unset>") for k in _LINUX_AUDIO_ENV_KEYS}
+
+    def _macos_snapshot(self) -> dict[str, str]:
+        """Return launchd manager + pid/sid facts that diagnose CoreAudio access.
+
+        ``mgr=Aqua`` is the healthy value (LaunchAgent in the graphical login
+        session).  ``mgr=Background`` or ``mgr=System`` means the process is
+        outside the Aqua session -- CoreAudio queue starts will fail
+        intermittently.  ``ppid`` is expected to be 1 (launchd) when running
+        under a proper LaunchAgent; anything else is an orphaned spawn.
+        ``sid`` (POSIX session id) rounds out the process-context evidence.
+        """
+        return {
+            "mgr": self._launchctl_manager(),
+            "ppid": str(os.getppid()),
+            "sid": str(os.getsid(0)),
+        }
+
+    def _launchctl_manager(self) -> str:
+        """Return ``launchctl managername`` output, cached for the process.
+
+        Cache only on success.  ``"unknown"`` is the absence of an answer, not
+        an answer -- caching it would turn one transient launchctl hiccup into
+        permanent silence, the same "signal that stops reporting" failure mode
+        this diagnostic exists to explain.  A failed probe retries on the next
+        playback failure at a cost of at most one extra 2s probe.
+        """
+        cached = type(self)._MGR_CACHE
+        if cached is not None:
+            return cached
+        name = self._probe_launchctl_manager()
+        if name != "unknown":
+            type(self)._MGR_CACHE = name
+        return name
+
+    @staticmethod
+    def _probe_launchctl_manager() -> str:
+        """Run ``launchctl managername`` once; return ``unknown`` on failure.
+
+        A missing or misbehaving launchctl must not raise from a diagnostic
+        path -- swallow the failure and record ``unknown`` so the log line
+        still shows the other session facts.
+        """
+        try:
+            # Absolute path so a launchd-inherited PATH cannot substitute a
+            # different binary for ``launchctl`` -- macOS ships it at a stable
+            # location, and voxd runs long-lived from launchd where the PATH is
+            # not the interactive shell PATH.
+            result = subprocess.run(
+                ["/bin/launchctl", "managername"],
+                capture_output=True,
+                text=True,
+                timeout=AudioContext._MGR_TIMEOUT_S,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return "unknown"
+        name = result.stdout.strip()
+        return name or "unknown"
+
+
+def _snapshot_audio_context() -> dict[str, str]:
+    """Return the diagnostic snapshot recorded on every playback."""
+    return AudioContext().snapshot()
 
 
 def _player_command(path: Path) -> list[str]:
@@ -276,7 +376,7 @@ class PlaybackQueue:
         and result logging. Each concern is handled by a focused private method.
         """
         cmd = _player_command(path)
-        env_snapshot = _snapshot_env(_AUDIO_ENV_KEYS)
+        env_snapshot = _snapshot_audio_context()
 
         size = self._validate_file(path)
         if size is None:

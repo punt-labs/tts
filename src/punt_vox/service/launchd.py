@@ -59,26 +59,42 @@ class LaunchdBackend:
             extras["VOXD_BIND"] = bind
         return extras
 
+    def _program_args_xml(self) -> str:
+        """Return the ``<string>...</string>`` block for ProgramArguments.
+
+        ``html.escape`` XML-escapes each arg -- launchd reads the ``<string>``
+        content literally, so ``&``, ``<``, ``>`` and quotes in a path or
+        argument have to be entity-encoded, not shell-quoted.
+        """
+        return "\n".join(
+            f"        <string>{html.escape(a)}</string>"
+            for a in self._voxd_exec_args_fn()
+        )
+
+    def _extra_env_xml(self) -> str:
+        """Return the trailing key/string pairs for EnvironmentVariables."""
+        return "".join(
+            f"\n            <key>{html.escape(k)}</key>"
+            f"\n            <string>{html.escape(v)}</string>"
+            for k, v in self._extra_env().items()
+        )
+
     def plist_content(self) -> str:
         """Generate the LaunchAgent plist XML.
 
         LaunchAgents run as the session user by default -- no ``UserName``
         key is needed (and it is invalid for agents).  ``ProcessType=Interactive``
         prevents App Nap-style throttling on the windowless daemon.
+
+        ``LimitLoadToSessionType=Aqua`` pins the job to the graphical login
+        session, so voxd inherits the Aqua bootstrap context that grants
+        CoreAudio queue access.  Without it, the agent can end up in a
+        Background context that mostly works but intermittently fails
+        ``AudioQueueStart`` with ``-66681`` after a ~15s block -- 72 such
+        failures were logged in one session before the pin was added.
         """
-        args = self._voxd_exec_args_fn()
-        # Plist XML reads <string> values literally -- use html.escape for
-        # XML-safe encoding (not shlex.quote, which adds shell quotes).
-        program_args = "\n".join(
-            f"        <string>{html.escape(a)}</string>" for a in args
-        )
         path_value = html.escape(
             os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
-        )
-        extra_env = "".join(
-            f"\n            <key>{html.escape(k)}</key>"
-            f"\n            <string>{html.escape(v)}</string>"
-            for k, v in self._extra_env().items()
         )
         return textwrap.dedent(f"""\
             <?xml version="1.0" encoding="UTF-8"?>
@@ -90,14 +106,16 @@ class LaunchdBackend:
                 <string>{_LABEL}</string>
                 <key>ProcessType</key>
                 <string>Interactive</string>
+                <key>LimitLoadToSessionType</key>
+                <string>Aqua</string>
                 <key>ProgramArguments</key>
                 <array>
-            {program_args}
+            {self._program_args_xml()}
                 </array>
                 <key>EnvironmentVariables</key>
                 <dict>
                     <key>PATH</key>
-                    <string>{path_value}</string>{extra_env}
+                    <string>{path_value}</string>{self._extra_env_xml()}
                 </dict>
                 <key>RunAtLoad</key>
                 <true/>

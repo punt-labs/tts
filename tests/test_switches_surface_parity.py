@@ -305,6 +305,10 @@ def test_voice_set_writes_the_same_field(
     tool_written = ConfigStore(tmp_path).read_field("voice")
 
     (tmp_path / "vox.md").unlink(missing_ok=True)
+    # Setting a voice with no provider configured refuses (F1); seed
+    # provider so the CLI side hits the write, not the refusal -- the
+    # tool side reads its provider from the in-memory _FakeSession above.
+    (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
     monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
     runner = CliRunner()
     result = runner.invoke(app, ["voice", "matilda", "--json"])
@@ -331,6 +335,9 @@ def test_voice_set_strips_leading_at_on_both_surfaces(
     tool_written = ConfigStore(tmp_path).read_field("voice")
 
     (tmp_path / "vox.md").unlink(missing_ok=True)
+    # Same F1 seed as the sibling parity test above; the CLI reads state
+    # from vox.md and the F1 refusal would fire on the write path.
+    (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
     monkeypatch.setattr(f"{_CLI}.find_config_dir", lambda: tmp_path)
     runner = CliRunner()
     result = runner.invoke(app, ["voice", "@sarah", "--json"])

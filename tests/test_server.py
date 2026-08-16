@@ -5,11 +5,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, NoReturn, cast, final
+from typing import TYPE_CHECKING, Any, NoReturn, cast, final
 from unittest.mock import MagicMock
 
 import pytest
 from _program_fakes import FakeProgramGateway
+
+if TYPE_CHECKING:
+    from punt_vox.types_provider import ProviderStatusPayload
 
 from punt_vox.client import SynthesizeResult
 from punt_vox.client_errors import VoxdConnectionError
@@ -124,6 +127,14 @@ class _UnreachableClient:
     def voices(self, *_args: object, **_kwargs: object) -> NoReturn:
         raise VoxdConnectionError(_DAEMON_DOWN)
 
+    def provider_status(self, *_args: object, **_kwargs: object) -> NoReturn:
+        # ``mic:status`` reads the daemon's provider readiness through
+        # this seam (design §3.6); the hermetic default reports "daemon
+        # unreachable" so a test that forgets to install its own client
+        # sees the expected ``voxd_unavailable`` reason instead of an
+        # attribute error the moment ``status`` runs.
+        raise VoxdConnectionError(_DAEMON_DOWN)
+
 
 def _unreachable_client() -> _UnreachableClient:
     """Return a synthesis client whose every RPC models an unreachable daemon."""
@@ -151,14 +162,22 @@ def _patch_config(  # pyright: ignore[reportUnusedFunction]
 def _fresh_session(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
     """Reset server session config before every test.
 
-    Also stubs _find_config_dir to return None so refresh_from_config
-    is a no-op by default.  Tests that need refresh behavior override via
-    the _refresh_config fixture.
+    Seeds the session with ``provider="elevenlabs"`` so surfaces that fill
+    from state through :class:`~punt_vox.session_spec.SessionSpec` -- the
+    ``mic:unmute`` synthesis path in particular -- have an authoritative
+    provider to send. Without a seed every ``TestUnmute`` case would hit
+    the F1 refusal introduced by vox-w3f8 and exit before the assertion it
+    was written for. Tests that mean to exercise the unset-provider
+    branch reset ``_session._provider`` explicitly.
+
+    Also stubs ``_find_config_dir`` to return None so
+    ``refresh_from_config`` is a no-op by default; tests that need refresh
+    behavior override via the ``_refresh_config`` fixture.
     """
     import punt_vox.server as srv
     from punt_vox.vibe_command import MusicPreference
 
-    monkeypatch.setattr(srv, "_session", SessionConfig())
+    monkeypatch.setattr(srv, "_session", SessionConfig(_provider="elevenlabs"))
     monkeypatch.setattr(srv, "_music_pref", MusicPreference())
     monkeypatch.setattr(srv, "_find_config_dir", lambda: None)
 
@@ -573,6 +592,62 @@ class TestUnmute:
         assert len(result) == 1  # pyright: ignore[reportUnknownArgumentType]
         assert result[0]["text"] == "Hello world"
         mock_client.synthesize.assert_called_once()
+
+    def test_unconfigured_provider_returns_error_envelope(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An unset session provider returns a JSON error, never crashes the tool.
+
+        Every sibling synthesis surface returns ``{"error": ...}`` on the F1
+        refusal (``session_spec.SessionSpec`` raises
+        :class:`ProviderNotConfiguredError`); ``mic:unmute`` must match. A bare
+        exception would surface as a FastMCP protocol-level ``ToolError``
+        instead, which the caller cannot introspect. The guard must also fire
+        BEFORE ``_session.set_vibe`` so a refused call leaves no trace on the
+        session's vibe state.
+        """
+        import punt_vox.server as srv
+
+        monkeypatch.setattr(srv, "_session", SessionConfig())  # no provider
+        mock_client = MagicMock()
+        monkeypatch.setattr(srv, "_voxd_client", lambda: mock_client)
+
+        vibe_before = srv._session._vibe_tags
+
+        result = json.loads(unmute(text="Hi", vibe_tags="[warm]"))
+
+        assert isinstance(result, dict)
+        assert "error" in result
+        assert "no TTS provider" in result["error"]
+        # The daemon was never contacted.
+        mock_client.synthesize.assert_not_called()
+        # The refusal left the session's vibe untouched.
+        assert srv._session._vibe_tags == vibe_before
+
+    def test_unconfigured_model_returns_error_envelope(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A hand-edited provider/model pair returns the F7 refusal, not a crash.
+
+        Same envelope contract as F1: the caller sees the wrong pair state
+        actually declared, not a silent substitution to the provider default.
+        """
+        import punt_vox.server as srv
+
+        # provider=openai + model=eleven_v3 is the hand-edited hazard from §3.9.
+        monkeypatch.setattr(
+            srv, "_session", SessionConfig(_provider="openai", _model="eleven_v3")
+        )
+        mock_client = MagicMock()
+        monkeypatch.setattr(srv, "_voxd_client", lambda: mock_client)
+
+        result = json.loads(unmute(text="Hi"))
+
+        assert isinstance(result, dict)
+        assert "error" in result
+        assert "eleven_v3" in result["error"]
+        assert "openai" in result["error"]
+        mock_client.synthesize.assert_not_called()
 
     def test_segments(self, monkeypatch: pytest.MonkeyPatch) -> None:
         mock_client = MagicMock()
@@ -1036,14 +1111,23 @@ class TestStatusTool:
         result = json.loads(status())
         assert result["style"] == "flamenco"
 
-    def test_defaults_when_no_state_set(self) -> None:
+    def test_defaults_when_no_state_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A bare ``status`` reads the hermetic idle default, never the live daemon.
+
+        Overrides ``_fresh_session``'s provider seed with a pristine
+        :class:`SessionConfig` (no provider set) because this test's whole
+        point is what status reports when nothing has been configured -- the
+        seed introduced for the F1 refusal path is not the state under test
+        here.
 
         ``music_mode`` is "off" because the autouse ``_hermetic_daemon`` fixture
         installs an idle ``FakeProgramGateway`` -- not because ``voxd`` happens to
         be unreachable. Without that fixture this test read the real daemon and
         failed whenever music was actually playing.
         """
+        import punt_vox.server as srv
+
+        monkeypatch.setattr(srv, "_session", SessionConfig())
         result = json.loads(status())
         assert result["voice"] is None
         assert result["provider"] is None
@@ -1119,7 +1203,7 @@ class TestSuiteDoesNotTouchRealDaemon:
         import punt_vox.server as srv
 
         with pytest.raises(VoxdConnectionError):
-            srv._voxd_client().voices()
+            srv._voxd_client().voices("elevenlabs")
 
 
 # ---------------------------------------------------------------------------
@@ -1719,6 +1803,119 @@ class TestStatusProgramSurface:
         block = json.loads(status())["program"]
 
         assert "error" in block
+
+
+class TestStatusProviderStatus:
+    """The daemon-authoritative ``provider_status`` block on ``mic:status``."""
+
+    def _mock_client(self, payload: ProviderStatusPayload | Exception) -> MagicMock:
+        client = MagicMock()
+        if isinstance(payload, Exception):
+            client.provider_status.side_effect = payload
+        else:
+            client.provider_status.return_value = payload
+        return client
+
+    def test_status_includes_provider_status_for_configured_provider(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A session with a provider fetches its readiness from the daemon.
+
+        The block mirrors the daemon's verdict verbatim -- reason,
+        detail, ready -- so the caller programs against one shape
+        whether it arrived through synthesize (as a wire error) or
+        through status (as an inline block).
+        """
+        import punt_vox.server as srv
+        from punt_vox.types_provider import (
+            ProviderReadiness,
+            ProviderStatusPayload,
+        )
+
+        srv._session._provider = "polly"
+        payload = ProviderStatusPayload(
+            (
+                ProviderReadiness(
+                    name="polly",
+                    ready=False,
+                    reason="no_credentials",
+                    detail="voxd has no AWS credentials",
+                ),
+            ),
+            preferred="elevenlabs",
+        )
+        client = self._mock_client(payload)
+        monkeypatch.setattr(srv, "_voxd_client", lambda: client)
+
+        block = json.loads(status())["provider_status"]
+
+        assert block["name"] == "polly"
+        assert block["ready"] is False
+        assert block["reason"] == "no_credentials"
+        assert block["detail"] == "voxd has no AWS credentials"
+
+    def test_status_reports_unconfigured_without_calling_daemon(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No provider in state => ``reason="unconfigured"``, no daemon call.
+
+        Asking the daemon in this state would be a wasted round-trip:
+        the missing provider is a client-side fact.  A fake client that
+        raises when called catches a regression that reintroduces the
+        wasteful probe.
+        """
+        import punt_vox.server as srv
+
+        srv._session._provider = None
+        client = MagicMock()
+        client.provider_status.side_effect = AssertionError(
+            "must not call daemon when unconfigured"
+        )
+        monkeypatch.setattr(srv, "_voxd_client", lambda: client)
+
+        block = json.loads(status())["provider_status"]
+
+        assert block["ready"] is False
+        assert block["reason"] == "unconfigured"
+        # F1 detail names the fix path.
+        assert "mic:provider" in block["detail"]
+
+    def test_status_provider_status_degrades_when_daemon_unreachable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A voxd fault yields ``reason="voxd_unavailable"``, never an exception."""
+        import punt_vox.server as srv
+
+        srv._session._provider = "openai"
+        client = self._mock_client(VoxdConnectionError("not running"))
+        monkeypatch.setattr(srv, "_voxd_client", lambda: client)
+
+        block = json.loads(status())["provider_status"]
+
+        assert block["reason"] == "voxd_unavailable"
+        assert block["ready"] is False
+        assert block["name"] == "openai"
+
+    def test_status_reports_the_model_field(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``mic:status`` carries the model field alongside the provider."""
+        import punt_vox.server as srv
+        from punt_vox.types_provider import (
+            ProviderReadiness,
+            ProviderStatusPayload,
+        )
+
+        srv._session._provider = "elevenlabs"
+        srv._session._model = "eleven_v3"
+        payload = ProviderStatusPayload(
+            (ProviderReadiness(name="elevenlabs", ready=True, reason="ok", detail=""),),
+            preferred="elevenlabs",
+        )
+        monkeypatch.setattr(srv, "_voxd_client", lambda: self._mock_client(payload))
+
+        reply = json.loads(status())
+        assert reply["model"] == "eleven_v3"
 
 
 # ---------------------------------------------------------------------------
