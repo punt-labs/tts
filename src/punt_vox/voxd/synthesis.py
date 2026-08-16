@@ -19,6 +19,7 @@ from punt_vox.cache import CacheKey, cache_get, cache_put
 from punt_vox.core import TTSClient
 from punt_vox.normalize import VIBE_TAG_RE, normalize_for_speech
 from punt_vox.providers import get_provider
+from punt_vox.providers.credentials import ProviderCredentials
 from punt_vox.types import (
     AudioProviderId,
     AudioRequest,
@@ -30,9 +31,7 @@ from punt_vox.voxd.synthesis_result import SynthesisOutcome
 
 __all__ = [
     "_LOCAL_PROVIDERS",
-    "_PROVIDER_API_KEY_VAR",
     "SynthesisPipeline",
-    "_build_audio_request",
     "_run_play_directly_sync",
 ]
 
@@ -48,12 +47,14 @@ logger = logging.getLogger(__name__)
 # only to discover they don't implement play_directly.
 _LOCAL_PROVIDERS: frozenset[str] = frozenset({"espeak", "say"})
 
-# Map of provider name to its expected API key env var. Used by the
-# direct-play env-injection helper.
-_PROVIDER_API_KEY_VAR: dict[str, str] = {
-    "elevenlabs": "ELEVENLABS_API_KEY",
-    "openai": "OPENAI_API_KEY",
-}
+
+# provider -> env-var the API-key context injects for it. Derived from
+# :class:`ProviderCredentials` (via :meth:`ProviderCredentials.api_key_env_vars`)
+# rather than duplicated here, so the direct-play env helper and the readiness
+# gate cannot list different env vars for the same provider. Adding an
+# API-key provider is one entry in the credentials module; this map picks
+# it up automatically.
+_PROVIDER_API_KEY_VAR: dict[str, str] = ProviderCredentials().api_key_env_vars()
 
 
 @contextlib.contextmanager
@@ -77,34 +78,6 @@ def _api_key_context(api_key: str | None, provider_name: str) -> Generator[None]
 # ---------------------------------------------------------------------------
 # Pure helpers
 # ---------------------------------------------------------------------------
-
-
-def _build_audio_request(
-    normalized_text: str,
-    voice: str | None,
-    language: str | None,
-    rate: int | None,
-    stability: float | None,
-    similarity: float | None,
-    style: float | None,
-    *,
-    speaker_boost: bool | None,
-    provider_id: str,
-) -> AudioRequest:
-    """Build an AudioRequest from parsed message fields."""
-    return AudioRequest(
-        text=normalized_text,
-        voice=voice,
-        language=language,
-        rate=rate,
-        stability=stability,
-        similarity=similarity,
-        style=style,
-        speaker_boost=speaker_boost,
-        provider=AudioProviderId(provider_id)
-        if provider_id in AudioProviderId.__members__
-        else None,
-    )
 
 
 def _run_play_directly_sync(
@@ -195,6 +168,34 @@ class SynthesisPipeline:
 
             return ElevenLabsProvider.model_supports_expressive_tags(model)
         return False
+
+    @staticmethod
+    def _build_audio_request(
+        normalized_text: str,
+        voice: str | None,
+        language: str | None,
+        rate: int | None,
+        stability: float | None,
+        similarity: float | None,
+        style: float | None,
+        *,
+        speaker_boost: bool | None,
+        provider_id: str,
+    ) -> AudioRequest:
+        """Build an AudioRequest from parsed message fields."""
+        return AudioRequest(
+            text=normalized_text,
+            voice=voice,
+            language=language,
+            rate=rate,
+            stability=stability,
+            similarity=similarity,
+            style=style,
+            speaker_boost=speaker_boost,
+            provider=AudioProviderId(provider_id)
+            if provider_id in AudioProviderId.__members__
+            else None,
+        )
 
     @staticmethod
     def apply_vibe_for_synthesis(
@@ -306,8 +307,8 @@ class SynthesisPipeline:
         # Serialize env mutation + synthesis to avoid concurrent os.environ races.
         async with self._env_lock:
             with _api_key_context(api_key, provider_name):
-                provider = get_provider(provider_name, config_dir=None, model=model)
-                request = _build_audio_request(
+                provider = get_provider(provider_name, model=model)
+                request = self._build_audio_request(
                     normalized,
                     voice,
                     spec.language,
@@ -365,7 +366,7 @@ class SynthesisPipeline:
         spec: SynthesisSpec,
         *,
         record_result: Callable[..., None],
-    ) -> int | None | Exception:
+    ) -> int | Exception | None:
         """Attempt direct-to-device playback via the provider.
 
         Returns one of:
@@ -390,7 +391,7 @@ class SynthesisPipeline:
             text, spec.vibe_tags, provider_name, model
         )
 
-        request = _build_audio_request(
+        request = self._build_audio_request(
             normalized,
             voice,
             spec.language,
@@ -403,7 +404,7 @@ class SynthesisPipeline:
         )
 
         def _factory() -> TTSProvider:
-            return get_provider(provider_name, config_dir=None, model=model)
+            return get_provider(provider_name, model=model)
 
         start = time.monotonic()
         try:

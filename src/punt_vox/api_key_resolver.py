@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 from typing import Self
 
-import click
 import typer
 
 __all__ = ["ApiKeyResolver"]
@@ -60,12 +59,11 @@ class ApiKeyResolver:
             return self._read_stdin()
         if self._api_key is not None:
             source = self._ctx.get_parameter_source("api_key")
-            if source is click.core.ParameterSource.COMMANDLINE:
+            # Typer 0.27 vendors its own click; compare enum by ``.name``.
+            if getattr(source, "name", None) == "COMMANDLINE":
                 typer.echo(_API_KEY_ARGV_WARNING, err=True)
             return self._api_key
         return None
-
-    # -- private helpers -----------------------------------------------------
 
     def _check_mutual_exclusion(self) -> None:
         """Raise if more than one source is set."""
@@ -83,10 +81,8 @@ class ApiKeyResolver:
             named.append("--api-key-stdin")
         if argv_or_env_set:
             source = self._ctx.get_parameter_source("api_key")
-            if source is click.core.ParameterSource.ENVIRONMENT:
-                named.append("VOX_API_KEY")
-            else:
-                named.append("--api-key")
+            src_name = getattr(source, "name", None)
+            named.append("VOX_API_KEY" if src_name == "ENVIRONMENT" else "--api-key")
         conflict = ", ".join(named)
         msg = (
             f"Specify at most one API key source; got {conflict}. "

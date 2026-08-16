@@ -19,6 +19,12 @@ config -- the provider name and the output directory. The API key never
 appears there. This module builds that secret-free entry and, when the
 selected provider needs a key the daemon cannot yet reach, emits guidance
 that names the missing variable and where to set it -- never the value.
+
+Design (§3.8): the provider-name choice runs against
+:class:`ProviderCredentials`' own dispatch rather than a second local
+probe, and the ``keys.env`` readiness check uses the same key-variable
+map the daemon's gate reads. Two code paths asking the same question
+were the shape of the state-authority defect this bead closes.
 """
 
 from __future__ import annotations
@@ -28,17 +34,18 @@ from typing import Self, final
 
 from punt_vox.keys import parse_keys_env
 from punt_vox.paths import keys_env_file
-from punt_vox.providers import auto_detect_provider
+from punt_vox.providers.credentials import ProviderCredentials
 
 __all__ = ["DesktopInstaller"]
 
-# Providers that authenticate with a bearer API key, and the env var the
-# daemon reads it from. Providers absent here (say, espeak, polly) need no
-# API key for the daemon to speak, so registration never blocks on them.
-_PROVIDER_KEY_VARS: dict[str, str] = {
-    "elevenlabs": "ELEVENLABS_API_KEY",
-    "openai": "OPENAI_API_KEY",
-}
+
+# provider -> env-var the daemon reads for authentication. Derived from
+# :class:`ProviderCredentials` so this module and the readiness gate cannot
+# list different variables for the same provider (§3.4). Providers absent
+# from the map (say, espeak, polly) need no bearer key: say/espeak
+# authenticate against a binary on ``PATH``, polly against the AWS chain,
+# neither of which lives in ``keys.env`` under a single name.
+_PROVIDER_KEY_VARS: dict[str, str] = ProviderCredentials().api_key_env_vars()
 
 
 @final
@@ -62,14 +69,43 @@ class DesktopInstaller:
         return self
 
     @classmethod
-    def detect(cls, provider_name: str | None, audio_dir: Path) -> Self:
-        """Build from an explicit provider or auto-detection.
+    def config_path(cls) -> Path:
+        """Return the Claude Desktop config file path this installer writes.
 
-        A ``None`` provider means "pick the best available provider"; a
-        given name is lowercased so ``ElevenLabs`` and ``elevenlabs``
-        resolve identically.
+        The path is a per-user constant of the Claude Desktop app, so it lives
+        on the installer as an alternate constructor -- the class that owns
+        writing (and doctor's read-back) is the class that names the location.
         """
-        provider = provider_name.lower() if provider_name else auto_detect_provider()
+        return (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "Claude"
+            / "claude_desktop_config.json"
+        )
+
+    @classmethod
+    def detect(cls, provider_name: str | None, audio_dir: Path) -> Self:
+        """Build from an explicit provider or the credential dispatch's proposal.
+
+        A ``None`` provider means "pick a provider whose credentials the
+        installer's environment can already satisfy" -- the same question
+        :meth:`ProviderCredentials.preferred` answers for the enable path.
+        A given name is lowercased so ``ElevenLabs`` and ``elevenlabs``
+        resolve identically. Raises :class:`ValueError` when no provider
+        is ready: a fresh install with no credentials in view of the
+        installer has nothing sensible to write as the routing default.
+        """
+        if provider_name is not None:
+            return cls(provider_name.lower(), audio_dir)
+        provider = ProviderCredentials().preferred()
+        if provider is None:
+            msg = (
+                "No TTS provider credentials found in the current environment. "
+                "Export ELEVENLABS_API_KEY / OPENAI_API_KEY / AWS credentials, "
+                "or pass --provider explicitly."
+            )
+            raise ValueError(msg)
         return cls(provider, audio_dir)
 
     @property

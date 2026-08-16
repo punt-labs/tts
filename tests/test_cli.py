@@ -18,7 +18,7 @@ from punt_vox.__main__ import app
 from punt_vox.types_health import HealthStatus
 
 if TYPE_CHECKING:
-    from click.testing import Result
+    from typer.testing import Result
 
 
 _CLI = "punt_vox.__main__"
@@ -990,6 +990,9 @@ class TestVoiceCommand:
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
         monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        # Setting a voice with no provider configured refuses (F1); seed
+        # provider so the set path exercises the write, not the refusal.
+        (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
 
         runner = CliRunner()
         result = runner.invoke(app, ["voice", "matilda"])
@@ -1014,6 +1017,7 @@ class TestVoiceCommand:
         self, mock_client_cls: MagicMock, tmp_path: Path, monkeypatch: MagicMock
     ) -> None:
         monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
         mock_client_cls.return_value.voices.return_value = ["matilda", "roger"]
 
         runner = CliRunner()
@@ -1031,7 +1035,9 @@ class TestVoiceCommand:
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
         monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
-        (tmp_path / "vox.md").write_text('---\nvoice: "roger"\n---\n')
+        (tmp_path / "vox.md").write_text(
+            '---\nprovider: "elevenlabs"\nvoice: "roger"\n---\n'
+        )
         mock_client_cls.return_value.voices.return_value = ["matilda", "roger"]
 
         runner = CliRunner()
@@ -1065,7 +1071,9 @@ class TestVoiceCommand:
 
         monkeypatch.setattr(cfg, "DEFAULT_CONFIG_DIR", tmp_path)
         monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
-        (tmp_path / "vox.md").write_text('---\nvoice: "matilda"\n---\n')
+        (tmp_path / "vox.md").write_text(
+            '---\nprovider: "elevenlabs"\nvoice: "matilda"\n---\n'
+        )
         mock_client_cls.return_value.voices.return_value = ["matilda", "roger"]
 
         runner = CliRunner()
@@ -1083,6 +1091,7 @@ class TestVoiceCommand:
         from punt_vox.client_errors import VoxdConnectionError
 
         monkeypatch.setattr("punt_vox.__main__.find_config_dir", lambda: tmp_path)
+        (tmp_path / "vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
         mock_client_cls.return_value.voices.side_effect = VoxdConnectionError("nope")
 
         runner = CliRunner()
@@ -1309,25 +1318,33 @@ class TestDoctorCommand:
 
         runner = CliRunner()
         _doc = "punt_vox.doctor"
+        _mpv = "punt_vox.doctor_mpv"
+        _res = "punt_vox.doctor_result"
         with (
             patch(f"{_doc}.shutil.which", side_effect=which_side_effect),
+            patch(f"{_mpv}.shutil.which", side_effect=which_side_effect),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
             patch(
-                f"{_doc}.subprocess.run",
+                f"{_mpv}.subprocess.run",
                 return_value=MagicMock(stdout=f"mpv {mpv_version} Copyright"),
             ),
             patch(
                 f"{_doc}.installed_version",
                 return_value=installed_version,
             ),
-            patch(f"{_doc}.claude_desktop_config_path", return_value=config_path),
+            patch(
+                "punt_vox.desktop_install.DesktopInstaller.config_path",
+                return_value=config_path,
+            ),
             patch(
                 f"{_doc}.default_output_dir",
                 return_value=tmp_path / "audio",
             ),
             patch(f"{_doc}.platform.system", return_value=system_platform),
-            # Isolate legacy-path doctor checks from the real filesystem.
-            patch(f"{_doc}.Path.home", return_value=tmp_path),
+            patch(f"{_mpv}.platform.system", return_value=system_platform),
+            # Isolate the config-path helper from the real filesystem.
+            patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
+            patch("punt_vox.doctor.find_repo_root", return_value=None),
             patch(
                 "punt_vox.dirs._resolve_music_dir",
                 return_value=tmp_path / "Music",
@@ -1462,16 +1479,19 @@ class TestDoctorCommand:
         (tmp_path / "audio").mkdir(exist_ok=True)
 
         _doc = "punt_vox.doctor"
+        _mpv = "punt_vox.doctor_mpv"
+        _res = "punt_vox.doctor_result"
         with (
             patch(f"{_doc}.shutil.which", side_effect=which_side_effect),
+            patch(f"{_mpv}.shutil.which", side_effect=which_side_effect),
             patch(
-                f"{_doc}.subprocess.run",
+                f"{_mpv}.subprocess.run",
                 return_value=MagicMock(stdout="mpv 0.38.0 Copyright"),
             ),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
             patch(f"{_doc}.installed_version", return_value="4.2.0"),
             patch(
-                f"{_doc}.claude_desktop_config_path",
+                "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=tmp_path / "nope.json",
             ),
             patch(
@@ -1479,7 +1499,9 @@ class TestDoctorCommand:
                 return_value=tmp_path / "audio",
             ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
-            patch(f"{_doc}.Path.home", return_value=tmp_path),
+            patch(f"{_mpv}.platform.system", return_value="Darwin"),
+            patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
+            patch("punt_vox.doctor.find_repo_root", return_value=None),
             patch(
                 "punt_vox.dirs._resolve_music_dir",
                 return_value=tmp_path / "Music",
@@ -1545,16 +1567,19 @@ class TestDoctorCommand:
         (tmp_path / "audio").mkdir(exist_ok=True)
 
         _doc = "punt_vox.doctor"
+        _mpv = "punt_vox.doctor_mpv"
+        _res = "punt_vox.doctor_result"
         with (
             patch(f"{_doc}.shutil.which", side_effect=which_side_effect),
+            patch(f"{_mpv}.shutil.which", side_effect=which_side_effect),
             patch(
-                f"{_doc}.subprocess.run",
+                f"{_mpv}.subprocess.run",
                 return_value=MagicMock(stdout="mpv 0.38.0 Copyright"),
             ),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
             patch(f"{_doc}.installed_version", return_value="4.2.0"),
             patch(
-                f"{_doc}.claude_desktop_config_path",
+                "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=tmp_path / "nope.json",
             ),
             patch(
@@ -1562,7 +1587,9 @@ class TestDoctorCommand:
                 return_value=tmp_path / "audio",
             ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
-            patch(f"{_doc}.Path.home", return_value=tmp_path),
+            patch(f"{_mpv}.platform.system", return_value="Darwin"),
+            patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
+            patch("punt_vox.doctor.find_repo_root", return_value=None),
             patch(
                 "punt_vox.dirs._resolve_music_dir",
                 return_value=tmp_path / "Music",
@@ -1614,16 +1641,19 @@ class TestDoctorCommand:
         (tmp_path / "audio").mkdir(exist_ok=True)
 
         _doc = "punt_vox.doctor"
+        _mpv = "punt_vox.doctor_mpv"
+        _res = "punt_vox.doctor_result"
         with (
             patch(f"{_doc}.shutil.which", side_effect=which_side_effect),
+            patch(f"{_mpv}.shutil.which", side_effect=which_side_effect),
             patch(
-                f"{_doc}.subprocess.run",
+                f"{_mpv}.subprocess.run",
                 return_value=MagicMock(stdout="mpv 0.38.0 Copyright"),
             ),
             patch(f"{_CLI}.VoxClientSync", return_value=mock_client),
             patch(f"{_doc}.installed_version", return_value="4.2.0"),
             patch(
-                f"{_doc}.claude_desktop_config_path",
+                "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=tmp_path / "nope.json",
             ),
             patch(
@@ -1631,7 +1661,9 @@ class TestDoctorCommand:
                 return_value=tmp_path / "audio",
             ),
             patch(f"{_doc}.platform.system", return_value="Darwin"),
-            patch(f"{_doc}.Path.home", return_value=tmp_path),
+            patch(f"{_mpv}.platform.system", return_value="Darwin"),
+            patch("punt_vox.desktop_install.Path.home", return_value=tmp_path),
+            patch("punt_vox.doctor.find_repo_root", return_value=None),
             patch(
                 "punt_vox.dirs._resolve_music_dir",
                 return_value=tmp_path / "Music",
@@ -1879,6 +1911,12 @@ class TestDesktopInstallCommand:
         audio_dir = tmp_path / "audio"
 
         runner = CliRunner()
+        mock_creds = MagicMock()
+        mock_creds.preferred.return_value = "say"
+        mock_creds.api_key_env_vars.return_value = {
+            "elevenlabs": "ELEVENLABS_API_KEY",
+            "openai": "OPENAI_API_KEY",
+        }
         with (
             patch(
                 f"{_CLI_DESKTOP}.shutil.which",
@@ -1887,10 +1925,16 @@ class TestDesktopInstallCommand:
                 ),
             ),
             patch(
-                "punt_vox.cli_desktop.claude_desktop_config_path",
+                "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=config_path,
             ),
-            patch("punt_vox.providers.platform.system", return_value="Darwin"),
+            # Design §3.8: ``DesktopInstaller`` asks ``ProviderCredentials``
+            # for its preferred provider; stub the answer so the test is
+            # independent of the host's shell env and AWS chain.
+            patch(
+                "punt_vox.desktop_install.ProviderCredentials",
+                return_value=mock_creds,
+            ),
             patch.dict(os.environ, {}, clear=False),
         ):
             os.environ.pop("OPENAI_API_KEY", None)
@@ -1930,7 +1974,7 @@ class TestDesktopInstallCommand:
         with (
             patch(f"{_CLI_DESKTOP}.shutil.which", return_value=_UVX),
             patch(
-                "punt_vox.cli_desktop.claude_desktop_config_path",
+                "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=config_path,
             ),
         ):
@@ -1957,10 +2001,12 @@ class TestDesktopInstallCommand:
         with (
             patch(f"{_CLI_DESKTOP}.shutil.which", return_value=_UVX),
             patch(
-                "punt_vox.cli_desktop.claude_desktop_config_path",
+                "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=config_path,
             ),
-            patch("punt_vox.providers.platform.system", return_value="Darwin"),
+            # ``providers.platform`` is gone with the auto-detect probe
+            # (design §3.3); ``--provider elevenlabs`` names the provider
+            # explicitly, so no proposal path runs.
         ):
             result = runner.invoke(
                 app,
@@ -1996,14 +2042,15 @@ class TestDesktopInstallCommand:
         with (
             patch(f"{_CLI_DESKTOP}.shutil.which", return_value=_UVX),
             patch(
-                "punt_vox.cli_desktop.claude_desktop_config_path",
+                "punt_vox.desktop_install.DesktopInstaller.config_path",
                 return_value=config_path,
             ),
-            patch("punt_vox.providers.platform.system", return_value="Darwin"),
             patch(
                 "punt_vox.desktop_install.keys_env_file",
                 return_value=tmp_path / "absent.env",
             ),
+            # ``--provider elevenlabs`` is explicit; the auto-detect
+            # ``platform`` mock is retired with the probe.
         ):
             result = runner.invoke(
                 app,
@@ -2022,6 +2069,49 @@ class TestDesktopInstallCommand:
         assert "ELEVENLABS_API_KEY" in result.stderr
         assert "vox daemon install" in result.stderr
 
+    def test_no_credentials_exits_cleanly_no_traceback(self, tmp_path: Path) -> None:
+        """``vox desktop install`` with no --provider and no ready credentials
+        must exit(1) with a clean stderr message, not a traceback.
+
+        ``DesktopInstaller.detect(None, ...)`` raises ``ValueError`` when
+        ``ProviderCredentials.preferred()`` returns None; the CLI wrapper
+        must catch that and route through the same
+        ``typer.echo(err) + typer.Exit(1)`` convention the rest of
+        :class:`DesktopCli` uses. Without the guard the user sees the raw
+        Python traceback -- fine for a developer, wrong for a CLI.
+        """
+        config_path = tmp_path / "Claude" / "claude_desktop_config.json"
+        audio_dir = tmp_path / "audio"
+
+        runner = CliRunner()
+        mock_creds = MagicMock()
+        mock_creds.preferred.return_value = None
+        mock_creds.api_key_env_vars.return_value = {
+            "elevenlabs": "ELEVENLABS_API_KEY",
+            "openai": "OPENAI_API_KEY",
+        }
+        with (
+            patch(f"{_CLI_DESKTOP}.shutil.which", return_value=_UVX),
+            patch(
+                "punt_vox.desktop_install.DesktopInstaller.config_path",
+                return_value=config_path,
+            ),
+            patch(
+                "punt_vox.desktop_install.ProviderCredentials",
+                return_value=mock_creds,
+            ),
+        ):
+            result = runner.invoke(
+                app,
+                ["desktop", "install", "--output-dir", str(audio_dir)],
+            )
+
+        assert result.exit_code == 1
+        assert "Error: No TTS provider credentials" in result.stderr
+        # No traceback: exception should be intercepted.
+        assert "Traceback" not in result.stderr
+        assert "ValueError" not in result.stderr
+
 
 class TestDesktopUninstallCommand:
     def test_removes_vox_entry(self, tmp_path: Path) -> None:
@@ -2038,7 +2128,8 @@ class TestDesktopUninstallCommand:
 
         runner = CliRunner()
         with patch(
-            "punt_vox.cli_desktop.claude_desktop_config_path", return_value=config_path
+            "punt_vox.desktop_install.DesktopInstaller.config_path",
+            return_value=config_path,
         ):
             result = runner.invoke(app, ["desktop", "uninstall"])
 
@@ -2054,7 +2145,8 @@ class TestDesktopUninstallCommand:
 
         runner = CliRunner()
         with patch(
-            "punt_vox.cli_desktop.claude_desktop_config_path", return_value=config_path
+            "punt_vox.desktop_install.DesktopInstaller.config_path",
+            return_value=config_path,
         ):
             result = runner.invoke(app, ["desktop", "uninstall"])
 
@@ -2071,7 +2163,8 @@ class TestDesktopUninstallCommand:
 
         runner = CliRunner()
         with patch(
-            "punt_vox.cli_desktop.claude_desktop_config_path", return_value=config_path
+            "punt_vox.desktop_install.DesktopInstaller.config_path",
+            return_value=config_path,
         ):
             result = runner.invoke(app, ["desktop", "uninstall"])
 
@@ -2091,7 +2184,8 @@ class TestDesktopUninstallCommand:
 
         runner = CliRunner()
         with patch(
-            "punt_vox.cli_desktop.claude_desktop_config_path", return_value=config_path
+            "punt_vox.desktop_install.DesktopInstaller.config_path",
+            return_value=config_path,
         ):
             result = runner.invoke(app, ["desktop", "uninstall", "--json"])
 
@@ -2159,14 +2253,18 @@ class TestGlobalFlags:
 
     @patch(f"{_CLI}.VoxClientSync")
     def test_json_after_status(self, mock_client_cls: MagicMock) -> None:
-        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire(
-            {"provider": "polly"}
-        )
+        # Provider comes from state now (design §3.6); the daemon health
+        # probe used to invent one, which was the substitution defect
+        # this bead closes. The client is stubbed only to confirm the
+        # daemon is running; the ``--json`` payload's ``provider`` field
+        # reads from the local ``vox.md`` -- which is empty in this
+        # runner, so it renders as ``"unknown"``.
+        mock_client_cls.return_value.health.return_value = HealthStatus.from_wire({})
         runner = CliRunner()
         result = runner.invoke(app, ["status", "--json"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data["provider"] == "polly"
+        assert "provider" in data
 
     def test_quiet_after_version(self) -> None:
         runner = CliRunner()
@@ -2280,13 +2378,17 @@ class TestDaemonStatusCommand:
 
     @patch(f"{_CLI_DAEMON}.VoxClientSync")
     def test_json_returns_health_shape(self, mock_client_cls: MagicMock) -> None:
-        """--json emits the daemon health snapshot (mic:status daemon block)."""
+        """--json emits the daemon health snapshot (mic:status daemon block).
+
+        ``provider`` is deliberately absent from the payload (design §3.6
+        / D4): the daemon has no provider of its own; per-provider
+        readiness lives on the ``provider_status`` op PR 3 delivers.
+        """
         mock_client_cls.return_value.health.return_value = HealthStatus.from_wire(
             {
                 "status": "ok",
                 "port": 8421,
                 "pid": 4242,
-                "provider": "elevenlabs",
                 "daemon_version": "4.17.0",
                 "uptime_seconds": 123.4,
                 "queued": 0,
@@ -2299,12 +2401,10 @@ class TestDaemonStatusCommand:
 
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)
-        # Mirrors the daemon's own health schema ("ok" from voxd/health.py) so
-        # the CLI --json output matches the mic:status daemon block shape.
         assert payload["status"] == "ok"
         assert payload["port"] == 8421
         assert payload["pid"] == 4242
-        assert payload["provider"] == "elevenlabs"
+        assert "provider" not in payload
         assert payload["daemon_version"] == "4.17.0"
         assert payload["active_sessions"] == 2
 

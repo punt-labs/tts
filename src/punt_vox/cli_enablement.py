@@ -17,7 +17,7 @@ import typer
 
 from punt_vox.config import ConfigStore
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
-from punt_vox.enablement import RepoEnablement
+from punt_vox.enablement import EnableOutcome, RepoEnablement
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -82,18 +82,36 @@ class EnablementCli:
         """Turn vox on in this repo: deposit the guide, marker, import, and settings.
 
         Idempotent -- a re-run upgrades the deposited guide and adds no second
-        import. Writes a working-tree change committed via a PR, never runs git.
+        import. Also asks the DAEMON (never the local environment) for a
+        starter provider and writes it into ``vox.md`` on the ``written``
+        branch (design §3.8); an unreachable daemon or a host with nothing
+        ready is reported inline, and the rest of enable still lands. Writes
+        a working-tree change committed via a PR, never runs git.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        enablement = self._transition(lambda e: e.enable())
-        self._formatter.emit(
-            {
-                "enabled": True,
-                "repo": str(enablement.root),
-                "marker": str(enablement.marker_path),
+        outcome_holder: dict[str, EnableOutcome] = {}
+
+        def _do_enable(e: RepoEnablement) -> None:
+            outcome_holder["value"] = e.enable()
+
+        enablement = self._transition(_do_enable)
+        outcome = outcome_holder["value"]
+        payload: dict[str, object] = {
+            "enabled": True,
+            "repo": str(enablement.root),
+            "marker": str(enablement.marker_path),
+            "provider_proposal": {
+                "reason": outcome.reason,
+                "provider_written": outcome.provider_written,
+                "detail": outcome.detail,
             },
-            f"vox enabled in {enablement.root}",
-        )
+        }
+        headline = f"vox enabled in {enablement.root}"
+        # The outcome sentence is appended so a plain-text reader sees the
+        # daemon-proposal result without decoding the JSON envelope (the
+        # ``detail`` string is written to be read directly).
+        text = f"{headline}\n{outcome.detail}" if outcome.detail else headline
+        self._formatter.emit(payload, text)
 
     def disable(
         self,

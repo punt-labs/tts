@@ -167,7 +167,9 @@ class DaemonCli:
             "status": health.status,
             "port": health.port,
             "pid": health.pid,
-            "provider": health.provider,
+            # ``provider`` is not on the health payload -- the daemon has
+            # no provider of its own; per-provider readiness moves to the
+            # ``provider_status`` op (design §3.6, delivered by PR 3).
             "daemon_version": health.daemon_version,
             "uptime_seconds": health.uptime_seconds,
             "queued": health.queued,

@@ -15,7 +15,6 @@ def test_from_wire_reads_the_full_daemon_payload() -> None:
             "queued": 3,
             "port": 8421,
             "active_sessions": 2,
-            "provider": "elevenlabs",
             "last_playback": {"rc": 0, "file": "recordings/a.mp3"},
             "pid": 4242,
             "daemon_version": "5.0.0",
@@ -27,10 +26,25 @@ def test_from_wire_reads_the_full_daemon_payload() -> None:
     assert status.queued == 3
     assert status.port == 8421
     assert status.active_sessions == 2
-    assert status.provider == "elevenlabs"
     assert status.last_playback == {"rc": 0, "file": "recordings/a.mp3"}
     assert status.pid == 4242
     assert status.daemon_version == "5.0.0"
+
+
+def test_from_wire_ignores_unknown_fields() -> None:
+    """Fields the schema no longer carries (``provider``) are dropped silently.
+
+    The daemon has no provider of its own (design §3.6 / D4); per-provider
+    readiness is a separate wire op. A payload from an older daemon still
+    parses because :meth:`from_wire` ignores unknown keys.
+    """
+    status = HealthStatus.from_wire(
+        {"status": "ok", "provider": "elevenlabs", "port": 42}
+    )
+
+    assert status.status == "ok"
+    assert status.port == 42
+    assert not hasattr(status, "provider")
 
 
 def test_from_wire_defaults_absent_fields() -> None:
@@ -42,7 +56,6 @@ def test_from_wire_defaults_absent_fields() -> None:
     """
     status = HealthStatus.from_wire({"status": "ok", "queued": 0})
 
-    assert status.provider == "unknown"
     assert status.port == 0
     assert status.pid == 0
     assert status.daemon_version == ""
@@ -53,15 +66,12 @@ def test_from_wire_defaults_absent_fields() -> None:
 def test_from_wire_coerces_wrong_types_to_defaults() -> None:
     """Wrong-typed fields fall back to defaults rather than raising or leaking.
 
-    ``bool`` is rejected as an int (``True`` is not a port); a non-string
-    ``provider`` falls back to ``"unknown"``.
+    ``bool`` is rejected as an int (``True`` is not a port); non-string
+    fields fall back to their string defaults.
     """
-    status = HealthStatus.from_wire(
-        {"port": True, "provider": 7, "uptime_seconds": True}
-    )
+    status = HealthStatus.from_wire({"port": True, "uptime_seconds": True})
 
     assert status.port == 0
-    assert status.provider == "unknown"
     assert status.uptime_seconds == 0.0
 
 

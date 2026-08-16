@@ -327,3 +327,139 @@ class TestVoicesHandler:
         await VoicesHandler()(
             {"id": "v1", "provider": 123}, cast("WebSocket", _GoneWs())
         )
+
+    @pytest.mark.asyncio
+    async def test_missing_provider_field_is_a_rejected_op(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A wire message with no ``provider`` field is a rejected client op.
+
+        State is the sole authority on which provider voxd runs (design
+        §3.7); the parse for ``provider`` is ``parse_required_str`` and
+        a missing field must not fall through to a daemon guess. The
+        rejection audits as WARNING "rejected op", not ERROR "operation
+        failed" -- the client sent an incomplete request, and the
+        message names the missing field.
+        """
+        ws = _CollectingWs()
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            await VoicesHandler()({"id": "v0"}, cast("WebSocket", ws))
+
+        assert ws.sent[-1]["type"] == "error"
+        assert ws.sent[-1]["id"] == "v0"
+        assert "provider" in str(ws.sent[-1]["message"])
+        assert any("rejected op" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_uncredentialed_provider_crosses_verbatim_via_error(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The F2 wire promise on the voices op.
+
+        When ``get_provider`` raises :class:`ProviderUnavailableError`
+        (the daemon has no credentials for a known provider), the
+        message must reach the client verbatim through
+        ``WireReply.error`` -- NOT through fault() and NOT laundered
+        to "operation failed". Same shape ``mic:unmute`` gets for the
+        same underlying condition, so ``mic:voice`` and ``mic:unmute``
+        return one text for one fact.
+
+        This test would have caught the round-1 defect where the type
+        was defined and caught but never raised: driving a real
+        ``ProviderUnavailableError`` through the handler ensures the
+        end-to-end path works, not just its pieces.
+        """
+        from punt_vox.types_provider_errors import ProviderUnavailableError
+
+        detail = (
+            "provider 'polly' is configured but voxd has no AWS credentials "
+            "(AWS_PROFILE, or AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY); "
+            "run `vox doctor`"
+        )
+
+        def boom(*_args: object, **_kwargs: object) -> object:
+            raise ProviderUnavailableError("polly", detail)
+
+        monkeypatch.setattr("punt_vox.voxd.system_handlers.get_provider", boom)
+        ws = _CollectingWs()
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            await VoicesHandler()(
+                {"id": "vf2", "provider": "polly"}, cast("WebSocket", ws)
+            )
+
+        assert ws.sent[-1]["type"] == "error"
+        assert ws.sent[-1]["id"] == "vf2"
+        assert ws.sent[-1]["message"] == detail
+        # Never through fault() / "operation failed" for this class.
+        assert not any("operation failed" in r.getMessage() for r in caplog.records)
+        assert any("rejected op" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_unknown_provider_crosses_verbatim_via_error(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """F4 on the voices op: hand-edited ``provider: ploly``.
+
+        ``UnknownProviderError`` is a ``ValueError`` subclass, so
+        ``system_handlers.VoicesHandler`` catches it in the existing
+        ``(ValueError, LookupError, OSError)`` trio and routes it
+        through ``reject_or_fault`` -> ``WireReply.error``. The
+        message crosses verbatim, and the audit line is a WARNING
+        rejected op rather than an ERROR operation failed.
+        """
+        from punt_vox.types_provider_errors import UnknownProviderError
+
+        def boom(*_args: object, **_kwargs: object) -> object:
+            raise UnknownProviderError("ploly", ["elevenlabs", "openai", "polly"])
+
+        monkeypatch.setattr("punt_vox.voxd.system_handlers.get_provider", boom)
+        ws = _CollectingWs()
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            await VoicesHandler()(
+                {"id": "vf4", "provider": "ploly"}, cast("WebSocket", ws)
+            )
+
+        assert ws.sent[-1]["type"] == "error"
+        assert ws.sent[-1]["id"] == "vf4"
+        assert ws.sent[-1]["message"] == (
+            "Unknown provider 'ploly'. Available: elevenlabs, openai, polly"
+        )
+        assert not any("operation failed" in r.getMessage() for r in caplog.records)
+        assert any("rejected op" in r.getMessage() for r in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_voice_not_found_crosses_verbatim_via_error(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """F5 on the voices op: an unknown-voice error crosses verbatim.
+
+        The bead's originally reported incident was ``bella`` (an
+        ElevenLabs voice) reaching the OpenAI provider and coming back
+        as "operation failed". The synthesize path catches this
+        explicitly; ``VoicesHandler`` catches it via the ValueError
+        branch of ``reject_or_fault``. Either way the sentence must
+        cross the wire.
+        """
+        from punt_vox.types_errors import VoiceNotFoundError
+
+        def list_voices() -> list[str]:
+            raise VoiceNotFoundError("bella", ["alloy", "ash", "ballad"])
+
+        provider = type(
+            "_StubProvider", (), {"list_voices": staticmethod(list_voices)}
+        )()
+
+        def factory(*_args: object, **_kwargs: object) -> object:
+            return provider
+
+        monkeypatch.setattr("punt_vox.voxd.system_handlers.get_provider", factory)
+        ws = _CollectingWs()
+        with caplog.at_level(logging.WARNING, logger="punt_vox.voxd.wire_reply"):
+            await VoicesHandler()(
+                {"id": "vf5", "provider": "openai"}, cast("WebSocket", ws)
+            )
+
+        assert ws.sent[-1]["type"] == "error"
+        assert ws.sent[-1]["id"] == "vf5"
+        assert ws.sent[-1]["message"] == "bella (available: alloy, ash, ballad)"
+        assert not any("operation failed" in r.getMessage() for r in caplog.records)

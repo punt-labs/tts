@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Self, final
 
+from punt_vox.types_synthesis_errors import ModelNotAvailableError
+
 __all__ = [
     "MODEL_TABLE",
     "ModelTable",
@@ -88,6 +90,20 @@ class ModelTable:
     def available(self, provider: str) -> tuple[str, ...]:
         """Return the full model names for *provider*, empty when none."""
         return self.for_provider(provider).full
+
+    def validate(self, name: str, provider: str) -> None:
+        """Raise :class:`ModelNotAvailableError` when *name* is not on *provider*.
+
+        The pair check that used to live inline in every caller. Ownership
+        belongs here because the list of accepted names lives here too --
+        splitting the "get list" and "check membership" across two modules
+        is the PY-OO-5 shape (state and its behavior in one class). Silent
+        on success so callers can trust the un-validated name they already
+        hold.
+        """
+        available = self.available(provider)
+        if not available or name not in available:
+            raise ModelNotAvailableError(name, provider, list(available))
 
     def resolve(self, name: str, provider: str) -> str:
         """Resolve *name* against *provider*'s shorthand and full-name tables.

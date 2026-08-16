@@ -26,11 +26,16 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.commands import CommandResult, Ctx
 from punt_vox.config import ConfigStore
+from punt_vox.desktop_install import DesktopInstaller
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
-from punt_vox.doctor import claude_desktop_config_path
 from punt_vox.hooks import hook_app
 from punt_vox.output_formatter import OutputFormatter
+from punt_vox.session_spec import SessionSpec
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.types_synthesis_errors import (
+    ModelNotAvailableError,
+    ProviderNotConfiguredError,
+)
 from punt_vox.vibe import VibeChange
 
 if TYPE_CHECKING:
@@ -94,6 +99,29 @@ def _validated_spec(spec: SynthesisSpec) -> SynthesisSpec:
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     return spec
+
+
+def _fill_from_state(spec: SynthesisSpec) -> SynthesisSpec:
+    """Fill unset fields from the repo's ``vox.md`` through :class:`SessionSpec`.
+
+    The CLI counterpart to :meth:`SessionConfig.fill_defaults` (server.py):
+    ``vox say`` used to ignore ``vox.md`` entirely, so a bare ``vox say "hi"``
+    sent no provider and let the daemon guess. Filling here makes state the
+    authority on ``vox say`` too. ``vox rec new`` fills through the same
+    :class:`SessionSpec` from its own helper in :mod:`cli_rec`, matching
+    the shape here.
+
+    An unconfigured provider is the F1 refusal -- reported on stderr and
+    exit 1 -- and an incompatible provider/model pair is the F7 refusal,
+    same treatment.
+    """
+    config = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
+    try:
+        return SessionSpec(config).fill(spec)
+    except (ProviderNotConfiguredError, ModelNotAvailableError) as exc:
+        message = str(exc)
+        _formatter.error(message, f"Error: {message}")
+        raise typer.Exit(code=1) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -351,18 +379,20 @@ def say(  # pyright: ignore[reportUnusedFunction]
         ctx, api_key, api_key_file, api_key_stdin=api_key_stdin
     ).resolve()
 
-    spec = _validated_spec(
-        SynthesisSpec(
-            voice=voice,
-            language=language,
-            rate=rate,
-            provider=provider,
-            model=model,
-            stability=stability,
-            similarity=similarity,
-            style=style,
-            speaker_boost=speaker_boost or None,
-            api_key=resolved_api_key,
+    spec = _fill_from_state(
+        _validated_spec(
+            SynthesisSpec(
+                voice=voice,
+                language=language,
+                rate=rate,
+                provider=provider,
+                model=model,
+                stability=stability,
+                similarity=similarity,
+                style=style,
+                speaker_boost=speaker_boost or None,
+                api_key=resolved_api_key,
+            )
         )
     )
 
@@ -641,17 +671,18 @@ def status_cmd(  # pyright: ignore[reportUnusedFunction]
     _flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
     cfg = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
 
-    # Try to get provider from voxd health
-    daemon_provider: str | None = None
+    # Ping voxd for liveness only; the provider comes from state, not
+    # from the daemon (design §3.6 -- the daemon owns no provider of its
+    # own, and the health probe used to invent one, which was the
+    # substitution defect this bead closes).
     daemon_status = "not running"
     try:
-        health = VoxClientSync().health()
-        daemon_provider = health.provider
+        VoxClientSync().health()
         daemon_status = "running"
     except (VoxdConnectionError, VoxdProtocolError):
         pass
 
-    provider_name = daemon_provider or "unknown"
+    provider_name = cfg.provider or "unknown"
     display_name = _PROVIDER_DISPLAY.get(provider_name, provider_name)
     desktop_reg = _desktop_registration()
 
@@ -702,7 +733,7 @@ def _desktop_registration() -> str:
       because the operator cannot conclude anything about the
       registration from a file the CLI cannot parse.
     """
-    config_path = claude_desktop_config_path()
+    config_path = DesktopInstaller.config_path()
     if not config_path.exists():
         return "no config"
     try:
@@ -725,11 +756,11 @@ def _desktop_registration() -> str:
 @app.command()
 def doctor() -> None:  # pyright: ignore[reportUnusedFunction]
     """Check system health for vox."""
-    from punt_vox.doctor import DoctorCheck, format_results
+    from punt_vox.doctor import DoctorCheck
+    from punt_vox.doctor_result import CheckResults
 
     check = DoctorCheck(client=VoxClientSync())
-    results = check.run_all()
-    payload, text = format_results(results)
+    payload, text = CheckResults(check.run_all()).format()
     _formatter.emit(payload, text)
 
     if payload.get("failed", 0):

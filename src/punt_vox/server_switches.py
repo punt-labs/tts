@@ -129,7 +129,20 @@ class ModelTool:
         err = self._config.refresh(session)
         if err is not None:
             return err
-        provider = session.provider or "elevenlabs"
+        provider = session.provider
+        if not provider:
+            # ``mic:model`` used to substitute ``"elevenlabs"`` for an unset
+            # provider and then report its models as the current session's --
+            # the exact substitution this bead deletes. Listing needs no
+            # synthesis, so an empty list with ``current: null`` is the
+            # honest answer; setting is refused so no wrong-provider model
+            # writes into state.
+            if name is None:
+                return json.dumps({"available": [], "current": session.model})
+            return _error(
+                "no TTS provider is configured for this repo; "
+                "set one with mic:provider <name>"
+            )
 
         if name is None:
             return json.dumps(
@@ -286,8 +299,9 @@ class VoiceTool:
 
         Returns:
             JSON string. No arg: ``{"provider", "current", "available",
-            "featured"}`` (the current ``mic:who`` payload with ``all``
-            renamed to ``available``; ``featured`` carries the blurbs).
+            "featured"}`` (the shape the retired ``mic:who`` tool produced,
+            with ``all`` renamed to ``available``; ``featured`` carries the
+            blurbs).
             Name given: ``{"voice": "<normalized-name>"}``. A daemon fault on
             the roster returns ``{"error": ...}``; a blank/lone-``@`` write
             returns ``{"error": "voice name is empty"}``; a filesystem or
@@ -301,6 +315,16 @@ class VoiceTool:
         if name is None:
             return self._list(session)
 
+        # Setting a voice with no provider configured lands a wrong-provider
+        # voice into vox.md the moment a caller runs mic:provider -- exactly
+        # the substitution class this bead exists to prevent. Listing does
+        # not require a provider (empty roster is fine); setting does.
+        if not session.provider:
+            return _error(
+                "no TTS provider is configured for this repo; "
+                "set one with mic:provider <name>"
+            )
+
         normalized = SynthesisSpec.normalize_voice(name)
         if normalized is None:
             return _error("voice name is empty")
@@ -312,22 +336,42 @@ class VoiceTool:
         return json.dumps({"voice": normalized})
 
     def _list(self, session: SessionConfig) -> str:
-        """Return the voice roster for the current provider, blurbs included."""
-        roster = Cascade.fetch_roster(self._client_factory(), session.provider)
+        """Return the voice roster for the current provider, blurbs included.
+
+        Listing needs no synthesis, so an unset provider yields an honest
+        empty answer instead of a refusal -- the caller is trying to learn
+        what to configure, and answering "configure something first" is
+        the worst possible moment to refuse. Symmetric with ``ModelTool``'s
+        list branch; a client can tell "no provider is configured" apart
+        from "the provider has no voices" by checking ``provider is None``.
+        A set operation (``mic:voice <name>``) does still refuse F1 in
+        ``VoiceTool.dispatch`` -- writing a wrong-provider voice into
+        state is the substitution the whole subsystem exists to prevent.
+        """
+        provider = session.provider
+        if not provider:
+            return json.dumps(
+                {
+                    "provider": None,
+                    "current": session.voice,
+                    "available": [],
+                    "featured": [],
+                }
+            )
+        roster = Cascade.fetch_roster(self._client_factory(), provider)
         if isinstance(roster, RosterError):
             return _error(roster.message)
         all_voices = roster
 
-        provider_name = session.provider or "elevenlabs"
         featured = [
             {"name": name, "blurb": blurb}
             for (prov, name), blurb in VOICE_BLURBS.items()
-            if prov == provider_name and name in all_voices
+            if prov == provider and name in all_voices
         ]
 
         return json.dumps(
             {
-                "provider": provider_name,
+                "provider": provider,
                 "current": session.voice,
                 "available": all_voices,
                 "featured": random.sample(featured, min(_FEATURED_CAP, len(featured))),
