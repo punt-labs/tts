@@ -12,9 +12,15 @@ from __future__ import annotations
 import typer
 import typer.main
 from click import Group
-from typer.core import TyperArgument, TyperOption
+from typer.core import TyperArgument, TyperGroup, TyperOption
 
 from punt_vox.__main__ import app
+
+# Typer 0.27 stopped inheriting TyperGroup from click.Group; group semantics
+# now live on TyperGroup itself with its own `.commands` mapping. Accept either
+# shape so introspection works across the older-Group and newer-TyperGroup
+# layouts.
+_GroupType = Group | TyperGroup
 
 
 def app_help_texts(built: typer.Typer) -> list[str]:
@@ -27,7 +33,7 @@ def app_help_texts(built: typer.Typer) -> list[str]:
     """
     group = typer.main.get_command(built)
     texts = [group.help or ""]
-    if isinstance(group, Group):
+    if isinstance(group, _GroupType):
         for command in group.commands.values():
             texts.append(command.help or "")
             texts.extend(
@@ -47,7 +53,7 @@ def command_opts(*path: str) -> set[str]:
     """
     command = typer.main.get_command(app)
     for name in path:
-        if not isinstance(command, Group):
+        if not isinstance(command, _GroupType):
             raise LookupError(f"{name!r}: parent is not a command group")
         command = command.commands[name]
     return {
