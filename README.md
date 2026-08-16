@@ -250,11 +250,13 @@ except VoxError as exc:  # VoxdConnectionError (daemon down) or VoxdProtocolErro
 import asyncio
 from punt_vox import VoxClient, SynthesisSpec
 
+
 async def main() -> None:
-    async with VoxClient() as vox:      # connect on enter, close on exit
+    async with VoxClient() as vox:  # connect on enter, close on exit
         await vox.synthesize("Tests green", SynthesisSpec(voice="sarah"))
-        health = await vox.health()     # typed HealthStatus, not a bare dict
+        health = await vox.health()  # typed HealthStatus, not a bare dict
         print(health.provider, health.daemon_version)
+
 
 asyncio.run(main())
 ```
