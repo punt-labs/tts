@@ -8,8 +8,8 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self
 
-from punt_vox.providers import auto_detect_provider, get_provider
-from punt_vox.voxd._parse import parse_optional_str
+from punt_vox.providers import get_provider
+from punt_vox.voxd._parse import parse_required_str
 from punt_vox.voxd.chimes import ChimeResolver
 from punt_vox.voxd.dedup import ChimeDedup
 from punt_vox.voxd.health import DaemonHealth
@@ -85,15 +85,27 @@ class VoicesHandler(MessageHandler):
         return super().__new__(cls)
 
     async def __call__(self, msg: dict[str, object], websocket: WebSocket) -> None:
-        """List available voices for the requested provider."""
+        """List available voices for the requested provider.
+
+        ``provider`` is required on the wire (design §3.7): every
+        client fills it from state via :class:`SessionSpec` before
+        crossing, so a missing field is a hand-rolled caller and gets
+        an id-stamped rejection here rather than a daemon-side guess.
+        A known provider with no credentials raises
+        :class:`ProviderUnavailableError` from inside
+        :meth:`ProviderRegistry.get`; ``ValueError``-family exceptions
+        (unknown provider name, unavailable credentials) route
+        through ``error()`` with the sentence verbatim, so
+        ``mic:voice`` and ``mic:unmute`` see the same message for the
+        same underlying condition.
+        """
         # Reply via WireReply (a gone peer no-ops, not a teardown), and parse inside
         # the try so domain failures classify like the store handlers.
         reply = WireReply(websocket, str(msg.get("id", "")))
+        provider_name = ""
         try:
-            provider_name = (
-                parse_optional_str(msg, "provider") or auto_detect_provider()
-            )
-            provider = get_provider(provider_name, config_dir=None)
+            provider_name = parse_required_str(msg, "provider")
+            provider = get_provider(provider_name)
             voice_list = await asyncio.to_thread(provider.list_voices)
         except (ValueError, LookupError, OSError) as exc:
             # Shared taxonomy: ValueError = rejected client request (WARNING),

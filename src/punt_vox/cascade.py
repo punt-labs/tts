@@ -60,8 +60,12 @@ class RosterClient(Protocol):
     import.
     """
 
-    def voices(self, provider: str | None = None) -> list[str]:
-        """Return the named provider's voice roster."""
+    def voices(self, provider: str) -> list[str]:
+        """Return the named provider's voice roster.
+
+        State is the sole authority on which provider voxd runs, so the
+        caller names it on every fetch -- the daemon never guesses.
+        """
         ...
 
 
@@ -113,13 +117,16 @@ class Cascade:
         return Cascade.first_or_empty(MODEL_TABLE.available(provider))
 
     @staticmethod
-    def fetch_roster(
-        client: RosterClient, provider: str | None
-    ) -> list[str] | RosterError:
+    def fetch_roster(client: RosterClient, provider: str) -> list[str] | RosterError:
         """Return *provider*'s voice roster, or a :class:`RosterError` on fault.
 
-        Fetches ``client.voices(provider=provider)``. A
-        :class:`VoxdConnectionError` (daemon down) is wrapped without
+        Fetches ``client.voices(provider=provider)``. The provider is
+        required now: state is the sole authority on which one voxd runs,
+        so the caller must name it -- ``mic:model``, ``mic:voice``, and
+        the panel each refuse when their session has no provider yet
+        rather than pass ``None`` and let the daemon substitute.
+
+        A :class:`VoxdConnectionError` (daemon down) is wrapped without
         logging; a :class:`VoxdProtocolError`, :class:`WebSocketException`,
         :class:`OSError`, or :class:`ValueError` is logged with
         ``.exception()`` before wrapping so a real bug leaves a diagnostic

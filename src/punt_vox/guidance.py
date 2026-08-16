@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Self, final
 
 from punt_vox.claude_md import ClaudeMdImport
+from punt_vox.guide_stamp import GuideStamp
 from punt_vox.paths import user_state_dir
 
 __all__ = ["VoxGuidance"]
@@ -76,7 +77,8 @@ class VoxGuidance:
         original error, so a failed install leaves no partial state behind.
         """
         self._doc_path.parent.mkdir(parents=True, exist_ok=True)
-        self._doc_path.write_text(self._load_doc(), encoding="utf-8")
+        stamp = GuideStamp.for_packaged_asset()
+        self._doc_path.write_text(stamp.stamped(self._load_doc()), encoding="utf-8")
         try:
             wrote = self._import.register()
         except OSError:

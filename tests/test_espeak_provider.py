@@ -499,29 +499,7 @@ class TestEspeakProviderInferLanguage:
         assert espeak_provider.infer_language_from_voice("german") == "de"
 
 
-class TestAutoDetectEspeakFallback:
-    def test_linux_with_espeak(self) -> None:
-        with (
-            patch.dict("os.environ", {}, clear=True),
-            patch("punt_vox.providers.platform") as mock_platform,
-            patch("punt_vox.providers.shutil") as mock_shutil,
-        ):
-            mock_platform.system.return_value = "Linux"
-            mock_shutil.which.side_effect = lambda name: (  # pyright: ignore[reportUnknownLambdaType]
-                "/usr/bin/espeak-ng" if name == "espeak-ng" else None
-            )
-            from punt_vox.providers import auto_detect_provider
-
-            assert auto_detect_provider() == "espeak"
-
-    def test_linux_without_espeak(self) -> None:
-        with (
-            patch.dict("os.environ", {}, clear=True),
-            patch("punt_vox.providers.platform") as mock_platform,
-            patch("punt_vox.providers.shutil") as mock_shutil,
-        ):
-            mock_platform.system.return_value = "Linux"
-            mock_shutil.which.return_value = None
-            from punt_vox.providers import auto_detect_provider
-
-            assert auto_detect_provider() == "polly"
+# The old ``TestAutoDetectEspeakFallback`` covered ``auto_detect_provider``,
+# which is deleted (design §3.3): the daemon never invents a provider.
+# The espeak leg of the preference walk is now covered generically by
+# tests/test_credentials.py (:class:`BinaryRequirement`).

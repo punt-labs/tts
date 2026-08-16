@@ -19,13 +19,15 @@ class HealthStatus:
     port, and running which build. ``last_playback`` is the ``vox doctor``
     diagnostic the daemon reports, relativized so it carries no host path.
 
-    Absent fields fall back to benign defaults rather than raising: a health
-    read is best-effort observability, and every consumer already treats a
+    Deliberately absent: ``provider``. The daemon has no provider of its
+    own; per-provider readiness moves to the ``provider_status`` op
+    (design §3.6, delivered by PR 3). Absent fields on the wire fall
+    back to benign defaults rather than raising: a health read is
+    best-effort observability, and every consumer already treats a
     missing field as "not reported".
     """
 
     status: str = "unknown"
-    provider: str = "unknown"
     port: int = 0
     pid: int = 0
     daemon_version: str = ""
@@ -42,7 +44,6 @@ class HealthStatus:
         """Build a health snapshot from the daemon's ``health`` reply."""
         return cls(
             status=cls._as_str(raw.get("status"), "unknown"),
-            provider=cls._as_str(raw.get("provider"), "unknown"),
             port=cls._as_int(raw.get("port")),
             pid=cls._as_int(raw.get("pid")),
             daemon_version=cls._as_str(raw.get("daemon_version"), ""),
