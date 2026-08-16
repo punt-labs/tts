@@ -18,7 +18,7 @@ from punt_vox.__main__ import app
 from punt_vox.types_health import HealthStatus
 
 if TYPE_CHECKING:
-    from click.testing import Result
+    from typer.testing import Result
 
 
 _CLI = "punt_vox.__main__"
