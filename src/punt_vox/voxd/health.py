@@ -85,18 +85,19 @@ class DaemonHealth:
         """Return the full diagnostic health payload for authenticated callers.
 
         Used only by the token-gated WebSocket health handler. ``provider`` is
-        authenticated-only (D1) -- ``doctor`` reads it, the ``/health`` probe
-        never sees it. The old host-fact diagnostics ``audio_env`` and
-        ``player_binary`` are dropped (D2): out of jail, no relative form.
-        ``last_playback`` is relativized by :meth:`PlaybackResult.to_health_dict`,
-        so no absolute prefix crosses even here. ``pid`` (used by ``vox daemon
-        restart``) and ``daemon_version`` (used by ``vox doctor``) are neither a
-        host map nor forbidden over the token.
+        deliberately absent (design D4): the daemon has no provider of its
+        own to report, and reporting the old auto-detect probe's answer here
+        would be the same substitution defect this bead closes, in a third
+        place. Per-provider readiness moves to the ``provider_status`` op
+        (§3.6, delivered by PR 3). The old host-fact diagnostics
+        ``audio_env`` and ``player_binary`` are dropped (D2): out of jail,
+        no relative form. ``last_playback`` is relativized by
+        :meth:`PlaybackResult.to_health_dict`, so no absolute prefix crosses
+        even here. ``pid`` (used by ``vox daemon restart``) and
+        ``daemon_version`` (used by ``vox doctor``) are neither a host map
+        nor forbidden over the token.
         """
-        from punt_vox.providers import auto_detect_provider
-
         payload = self.minimal_payload()
-        payload["provider"] = auto_detect_provider()
         if result := self._playback.last_result:
             payload["last_playback"] = result.to_health_dict()
         else:

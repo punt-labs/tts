@@ -42,14 +42,19 @@ if TYPE_CHECKING:
 def _fresh_session(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
     """Reset the module session and pin config discovery to a no-op.
 
+    Seeds ``_provider="elevenlabs"`` so ``rec new``'s ``SessionSpec``
+    fill (vox-w3f8) has an authoritative provider to send -- an unset
+    provider is the F1 refusal now, and the tests here exercise the
+    dispatch/wire shape, not the F1 branch. Tests that mean to exercise
+    the unset-provider refusal reset ``_session._provider`` explicitly.
+
     ``RecTool``'s ``new`` subcommand refreshes the session from config; a fresh
-    session plus a
-    ``None`` config dir keeps that a pure no-op so the tests exercise only the
-    tool's own logic.
+    session plus a ``None`` config dir keeps that a pure no-op so the tests
+    exercise only the tool's own logic.
     """
     import punt_vox.server as srv
 
-    monkeypatch.setattr(srv, "_session", srv.SessionConfig())
+    monkeypatch.setattr(srv, "_session", srv.SessionConfig(_provider="elevenlabs"))
     monkeypatch.setattr(srv, "_find_config_dir", lambda: None)
 
 

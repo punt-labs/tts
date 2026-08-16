@@ -34,7 +34,12 @@ from punt_vox.panel.state import PanelState
 from punt_vox.panel.topics import PanelTopic
 from punt_vox.panel.voice_control import VoiceControl
 from punt_vox.server_switches import PROVIDER_NAMES
+from punt_vox.session_spec import SessionSpec
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.types_synthesis_errors import (
+    ModelNotAvailableError,
+    ProviderNotConfiguredError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -186,7 +191,14 @@ class VoxPanelService:
     def _model_for(self, index: int) -> str:
         with self._lock:
             provider, current = self._state.provider, self._state.model
-        models = MODEL_TABLE.available(provider or "elevenlabs")
+        # A model click needs to name a provider -- previously the panel
+        # substituted ``"elevenlabs"`` when state had none, offering the
+        # ElevenLabs model list under an unset-provider session, which is
+        # the same silent substitution this bead deletes. An empty tuple
+        # produces an out-of-range click that ``ModelControl`` refuses,
+        # so the panel's guard reaches the caller as the same rejection
+        # a menu click on a genuinely modelless provider gets.
+        models = MODEL_TABLE.available(provider) if provider else ()
         return ModelControl(models=models, current=current).model_for_index(index)
 
     def _fetch_roster_or_notice(
@@ -293,7 +305,18 @@ class VoxPanelService:
         provider. Mirrors ``_commit_provider``'s pre-fetch guard.
         """
         with self._lock:
-            pre_fetch_provider = self._state.provider or "elevenlabs"
+            pre_fetch_provider = self._state.provider
+        if pre_fetch_provider is None:
+            # A model click before any provider has been chosen would have
+            # been dispatched against the substituted ``"elevenlabs"``, its
+            # cascaded voice roster fetched from a provider the session
+            # never picked. Skip cleanly instead so the panel never writes
+            # a wrong-provider voice on behalf of a caller who declared
+            # no provider.
+            logger.info("vox-panel: model click ignored; no provider selected yet")
+            with self._lock:
+                self._notice = PanelNotice.silent()
+            return
         fetched = self._fetch_roster_or_notice(pre_fetch_provider, "model-switch")
         if fetched is None:
             return
@@ -304,7 +327,7 @@ class VoxPanelService:
             # different provider (via PROVIDER topic) while our roster RPC
             # was in flight. Give up rather than persist a voice default
             # from the wrong provider on top of that newer state.
-            current_provider = self._state.provider or "elevenlabs"
+            current_provider = self._state.provider
             if current_provider != pre_fetch_provider:
                 logger.info(
                     "vox-panel: provider changed to %r mid-fetch; "
@@ -319,14 +342,29 @@ class VoxPanelService:
             self._notice = PanelNotice.silent()
 
     def _preview(self) -> bool:
-        """Play the held voice back; return whether a status notice needs to show."""
+        """Play the held voice back; return whether a status notice needs to show.
+
+        Builds the wire spec through :class:`SessionSpec` off a fresh read of
+        the config store, so the preview sends the provider state declares
+        rather than letting voxd guess -- previously the preview sent no
+        provider at all (``docs/provider-authority.md`` §1.3, panel row).
+        An unconfigured or misconfigured state surfaces on the notice band
+        via :class:`PanelNotice.voxd_rejected` (F1 / F7).
+        """
         with self._lock:
             voice = self._state.voice
         if voice is None:
             logger.info("vox-panel: no voice selected yet; preview skipped")
             return False
         try:
-            self._client.synthesize(_PREVIEW_TEXT, SynthesisSpec(voice=voice))
+            spec = SessionSpec(self._store.read()).fill(SynthesisSpec(voice=voice))
+        except (ProviderNotConfiguredError, ModelNotAvailableError) as exc:
+            logger.warning("vox-panel: voice preview refused: %s", exc)
+            with self._lock:
+                self._notice = PanelNotice.voxd_rejected(str(exc))
+            return True
+        try:
+            self._client.synthesize(_PREVIEW_TEXT, spec)
         except VoxdConnectionError:
             logger.warning("vox-panel: voice preview failed -- voxd is not reachable")
             with self._lock:

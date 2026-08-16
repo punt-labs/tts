@@ -13,6 +13,7 @@ from punt_vox.voxd.dedup import ChimeDedup, OnceDedup
 from punt_vox.voxd.fetch_handler import FetchHandler
 from punt_vox.voxd.log_level_handler import LogLevelHandler
 from punt_vox.voxd.play_handler import PlayHandler
+from punt_vox.voxd.provider_status_handler import ProviderStatusHandler
 from punt_vox.voxd.rec_handlers import RecListHandler, RecRemoveHandler
 from punt_vox.voxd.record_handler import RecordHandler
 from punt_vox.voxd.record_store import RecordStore
@@ -89,5 +90,6 @@ class HandlerRegistry:
             ),
             "voices": VoicesHandler(),
             "health": HealthHandler(health=self._health),
+            "provider_status": ProviderStatusHandler(),
             **self._programs.handlers(),
         }

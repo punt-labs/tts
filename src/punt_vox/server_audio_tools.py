@@ -24,8 +24,13 @@ from typing import TYPE_CHECKING, ClassVar, Literal, Protocol, Self, final
 from websockets.exceptions import WebSocketException
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.session_spec import SessionSpec
 from punt_vox.synthesis_batch import SegmentBatch
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.types_synthesis_errors import (
+    ModelNotAvailableError,
+    ProviderNotConfiguredError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -230,18 +235,25 @@ class RecTool:
                 "cached": result.cached,
             }
 
-        defaults = SynthesisSpec(
-            voice=args.voice or session.voice,
-            language=args.language,
-            rate=args.rate,
-            provider=session.provider,
-            model=session.model,
-            stability=args.stability,
-            similarity=args.similarity,
-            style=args.style,
-            speaker_boost=args.speaker_boost,
-            vibe_tags=session.vibe_tags,
-        )
+        # Route through SessionSpec so ``rec new`` shares the one state-to-spec
+        # constructor every synthesis surface uses -- state is the sole authority
+        # on the provider, and an unconfigured provider is the F1 refusal rather
+        # than a daemon guess. The per-call override carries the CLI-shaped
+        # per-request fields; state fills provider / voice / model / vibe_tags.
+        try:
+            defaults = SessionSpec(session).fill(
+                SynthesisSpec(
+                    voice=args.voice,
+                    language=args.language,
+                    rate=args.rate,
+                    stability=args.stability,
+                    similarity=args.similarity,
+                    style=args.style,
+                    speaker_boost=args.speaker_boost,
+                )
+            )
+        except (ProviderNotConfiguredError, ModelNotAvailableError) as exc:
+            return _error(str(exc))
         return SegmentBatch(segments, defaults).render(
             handler=_handler, error_label="Record"
         )

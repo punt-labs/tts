@@ -39,7 +39,30 @@ class ModelCommand:
         fetch aborts the write and returns an error result.
         """
         cfg = ctx.store.read()
-        provider = cfg.provider or "elevenlabs"
+        provider = cfg.provider
+        if not provider:
+            # ``vox model`` used to substitute ``"elevenlabs"`` for an unset
+            # provider and quietly resolve model names against it -- the CLI
+            # twin of the same substitution ``server_switches.py`` used to
+            # carry. Listing gets an honest empty answer; resolving a name
+            # against no provider is refused so a wrong-provider model
+            # never lands in ``vox.md``.
+            if name is None:
+                listing: SwitchList = SwitchList(names=(), current=cfg.model)
+                return CommandResult(
+                    text=listing.render("No models for this provider."),
+                    json_data=listing.payload(),
+                )
+            message = (
+                "no TTS provider is configured for this repo; "
+                "set one with vox provider <name>"
+            )
+            return CommandResult(
+                text=f"Error: {message}",
+                json_data={"error": message},
+                error=True,
+                exit_code=1,
+            )
 
         if name is None:
             listing = SwitchList(

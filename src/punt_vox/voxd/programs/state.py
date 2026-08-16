@@ -218,12 +218,12 @@ class ProgramState:
         *,
         pool: frozenset[Part] | _Unset = _UNSET,
         failed_parts: FrozenParts | _Unset = _UNSET,
-        playing: Part | None | _Unset = _UNSET,
-        last_played: Part | None | _Unset = _UNSET,
+        playing: Part | _Unset | None = _UNSET,
+        last_played: Part | _Unset | None = _UNSET,
         mode: Mode | _Unset = _UNSET,
         filling: bool | _Unset = _UNSET,
         attempts: int | _Unset = _UNSET,
-        last_error: Reason | None | _Unset = _UNSET,
+        last_error: Reason | _Unset | None = _UNSET,
     ) -> ProgramState:
         """Return a re-validated successor with the named fields replaced.
 
