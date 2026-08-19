@@ -36,10 +36,15 @@ git -C "$REPO_ROOT" checkout "${RELEASE_PREP_COMMIT}^" -- "$PLUGIN_JSON"
 
 # Restore the plugin commands directory if the parent commit had one, bringing
 # back whatever *-dev.md files release-plugin.sh removed.
-if git -C "$REPO_ROOT" ls-tree -d "${RELEASE_PREP_COMMIT}^" -- "${COMMANDS_DIR}/" | grep -q .; then
-  git -C "$REPO_ROOT" checkout "${RELEASE_PREP_COMMIT}^" -- "${COMMANDS_DIR}/"
+#
+# The pathspec carries NO trailing slash: `ls-tree -d -- <dir>/` matches nothing
+# (it asks for a tree entry literally named "<dir>/"), so the guard as written
+# with a slash was permanently false and this restore never ran -- every release
+# put back plugin.json and silently left the dev commands deleted.
+if git -C "$REPO_ROOT" ls-tree -d "${RELEASE_PREP_COMMIT}^" -- "$COMMANDS_DIR" | grep -q .; then
+  git -C "$REPO_ROOT" checkout "${RELEASE_PREP_COMMIT}^" -- "$COMMANDS_DIR"
 fi
 
 git -C "$REPO_ROOT" add "$PLUGIN_JSON"
-git -C "$REPO_ROOT" add "${COMMANDS_DIR}/" 2>/dev/null || true
+git -C "$REPO_ROOT" add "$COMMANDS_DIR" 2>/dev/null || true
 git -C "$REPO_ROOT" commit --no-verify -m "chore: restore dev plugin state [skip ci]"

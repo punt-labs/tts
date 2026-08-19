@@ -1955,7 +1955,7 @@ This is distinct from the prfaq's *"Won't Do: agent personality voices"* boundar
 
 ### Decision
 
-Auto-vibe sets the TTS mood from the **conversation, judged by the main agent**, not from any deterministic per-command signal. A non-blocking `UserPromptSubmit` hook (`hooks/vibe-nudge.sh` → `vox hook vibe-nudge`) injects a soft `additionalContext` reminder every Nth user prompt (N=5), **only when `vibe_mode == auto`**, nudging the agent to glance at the session and set the vibe via the `vibe` tool if the mood has shifted — `[happy]` when flowing, `[focused]`/`[frustrated]`/`[weary]` when stuck, `[relieved]` after a fix. The cadence counter (`vibe_nudge_turns`) lives in the ephemeral `vox.local.md`; a `/vibe` mode change and session end reset it.
+Auto-vibe sets the TTS mood from the **conversation, judged by the main agent**, not from any deterministic per-command signal. A non-blocking `UserPromptSubmit` hook (`plugin/hooks/vibe-nudge.sh` → `vox hook vibe-nudge`) injects a soft `additionalContext` reminder every Nth user prompt (N=5), **only when `vibe_mode == auto`**, nudging the agent to glance at the session and set the vibe via the `vibe` tool if the mood has shifted — `[happy]` when flowing, `[focused]`/`[frustrated]`/`[weary]` when stuck, `[relieved]` after a fix. The cadence counter (`vibe_nudge_turns`) lives in the ephemeral `vox.local.md`; a `/vibe` mode change and session end reset it.
 
 Design of record: `docs/vibe-agent-driven.md`. **No formal model:** the state that justified the interim Z model (an exit-code window/mood accumulator) is deleted; the replacement is a stateless nudge plus a bounded mod-N counter, below the formal-modeling trigger.
 
@@ -2076,7 +2076,7 @@ Soft mechanisms cannot be guaranteed by unit tests — the LLM's follow-through 
 ### Consequences
 
 - `[vibe-trace]` events at the nudge (`NudgeHook`), vibe-set (`VibeCommand`), and music (`server.music`) links, via `logger.info` (never `print`), pinned at a level that always reaches the log.
-- Because the vibe/music logic runs **client-side** (the `mic` MCP server and hooks), the trace is written to a **persistent, append-only log file** at a known path under the vox state/log directory — shared by the MCP server and the hook subprocesses via multi-process-safe atomic appends — **not** voxd's `tts.log`. The `grep '[vibe-trace]'` proof recipe in `commands/vibe.md` targets that file. **(Amended 2026-07-16 — see below. The original decision routed the trace to stderr; that was wrong.)**
+- Because the vibe/music logic runs **client-side** (the `mic` MCP server and hooks), the trace is written to a **persistent, append-only log file** at a known path under the vox state/log directory — shared by the MCP server and the hook subprocesses via multi-process-safe atomic appends — **not** voxd's `tts.log`. The `grep '[vibe-trace]'` proof recipe in `plugin/commands/vibe.md` targets that file. **(Amended 2026-07-16 — see below. The original decision routed the trace to stderr; that was wrong.)**
 - Current state (the session vibe and the playing music style) is *also* surfaced through the `status` tool — the trace is the event-trail *proof over time*; `status` is the point-in-time *client-observable state*. Both, per "client-observable, not logs."
 
 ### Alternatives Considered
@@ -2092,7 +2092,7 @@ Soft mechanisms cannot be guaranteed by unit tests — the LLM's follow-through 
 
 The original Consequences routed `[vibe-trace]` to the MCP-server / hook **stderr**, assuming Claude Code captured it to a greppable log. It does not: the CLI's per-server MCP log holds only client-side "Calling MCP tool" wrapper lines, and the server/hook stderr is discarded. The 4.12.2 live smoke test found the feature itself works end-to-end (the `music_hint` round-trips through the API and the agent re-pools), but the DES-046 proof — a **core** operator goal — was unreachable: no `[vibe-trace]` line existed in any runtime file.
 
-**Correction:** the trace is written to a **persistent, append-only log file** at a known path under the vox state/log directory, shared by both emitters (MCP server + hook subprocesses) via multi-process-safe atomic (`O_APPEND`, single-line) writes. The stderr emission is **deleted** (forward integration, PY-RF-6 — no dual-write). `commands/vibe.md` documents the real file path. The trace format is unchanged; only the sink moved. Root cause of the mistake: the decision assumed the host persisted stderr without verifying it against the running system — the "verify outputs, not just metrics" discipline applied to observability, not just features.
+**Correction:** the trace is written to a **persistent, append-only log file** at a known path under the vox state/log directory, shared by both emitters (MCP server + hook subprocesses) via multi-process-safe atomic (`O_APPEND`, single-line) writes. The stderr emission is **deleted** (forward integration, PY-RF-6 — no dual-write). `plugin/commands/vibe.md` documents the real file path. The trace format is unchanged; only the sink moved. Root cause of the mistake: the decision assumed the host persisted stderr without verifying it against the running system — the "verify outputs, not just metrics" discipline applied to observability, not just features.
 
 Closes vox-q1z4. Observability sink corrected under vox-9po7.
 
@@ -2655,7 +2655,7 @@ installs a plugin's commands into a single global namespace, so those two bare
 verbs claimed `/enable` and `/disable` for every session — generic names no
 plugin should own. Every other vox slash verb is already namespaced under
 `/vox` (`/vox model`, `/vox provider`), dispatched by parsing `$ARGUMENTS` in
-`commands/vox.md`.
+`plugin/commands/vox.md`.
 
 ### Decision
 
@@ -2663,7 +2663,7 @@ Fold enablement into `/vox` as two more `$ARGUMENTS` subcommands beside `model`
 and `provider`: **`/vox enable`** and **`/vox disable`**. Both call the same
 `mic:enablement` tool (`action="enable"|"disable"`) with the same confirmation
 text the split-out commands used. `commands/enable.md` and `commands/disable.md`
-are deleted (forward integration, no shim), and `hooks/session-start.sh` lists
+are deleted (forward integration, no shim), and `plugin/hooks/session-start.sh` lists
 them among the retired commands it cleans, so an already-installed plugin drops
 the stale top-level `/enable` / `/disable` on the next session start. The CLI
 verbs `vox enable` / `vox disable` are unchanged — the collision was only on the
