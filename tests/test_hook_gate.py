@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-_HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
+_HOOKS_DIR = Path(__file__).resolve().parent.parent / "plugin" / "hooks"
 
 # hook script -> the hook_event_name it dispatches on. subagent.sh only calls
 # vox for Subagent* events; the rest ignore the event but a realistic value is

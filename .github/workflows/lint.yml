@@ -29,7 +29,11 @@ jobs:
       - run: uv run ruff format --check .
       - run: uv run mypy src/ tests/
       - run: uv run pyright src/ tests/
-      - run: shellcheck -x hooks/*.sh scripts/*.sh install.sh
+      - run: shellcheck -x plugin/hooks/*.sh scripts/*.sh install.sh
+      # `make lint` also runs this; the job spells its steps out one by one, so
+      # omitting it here let skill-permission drift land on main while `make
+      # check` caught it locally. CI mirrors the local gate.
+      - run: bash scripts/check-skill-permissions.sh
       # OO ratchet on a PR: compare code-at-HEAD against the baseline at the
       # merge-base (S1/S2). --require-base AND the explicit fetch are both
       # mandatory — with either missing, an unfetched/unresolvable base would

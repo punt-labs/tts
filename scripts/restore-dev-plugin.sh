@@ -10,7 +10,10 @@ set -euo pipefail
 # commit and restores from its parent.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PLUGIN_JSON="${REPO_ROOT}/.claude-plugin/plugin.json"
+PLUGIN_JSON="${REPO_ROOT}/plugin/.claude-plugin/plugin.json"
+# Mirrors release-plugin.sh: the dev commands are the *-dev.md files inside the
+# plugin's own commands/ directory, not project-local .claude/commands/.
+COMMANDS_DIR="plugin/commands"
 
 # Preflight: abort if repo has uncommitted changes
 if [[ -n "$(git -C "$REPO_ROOT" status --porcelain -uno)" ]]; then
@@ -31,11 +34,12 @@ fi
 echo "Restoring dev state from parent of ${RELEASE_PREP_COMMIT:0:12}"
 git -C "$REPO_ROOT" checkout "${RELEASE_PREP_COMMIT}^" -- "$PLUGIN_JSON"
 
-# Restore dev commands if the parent commit had a .claude/commands/ directory
-if git -C "$REPO_ROOT" ls-tree -d "${RELEASE_PREP_COMMIT}^" -- .claude/commands/ | grep -q .; then
-  git -C "$REPO_ROOT" checkout "${RELEASE_PREP_COMMIT}^" -- .claude/commands/
+# Restore the plugin commands directory if the parent commit had one, bringing
+# back whatever *-dev.md files release-plugin.sh removed.
+if git -C "$REPO_ROOT" ls-tree -d "${RELEASE_PREP_COMMIT}^" -- "${COMMANDS_DIR}/" | grep -q .; then
+  git -C "$REPO_ROOT" checkout "${RELEASE_PREP_COMMIT}^" -- "${COMMANDS_DIR}/"
 fi
 
 git -C "$REPO_ROOT" add "$PLUGIN_JSON"
-git -C "$REPO_ROOT" add .claude/commands/ 2>/dev/null || true
+git -C "$REPO_ROOT" add "${COMMANDS_DIR}/" 2>/dev/null || true
 git -C "$REPO_ROOT" commit --no-verify -m "chore: restore dev plugin state [skip ci]"
