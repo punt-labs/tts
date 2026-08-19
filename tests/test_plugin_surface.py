@@ -68,6 +68,21 @@ class TestAcceptsAWellFormedSurface:
         )
         assert result.returncode == 0, result.stderr
 
+    def test_unquoted_glob_reference_passes(self, tmp_path: Path) -> None:
+        # A glob's matches cannot be verified statically, so the gate checks the
+        # directory prefix and stops. Extracting the `*` as part of the path
+        # instead would fail correct code with "does not ship".
+        surface = _make_surface(tmp_path)
+        (surface / "hooks" / "loop.sh").write_text(
+            "#!/usr/bin/env bash\n"
+            "for f in ${CLAUDE_PLUGIN_ROOT}/hooks/*.sh; do\n"
+            "  :\n"
+            "done\n",
+            encoding="utf-8",
+        )
+        result = _run(surface)
+        assert result.returncode == 0, result.stderr
+
 
 class TestRejectsAReferenceTheSurfaceCannotSatisfy:
     def test_missing_target_fails(self, tmp_path: Path) -> None:

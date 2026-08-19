@@ -27,12 +27,21 @@ SURFACE="$(cd "$SURFACE" && pwd -P)"
 # PLUGIN_ROOT is what a script derives from its own location for the same job.
 _PLACEHOLDER='\$\{?(CLAUDE_)?PLUGIN_ROOT\}?/'
 
-# `while read` rather than mapfile for Bash 3.2 (stock macOS). The character
-# class stops each match at the quote, whitespace, or glob that ends the path.
+# The trailing class is a POSITIVE one -- the characters a path can be made of
+# -- not a list of terminators. Enumerating terminators means every character
+# forgotten is a false positive: an unquoted `${CLAUDE_PLUGIN_ROOT}/hooks/*.sh`
+# would be extracted with the glob attached, `-e` on that literal is false, and
+# the gate would fail correct code while claiming the surface does not ship it.
+# Matching only path characters stops at a quote, whitespace, `$`, and every
+# glob metacharacter at once, leaving the directory prefix -- which is the part
+# that can actually be verified, since a glob's matches cannot be checked
+# statically. `-` is last in the class so it is a literal, not a range.
+#
+# `while read` rather than mapfile for Bash 3.2 (stock macOS).
 refs=()
 while IFS= read -r ref; do
   refs+=("$ref")
-done < <(grep -rhoE "${_PLACEHOLDER}[^\"'[:space:]\$]*" "$SURFACE" | sort -u)
+done < <(grep -rhoE "${_PLACEHOLDER}[A-Za-z0-9._/-]*" "$SURFACE" | sort -u)
 
 # Fail closed on extraction rot: hooks.json always registers its scripts through
 # the placeholder, so matching nothing there means the pattern above stopped
