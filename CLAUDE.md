@@ -89,7 +89,10 @@ Two rules follow, and both are load-bearing:
 | `plugin/hooks/farewell.sh` | SessionEnd → `vox hook session-end` |
 | `plugin/commands/` | `/vox`, `/unmute`, `/mute`, `/recap`, `/vibe`, `/music`, `/model`, `/provider`, `/voice` |
 
-`scripts/check-skill-permissions.sh` (wired into `make lint` and the lint workflow) enforces that every `plugin/commands/*.md` has a matching `Skill()` grant in `plugin/hooks/session-start.sh`.
+Two gates hold the surface, both wired into `make lint` and the lint workflow:
+
+- `scripts/check-skill-permissions.sh` — every `plugin/commands/*.md` has a matching `Skill()` grant in `plugin/hooks/session-start.sh`.
+- `scripts/check-plugin-surface.sh` — every `${CLAUDE_PLUGIN_ROOT}`/`$PLUGIN_ROOT` reference anywhere in `plugin/` resolves to a path the surface actually ships, does not escape it via `..`, and is executable when it is a hook script. This is the gate for the reach-outside-itself rule above, which is otherwise a *silent* break: the path is present in the source tree and absent on every installed copy, so the hook runs, finds nothing, and the feature is quietly gone. It fails closed — if `hooks.json` stops carrying the placeholder at all, the gate errors rather than passing vacuously.
 
 See `docs/architecture.tex` for the full system description.
 

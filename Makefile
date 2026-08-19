@@ -11,6 +11,7 @@ lint: ## Lint and format check (Python + shell)
 	uv run ruff format --check .
 	shellcheck -x plugin/hooks/*.sh scripts/*.sh install.sh
 	bash scripts/check-skill-permissions.sh
+	bash scripts/check-plugin-surface.sh
 
 type: ## Type check with mypy and pyright
 	uv run mypy src/ tests/
@@ -52,6 +53,7 @@ report: ## Full diagnostics (OO score + all checks, no fail-fast)
 	-uv run ruff check --preview --select PLR6301,PLR0913,UP035,UP040,UP007,N,I,SIM,PLC1901,S101 src/ tests/
 	-uv run pyright src/ tests/
 	-shellcheck -x plugin/hooks/*.sh scripts/*.sh install.sh
+	-bash scripts/check-plugin-surface.sh
 	-uv run pytest
 	@echo "Report complete."
 
