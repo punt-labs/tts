@@ -18,22 +18,47 @@ SETTINGS="$HOME/.claude/settings.json"
 COMMANDS_DIR="$HOME/.claude/commands"
 PLUGIN_JSON="${PLUGIN_ROOT}/.claude-plugin/plugin.json"
 
-# Detect dev mode: plugin.json name contains "vox-dev"
-DEV_MODE=false
-if grep -q '"vox-dev"' "$PLUGIN_JSON" 2>/dev/null; then
-  DEV_MODE=true
+ACTIONS=()
+
+# Dev vs prod comes from the manifest: a "vox-dev" name means this is a working
+# tree loaded with `claude --plugin-dir plugin`, and the permission glob, the
+# retired-command cleanup, and the command deployment all branch on it.
+#
+# There are THREE answers, not two. An absent or unreadable manifest used to
+# fall through to prod, which is the worst available guess: prod deploys
+# commands out of $PLUGIN_ROOT and writes the prod tool glob, so a PLUGIN_ROOT
+# that is not actually the plugin failed OPEN -- taking the more invasive
+# branch on the strength of a file it never managed to read. `unknown` refuses
+# to guess: it reports the reason through ACTIONS (this hook's only channel to
+# the agent) and skips every branch that needs the answer. The panel block at
+# the end reads no mode, so an unreadable manifest costs the session its
+# commands and permissions, not its panel. Exit stays 0 either way -- a
+# SessionStart hook must not take the session down with it.
+PLUGIN_MODE=unknown
+if [[ ! -f "$PLUGIN_JSON" ]]; then
+  ACTIONS+=("No plugin manifest at .claude-plugin/plugin.json under the plugin root - cannot tell dev from prod, so skipped command deployment and permission setup")
+else
+  # No 2>/dev/null here, deliberately. grep exits 1 for "no match" -- a genuine
+  # prod manifest -- and 2 for a read error, and collapsing those two into
+  # "false" is exactly what let an unreadable-but-present manifest read as
+  # prod. Its stderr is also the only place the underlying reason surfaces.
+  _grep_status=0
+  grep -q '"vox-dev"' "$PLUGIN_JSON" || _grep_status=$?
+  case "$_grep_status" in
+    0) PLUGIN_MODE=dev ;;
+    1) PLUGIN_MODE=prod ;;
+    *) ACTIONS+=("Could not read the plugin manifest at .claude-plugin/plugin.json (grep exit $_grep_status) - cannot tell dev from prod, so skipped command deployment and permission setup") ;;
+  esac
 fi
 
-if [[ "$DEV_MODE" == "true" ]]; then
+if [[ "$PLUGIN_MODE" == "dev" ]]; then
   TOOL_GLOB="mcp__plugin_vox-dev_mic__*"
-else
+elif [[ "$PLUGIN_MODE" == "prod" ]]; then
   TOOL_GLOB="mcp__plugin_vox_mic__*"
 fi
 
-ACTIONS=()
-
 # ── Clean up retired commands ─────────────────────────────────────────
-if [[ "$DEV_MODE" == "false" ]]; then
+if [[ "$PLUGIN_MODE" == "prod" ]]; then
   RETIRED=(say.md speak.md notify.md vox-on.md vox-off.md enable.md disable.md)
   CLEANED=()
   FAILED_CLEAN=0
@@ -60,7 +85,7 @@ fi
 # ── Deploy top-level commands if missing ──────────────────────────────
 # In dev mode, skip command deployment — prod plugin handles top-level commands.
 # Skip *-dev.md files — dev commands use plugin namespace (vox-dev:say-dev)
-if [[ "$DEV_MODE" == "false" ]]; then
+if [[ "$PLUGIN_MODE" == "prod" ]]; then
   DEPLOYED=()
   FAILED_DEPLOY=0
   # A bare `mkdir -p` here would abort the whole hook under `set -e` if
@@ -108,7 +133,13 @@ fi
 # or renamed, update the Skill() list below; scripts/check-skill-permissions.sh
 # (wired into `make lint`) enforces parity and catches any drift that
 # would otherwise surface as unexplained permission prompts.
-if ! command -v jq >/dev/null 2>&1; then
+#
+# Skipped entirely when the mode is unknown: TOOL_GLOB is the dev/prod-specific
+# half of every rule written here, so there is nothing correct to write without
+# it, and `set -u` would abort on the unset variable rather than guess.
+if [[ "$PLUGIN_MODE" == "unknown" ]]; then
+  : # already reported above; the tool glob is unknowable without the manifest
+elif ! command -v jq >/dev/null 2>&1; then
   ACTIONS+=("jq not found, skipping permission setup")
 else
   # Remove legacy mcp__plugin_tts_* and mcp__plugin_vox*_vox__* patterns

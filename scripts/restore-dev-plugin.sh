@@ -41,10 +41,20 @@ git -C "$REPO_ROOT" checkout "${RELEASE_PREP_COMMIT}^" -- "$PLUGIN_JSON"
 # (it asks for a tree entry literally named "<dir>/"), so the guard as written
 # with a slash was permanently false and this restore never ran -- every release
 # put back plugin.json and silently left the dev commands deleted.
+restored=false
 if git -C "$REPO_ROOT" ls-tree -d "${RELEASE_PREP_COMMIT}^" -- "$COMMANDS_DIR" | grep -q .; then
   git -C "$REPO_ROOT" checkout "${RELEASE_PREP_COMMIT}^" -- "$COMMANDS_DIR"
+  restored=true
 fi
 
 git -C "$REPO_ROOT" add "$PLUGIN_JSON"
-git -C "$REPO_ROOT" add "$COMMANDS_DIR" 2>/dev/null || true
+# Staged only when something was actually restored, and UNGUARDED. The add used
+# to run unconditionally behind `2>/dev/null || true`, which had to be tolerant
+# because the common case was a directory that had never been touched -- and
+# that tolerance also swallowed a genuine failure to stage the commands just
+# restored, producing a "restore dev plugin state" commit carrying none of them
+# and reporting success. Now the only add that runs is one that must succeed.
+if [[ "$restored" == true ]]; then
+  git -C "$REPO_ROOT" add "$COMMANDS_DIR"
+fi
 git -C "$REPO_ROOT" commit --no-verify -m "chore: restore dev plugin state [skip ci]"

@@ -14,6 +14,14 @@ PLUGIN_JSON="${REPO_ROOT}/plugin/.claude-plugin/plugin.json"
 # release prep had stopped stripping dev commands from the shipped surface and
 # `find` errored on a directory that no longer exists.
 COMMANDS_DIR="${REPO_ROOT}/plugin/commands"
+# `find` on a missing directory writes to stderr and exits non-zero, but inside
+# the process substitution below that status is discarded: dev_files would stay
+# empty, the script would report "No -dev commands found" and go on to commit a
+# release that stripped nothing. Refuse here instead of reporting success.
+[[ -d "$COMMANDS_DIR" ]] || {
+  echo "error: $COMMANDS_DIR missing" >&2
+  exit 1
+}
 
 # Preflight: abort if repo has uncommitted changes
 if [[ -n "$(git -C "$REPO_ROOT" status --porcelain -uno)" ]]; then

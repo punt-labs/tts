@@ -495,3 +495,76 @@ class TestPanelSpawn:
             home.chmod(0o700)
 
         assert rc == 0, "an unwritable log path aborted the hook"
+
+
+class TestManifestRefusal:
+    """``session-start.sh`` refuses to guess dev-vs-prod it cannot read.
+
+    The manifest decides the permission glob, the retired-command cleanup, and
+    the command deployment. An absent or unreadable one used to fall through to
+    *prod*, the more invasive branch, on the strength of a file the hook never
+    managed to read -- so a wrong ``PLUGIN_ROOT`` deployed commands and wrote
+    the prod glob instead of reporting the problem. These tests pin the third
+    state: report it, touch nothing, exit 0.
+    """
+
+    @staticmethod
+    def _plugin_copy(tmp_path: Path) -> Path:
+        """Copy the real surface so its manifest can be broken safely."""
+        dest = tmp_path / "plugin"
+        shutil.copytree(_HOOKS_DIR.parent, dest)
+        return dest
+
+    @staticmethod
+    def _run(plugin: Path, cwd: Path, home: Path) -> subprocess.CompletedProcess[str]:
+        home.mkdir(parents=True, exist_ok=True)
+        env = dict(os.environ)
+        env["HOME"] = str(home)
+        env["TMPDIR"] = str(home)
+        return subprocess.run(
+            ["bash", str(plugin / "hooks" / "session-start.sh")],
+            input=json.dumps({"cwd": str(cwd)}),
+            text=True,
+            capture_output=True,
+            env=env,
+            check=False,
+        )
+
+    def test_intact_manifest_still_provisions(self, tmp_path: Path) -> None:
+        # The control. Without it, "nothing was written" below could just mean
+        # the fixture is inert rather than that the guard fired.
+        plugin = self._plugin_copy(tmp_path)
+        result = self._run(plugin, _make_repo(tmp_path), tmp_path / "home")
+        assert result.returncode == 0, result.stderr
+        assert (tmp_path / "home" / ".claude" / "settings.json").exists()
+
+    def test_absent_manifest_provisions_nothing(self, tmp_path: Path) -> None:
+        plugin = self._plugin_copy(tmp_path)
+        (plugin / ".claude-plugin" / "plugin.json").unlink()
+        home = tmp_path / "home"
+        result = self._run(plugin, _make_repo(tmp_path), home)
+
+        assert result.returncode == 0, result.stderr
+        assert not (home / ".claude").exists(), "provisioned against an unread manifest"
+        assert "No plugin manifest" in result.stdout
+        assert "skipped command deployment and permission setup" in result.stdout
+
+    def test_unreadable_manifest_provisions_nothing(self, tmp_path: Path) -> None:
+        if os.geteuid() == 0:
+            pytest.skip("root bypasses the mode bits, so chmod 000 stays readable")
+
+        plugin = self._plugin_copy(tmp_path)
+        manifest = plugin / ".claude-plugin" / "plugin.json"
+        manifest.chmod(0o000)
+        home = tmp_path / "home"
+        try:
+            result = self._run(plugin, _make_repo(tmp_path), home)
+        finally:
+            manifest.chmod(0o644)
+
+        assert result.returncode == 0, result.stderr
+        assert not (home / ".claude").exists(), "provisioned against an unread manifest"
+        # grep exits 2 on a read error and 1 on a genuine no-match; collapsing
+        # the two is what made an unreadable manifest look like a prod one.
+        assert "grep exit 2" in result.stdout
+        assert "Permission denied" in result.stderr

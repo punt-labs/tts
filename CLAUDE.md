@@ -78,7 +78,7 @@ Two rules follow, and both are load-bearing:
 |------|---------------|
 | `plugin/.claude-plugin/plugin.json` | Manifest. `mcpServers.mic` runs `vox mcp`, the binary on `PATH`, so no Python ships with the plugin. `"name": "vox-dev"` in the working tree; `scripts/release-plugin.sh` swaps it to `vox` for the tag. |
 | `plugin/hooks/hooks.json` | Hook registration: SessionStart, PostToolUse (mic tools), Stop, PreCompact, Notification, UserPromptSubmit, SubagentStart/Stop, SessionEnd |
-| `plugin/hooks/session-start.sh` | SessionStart: deploys commands, cleans retired commands, auto-allows MCP tools and skills, launches the session's Lux control panel |
+| `plugin/hooks/session-start.sh` | SessionStart: deploys commands, cleans retired commands, auto-allows MCP tools and skills, launches the session's Lux control panel. Reads dev-vs-prod from the manifest as three states — an unreadable or absent `plugin.json` is `unknown`, which reports the reason and skips every mode-dependent branch rather than guessing prod |
 | `plugin/hooks/suppress-output.sh` | PostToolUse (mic tools): formats MCP tool output for the UI panel |
 | `plugin/hooks/notify.sh` | Stop → `vox hook stop` |
 | `plugin/hooks/notify-permission.sh` | Notification (`permission_prompt`, `idle_prompt`) → `vox hook notification` |
@@ -92,7 +92,7 @@ Two rules follow, and both are load-bearing:
 Two gates hold the surface, both wired into `make lint` and the lint workflow:
 
 - `scripts/check-skill-permissions.sh` — every `plugin/commands/*.md` has a matching `Skill()` grant in `plugin/hooks/session-start.sh`.
-- `scripts/check-plugin-surface.sh` — every `${CLAUDE_PLUGIN_ROOT}`/`$PLUGIN_ROOT` reference anywhere in `plugin/` resolves to a path the surface actually ships, does not escape it via `..`, and is executable when it is a hook script. This is the gate for the reach-outside-itself rule above, which is otherwise a *silent* break: the path is present in the source tree and absent on every installed copy, so the hook runs, finds nothing, and the feature is quietly gone. It fails closed — if `hooks.json` stops carrying the placeholder at all, the gate errors rather than passing vacuously.
+- `scripts/check-plugin-surface.sh` — every **statically-literal** `${CLAUDE_PLUGIN_ROOT}`/`$PLUGIN_ROOT` reference anywhere in `plugin/` resolves to a path the surface actually ships, does not escape it via `..`, and is executable when it is a hook script. This is the gate for the reach-outside-itself rule above, which is otherwise a *silent* break: the path is present in the source tree and absent on every installed copy, so the hook runs, finds nothing, and the feature is quietly gone. It fails closed — if `hooks.json` stops carrying the placeholder at all, the gate errors rather than passing vacuously. A reference carrying an embedded variable (`.../${name}.sh`) or a glob (`.../*.sh`) is checked only as far as its literal prefix: the directory must ship, but the leaf cannot be resolved statically. That is a deliberate limit of static analysis, not total coverage.
 
 See `docs/architecture.tex` for the full system description.
 
