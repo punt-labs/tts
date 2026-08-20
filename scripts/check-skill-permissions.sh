@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Verify hooks/session-start.sh auto-allows a Skill(<name>) rule for every
-# command in commands/*.md. Drift here causes unexplained permission
-# prompts on first use. Fast (no network; uses standard shell utilities only).
+# Verify plugin/hooks/session-start.sh auto-allows a Skill(<name>) rule for
+# every command in plugin/commands/*.md. Drift here causes unexplained
+# permission prompts on first use. Fast (no network; uses standard shell
+# utilities only).
 set -euo pipefail
 shopt -s nullglob
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-HOOK="$ROOT/hooks/session-start.sh"
-COMMANDS_DIR="$ROOT/commands"
+HOOK="$ROOT/plugin/hooks/session-start.sh"
+COMMANDS_DIR="$ROOT/plugin/commands"
 
 if [[ ! -f "$HOOK" ]]; then
   echo "error: $HOOK not found" >&2
@@ -63,12 +64,12 @@ done
 
 status=0
 if [[ ${#missing[@]} -gt 0 ]]; then
-  echo "error: commands/*.md has no matching Skill() permission in hooks/session-start.sh:" >&2
+  echo "error: plugin/commands/*.md has no matching Skill() permission in plugin/hooks/session-start.sh:" >&2
   for m in "${missing[@]}"; do echo "  - $m" >&2; done
   status=1
 fi
 if [[ ${#extra[@]} -gt 0 ]]; then
-  echo "error: hooks/session-start.sh grants Skill() for commands that do not exist:" >&2
+  echo "error: plugin/hooks/session-start.sh grants Skill() for commands that do not exist:" >&2
   for e in "${extra[@]}"; do echo "  - $e" >&2; done
   status=1
 fi

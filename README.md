@@ -298,7 +298,7 @@ voxd talks to the lux Hub through its public client library, registers the menu,
 
 ## Control Panel
 
-A `Vox` entry in the Lux menu, launched for the life of your Claude Code session, gives you a settings panel for mic mode (chimes vs. voice), the notification level (off/normal/continuous), and your voice --- with a preview button --- without a slash command. It's a session-scoped Lux applet, the same shape as lux's own `lux-beads`: launched by a `hooks/session-start.sh` block when the repo has vox enabled, not hosted inside `voxd`. Every change goes through the same `notify`/`speak`/`voice` settings the CLI and MCP tool already write, so the panel and the slash commands always agree; if a change can't be saved or `voxd` is unreachable, the panel says so in a status line rather than reverting silently.
+A `Vox` entry in the Lux menu, launched for the life of your Claude Code session, gives you a settings panel for mic mode (chimes vs. voice), the notification level (off/normal/continuous), and your voice --- with a preview button --- without a slash command. It's a session-scoped Lux applet, the same shape as lux's own `lux-beads`: launched by a `plugin/hooks/session-start.sh` block when the repo has vox enabled, not hosted inside `voxd`. Every change goes through the same `notify`/`speak`/`voice` settings the CLI and MCP tool already write, so the panel and the slash commands always agree; if a change can't be saved or `voxd` is unreachable, the panel says so in a status line rather than reverting silently.
 
 ## Commands
 
@@ -563,6 +563,8 @@ uv sync                 # Install dev tools (auto via [dependency-groups].dev)
 uv sync --all-extras    # Also install the `lux` optional extra
 make check              # Run all quality gates
 ```
+
+Everything the Claude Code plugin ships lives under `plugin/` — `plugin/.claude-plugin/plugin.json`, `plugin/commands/`, `plugin/hooks/` — and nothing else does. The marketplace installs that one directory through Claude Code's `git-subdir` source, so an install never fetches `src/`, `tests/`, `docs/`, or `scripts/`. Two rules follow: a hook script may use `$HOME`, the `vox` binary, and paths under the *consumer's* repo root, but never another path in this repository (it will not exist on an installed plugin); and dev loading is `claude --plugin-dir plugin`, not `--plugin-dir .`, because `CLAUDE_PLUGIN_ROOT` has to be the directory the marketplace checks out.
 
 ## License
 

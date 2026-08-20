@@ -70,7 +70,7 @@ tests/
   test_hook_envelope.py      # Hook event envelope parsing
   test_hook_gate.py          # Hook enable/disable gating
   test_hook_payload.py       # Hook payload extraction
-  test_hook_scripts.py       # hooks/*.sh shell entry points
+  test_hook_scripts.py       # plugin/hooks/*.sh shell entry points
   test_nudge_hook.py         # Vibe-nudge hook
   test_vibe_nudge.py         # Vibe-nudge cadence: threshold fire, reset, auto-only gating
   test_audible_notify.py     # Audible notification gating
