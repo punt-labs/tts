@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-08-19
+
 ### Fixed
 
 - **An unreadable `plugin.json` made `session-start.sh` guess "prod" and provision against it.** Dev-vs-prod was a boolean read through `grep -q '"vox-dev"' "$PLUGIN_JSON" 2>/dev/null`, so a missing manifest — and, because the redirect collapsed grep's exit 1 (no match) with its exit 2 (read error), an unreadable one — fell through to prod: the more invasive branch, deploying commands out of `$PLUGIN_ROOT` into `~/.claude/commands` and writing the prod permission glob on the strength of a file the hook never managed to read. A wrong `PLUGIN_ROOT` therefore failed *open*. The read now has three outcomes (`dev`, `prod`, `unknown`) with grep's status captured explicitly, and `unknown` refuses to guess: it reports the reason through the hook's `additionalContext` — the only channel it has to the agent — and skips the retired-command cleanup, the command deployment, and the permission setup, while the Lux panel spawn (which reads no mode) still runs. The `2>/dev/null` is gone, so a read error's real cause reaches stderr instead of being swallowed. Exit stays 0 throughout: a SessionStart hook must not take the session down. Pinned by `tests/test_hook_gate.py::TestManifestRefusal`, which asserts both refusal shapes write *nothing* under an isolated `$HOME`, alongside a positive control proving the fixture is live — verified by mutating the initializer back to `prod` and watching both refusal tests fail.
