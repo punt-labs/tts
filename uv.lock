@@ -548,7 +548,7 @@ wheels = [
 
 [[package]]
 name = "elevenlabs"
-version = "2.47.0"
+version = "2.64.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -558,9 +558,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/59/83/f354abd05bf68238d682c492646a90fd87c8d2cf1cc643b68bb7bf73b164/elevenlabs-2.47.0.tar.gz", hash = "sha256:1e62e0c64d8b78dab27e0076dfff6d498c5c7363c23c545219e70b1602a456d5", size = 596325, upload-time = "2026-05-12T20:23:04.014Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/af/f3/0931fc203e86797e46c132174990f6476141ee4593631b8b42d19b00817a/elevenlabs-2.64.0.tar.gz", hash = "sha256:97cab1d3b84019a08f0e52fa00c8ed38dae9276e4209745be929cb3f6d830426", size = 777749, upload-time = "2026-08-14T14:36:41.462Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/64/80/3be940678d0d220fb85fe05662d17e352a24c5b487b6f3ce01b16b840deb/elevenlabs-2.47.0-py3-none-any.whl", hash = "sha256:77f20a9939c0c966cfead0c79d6bab204fb2bc5e41e98e0817a180b316c98cbf", size = 1609805, upload-time = "2026-05-12T20:23:01.725Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/c7/f70ff6b05fd040238500894d4092c8416a7049f1dd2a6b1843a5b8c972fe/elevenlabs-2.64.0-py3-none-any.whl", hash = "sha256:806bb8123f7b3d0559cb67537e819dacdc7a2df7cda8334a99627e6a92cf8f8a", size = 2062258, upload-time = "2026-08-14T14:36:39.501Z" },
 ]
 
 [[package]]
@@ -1726,8 +1726,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography", marker = "python_full_version >= '3.15' or sys_platform != 'win32'" },
-    { name = "jeepney", marker = "python_full_version >= '3.15' or sys_platform != 'win32'" },
+    { name = "cryptography" },
+    { name = "jeepney" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
