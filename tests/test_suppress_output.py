@@ -1,4 +1,4 @@
-"""Behavioral tests for the hooks/suppress-output.sh PostToolUse hook.
+"""Behavioral tests for the plugin/hooks/suppress-output.sh PostToolUse hook.
 
 The hook drives the two-channel display: ``updatedMCPToolOutput`` (the panel
 line the user sees) and ``additionalContext`` (text injected back into the
@@ -29,7 +29,9 @@ from pathlib import Path
 
 import pytest
 
-_HOOK = Path(__file__).resolve().parent.parent / "hooks" / "suppress-output.sh"
+_HOOK = (
+    Path(__file__).resolve().parent.parent / "plugin" / "hooks" / "suppress-output.sh"
+)
 
 # A distinctive slice of STOP_NARRATION — stable enough to assert on without
 # pinning the whole sentence.
