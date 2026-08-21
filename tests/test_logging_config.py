@@ -241,6 +241,12 @@ class TestConfigureClientLogging:
         assert logging.getLogger("mcp.server.lowlevel").level == logging.WARNING
         assert logging.getLogger("mcp").level == logging.WARNING
 
+    def test_httpx_loggers_suppressed(self) -> None:
+        """Both httpx and httpx2 (openai>=3) are pinned to WARNING."""
+        logging_config.configure_client_logging(role="mcp")
+        assert logging.getLogger("httpx").level == logging.WARNING
+        assert logging.getLogger("httpx2").level == logging.WARNING
+
 
 class TestLogHealth:
     """The unified sink's writability is client-observable (like vibe-trace)."""
