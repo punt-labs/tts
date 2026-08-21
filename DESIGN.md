@@ -241,7 +241,7 @@ Played via `afplay` (macOS) directly from the hook script.
 
 ### Design
 
-Hooks are declared in `hooks/hooks.json` and registered by the plugin system. Each Claude Code event maps to a focused script under `hooks/` (current registration):
+Hooks are declared in `plugin/hooks/hooks.json` and registered by the plugin system. Each Claude Code event maps to a focused script under `plugin/hooks/` (current registration):
 
 | Event | Script(s) | Notes |
 |-------|-----------|-------|
@@ -507,16 +507,16 @@ ffmpeg is already a project dependency (pydub uses it for audio processing).
 
 ### Problem
 
-`claude --plugin-dir .` loads the working tree as a plugin, but it collides with the installed production `vox` plugin if both use the same name. Developers cannot test plugin changes (hooks, commands, MCP tools) without uninstalling the production plugin first.
+`claude --plugin-dir plugin` loads the working tree's plugin surface as a plugin, but it collides with the installed production `vox` plugin if both use the same name. Developers cannot test plugin changes (hooks, commands, MCP tools) without uninstalling the production plugin first.
 
 ### Design
 
-The working tree uses `"name": "vox-dev"` in `.claude-plugin/plugin.json`. Claude Code treats `vox` and `vox-dev` as separate plugins:
+The working tree uses `"name": "vox-dev"` in `plugin/.claude-plugin/plugin.json`. Claude Code treats `vox` and `vox-dev` as separate plugins:
 
 - **Prod tools**: `mcp__plugin_vox_vox__speak` (from installed plugin)
-- **Dev tools**: `mcp__plugin_vox-dev_vox__speak` (from `--plugin-dir .`)
+- **Dev tools**: `mcp__plugin_vox-dev_vox__speak` (from `--plugin-dir plugin`)
 
-Dev commands (`say-dev.md`, `recap-dev.md`) in `.claude/commands/` reference dev-namespaced tools. Prod commands in `commands/` are unchanged.
+Dev commands are `*-dev.md` files alongside the prod commands in `plugin/commands/` and reference dev-namespaced tools; `session-start.sh` skips them when deploying, and `release-plugin.sh` deletes them for the tag. Prod commands are unchanged.
 
 The MCP server uses the installed `vox` binary as its command. With editable installs (`uv tool install --force --editable .`), the installed binary runs working-tree code — no `uv run` needed.
 
@@ -1955,7 +1955,7 @@ This is distinct from the prfaq's *"Won't Do: agent personality voices"* boundar
 
 ### Decision
 
-Auto-vibe sets the TTS mood from the **conversation, judged by the main agent**, not from any deterministic per-command signal. A non-blocking `UserPromptSubmit` hook (`hooks/vibe-nudge.sh` → `vox hook vibe-nudge`) injects a soft `additionalContext` reminder every Nth user prompt (N=5), **only when `vibe_mode == auto`**, nudging the agent to glance at the session and set the vibe via the `vibe` tool if the mood has shifted — `[happy]` when flowing, `[focused]`/`[frustrated]`/`[weary]` when stuck, `[relieved]` after a fix. The cadence counter (`vibe_nudge_turns`) lives in the ephemeral `vox.local.md`; a `/vibe` mode change and session end reset it.
+Auto-vibe sets the TTS mood from the **conversation, judged by the main agent**, not from any deterministic per-command signal. A non-blocking `UserPromptSubmit` hook (`plugin/hooks/vibe-nudge.sh` → `vox hook vibe-nudge`) injects a soft `additionalContext` reminder every Nth user prompt (N=5), **only when `vibe_mode == auto`**, nudging the agent to glance at the session and set the vibe via the `vibe` tool if the mood has shifted — `[happy]` when flowing, `[focused]`/`[frustrated]`/`[weary]` when stuck, `[relieved]` after a fix. The cadence counter (`vibe_nudge_turns`) lives in the ephemeral `vox.local.md`; a `/vibe` mode change and session end reset it.
 
 Design of record: `docs/vibe-agent-driven.md`. **No formal model:** the state that justified the interim Z model (an exit-code window/mood accumulator) is deleted; the replacement is a stateless nudge plus a bounded mod-N counter, below the formal-modeling trigger.
 
@@ -2076,7 +2076,7 @@ Soft mechanisms cannot be guaranteed by unit tests — the LLM's follow-through 
 ### Consequences
 
 - `[vibe-trace]` events at the nudge (`NudgeHook`), vibe-set (`VibeCommand`), and music (`server.music`) links, via `logger.info` (never `print`), pinned at a level that always reaches the log.
-- Because the vibe/music logic runs **client-side** (the `mic` MCP server and hooks), the trace is written to a **persistent, append-only log file** at a known path under the vox state/log directory — shared by the MCP server and the hook subprocesses via multi-process-safe atomic appends — **not** voxd's `tts.log`. The `grep '[vibe-trace]'` proof recipe in `commands/vibe.md` targets that file. **(Amended 2026-07-16 — see below. The original decision routed the trace to stderr; that was wrong.)**
+- Because the vibe/music logic runs **client-side** (the `mic` MCP server and hooks), the trace is written to a **persistent, append-only log file** at a known path under the vox state/log directory — shared by the MCP server and the hook subprocesses via multi-process-safe atomic appends — **not** voxd's `tts.log`. The `grep '[vibe-trace]'` proof recipe in `plugin/commands/vibe.md` targets that file. **(Amended 2026-07-16 — see below. The original decision routed the trace to stderr; that was wrong.)**
 - Current state (the session vibe and the playing music style) is *also* surfaced through the `status` tool — the trace is the event-trail *proof over time*; `status` is the point-in-time *client-observable state*. Both, per "client-observable, not logs."
 
 ### Alternatives Considered
@@ -2092,7 +2092,7 @@ Soft mechanisms cannot be guaranteed by unit tests — the LLM's follow-through 
 
 The original Consequences routed `[vibe-trace]` to the MCP-server / hook **stderr**, assuming Claude Code captured it to a greppable log. It does not: the CLI's per-server MCP log holds only client-side "Calling MCP tool" wrapper lines, and the server/hook stderr is discarded. The 4.12.2 live smoke test found the feature itself works end-to-end (the `music_hint` round-trips through the API and the agent re-pools), but the DES-046 proof — a **core** operator goal — was unreachable: no `[vibe-trace]` line existed in any runtime file.
 
-**Correction:** the trace is written to a **persistent, append-only log file** at a known path under the vox state/log directory, shared by both emitters (MCP server + hook subprocesses) via multi-process-safe atomic (`O_APPEND`, single-line) writes. The stderr emission is **deleted** (forward integration, PY-RF-6 — no dual-write). `commands/vibe.md` documents the real file path. The trace format is unchanged; only the sink moved. Root cause of the mistake: the decision assumed the host persisted stderr without verifying it against the running system — the "verify outputs, not just metrics" discipline applied to observability, not just features.
+**Correction:** the trace is written to a **persistent, append-only log file** at a known path under the vox state/log directory, shared by both emitters (MCP server + hook subprocesses) via multi-process-safe atomic (`O_APPEND`, single-line) writes. The stderr emission is **deleted** (forward integration, PY-RF-6 — no dual-write). `plugin/commands/vibe.md` documents the real file path. The trace format is unchanged; only the sink moved. Root cause of the mistake: the decision assumed the host persisted stderr without verifying it against the running system — the "verify outputs, not just metrics" discipline applied to observability, not just features.
 
 Closes vox-q1z4. Observability sink corrected under vox-9po7.
 
@@ -2655,7 +2655,7 @@ installs a plugin's commands into a single global namespace, so those two bare
 verbs claimed `/enable` and `/disable` for every session — generic names no
 plugin should own. Every other vox slash verb is already namespaced under
 `/vox` (`/vox model`, `/vox provider`), dispatched by parsing `$ARGUMENTS` in
-`commands/vox.md`.
+`plugin/commands/vox.md`.
 
 ### Decision
 
@@ -2663,7 +2663,7 @@ Fold enablement into `/vox` as two more `$ARGUMENTS` subcommands beside `model`
 and `provider`: **`/vox enable`** and **`/vox disable`**. Both call the same
 `mic:enablement` tool (`action="enable"|"disable"`) with the same confirmation
 text the split-out commands used. `commands/enable.md` and `commands/disable.md`
-are deleted (forward integration, no shim), and `hooks/session-start.sh` lists
+are deleted (forward integration, no shim), and `plugin/hooks/session-start.sh` lists
 them among the retired commands it cleans, so an already-installed plugin drops
 the stale top-level `/enable` / `/disable` on the next session start. The CLI
 verbs `vox enable` / `vox disable` are unchanged — the collision was only on the
@@ -2777,3 +2777,85 @@ migrating any state (no persistence, no `vox.md` touch).
   the daemon-is-audio-host invariant and DES-049.
 
 Design of record: this ADR. Closes the transport-verb polish (vox `fix/lux-observability`).
+
+## DES-063: The Shippable Plugin Surface Lives in `plugin/`
+
+**Date:** 2026-08-19
+**Status:** SETTLED
+**Topic:** Repository layout for a `git-subdir` marketplace install
+
+### Context
+
+The marketplace entry for `vox` used the `url` source, which clones the whole
+repository into the plugin cache. Everything a user installs beyond
+`.claude-plugin/`, `commands/`, and `hooks/` is dead weight for them: `src/`,
+`tests/`, `docs/`, `scripts/`, `tools/`, `typings/`, `.github/`, and this repo's
+own `.beads/`, `.punt-labs/`, and `.claude/` working state. None of it is
+reachable from a hook or a command, because the MCP server is the `vox` binary
+on `PATH` (`plugin.json` → `vox mcp`) and not code that ships with the plugin.
+
+Claude Code offers a `git-subdir` source — a blobless partial clone plus
+`git sparse-checkout set --cone <path>` — but it can only exclude whole
+directories under one root. That requires the surface to sit in one directory,
+which it did not.
+
+### Decision
+
+`.claude-plugin/`, `commands/`, and `hooks/` move under a single `plugin/`
+directory, and the marketplace entry becomes
+`"source": "git-subdir", "path": "plugin"`.
+
+Measured against this branch on GitHub: a `--filter=blob:none` clone with
+`sparse-checkout set --cone plugin` materializes **47 files / 2.0 MB** of
+working tree (4.1 MB including `.git`), versus **1,019 files / 11 MB** (14 MB
+including `.git`) for an equivalent shallow full clone — a 22x file-count and
+5.5x working-tree reduction. `plugin/` itself is 124 KB.
+
+Cone mode always materializes the files sitting in the *repo root*, so ~1.9 MB
+of the remaining 2.0 MB is root documents and root state, not the plugin. In
+this repo the largest contributors are the OO-ratchet artifacts
+(`.oo-audit.jsonl` 460 KB, `.oo-coupling-audit.jsonl` 176 KB,
+`.oo-baseline.json` 100 KB), `uv.lock` (272 KB), `prfaq.pdf` (220 KB),
+`CHANGELOG.md` (188 KB), and `DESIGN.md` (168 KB). Shrinking that remainder
+means moving root files into a subdirectory; this decision does not attempt it.
+
+### Consequences
+
+- **`${CLAUDE_PLUGIN_ROOT}` is `plugin/`.** `hooks.json`'s
+  `${CLAUDE_PLUGIN_ROOT}/hooks/*.sh` entries stay correct because the whole
+  hooks directory moved together, and `session-start.sh` derives `PLUGIN_ROOT`
+  from its own location, so its `.claude-plugin/plugin.json` dev-mode probe and
+  its `commands/` deployment follow the move without edits.
+- **Nothing in the surface may reach outside itself.** A hook script may use
+  `$HOME`, the `vox` binary, and paths under the *consumer's* repo root. A
+  reference to any other path in this repository would resolve to a file that
+  does not exist on an installed plugin. This is now an invariant of the
+  layout, not an accident of it.
+- **Dev loading is `claude --plugin-dir plugin`,** not `--plugin-dir .`: the
+  directory has to be the one the marketplace source checks out, or every
+  `${CLAUDE_PLUGIN_ROOT}/hooks/*.sh` path is wrong in dev and right in prod.
+- **The repo's own references had to move with it** — the shellcheck globs in
+  the `Makefile` and the lint workflow, `scripts/check-skill-permissions.sh`,
+  the two release scripts, and the four test modules that locate hook scripts
+  relative to the repo root. There is no packaging coupling: the wheel ships
+  `src/punt_vox` via `uv_build`, and the one `importlib.resources` consumer
+  reads `punt_vox.assets`.
+- No user-visible behavior change. Existing installs are unaffected until the
+  marketplace entry is repointed at the post-restructure release.
+
+### Alternatives Considered
+
+- **Keep the `url` source and accept the full clone.** Rejected: it is a 22x
+  file-count penalty on every install and upgrade, for content the user cannot
+  use.
+- **Move the root documents into a subdirectory in the same change** to shrink
+  the ~1.9 MB cone-mode remainder. Rejected as separate: it churns every
+  inbound link (`README.md`, `prfaq.pdf`, `CHANGELOG.md` are referenced from
+  outside this repo) and none of it blocks the `git-subdir` switch.
+- **Ship the MCP server inside the plugin** instead of relying on the `vox`
+  binary on `PATH`, which would make the surface self-contained but reintroduce
+  the Python tree the move exists to exclude. Rejected: the two-part install
+  (pip binary + marketplace plugin) is the standing design (DES-059).
+
+Design of record: this ADR, and the rollout spec shared by the nine non-pilot
+plugin repos. Pattern copied from the ethos pilot.

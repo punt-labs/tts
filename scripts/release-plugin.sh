@@ -6,8 +6,22 @@ set -euo pipefail
 # from it.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PLUGIN_JSON="${REPO_ROOT}/.claude-plugin/plugin.json"
-COMMANDS_DIR="${REPO_ROOT}/.claude/commands"
+PLUGIN_JSON="${REPO_ROOT}/plugin/.claude-plugin/plugin.json"
+# The dev commands live in the plugin's own commands/ directory, which is what
+# session-start.sh and check-skill-permissions.sh both skip *-dev.md from.
+# This pointed at .claude/commands/ — the project-local command directory the
+# plugin's dev commands were deliberately moved OUT of (9b18a26) — so the
+# release prep had stopped stripping dev commands from the shipped surface and
+# `find` errored on a directory that no longer exists.
+COMMANDS_DIR="${REPO_ROOT}/plugin/commands"
+# `find` on a missing directory writes to stderr and exits non-zero, but inside
+# the process substitution below that status is discarded: dev_files would stay
+# empty, the script would report "No -dev commands found" and go on to commit a
+# release that stripped nothing. Refuse here instead of reporting success.
+[[ -d "$COMMANDS_DIR" ]] || {
+  echo "error: $COMMANDS_DIR missing" >&2
+  exit 1
+}
 
 # Preflight: abort if repo has uncommitted changes
 if [[ -n "$(git -C "$REPO_ROOT" status --porcelain -uno)" ]]; then
