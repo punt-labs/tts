@@ -50,16 +50,10 @@ _APPEND_FACTORY = "punt_vox.log_append_handler.AppendLogHandler.for_file"
 # Third-party and mcp-framework loggers pinned to WARNING so vox owns the INFO
 # surface -- notably the 38x "Processing request of type CallToolRequest" noise.
 _SUPPRESSED: tuple[str, ...] = (
-    "boto3",
-    "botocore",
-    "urllib3",
-    "s3transfer",
-    "httpx",
-    "websockets",
-    "mcp",
-    "mcp.server",
-    "mcp.server.lowlevel",
-)
+    "boto3", "botocore", "urllib3", "s3transfer",
+    "httpx", "httpx2", "websockets",
+    "mcp", "mcp.server", "mcp.server.lowlevel",
+)  # fmt: skip
 
 
 def configure_daemon_logging() -> None:
