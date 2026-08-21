@@ -1058,6 +1058,12 @@ def _make_repo(root: Path, *, notify: str = "c") -> Path:
     config_dir = root / ".punt-labs" / "vox"
     config_dir.mkdir(parents=True)
     (config_dir / "vox.md").write_text(f'---\nnotify: "{notify}"\n---\n')
+    # find_repo_root() stops at the first ancestor holding .git, and pytest's
+    # tmp_path lives under the punt-labs checkout whenever TMPDIR points into
+    # it -- so without a boundary here the walk escapes the fixture and the
+    # spoken repo name is the enclosing checkout's. Same reason test_hook_gate
+    # git-inits its fixture; existence is all find_repo_root checks.
+    (root / ".git").mkdir()
     return root
 
 

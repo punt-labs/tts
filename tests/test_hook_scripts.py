@@ -1,4 +1,4 @@
-"""Static assertions over the shell hook scripts in hooks/.
+"""Static assertions over the shell hook scripts in plugin/hooks/.
 
 The shell scripts cannot be unit-tested in-process, so these checks
 guard the two structural invariants the cwd fix relies on: the gate
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-_HOOKS_DIR = Path(__file__).resolve().parent.parent / "hooks"
+_HOOKS_DIR = Path(__file__).resolve().parent.parent / "plugin" / "hooks"
 _SCRIPTS = (
     "notify.sh",
     "notify-permission.sh",

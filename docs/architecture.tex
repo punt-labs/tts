@@ -503,7 +503,7 @@ asynchronously.  The agent never blocks on synthesis or playback.
 \begin{enumerate}
   \item Claude Code fires a lifecycle hook (Stop, Notification,
     PreCompact, etc.).
-  \item Shell script dispatcher (e.g., \texttt{hooks/notify.sh})
+  \item Shell script dispatcher (e.g., \texttt{plugin/hooks/notify.sh})
     invokes \texttt{vox hook stop} with JSON on stdin.
   \item Python hook handler reads session config, checks
     \field{notify} and \field{speak} fields.
