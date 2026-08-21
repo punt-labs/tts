@@ -134,7 +134,7 @@ Claude Code session (repo enabled for vox)
    living in vox's own repo, imported as a library, not added to lux's
    `applets/` folder. The design above already reflects this.
 3. **Session-start spawn — no existing vox precedent.** vox's own
-   `hooks/session-start.sh` has no lux-spawn logic today: the Music Player
+   `plugin/hooks/session-start.sh` has no lux-spawn logic today: the Music Player
    never needed one, because it is daemon-hosted and starts with `voxd`
    itself, independent of any Claude Code session. So `vox-panel`'s
    session-start block is genuinely new for vox, modeled directly on lux's
@@ -162,7 +162,7 @@ Claude Code session (repo enabled for vox)
 ## Build
 
 Implemented on `feat/vox-panel` (`src/punt_vox/panel/`, `tests/panel/`, a new
-`vox-panel` console script, and a `hooks/session-start.sh` spawn block) across
+`vox-panel` console script, and a `plugin/hooks/session-start.sh` spawn block) across
 eleven review-and-fix rounds under mission `m-2026-08-07-009` and its
 follow-ons. See vox-mhwj and vox-rols (a tracked follow-up to extract the
 `PanelNotice`/`PlaybackNotice` and `HubOutageLog` patterns this feature
@@ -187,7 +187,7 @@ the connection lifecycle and dispatch. Review also found and fixed a
 silently revert with no on-screen notice — the fix extracted a new
 `src/punt_vox/frontmatter_block.py` module for the frontmatter grammar,
 paying down `frontmatter.py`'s own OO ratchet debt as a side effect — and
-three separate `set -e`/infinite-loop bugs in `hooks/session-start.sh`'s new
+three separate `set -e`/infinite-loop bugs in `plugin/hooks/session-start.sh`'s new
 spawn block (a non-git `cwd`, malformed stdin, an unreadable stdin fd, and a
 relative `cwd` all aborting or hanging the hook before the panel could ever
 spawn).

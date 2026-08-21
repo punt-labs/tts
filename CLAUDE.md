@@ -67,15 +67,32 @@ This separation means: daemon bugs are about audio, providers, caching, and syst
 
 ### Plugin structure
 
+Everything the Claude Code plugin ships lives under `plugin/`, and nothing else does. The marketplace installs that one directory through Claude Code's `git-subdir` source (`"source": "git-subdir"`, `"path": "plugin"`), which is a blobless partial clone plus `git sparse-checkout set --cone plugin` — so an install never fetches `src/`, `tests/`, `docs/`, `scripts/`, `tools/`, `.github/`, or this repo's own `.punt-labs/` and `.claude/` working state. Cone mode always materializes the files sitting in the *repo root*, so the root documents (`README.md`, `DESIGN.md`, `CHANGELOG.md`, `prfaq.pdf`) still travel with an install; only whole directories are excluded.
+
+Two rules follow, and both are load-bearing:
+
+- **The surface must not reach outside itself at runtime.** A hook script may use `$HOME`, the `vox` binary on `PATH`, and paths under the *consumer's* repo root; it may not reference a file elsewhere in this repo, because that file does not exist on an installed plugin. `${CLAUDE_PLUGIN_ROOT}` is `plugin/`.
+- **Paths inside the surface are relative to the surface.** `hooks.json` addresses its scripts as `${CLAUDE_PLUGIN_ROOT}/hooks/*.sh` and `session-start.sh` derives `PLUGIN_ROOT` from its own location, so both followed the move for free. The repo's *own* references — Makefile, CI, `scripts/`, tests, docs — did not, and are spelled `plugin/...` throughout.
+
 | Path | Responsibility |
 |------|---------------|
-| `hooks/hooks.json` | Hook registration: SessionStart, PostToolUse (mic tools + Bash), Stop, Notification |
-| `hooks/notify.sh` | Stop hook → `vox hook stop` |
-| `hooks/signal.sh` | PostToolUse hook (Bash) → `vox hook post-bash` |
-| `hooks/notify-permission.sh` | Notification hook → `vox hook notification` |
-| `hooks/suppress-output.sh` | PostToolUse hook: formats MCP tool output for UI panel |
-| `hooks/session-start.sh` | SessionStart: deploys commands, cleans retired commands, auto-allows MCP tools |
-| `commands/` | `/vox`, `/unmute`, `/mute`, `/recap`, `/vibe` |
+| `plugin/.claude-plugin/plugin.json` | Manifest. `mcpServers.mic` runs `vox mcp`, the binary on `PATH`, so no Python ships with the plugin. `"name": "vox-dev"` in the working tree; `scripts/release-plugin.sh` swaps it to `vox` for the tag. |
+| `plugin/hooks/hooks.json` | Hook registration: SessionStart, PostToolUse (mic tools), Stop, PreCompact, Notification, UserPromptSubmit, SubagentStart/Stop, SessionEnd |
+| `plugin/hooks/session-start.sh` | SessionStart: deploys commands, cleans retired commands, auto-allows MCP tools and skills, launches the session's Lux control panel. Reads dev-vs-prod from the manifest as three states — an unreadable or absent `plugin.json` is `unknown`, which reports the reason and skips every mode-dependent branch rather than guessing prod |
+| `plugin/hooks/suppress-output.sh` | PostToolUse (mic tools): formats MCP tool output for the UI panel |
+| `plugin/hooks/notify.sh` | Stop → `vox hook stop` |
+| `plugin/hooks/notify-permission.sh` | Notification (`permission_prompt`, `idle_prompt`) → `vox hook notification` |
+| `plugin/hooks/pre-compact.sh` | PreCompact → `vox hook pre-compact` |
+| `plugin/hooks/acknowledge.sh` | UserPromptSubmit → `vox hook user-prompt-submit` |
+| `plugin/hooks/vibe-nudge.sh` | UserPromptSubmit → `vox hook vibe-nudge` |
+| `plugin/hooks/subagent.sh` | SubagentStart/SubagentStop → `vox hook subagent-start` / `subagent-stop` |
+| `plugin/hooks/farewell.sh` | SessionEnd → `vox hook session-end` |
+| `plugin/commands/` | `/vox`, `/unmute`, `/mute`, `/recap`, `/vibe`, `/music`, `/model`, `/provider`, `/voice` |
+
+Two gates hold the surface, both wired into `make lint` and the lint workflow:
+
+- `scripts/check-skill-permissions.sh` — every `plugin/commands/*.md` has a matching `Skill()` grant in `plugin/hooks/session-start.sh`.
+- `scripts/check-plugin-surface.sh` — every **statically-literal** `${CLAUDE_PLUGIN_ROOT}`/`$PLUGIN_ROOT` reference anywhere in `plugin/` resolves to a path the surface actually ships, does not escape it via `..`, and is executable when it is a hook script. This is the gate for the reach-outside-itself rule above, which is otherwise a *silent* break: the path is present in the source tree and absent on every installed copy, so the hook runs, finds nothing, and the feature is quietly gone. It fails closed — if `hooks.json` stops carrying the placeholder at all, the gate errors rather than passing vacuously. A reference carrying an embedded variable (`.../${name}.sh`) or a glob (`.../*.sh`) is checked only as far as its literal prefix: the directory must ship, but the leaf cannot be resolved statically. That is a deliberate limit of static analysis, not total coverage.
 
 See `docs/architecture.tex` for the full system description.
 
@@ -137,7 +154,7 @@ Split by **rollback granularity**, not size. Ask: if this broke production, what
 |-------|-------------|------------|----------------|
 | Unit | `make test` | yes | types, core, output, config, dirs, hooks, normalize, cache, keys, server, service, applet, all 5 providers |
 | Integration | `@pytest.mark.integration` | no (needs AWS creds) | Real provider synthesis end-to-end |
-| Shell scripts | `make lint` (shellcheck) | yes | hooks/*.sh, scripts/*.sh, install.sh |
+| Shell scripts | `make lint` (shellcheck) | yes | plugin/hooks/*.sh, scripts/*.sh, install.sh |
 
 Tests mirror source: one `test_*.py` per module plus `conftest.py` for shared fixtures. See [TESTING.md](TESTING.md) for the full testing philosophy and architecture.
 
@@ -201,7 +218,7 @@ Vox spans three domains: (1) **audio/synthesis** — provider SDKs, audio format
 | `voxd` audio daemon (WebSocket, queue, cache, playback) | `rmh` | `bwk` (Pike) |
 | MCP server (`server.py`) tool surface | `rmh` | `mdm` (Pike) |
 | CLI (`__main__.py`) command authoring | `mdm` | `rmh` |
-| Hook scripts (`hooks/*.sh`) — bash, signal classification | `mdm` | `rop` (McIlroy) |
+| Hook scripts (`plugin/hooks/*.sh`) — bash, signal classification | `mdm` | `rop` (McIlroy) |
 | System daemon install (`service.py`, launchd/systemd) | `adb` (Lovelace) | `djb` (Bernstein) |
 | Provider auth / API-key handling / secrets | `djb` | `rmh` |
 | Audio playback / pydub / ffmpeg pipeline | `gvr` | `kpz` (Karpathy) |
@@ -230,12 +247,14 @@ Use `/punt:auto release [version=X.Y.Z]`. Vox is a CLI + Plugin Hybrid — relea
 
 ### Dev plugin testing
 
-The plugin uses dev/prod namespace isolation. Working tree has `"name": "vox-dev"` in plugin.json.
+The plugin uses dev/prod namespace isolation. Working tree has `"name": "vox-dev"` in `plugin/.claude-plugin/plugin.json`.
 
 ```bash
-uv tool install --force --editable .   # Editable install (vox binary = working tree)
-claude --plugin-dir .                   # Load dev plugin as vox-dev alongside prod vox
+uv tool install --force --editable .        # Editable install (vox binary = working tree)
+claude --plugin-dir plugin                  # Load dev plugin as vox-dev alongside prod vox
 ```
+
+The directory passed to `--plugin-dir` is `plugin`, not the repo root: it has to be the same directory the `git-subdir` marketplace source checks out, or `${CLAUDE_PLUGIN_ROOT}/hooks/*.sh` resolves to paths that do not exist and every hook silently fails.
 
 Release scripts: `scripts/release-plugin.sh` (swap `vox-dev` → `vox`), `scripts/restore-dev-plugin.sh` (restore dev state after tag).
 
