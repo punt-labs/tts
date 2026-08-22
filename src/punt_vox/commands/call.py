@@ -56,15 +56,6 @@ _SPEECH_CHUNKS = 20  # 400ms of synthetic "speech" per scripted utterance
 _SILENCE_CHUNKS = 10  # 200ms of synthetic silence to close the turn
 
 
-def _lock_dir() -> Path:
-    root = find_repo_root() or Path.cwd()
-    return root / DEFAULT_CONFIG_DIR / "call"
-
-
-def _pcm(amplitude: int, sample_count: int = 320) -> bytes:
-    return struct.pack(f"<{sample_count}h", *([amplitude] * sample_count))
-
-
 @final
 class ScriptedTurn:
     """One line of a ``--script`` file: a scripted utterance and its confidence."""
@@ -87,6 +78,15 @@ class ScriptedTurn:
     def confidence(self) -> float:
         return self._confidence
 
+    @staticmethod
+    def _pcm(amplitude: int, sample_count: int = 320) -> bytes:
+        return struct.pack(f"<{sample_count}h", *([amplitude] * sample_count))
+
+    @classmethod
+    def silence_chunks(cls, count: int) -> list[AudioChunk]:
+        """Return ``count`` chunks of pure silence, for calibration floors."""
+        return [AudioChunk(pcm=cls._pcm(0), duration_s=_CHUNK_S) for _ in range(count)]
+
     @classmethod
     def read_script(cls, path: Path) -> list[ScriptedTurn]:
         """Parse a JSON Lines file of ``{"text": ..., "confidence": ...}`` entries."""
@@ -108,8 +108,10 @@ class ScriptedTurn:
         a genuine silence gap so the real :class:`TurnDetector` closes the
         run on its own logic rather than a shortcut.
         """
-        speech = [AudioChunk(pcm=_pcm(20000), duration_s=_CHUNK_S)] * _SPEECH_CHUNKS
-        silence = [AudioChunk(pcm=_pcm(0), duration_s=_CHUNK_S)] * _SILENCE_CHUNKS
+        speech = [
+            AudioChunk(pcm=self._pcm(20000), duration_s=_CHUNK_S)
+        ] * _SPEECH_CHUNKS
+        silence = [AudioChunk(pcm=self._pcm(0), duration_s=_CHUNK_S)] * _SILENCE_CHUNKS
         return [*speech, *silence]
 
 
@@ -148,76 +150,6 @@ class ScriptedSTTProvider:
 
     def check_health(self) -> list[HealthCheck]:
         return []
-
-
-async def _resolve_session_attach(cwd: Path, session_id: str | None) -> SessionAttach:
-    """Resolve which session to attach to, per the ADR's no-silent-auto-pick rule."""
-    if session_id is not None:
-        return ClaudeSessionAttach(session_id=session_id)
-    candidates = await SessionDiscovery().discover(cwd)
-    if len(candidates) == 1:
-        return ClaudeSessionAttach(session_id=candidates[0].session_id)
-    if not candidates:
-        msg = (
-            "no active Claude Code session found for this directory; "
-            "start a session first, or pass --session <id>"
-        )
-        raise typer.BadParameter(msg)
-    listing = "\n".join(f"  {c.session_id}  ({c.cwd})" for c in candidates)
-    msg = (
-        "multiple active Claude Code sessions found; pass --session "
-        f"<id> to choose one:\n{listing}"
-    )
-    raise typer.BadParameter(msg)
-
-
-def _calibrated_detector() -> TurnDetector:
-    """Return a :class:`TurnDetector` calibrated against a synthetic silent floor.
-
-    Stands in for FR-1's "a few seconds of 'say something'" live calibration
-    step, deferred alongside real capture -- the synthetic floor is silence
-    (amplitude 0), matching :meth:`ScriptedTurn.synthetic_chunks`'s own
-    silence chunks, so the real detector's thresholds are meaningful against
-    the synthetic audio this CLI path feeds it.
-    """
-    detector = TurnDetector()
-    silence = [AudioChunk(pcm=_pcm(0), duration_s=_CHUNK_S) for _ in range(10)]
-    detector.calibrate(silence)
-    return detector
-
-
-async def _run_call(script: Path, session_id: str | None) -> None:
-    turns = ScriptedTurn.read_script(script)
-    client = VoxClientSync()
-
-    def speak(text: str) -> None:
-        # Discards SynthesizeResult -- SpeakFn's contract is "spoken", not "the
-        # daemon's synthesis metadata", and a call orchestrator has no use for it.
-        client.synthesize(text)
-
-    lock = CallLock(_lock_dir() / "call.lock")
-    control = CallControl(_lock_dir() / "call.control")
-    session_attach = await _resolve_session_attach(Path.cwd(), session_id)
-    session = CallSession(
-        turn_detector=_calibrated_detector(),
-        stt_provider=ScriptedSTTProvider(turns),
-        session_attach=session_attach,
-        speak=speak,
-    )
-    lock.acquire("conversation mode call active")
-    try:
-        await session.start()
-        for turn in turns:
-            request = control.consume()
-            if request is not None and request.kind == "stop":
-                break
-            if request is not None and request.kind == "transfer":
-                await _resolve_session_attach(Path.cwd(), request.target_session_id)
-            for chunk in turn.synthetic_chunks():
-                await session.process_chunk(chunk)
-        await session.hangup()
-    finally:
-        lock.release()
 
 
 _ScriptOpt = Annotated[
@@ -263,15 +195,92 @@ class CallCli:
 
     def start(self, script: _ScriptOpt, session: _SessionOpt = None) -> None:
         """Start a call: listen, detect turns, forward them, speak the reply."""
-        asyncio.run(_run_call(script, session))
+        asyncio.run(self._run(script, session))
 
     def stop(self) -> None:
         """Ask the running call to hang up (FR-2's explicit end)."""
-        CallControl(_lock_dir() / "call.control").request_stop()
+        CallControl(self._lock_dir() / "call.control").request_stop()
 
     def transfer(self, session: _TransferSessionOpt = None) -> None:
         """Ask the running call to re-attach to a different active session."""
-        CallControl(_lock_dir() / "call.control").request_transfer(session)
+        CallControl(self._lock_dir() / "call.control").request_transfer(session)
+
+    @staticmethod
+    def _lock_dir() -> Path:
+        root = find_repo_root() or Path.cwd()
+        return root / DEFAULT_CONFIG_DIR / "call"
+
+    @staticmethod
+    async def _resolve_session_attach(
+        cwd: Path, session_id: str | None
+    ) -> SessionAttach:
+        """Resolve which session to attach, per the ADR's no-silent-auto-pick rule."""
+        if session_id is not None:
+            return ClaudeSessionAttach(session_id=session_id)
+        candidates = await SessionDiscovery().discover(cwd)
+        if len(candidates) == 1:
+            return ClaudeSessionAttach(session_id=candidates[0].session_id)
+        if not candidates:
+            msg = (
+                "no active Claude Code session found for this directory; "
+                "start a session first, or pass --session <id>"
+            )
+            raise typer.BadParameter(msg)
+        listing = "\n".join(f"  {c.session_id}  ({c.cwd})" for c in candidates)
+        msg = (
+            "multiple active Claude Code sessions found; pass --session "
+            f"<id> to choose one:\n{listing}"
+        )
+        raise typer.BadParameter(msg)
+
+    @staticmethod
+    def _calibrated_detector() -> TurnDetector:
+        """Return a :class:`TurnDetector` calibrated against a synthetic silent floor.
+
+        Stands in for FR-1's "a few seconds of 'say something'" live calibration
+        step, deferred alongside real capture -- the synthetic floor is silence
+        (amplitude 0), matching :meth:`ScriptedTurn.synthetic_chunks`'s own
+        silence chunks, so the real detector's thresholds are meaningful against
+        the synthetic audio this CLI path feeds it.
+        """
+        detector = TurnDetector()
+        detector.calibrate(ScriptedTurn.silence_chunks(10))
+        return detector
+
+    async def _run(self, script: Path, session_id: str | None) -> None:
+        turns = ScriptedTurn.read_script(script)
+        client = VoxClientSync()
+
+        def speak(text: str) -> None:
+            # Discards SynthesizeResult -- SpeakFn's contract is "spoken", not "the
+            # daemon's synthesis metadata", and a call orchestrator has no use for it.
+            client.synthesize(text)
+
+        lock = CallLock(self._lock_dir() / "call.lock")
+        control = CallControl(self._lock_dir() / "call.control")
+        session_attach = await self._resolve_session_attach(Path.cwd(), session_id)
+        session = CallSession(
+            turn_detector=self._calibrated_detector(),
+            stt_provider=ScriptedSTTProvider(turns),
+            session_attach=session_attach,
+            speak=speak,
+        )
+        lock.acquire("conversation mode call active")
+        try:
+            await session.start()
+            for turn in turns:
+                request = control.consume()
+                if request is not None and request.kind == "stop":
+                    break
+                if request is not None and request.kind == "transfer":
+                    await self._resolve_session_attach(
+                        Path.cwd(), request.target_session_id
+                    )
+                for chunk in turn.synthetic_chunks():
+                    await session.process_chunk(chunk)
+            await session.hangup()
+        finally:
+            lock.release()
 
 
 def build_call_app() -> typer.Typer:

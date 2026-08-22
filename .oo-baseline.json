@@ -363,6 +363,19 @@
     "module_size": 62.0,
     "public_attr_violations": 0.0
   },
+  "src/punt_vox/commands/call.py": {
+    "method_ratio": 0.95,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.76,
+    "max_complexity": 7.0,
+    "avg_complexity": 1.71,
+    "module_size": 249.0,
+    "classes_per_module": 3.0,
+    "class_to_func_ratio": 0.75,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/commands/model.py": {
     "avg_complexity": 4.0,
     "avg_params": 1.0,

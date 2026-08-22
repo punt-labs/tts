@@ -51,7 +51,7 @@ def test_synthetic_chunks_are_speech_then_silence() -> None:
 
 
 def test_stop_writes_a_stop_request(tmp_path: Path) -> None:
-    with patch("punt_vox.commands.call._lock_dir", return_value=tmp_path):
+    with patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path):
         result = runner.invoke(build_call_app(), ["stop"])
     assert result.exit_code == 0
     control = CallControl(tmp_path / "call.control")
@@ -61,7 +61,7 @@ def test_stop_writes_a_stop_request(tmp_path: Path) -> None:
 
 
 def test_transfer_writes_a_transfer_request_with_session_id(tmp_path: Path) -> None:
-    with patch("punt_vox.commands.call._lock_dir", return_value=tmp_path):
+    with patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path):
         result = runner.invoke(build_call_app(), ["transfer", "--session", "session-b"])
     assert result.exit_code == 0
     control = CallControl(tmp_path / "call.control")
@@ -129,9 +129,9 @@ async def test_run_call_speaks_the_reply_and_holds_the_lock_only_while_active(
             "punt_vox.voxd.conversation_mode.claude_session_attach.asyncio.create_subprocess_exec",
             return_value=_fake_process(),
         ),
-        patch("punt_vox.commands.call._lock_dir", return_value=tmp_path),
+        patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path),
     ):
-        await call_module._run_call(script, "session-a")
+        await call_module.CallCli()._run(script, "session-a")
 
     assert "It returns the sum." in spoken
     from punt_vox.voxd.conversation_mode.call_lock import CallLock
