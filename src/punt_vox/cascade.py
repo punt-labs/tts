@@ -40,7 +40,7 @@ from punt_vox.models import MODEL_TABLE
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-__all__ = ["Cascade", "RosterClient", "RosterError"]
+__all__ = ["Cascade", "RosterClient", "RosterError", "RosterRejectedError"]
 
 logger = logging.getLogger(__name__)
 

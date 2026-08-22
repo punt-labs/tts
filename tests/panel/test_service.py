@@ -676,6 +676,28 @@ class TestRefreshAndRecover:
         assert "notify" in notice.message
         assert "voxd" in notice.message
 
+    def test_recover_from_write_failure_when_resync_is_rejected_composes_both(
+        self,
+    ) -> None:
+        """The write-failure notice must not be dropped when the confirming
+        resync hits a wire rejection -- two unrelated failures (disk, voxd
+        rejection), each must survive into the scene message."""
+        detail = "Unknown provider 'openai'"
+
+        class _RejectingClient:
+            def voices(self, provider: str | None = None) -> list[str]:
+                raise VoxdRejectionError(detail)
+
+            def synthesize(self, *args: object, **kwargs: object) -> object:
+                raise NotImplementedError
+
+        service = VoxPanelService(_RejectingClient(), _FakeStore(_config()))  # type: ignore[arg-type]
+        service.recover_from_write_failure("notify")
+        notice = service.scene().notice
+        assert notice == PanelNotice.write_failed_and_voxd_rejected("notify", detail)
+        assert "notify" in notice.message
+        assert detail in notice.message
+
 
 class TestNoteRejection:
     def test_flags_the_scene_with_the_reason_voxd_gave(self) -> None:

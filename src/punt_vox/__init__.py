@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from punt_vox.client import SynthesizeResult, VoxClient
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError, VoxError
+from punt_vox.client_errors import (
+    VoxdConnectionError,
+    VoxdProtocolError,
+    VoxdRejectionError,
+    VoxError,
+)
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.types_programs import (
     CommandOutcome,
@@ -27,6 +32,7 @@ __all__ = [
     "VoxError",
     "VoxdConnectionError",
     "VoxdProtocolError",
+    "VoxdRejectionError",
     "__version__",
 ]
 

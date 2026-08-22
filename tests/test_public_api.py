@@ -129,5 +129,6 @@ def test_all_lists_the_public_api() -> None:
         "VoxError",
         "VoxdConnectionError",
         "VoxdProtocolError",
+        "VoxdRejectionError",
         "__version__",
     }
