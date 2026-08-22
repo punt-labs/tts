@@ -28,7 +28,10 @@ from typing import TYPE_CHECKING, Self, final
 from punt_lux import HubUnavailableError
 
 from punt_vox.voxd.music_player.lux_trace import LuxTrace
-from punt_vox.voxd.music_player.player_event_codec import PlayerEventCodec
+from punt_vox.voxd.music_player.player_event_codec import (
+    AnchorUnresolvedError,
+    PlayerEventCodec,
+)
 from punt_vox.voxd.music_player.wire import MusicTopic
 
 if TYPE_CHECKING:
@@ -143,19 +146,31 @@ class LuxSubscription:
     async def on_event(self, topic: str, payload: Mapping[str, object]) -> None:
         """Decode and apply one inbound event exactly once; never drop the leg.
 
-        The receive boundary splits two failure modes. A malformed frame the codec
-        cannot decode is logged and dropped -- there is no album to name, so nothing
-        surfaces. A well-formed play or stop whose ``apply`` is *refused* (the album
-        vanished or has no ready tracks) is logged AND surfaced: the click changed no
-        daemon state, so the scene is re-pushed with a transient warning rather than
-        looking silently ignored. Either way one bad event can never tear down the
-        single hub connection (invariants I, II, V).
+        The receive boundary splits three failure modes. A malformed frame the codec
+        cannot decode -- empty payload, unknown topic, non-string anchor -- is logged
+        and dropped silently: there is no album to name, so nothing surfaces. A
+        well-formed anchor that names no catalogued album (``AnchorUnresolvedError``,
+        a vanished album or a stale row-cache click) is logged AND surfaced as a
+        transient warning naming the anchor text -- unlike a malformed frame, the
+        user clicked something real and the drop must not look silent. A play or
+        stop whose ``apply`` is *refused* (the resolved album has no ready tracks)
+        is logged AND surfaced by the event itself. Either way one bad event can
+        never tear down the single hub connection (invariants I, II, V).
         """
         _trace.info("received %s %r; applying", topic, dict(payload))
         try:
             # Fresh catalog: a music.play anchor resolves against the albums as they
             # stand now, not a subscribe-time snapshot (codec owns the resolution).
             event = self._codec.decode(topic, payload, self._service.catalog_albums())
+        except AnchorUnresolvedError as exc:
+            # Well-formed click; the album vanished between paint and click.
+            logger.warning(
+                "[lux] anchor %r on %s names no catalogued album; surfacing",
+                exc.anchor,
+                topic,
+            )
+            self._surface_resolve_failure(exc.anchor)
+            return
         except Exception:
             logger.exception("[lux] dropping music event on %s: %r", topic, payload)
             return
@@ -179,6 +194,19 @@ class LuxSubscription:
             event.surface_failure(self._presenter)
         except Exception:
             logger.exception("[lux] could not surface the playback failure")
+
+    def _surface_resolve_failure(self, anchor: str) -> None:
+        """Re-push the scene with a resolve-failure warning; never raise (boundary).
+
+        Mirrors :meth:`_surface_failure` but for the case where nothing resolved:
+        the codec produced no event, so the anchor text (the clicked cell) carries
+        the message instead of an album id. Failing to surface is logged, not
+        propagated -- one bad frame can never tear down the connection.
+        """
+        try:
+            self._presenter.present_resolve_failure(anchor)
+        except Exception:
+            logger.exception("[lux] could not surface the resolve failure")
 
     async def on_callback(self, callback_id: str) -> None:
         """Open (re-push) the music scene when the ``Music`` menu entry is clicked."""

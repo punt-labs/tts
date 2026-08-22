@@ -13,7 +13,10 @@ from typing import TYPE_CHECKING, final
 
 import pytest
 
-from punt_vox.voxd.music_player.player_event_codec import PlayerEventCodec
+from punt_vox.voxd.music_player.player_event_codec import (
+    AnchorUnresolvedError,
+    PlayerEventCodec,
+)
 from punt_vox.voxd.music_player.player_events import (
     Next,
     Pause,
@@ -104,9 +107,22 @@ def test_decode_rejects_a_non_string_anchor(album_of: AlbumFactory) -> None:
 
 
 def test_decode_rejects_an_anchor_naming_no_album(album_of: AlbumFactory) -> None:
+    # A well-formed anchor naming no album raises the dedicated
+    # ``AnchorUnresolvedError`` (a ``ValueError`` subclass), so the boundary can
+    # surface a transient warning rather than the silent drop malformed frames get.
     album = album_of("aa11bb", name="Techno Mix")
-    with pytest.raises(ValueError, match="names no catalogued album"):
+    with pytest.raises(AnchorUnresolvedError) as info:
         PlayerEventCodec().decode("music.play", {"anchor": "Ghost Album"}, (album,))
+    assert info.value.anchor == "Ghost Album"
+
+
+def test_anchor_unresolved_error_str_carries_the_descriptive_message() -> None:
+    # BaseException.__init__ would otherwise overwrite .args and collapse str(exc)
+    # to the bare anchor; __str__ composes the descriptive message from _anchor.
+    exc = AnchorUnresolvedError("Ghost Album")
+    assert str(exc) == "music.play anchor 'Ghost Album' names no catalogued album"
+    assert exc.anchor == "Ghost Album"
+    assert exc.args == ("Ghost Album",)  # anchor preserved for pickling/reflection
 
 
 def test_decode_stop_builds_a_stop_music() -> None:
