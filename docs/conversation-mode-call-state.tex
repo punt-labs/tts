@@ -1,0 +1,400 @@
+%
+% conversation-mode-call-state.tex
+%
+% Z Specification for the Conversation Mode call state machine.
+% Formal model of idle/listening/waiting/speaking, turn detection, and
+% barge-in -- written for Slice 1a of the Conversation Mode Phase 1 epic
+% (docs/conversation-mode-prd.tex Chapter 2, section "The unresolved core:
+% session attachment", and Chapter 3's testability addendum).
+%
+
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fuzz}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+
+\begin{document}
+
+\title{Vox Conversation Mode: A Z Specification for the Call State Machine}
+\author{Formal Model of idle/listening/waiting/speaking}
+\date{August 2026}
+\hypersetup{
+  pdftitle={Vox Conversation Mode Call State Machine: A Z Specification},
+  pdfauthor={Punt Labs},
+  pdfsubject={Z Specification},
+  pdfcreator={fuzz/probcli}
+}
+\maketitle
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+
+A Conversation Mode call moves through four modes -- \emph{idle} (no call),
+\emph{listening} (waiting to hear the human), \emph{waiting} (a turn has been
+sent to the agent; no reply audio yet), and \emph{speaking} (the agent's reply
+is playing). This document models that machine formally, per
+\texttt{docs/WORKFLOW.md}'s stateful-audio gate: the machine has four modes
+and transitions between them, invariants must hold across those transitions
+(a pending human utterance is never silently dropped), and a wrong transition
+here is exactly the class of defect that gate exists to catch before code is
+written, not after.
+
+Two questions were named in \texttt{docs/conversation-mode-prd.tex} as
+requiring resolution \emph{before} this model was written, not discovered
+while writing it (Chapter 2, ``Known unknowns''; Chapter 3,
+\S\ref{sec:test-di} item 6). Both are resolved here, explicitly:
+
+\begin{enumerate}
+  \item \textbf{Which detector governs a human speaking during the agent's
+    silent think-time (\emph{waiting}, before any reply audio starts)?}
+    Resolved in \S\ref{sec:detector} as a totally-defined function from
+    \texttt{Mode} to \texttt{Detector}: the \emph{turn detector} governs
+    both \emph{listening} and \emph{waiting} -- barge-in detection requires
+    agent audio to interrupt, and no agent audio exists until \emph{speaking}
+    begins, so there is nothing for a barge-in detector to do during
+    \emph{waiting}. A human who speaks again during \emph{waiting} is not
+    interrupting anything; the turn detector's normal end-of-utterance logic
+    applies, and what it captures is held as a \emph{pending addendum}
+    (\S\ref{sec:addendum}), not discarded and not immediately dispatched as a
+    second, concurrent turn (FR-4: one call is one human and one agent
+    session at a time; the current turn is still in flight).
+  \item \textbf{Where does the single serialized dispatch point for this
+    state machine live?} Resolved in \S\ref{sec:dispatch} as a design
+    requirement on the machine's \emph{caller}, not a property the pure
+    state schema below can enforce by itself -- exactly as
+    \texttt{voxd/programs/program.py}'s \texttt{Program} already documents
+    for its own single-writer assumption. \S\ref{sec:dispatch} states the
+    resolution and why it is the right one for this codebase.
+\end{enumerate}
+
+This model does not attempt session attachment, turn-detection acoustics, or
+synthesis timing -- those are described informally in
+\texttt{docs/conversation-mode-prd.tex} Chapter 2 and are the subject of
+Slice 1b onward. This model's job is the state machine those components
+drive: the shape \texttt{Program} already proved out for Audio Programs
+(\texttt{docs/audio-programs.tex}), applied to a live call instead of a
+playlist.
+
+\section{Basic Types}
+
+There is no session or agent identifier in this model. FR-4 requires
+exactly one human and one Claude Code agent session per call, and that
+constraint is structural (one \texttt{CallState} instance per call, created
+by \texttt{StartCall} and destroyed by the return to \texttt{idle}) rather
+than a value carried in the state, the same reasoning
+\texttt{docs/audio-programs.tex} gives for \texttt{Program} carrying no
+owner.
+
+\begin{zed}
+  [TURN]
+\end{zed}
+
+$TURN$ is an opaque handle for one transcribed human utterance -- what a
+\texttt{TranscribedTurn} carries in the implementation
+(\texttt{src/punt\_vox/voxd/conversation\_mode/turn.py}). Its
+internal structure (the transcript text, a confidence signal) is outside
+this model; the state machine only needs to know a turn was detected, not
+what it says.
+
+\section{Free Types}
+
+\begin{zed}
+  Mode ::= idle | listening | waiting | speaking
+\end{zed}
+
+\begin{zed}
+  Detector ::= noDetector | turnDetector | bargeInDetector
+\end{zed}
+
+\begin{zed}
+  ZBOOL ::= ztrue | zfalse
+\end{zed}
+
+A Z boolean (avoids the ProB/B keyword clash with \texttt{BOOL}), following
+the convention already established in \texttt{docs/audio-programs.tex}.
+
+\section{Which Detector Governs Each Mode}
+\label{sec:detector}
+
+\begin{axdef}
+  activeDetector : Mode \fun Detector
+  \where
+  activeDetector~idle = noDetector \\
+  activeDetector~listening = turnDetector \\
+  activeDetector~waiting = turnDetector \\
+  activeDetector~speaking = bargeInDetector
+\end{axdef}
+
+This is the resolution to gap (a): a \emph{total} function, so there is no
+mode for which ``which detector'' is left unanswered. \texttt{waiting} maps
+to \texttt{turnDetector}, the same detector as \texttt{listening} -- the two
+non-speaking modes share one detector, and only \texttt{speaking} switches to
+\texttt{bargeInDetector}. This is not an arbitrary tie-break: barge-in is
+defined (FR-8) as interrupting the agent's \emph{speech}, and there is no
+speech to interrupt before \texttt{speaking} begins. Modelling
+\texttt{activeDetector} as a total function, rather than leaving the
+\texttt{waiting} case as prose, is what makes the resolution checkable --
+\texttt{fuzz} rejects the specification if the function is not total over
+\texttt{Mode}.
+
+\section{Pending Addenda}
+\label{sec:addendum}
+
+\begin{schema}{CallState}
+  mode : Mode \\
+  hasPendingAddendum : ZBOOL
+  \where
+  hasPendingAddendum = ztrue \implies mode \in \{waiting, speaking\}
+\end{schema}
+
+The invariant is the second half of gap (a)'s resolution: a pending addendum
+--- speech the turn detector captured during \texttt{waiting} that was not
+yet part of any turn sent to the agent --- can only exist while the call has
+not yet returned to \texttt{listening}. Read contrapositively: whenever the
+call is in \texttt{idle} or \texttt{listening}, \texttt{hasPendingAddendum}
+is \texttt{zfalse} by construction. Every operation that lands on
+\texttt{listening} (\texttt{BargeIn}, \texttt{ReplyEnds}) must therefore
+discharge the flag explicitly, in the same operation -- the model will not
+type-check otherwise, because the invariant would be violated on entry to
+\texttt{listening}. This is a formal way of saying ``an addendum is never
+silently dropped'': it cannot survive a transition back to
+\texttt{listening} without the operation that makes that transition
+explicitly accounting for it. What the implementation does with the
+discharged content (fold it into the start of the next turn, per the same
+principle FR-9 already establishes for barge-in speech) is outside this
+model's scope, but the model pins the \emph{moment} that hand-off must
+happen: exactly at \texttt{BargeIn} or \texttt{ReplyEnds}, never later.
+
+\section{Initialisation}
+
+\begin{schema}{Init}
+  CallState'
+  \where
+  mode' = idle \\
+  hasPendingAddendum' = zfalse
+\end{schema}
+
+\section{Operations}
+
+\subsection{Call lifecycle}
+
+\begin{schema}{StartCall}
+  \Delta CallState
+  \where
+  mode = idle \\
+  mode' = listening \\
+  hasPendingAddendum' = zfalse
+\end{schema}
+
+A call begins listening immediately (UC-1, FR-1): there is no
+intermediate ``setting up'' mode between \texttt{idle} and
+\texttt{listening}.
+
+\begin{schema}{EndCall}
+  \Delta CallState
+  \where
+  mode \neq idle \\
+  mode' = idle \\
+  hasPendingAddendum' = zfalse
+\end{schema}
+
+An explicit hangup (UC-9, FR-2) ends the call from any active mode,
+including mid-\texttt{speaking} -- the human can end the call while the
+agent is still talking.
+
+\begin{schema}{TimeoutCall}
+  \Delta CallState
+  \where
+  mode = listening \\
+  mode' = idle \\
+  hasPendingAddendum' = zfalse
+\end{schema}
+
+The bounded-inactivity timeout (FR-2) fires only from \texttt{listening}:
+that is the one mode in which the human is expected to be about to speak
+and nothing is otherwise in flight. \texttt{waiting} and \texttt{speaking}
+have their own bounded-time failure paths (a synthesis call that never
+returns, Chapter 2's ``Known unknowns'') that are a distinct concern from
+mic-inactivity and are out of this model's scope, per the PRD's own framing
+of that gap as unresolved.
+
+\subsection{Turn detection}
+
+\begin{schema}{TurnDetected}
+  \Delta CallState
+  \where
+  mode = listening \\
+  mode' = waiting \\
+  hasPendingAddendum' = zfalse
+\end{schema}
+
+The turn detector (\S\ref{sec:detector}: active in \texttt{listening}) fires
+end-of-turn (FR-5); the transcribed turn is sent to the agent session
+(\texttt{SessionAttach.send\_turn}, out of this model's scope) and the call
+enters \texttt{waiting} -- no reply audio yet, but a turn is in flight.
+
+\begin{schema}{CaptureDuringWait}
+  \Delta CallState
+  \where
+  mode = waiting \\
+  mode' = waiting \\
+  hasPendingAddendum' = ztrue
+\end{schema}
+
+This is the operation gap (a) exists to name: the turn detector
+(\S\ref{sec:detector}: still active in \texttt{waiting}) fires again while
+the call is already waiting on the agent's reply. FR-4 rules out
+dispatching a second, concurrent turn to the same session -- one call is one
+human and one agent session, and the first turn has not yet been answered --
+so the newly-detected speech is recorded as pending, per
+\S\ref{sec:addendum}, rather than sent immediately or discarded.
+
+\subsection{The agent's turn}
+
+\begin{schema}{ReplyBegins}
+  \Delta CallState
+  \where
+  mode = waiting \\
+  mode' = speaking \\
+  hasPendingAddendum' = hasPendingAddendum
+\end{schema}
+
+The reply's first complete portion is ready to play (FR-11); the call
+enters \texttt{speaking}. A pending addendum, if any, carries through
+unchanged -- it is not yet discharged, because the call has not yet
+returned to \texttt{listening} (\S\ref{sec:addendum}).
+
+\begin{schema}{BargeIn}
+  \Delta CallState
+  \where
+  mode = speaking \\
+  mode' = listening \\
+  hasPendingAddendum' = zfalse
+\end{schema}
+
+The barge-in detector (\S\ref{sec:detector}: active in \texttt{speaking})
+fires; the agent's audio stops (FR-8) and the call returns to
+\texttt{listening}. Any pending addendum accumulated during the prior
+\texttt{waiting} phase, plus the interrupting speech itself, are both
+discharged here (\S\ref{sec:addendum}) and become the start of the next turn
+(FR-9) -- the model does not distinguish ``lost because of the barge-in''
+from ``carried forward,'' because the invariant forbids the former: reaching
+\texttt{listening} with \texttt{hasPendingAddendum} still \texttt{ztrue} is
+not a reachable state.
+
+\begin{schema}{ReplyEnds}
+  \Delta CallState
+  \where
+  mode = speaking \\
+  mode' = listening \\
+  hasPendingAddendum' = zfalse
+\end{schema}
+
+The reply finishes without interruption; the call signals ``ready to
+listen'' audibly (FR-3, NFR-6) and returns to \texttt{listening}. Any
+pending addendum is discharged the same way as in \texttt{BargeIn} -- the
+two operations are the only two paths into \texttt{listening} from an active
+call, and both carry the same obligation.
+
+\subsection{Observation}
+
+\begin{schema}{CurrentDetector}
+  \Xi CallState \\
+  detector! : Detector
+  \where
+  detector! = activeDetector~mode
+\end{schema}
+
+A non-mutating query: which detector is live right now. This is the
+queryable form of gap (a)'s resolution -- a test or a caller can ask
+\texttt{CurrentDetector} in any reachable state and get a definite answer,
+never ``undefined for this mode.''
+
+\section{The Single Serialized Dispatch Point}
+\label{sec:dispatch}
+
+This is the resolution to gap (b), and it is stated in prose rather than as
+a further Z schema, for the same reason
+\texttt{voxd/programs/program.py}'s single-writer assumption is a docstring
+note on \texttt{Program} rather than a schema in
+\texttt{docs/audio-programs.tex}: Z models the shape of state and the
+preconditions/postconditions of a transition, not a scheduling discipline
+between concurrent callers. The state schema above is safe to reason about
+in isolation \emph{only} if exactly one caller applies one operation at a
+time -- the same caveat \texttt{Program} carries and does not enforce
+internally.
+
+\texttt{docs/conversation-mode-prd.tex} names three components that can call
+into this state machine concurrently: turn detection, barge-in detection,
+and sentence-streamed synthesis (which drives \texttt{ReplyBegins}). All
+three are independently-running, continuous processes for the life of a
+call (Chapter 2, ``Component overview''). Copying \texttt{Program}'s pure
+class shape without also copying its single-writer discipline reproduces a
+data race, not a design -- this section is where that discipline is pinned
+down for Conversation Mode specifically.
+
+\textbf{Resolution: an actor with an internal, single-consumer command
+queue}, not an explicit lock. \texttt{voxd} is fully async
+(\texttt{docs/conversation-mode-prd.tex}, ``Sentence-streamed synthesis: one
+pipeline, not two'' -- every handler in \texttt{voxd/*.py} is \texttt{async
+def}), and Python's asyncio event loop is already single-threaded and
+cooperative: a lock is the wrong tool for serializing access between
+coroutines running on one loop, because nothing preempts a coroutine
+mid-statement the way a thread can be preempted. An explicit lock would add
+ceremony (acquire/release, and the risk of holding it across an
+\texttt{await} and reintroducing exactly the race it exists to prevent) for
+no safety a queue does not already give for free.
+
+The concrete shape: a \texttt{CallActor} owns one \texttt{CallState} and one
+\texttt{asyncio.Queue} of commands (one variant per operation above -- a
+tagged union, not a bare callable, so the actor's dispatch loop can pattern
+match and each command remains a first-class, testable value per PY-DP-3).
+Turn detection, barge-in detection, and the synthesis pipeline each hold a
+reference to the queue, never to the \texttt{CallState} or the
+\texttt{Program}-shaped class directly -- they enqueue a command and return;
+they never call an operation method on the state class themselves. Exactly
+one task drains the queue, one command at a time, applying the matching
+operation and awaiting nothing while doing so (the operation methods
+themselves, mirroring \texttt{Program}, are synchronous bare-attribute
+assignments with no \texttt{await} inside them) -- so no other command can
+interleave mid-operation. This is the queue analogue of
+\texttt{Program}'s documented (but unenforced) single-writer assumption,
+made structurally impossible to violate rather than merely stated: there is
+exactly one reader of the queue, and the state class itself is never handed
+to any of the three concurrent producers.
+
+This is a design requirement on Slice 1b's implementation, not a component
+this design mission builds -- consistent with this mission's boundary
+(the fake and Protocol under
+\texttt{src/punt\_vox/voxd/conversation\_mode/} model \emph{session
+attachment}, not the call actor). It is recorded here, in the Z
+specification, because \texttt{docs/conversation-mode-prd.tex} explicitly
+requires this document to be the place that gap is settled, not an
+implementation detail discovered afterward.
+
+\section{Known Limitations}
+
+This model does not address two items \texttt{docs/conversation-mode-prd.tex}
+names as separately unresolved, and neither was in this mission's scope to
+resolve:
+
+\begin{itemize}
+  \item \textbf{A stuck or free-running detector.} The model assumes
+    \texttt{activeDetector} always eventually fires the transition it
+    governs. A detector that hangs (no transition ever fires) or free-runs
+    (fires spuriously with no genuine speech) is a runtime failure mode
+    this state machine cannot detect from the inside -- consistent with
+    \texttt{docs/conversation-mode-prd.tex}'s own framing of this as an open
+    question, not a gap this document was asked to close.
+  \item \textbf{A synthesis call that never returns mid-turn.} The model
+    assumes \texttt{ReplyBegins} is always eventually reachable from
+    \texttt{waiting}. A hung synthesis call is, like the stuck detector
+    above, a bounded-time failure this document does not attempt to model;
+    \texttt{docs/conversation-mode-prd.tex} suggests a timeout ending the
+    turn (mirroring FR-18) as the likely mechanism, but that is
+    implementation, not this model's job.
+\end{itemize}
+
+\end{document}
