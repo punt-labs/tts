@@ -240,11 +240,10 @@ unit-tested in-process.
 No marker, no external service dependency. This is the vast majority of the
 suite (~4,130 of ~4,340 tests) and runs on every `uv run pytest`, `make test`,
 and `make check`. A handful of unmarked tests still spawn real local
-subprocesses -- `test_core.py` and `test_public_api.py` call `ffmpeg` directly
-outside the cached-MP3-bytes fixture path, and `test_service_process.py`
-exercises the daemon-restart flow -- but none of them reach the network or a
-credentialed API, so the tier's contract ("safe to run anywhere, no external
-dependency") holds. Tests that spawn a real *shell script* under test move to
+subprocesses -- `test_core.py` invokes `ffmpeg` directly outside the
+cached-MP3-bytes fixture path, and `test_public_api.py` runs a `python -c`
+import-lightness probe -- but none reach the network or a credentialed API, so
+the tier's contract ("safe to run anywhere, no external dependency") holds. Tests that spawn a real *shell script* under test move to
 Tier 3a; local `ffmpeg`/interpreter spawns from tests whose subject is
 in-process code stay here.
 
