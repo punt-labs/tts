@@ -1,16 +1,15 @@
 """``LuxMenuRegistrar`` -- register voxd's ``Music`` menu entry, best-effort.
 
 The mirror of :class:`LuxScenePublisher` for the menu leg: a thin, guarded transport
-over the public REST client. :meth:`register` builds the client and calls
-``register_callback`` off-thread (the call blocks), and swallows a down luxd or a
-refused registration into a log line -- a missing menu entry must never crash the
-receive leg or the daemon. The lux lease keeps the entry alive once registered; a
-fresh voxd re-registers on start (Z model *register-fresh*).
+over the ``LuxClient`` facade. :meth:`register` builds the client and awaits
+``client.callback.register`` -- natively async on the facade -- and swallows a down
+luxd or a refused registration into a log line: a missing menu entry must never
+crash the receive leg or the daemon. The lux lease keeps the entry alive once
+registered; a fresh voxd re-registers on start (Z model *register-fresh*).
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Self, final
 
@@ -21,7 +20,7 @@ from punt_vox.voxd.music_player.lux_trace import LuxTrace
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from punt_vox.voxd.music_player.hub_ports import MenuClient
+    from punt_lux import LuxClient
 
 __all__ = ["LuxMenuRegistrar"]
 
@@ -31,18 +30,18 @@ _trace = LuxTrace(logger)
 
 @final
 class LuxMenuRegistrar:
-    """Register one menu callback over the public REST client, failure-tolerant."""
+    """Register one menu callback over the ``LuxClient`` facade, failure-tolerant."""
 
     __slots__ = ("_connect",)
-    _connect: Callable[[], MenuClient]
+    _connect: Callable[[], LuxClient]
 
-    def __new__(cls, connect: Callable[[], MenuClient]) -> Self:
+    def __new__(cls, connect: Callable[[], LuxClient]) -> Self:
         self = super().__new__(cls)
         self._connect = connect
         return self
 
     async def register(self, callback_id: str, label: str) -> None:
-        """Register the ``label`` menu entry off-thread, dropping any lux failure.
+        """Register the ``label`` menu entry, dropping any lux failure.
 
         This is a best-effort REST I/O boundary. A down luxd logs a warning; any
         other transport fault -- a refused connection, a timeout, a client-side
@@ -51,10 +50,8 @@ class LuxMenuRegistrar:
         restart and turn a missing menu into a dropped connection.
         """
         try:
-            client = await asyncio.to_thread(self._connect)
-            result = await asyncio.to_thread(
-                client.register_callback, callback_id, label
-            )
+            client = self._connect()
+            result = await client.callback.register(callback_id, label)
         except HubUnavailableError:
             _trace.warning("luxd unavailable; %r menu entry not registered", label)
             return

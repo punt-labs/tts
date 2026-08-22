@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, cast, final
 
 import pytest
 from punt_lux import OpError
+from punt_lux.operations import Ok
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.panel.panel_notice import PanelNotice
@@ -17,10 +18,9 @@ from punt_vox.types_errors import ConfigValueError
 from punt_vox.types_synthesis import SynthesisSpec
 
 if TYPE_CHECKING:
-    from punt_lux import RenderRequest, SceneShown
+    from punt_lux import LuxClient, RenderRequest, SceneShown
     from punt_lux.applets import ClickLatency
     from punt_lux.hub_client import CallbackHandler, ConnectHandler, EventHandler
-    from punt_lux.operations import Ok
 
     from punt_vox.client import SynthesizeResult
     from punt_vox.config import VoxConfig
@@ -81,21 +81,34 @@ class _FakeStore:
 
 
 @final
+class _FakeSceneAccessor:
+    def __init__(self, outer: _FakeRest) -> None:
+        self._outer = outer
+
+    async def show(self, request: RenderRequest | OpError) -> SceneShown | OpError:
+        if self._outer._refuse:
+            return OpError(code="rejected", reason="no display")
+        if isinstance(request, OpError):
+            return request
+        self._outer.rendered.append(request)
+        return cast("SceneShown", Ok())
+
+
+@final
+class _FakeCallbackAccessor:
+    async def register(self, callback_id: str, label: str) -> Ok | OpError:
+        raise NotImplementedError
+
+
+@final
 class _FakeRest:
-    """A ``PanelRestClient`` double that only needs ``render`` for these tests."""
+    """A ``PanelRestClient`` double that only needs ``scene.show`` for these tests."""
 
     def __init__(self, *, refuse: bool = False) -> None:
         self._refuse = refuse
         self.rendered: list[RenderRequest] = []
-
-    def render(self, request: RenderRequest) -> SceneShown | OpError:
-        if self._refuse:
-            return OpError(code="rejected", reason="no display")
-        self.rendered.append(request)
-        return None  # type: ignore[return-value]
-
-    def register_callback(self, callback_id: str, label: str) -> Ok | OpError:
-        raise NotImplementedError
+        self.scene = _FakeSceneAccessor(self)
+        self.callback = _FakeCallbackAccessor()
 
     def listener(
         self,
@@ -542,16 +555,18 @@ class TestApplyEvent:
 
 
 class TestPushScene:
-    def test_pushes_the_held_scene(self) -> None:
+    async def test_pushes_the_held_scene(self) -> None:
         service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
         rest = _FakeRest()
-        service.push_scene(rest)
+        await service.push_scene(cast("LuxClient", rest))
         assert len(rest.rendered) == 1
         assert rest.rendered[0].scene_id == "vox.panel"
 
-    def test_luxd_refusal_is_logged_not_raised(self) -> None:
+    async def test_luxd_refusal_is_logged_not_raised(self) -> None:
         service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
-        service.push_scene(_FakeRest(refuse=True))  # must not raise
+        await service.push_scene(
+            cast("LuxClient", _FakeRest(refuse=True))
+        )  # must not raise
 
 
 class TestRefreshAndRecover:
@@ -673,21 +688,21 @@ class TestConcurrentApplyEvent:
 
 
 class TestAcknowledgeAndService:
-    def test_acknowledge_pushes_the_held_scene(self) -> None:
+    async def test_acknowledge_pushes_the_held_scene(self) -> None:
         from punt_lux.applets import ClickLatency
 
         service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
         rest = _FakeRest()
-        service.acknowledge(rest, ClickLatency("vox-panel"))
+        await service.acknowledge(cast("LuxClient", rest), ClickLatency("vox-panel"))
         assert len(rest.rendered) == 1
 
-    def test_service_refreshes_then_pushes(self) -> None:
+    async def test_service_refreshes_then_pushes(self) -> None:
         from punt_lux.applets import ClickLatency
 
         store = _FakeStore(_config(voice="aria"))
         service = VoxPanelService(_FakeDaemonClient(), store)
         rest = _FakeRest()
         latency: ClickLatency = ClickLatency("vox-panel")
-        service.service(rest, latency)
+        await service.service(cast("LuxClient", rest), latency)
         assert service.scene().voice == "aria"
         assert len(rest.rendered) == 1

@@ -19,7 +19,6 @@ would split one story across two.
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Self, final
 
 from punt_lux import OpError
@@ -28,10 +27,10 @@ if TYPE_CHECKING:
     import logging
     from collections.abc import Callable
 
+    from punt_lux import LuxClient
     from punt_lux.operations import Ok
 
     from punt_vox.panel.panel_guard import PanelGuard
-    from punt_vox.panel.ports import PanelRestClient
     from punt_vox.panel.service import VoxPanelService
 
 __all__ = ["PanelMenuEntry"]
@@ -44,7 +43,7 @@ class PanelMenuEntry:
     """The panel's menu entry: the call that puts it up, and how it can fail."""
 
     _service: VoxPanelService
-    _rest_factory: Callable[[], PanelRestClient]
+    _rest_factory: Callable[[], LuxClient]
     _guard: PanelGuard
     _logger: logging.Logger
     __slots__ = ("_guard", "_logger", "_rest_factory", "_service")
@@ -52,7 +51,7 @@ class PanelMenuEntry:
     def __new__(
         cls,
         service: VoxPanelService,
-        rest_factory: Callable[[], PanelRestClient],
+        rest_factory: Callable[[], LuxClient],
         guard: PanelGuard,
         logger: logging.Logger,
     ) -> Self:
@@ -64,7 +63,7 @@ class PanelMenuEntry:
         return self
 
     async def registered(self) -> bool:
-        """Put the entry up off the loop; answer whether it is there to be clicked.
+        """Put the entry up over the facade; answer whether it is there to click.
 
         One answer covers all three ways it can be absent -- luxd away, luxd
         refusing, a bug -- because whatever waits behind the entry waits on
@@ -72,7 +71,7 @@ class PanelMenuEntry:
         """
         try:
             with self._guard.outage(_UNAVAILABLE_MESSAGE):
-                return self._landed(await asyncio.to_thread(self._register_now))
+                return self._landed(await self._register_now())
         except Exception:
             self._logger.exception("the panel's menu entry could not be registered")
         return False
@@ -84,7 +83,7 @@ class PanelMenuEntry:
             return False
         return True
 
-    def _register_now(self) -> Ok | OpError:
-        return self._rest_factory().register_callback(
+    async def _register_now(self) -> Ok | OpError:
+        return await self._rest_factory().callback.register(
             self._service.callback_id, self._service.label
         )

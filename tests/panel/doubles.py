@@ -39,8 +39,10 @@ __all__ = [
     "PANEL_LOGGER",
     "FailPoint",
     "Failure",
+    "FakeCallbackAccessor",
     "FakeListener",
     "FakeRest",
+    "FakeSceneAccessor",
     "FakeService",
     "panel_records",
     "wait_until",
@@ -121,10 +123,37 @@ class FakeListener:
 
 
 @final
-class FakeRest:
-    """A ``PanelRestClient`` double: canned register result, records listeners."""
+class FakeSceneAccessor:
+    """The ``client.scene`` verbs the panel's push path uses -- ``show`` only."""
 
-    _fail_at: FailPoint | None
+    def __init__(self, outer: FakeRest) -> None:
+        self._outer = outer
+
+    async def show(self, request: RenderRequest) -> SceneShown | OpError:
+        self._outer.rendered_count += 1
+        return cast("SceneShown", Ok())
+
+
+@final
+class FakeCallbackAccessor:
+    """The ``client.callback`` verbs the panel's register path uses -- ``register``."""
+
+    def __init__(self, outer: FakeRest) -> None:
+        self._outer = outer
+
+    async def register(self, callback_id: str, label: str) -> Ok | OpError:
+        if self._outer.fail_at == "register":
+            raise self._outer.error
+        self._outer.registered.append((callback_id, label))
+        return self._outer.register_result
+
+
+@final
+class FakeRest:
+    """A ``PanelRestClient`` double: scene push, callback register, listener build."""
+
+    fail_at: FailPoint | None
+    error: Exception
 
     def __init__(
         self,
@@ -137,18 +166,10 @@ class FakeRest:
         self.registered: list[tuple[str, str]] = []
         self.rendered_count = 0
         self.listener_built: FakeListener | None = None
-        self._fail_at = fail_at
-        self._error = error if error is not None else HubUnavailableError("down")
-
-    def render(self, request: RenderRequest) -> SceneShown | OpError:
-        self.rendered_count += 1
-        return cast("SceneShown", Ok())
-
-    def register_callback(self, callback_id: str, label: str) -> Ok | OpError:
-        if self._fail_at == "register":
-            raise self._error
-        self.registered.append((callback_id, label))
-        return self.register_result
+        self.fail_at = fail_at
+        self.error = error if error is not None else HubUnavailableError("down")
+        self.scene = FakeSceneAccessor(self)
+        self.callback = FakeCallbackAccessor(self)
 
     def listener(
         self,
@@ -157,9 +178,9 @@ class FakeRest:
         on_event: EventHandler,
         on_connect: ConnectHandler | None = None,
     ) -> HubListener:
-        if self._fail_at == "listener":
-            raise self._error
-        self.listener_built = FakeListener(fail_at=self._fail_at, error=self._error)
+        if self.fail_at == "listener":
+            raise self.error
+        self.listener_built = FakeListener(fail_at=self.fail_at, error=self.error)
         return self.listener_built
 
 
@@ -196,10 +217,10 @@ class FakeService:
         self.prefetch_gate.wait(_GATE_SECONDS)
         self.prefetch_called = True
 
-    def acknowledge(self, client: object, latency: object) -> None:
+    async def acknowledge(self, client: object, latency: object) -> None:
         self.acknowledged += 1
 
-    def service(self, client: object, latency: object) -> None:
+    async def service(self, client: object, latency: object) -> None:
         if self._raise_on == "service":
             raise VoxdProtocolError(self.refusal)
         if self._raise_on == "unexpected":
@@ -226,7 +247,7 @@ class FakeService:
         self.applied.append((topic, payload))
         return self.apply_returns
 
-    def push_scene(self, client: object) -> None:
+    async def push_scene(self, client: object) -> None:
         self.pushed += 1
 
     def recover_from_write_failure(self, field: str) -> None:

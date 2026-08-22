@@ -27,8 +27,9 @@ from punt_vox.panel.topics import PanelTopic
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from punt_lux import LuxClient
+
     from punt_vox.panel.leg import VoxPanelLeg
-    from punt_vox.panel.ports import PanelRestClient
 
 # How long _register may take while a warm-up is blocked. Well under the gate
 # the double waits on, so a warm-up that went back to being awaited inline
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
 _HANDSHAKE_SECONDS = 2.0
 
 
-def _luxd_is_down() -> PanelRestClient:
+def _luxd_is_down() -> LuxClient:
     raise HubUnavailableError("down")
 
 
@@ -97,11 +98,11 @@ class TestListenOnce:
         caplog.set_level(logging.DEBUG, logger=PANEL_LOGGER.name)
         boom = RuntimeError("boom")
 
-        def _rest() -> PanelRestClient:
+        def _rest() -> LuxClient:
             if fail_at == "connect":
                 raise boom
             built = FakeRest(fail_at=cast("FailPoint", fail_at), error=boom)
-            return cast("PanelRestClient", built)
+            return cast("LuxClient", built)
 
         leg = build_leg(FakeService(), _rest)
         await leg._listen_once()  # must not raise
@@ -234,10 +235,10 @@ class TestOutageLogging:
         rest = FakeRest()
         luxd_is_down = True
 
-        def _factory() -> PanelRestClient:
+        def _factory() -> LuxClient:
             if luxd_is_down:
                 raise HubUnavailableError("down")
-            return cast("PanelRestClient", rest)
+            return cast("LuxClient", rest)
 
         leg = build_leg(FakeService(), _factory)
         await leg._listen_once()  # the outage opens

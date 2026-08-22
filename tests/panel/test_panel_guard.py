@@ -13,10 +13,11 @@ from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.panel.panel_guard import PanelGuard
 
 if TYPE_CHECKING:
-    from punt_vox.panel.ports import PanelRestClient
+    from punt_lux import LuxClient
+
     from punt_vox.panel.service import VoxPanelService
 
-_REST = cast("PanelRestClient", object())
+_REST = cast("LuxClient", object())
 
 
 def _raise(exc: Exception) -> None:
@@ -65,28 +66,26 @@ class TestOutage:
 
 
 class TestRejection:
-    def test_a_refusal_is_noted_logged_and_pushed_back_into_the_scene(
+    async def test_a_refusal_is_noted_logged_and_pushed_back_into_the_scene(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         caplog.set_level(logging.DEBUG, logger=PANEL_LOGGER.name)
         service = FakeService()
-        with _guard_for(service).rejection("a settings read"):
+        async with _guard_for(service).rejection("a settings read"):
             _raise(VoxdProtocolError(FAILURE_TEXT))
         assert service.rejections == [FAILURE_TEXT]
         assert service.pushed == 1
         assert [r.levelno for r in caplog.records] == [logging.ERROR]
         assert caplog.records[0].exc_info is not None
 
-    def test_voxd_merely_being_unreachable_is_not_a_refusal(self) -> None:
+    async def test_voxd_merely_being_unreachable_is_not_a_refusal(self) -> None:
         # An unreachable voxd is a transient the callers already answer with a
         # staleness notice; only a refusal -- voxd reached and saying no --
         # belongs to this guard.
         service = FakeService()
-        with (
-            pytest.raises(VoxdConnectionError),
-            _guard_for(service).rejection("a settings read"),
-        ):
-            _raise(VoxdConnectionError("no socket"))
+        with pytest.raises(VoxdConnectionError):
+            async with _guard_for(service).rejection("a settings read"):
+                _raise(VoxdConnectionError("no socket"))
         assert service.rejections == []
 
 
@@ -104,17 +103,17 @@ class TestOffscreenRejection:
 
 
 class TestRepush:
-    def test_a_push_reaches_the_service(self) -> None:
+    async def test_a_push_reaches_the_service(self) -> None:
         service = FakeService()
-        _guard_for(service).repush()
+        await _guard_for(service).repush()
         assert service.pushed == 1
 
-    def test_luxd_going_away_mid_push_is_swallowed(self) -> None:
+    async def test_luxd_going_away_mid_push_is_swallowed(self) -> None:
         service = FakeService()
 
-        def _factory() -> PanelRestClient:
+        def _factory() -> LuxClient:
             raise HubUnavailableError("down")
 
         guard = PanelGuard(cast("VoxPanelService", service), _factory, PANEL_LOGGER)
-        guard.repush()  # must not raise
+        await guard.repush()  # must not raise
         assert service.pushed == 0

@@ -113,7 +113,7 @@ class TestLegFor:
         """Build the leg for the standard test pid and return the identity it declares.
 
         Captures the ``ClientIdentity`` the REST factory closes over by
-        monkey-patching ``LuxRestClient.for_identity``, then invokes the
+        monkey-patching ``LuxClient.for_identity``, then invokes the
         factory once so the closed-over value flows into the capture. This
         is the identity the Hub attributes the panel's connection to.
         """
@@ -124,7 +124,7 @@ class TestLegFor:
             captured.append(identity)
             return object()
 
-        monkeypatch.setattr("punt_vox.panel.leg.LuxRestClient.for_identity", _capture)
+        monkeypatch.setattr("punt_vox.panel.leg.LuxClient.for_identity", _capture)
         leg = VoxPanelApplet._leg_for(_SESSION_PID)
         leg._rest_factory()
         return captured[0]

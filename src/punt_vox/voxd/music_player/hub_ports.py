@@ -1,29 +1,24 @@
-"""The lux receive-leg transport seams: the hub listener, the menu, the REST client.
+"""The lux receive-leg transport seams: the hub listener, the client factory.
 
 :class:`HubListener` is the one persistent WebSocket the subscription holds --
 subscribe to topics, then listen (with internal reconnect) until stopped; the
-concrete ``LuxHubClient`` satisfies it structurally. :class:`MenuClient` is the REST
-call that registers voxd's ``Music`` menu entry. :class:`LuxClient` is their REST
-union -- render a scene *and* register a callback -- so the composition root injects
-one factory that both the scene publisher and the menu registrar draw from.
+concrete ``LuxHubClient`` satisfies it structurally. :class:`LuxClientFactory`
+builds voxd's ``LuxClient`` facade and hub listener from one identity so the
+composition root injects one seam that both the scene publisher and the menu
+registrar draw from.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from punt_vox.voxd.music_player.ports import LuxRenderer
-
 if TYPE_CHECKING:
-    from punt_lux import CallbackHandler, EventHandler, OpError
+    from punt_lux import CallbackHandler, EventHandler, LuxClient
     from punt_lux.hub_client import ConnectHandler
-    from punt_lux.operations import Ok
 
 __all__ = [
     "HubListener",
-    "LuxClient",
     "LuxClientFactory",
-    "MenuClient",
     "MenuRegistrar",
 ]
 
@@ -46,20 +41,6 @@ class HubListener(Protocol):
 
 
 @runtime_checkable
-class MenuClient(Protocol):
-    """The REST surface that registers a menu callback under voxd's identity."""
-
-    def register_callback(self, callback_id: str, label: str) -> Ok | OpError:
-        """Register the ``Music`` menu entry, returning success or a typed error."""
-        ...
-
-
-@runtime_checkable
-class LuxClient(LuxRenderer, MenuClient, Protocol):
-    """The REST client that both renders scenes and registers the menu callback."""
-
-
-@runtime_checkable
 class MenuRegistrar(Protocol):
     """The guarded registration of one menu callback the subscription drives."""
 
@@ -70,15 +51,15 @@ class MenuRegistrar(Protocol):
 
 @runtime_checkable
 class LuxClientFactory(Protocol):
-    """Build voxd's two lux clients from one identity -- the composition seam.
+    """Build voxd's ``LuxClient`` facade and hub listener from one identity.
 
     Injected at the composition root so a test drives both legs with fakes; the
-    concrete ``VoxLuxClients`` satisfies it. Bundling the REST and hub factories
+    concrete ``VoxLuxClients`` satisfies it. Bundling the facade and hub factories
     behind one object keeps the subsystem's constructor to a single client seam.
     """
 
-    def rest(self) -> LuxClient:
-        """Build the REST client that renders scenes and registers the menu."""
+    def client(self) -> LuxClient:
+        """Build the ``LuxClient`` facade for scene push and menu registration."""
         ...
 
     def hub(
@@ -87,7 +68,7 @@ class LuxClientFactory(Protocol):
         on_callback: CallbackHandler,
         on_connect: ConnectHandler,
     ) -> HubListener:
-        """Build the hub client carrying the pub-sub receive stream.
+        """Build the hub listener carrying the pub-sub receive stream.
 
         ``on_connect`` is fired after every handshake -- first connect and every
         internal reconnect -- so the receive leg re-registers its menu and re-pushes

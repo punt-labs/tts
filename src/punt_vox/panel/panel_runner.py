@@ -32,8 +32,9 @@ if TYPE_CHECKING:
     import logging
     from collections.abc import Callable, Mapping
 
+    from punt_lux import LuxClient
+
     from punt_vox.panel.panel_guard import PanelGuard
-    from punt_vox.panel.ports import PanelRestClient
     from punt_vox.panel.service import VoxPanelService
 
 __all__ = ["PanelRunner"]
@@ -44,7 +45,7 @@ class PanelRunner:
     """The panel's three pieces of work: the warm-up, a click, a control change."""
 
     _service: VoxPanelService
-    _rest_factory: Callable[[], PanelRestClient]
+    _rest_factory: Callable[[], LuxClient]
     _guard: PanelGuard
     _logger: logging.Logger
     __slots__ = ("_guard", "_logger", "_rest_factory", "_service")
@@ -52,7 +53,7 @@ class PanelRunner:
     def __new__(
         cls,
         service: VoxPanelService,
-        rest_factory: Callable[[], PanelRestClient],
+        rest_factory: Callable[[], LuxClient],
         guard: PanelGuard,
         logger: logging.Logger,
     ) -> Self:
@@ -82,36 +83,36 @@ class PanelRunner:
             self._logger.exception("the panel's warm-up failed; the first click waits")
 
     async def clicked(self) -> None:
-        """Serve one menu click off the loop: acknowledge, then push it fresh."""
+        """Serve one menu click: acknowledge over the facade, then push it fresh."""
         try:
             with self._guard.outage("luxd unavailable; dropped a panel click"):
-                await asyncio.to_thread(self._serviced)
+                await self._serviced()
         except Exception:
             self._logger.exception(
                 "a panel click could not be served; the leg stays up"
             )
 
     async def changed(self, topic: str, payload: Mapping[str, object]) -> None:
-        """Apply one subscribed control change off the loop, re-pushing if it took."""
+        """Apply one subscribed control change, re-pushing if it took."""
         try:
-            await asyncio.to_thread(self._apply, topic, payload)
+            await self._apply(topic, payload)
         except Exception:
             self._logger.exception(
                 "a panel control event could not be applied: %s %r", topic, payload
             )
 
-    def _serviced(self) -> None:
+    async def _serviced(self) -> None:
         latency = ClickLatency(self._service.callback_id)
         rest = self._rest_factory()
-        self._service.acknowledge(rest, latency)
-        with self._guard.rejection("the settings read behind a panel click"):
-            self._service.service(rest, latency)
+        await self._service.acknowledge(rest, latency)
+        async with self._guard.rejection("the settings read behind a panel click"):
+            await self._service.service(rest, latency)
         latency.report()
 
-    def _apply(self, topic: str, payload: Mapping[str, object]) -> None:
-        with self._guard.rejection(f"a control change on {topic}"):
-            if self._applied(topic, payload):
-                self._guard.repush()
+    async def _apply(self, topic: str, payload: Mapping[str, object]) -> None:
+        async with self._guard.rejection(f"a control change on {topic}"):
+            if await asyncio.to_thread(self._applied, topic, payload):
+                await self._guard.repush()
 
     def _applied(self, topic: str, payload: Mapping[str, object]) -> bool:
         """Apply one control event; answer whether the scene needs a re-push.
