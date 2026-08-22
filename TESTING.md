@@ -197,6 +197,188 @@ tests/
     test_properties.py
 ```
 
+## Testing Pyramid
+
+Vox has no NATS/relay/multi-user surface, so this is not biff's eight-tier
+pyramid. Vox's actual shape is five TTS providers (mocked at the SDK
+boundary), a `voxd` daemon over WebSocket, an MCP server, a CLI, Claude Code
+hook shell scripts, a Lux display applet, and (arriving separately) a
+`conversation_mode` subpackage that will spawn a real `claude -p --resume`
+process and, eventually, drive a real Claude Agent SDK session. The tiers
+below reflect that shape, not a copy of biff's.
+
+```text
+             ┌───────────┐
+             │  Tier 4   │  sdk — real Claude Agent SDK session (reserved,
+             │           │  no tests yet; lands with conversation_mode)
+             ├───────────┤
+          ┌──┤  Tier 3b  │  integration — real, credentialed provider API
+          │  │           │  calls (reserved, no tests yet -- see below)
+          │  ├───────────┤
+       ┌──┤  │  Tier 3a  │  subprocess — real shell/git subprocess spawns
+       │  │  │           │  (hook scripts, install.sh, plugin-surface gate)
+       │  │  ├───────────┤
+       │  │  │  slow     │  cross-cutting -- heavy real-subprocess/
+       │  │  │           │  real-filesystem tests, wherever they occur
+       │  │  ├───────────┤
+       │  │  │  Tier 1   │  Unit -- mocked-provider-boundary, pure
+       │  │  │           │  functions, in-memory state machines
+       └──┴──┴───────────┘
+```
+
+`slow` is cross-cutting rather than a numbered tier because heavy tests do
+not cluster in one place: today they are all real-git-subprocess ratchet
+tests, but the marker exists for any test whose cost is disproportionate to
+what it verifies, wherever it turns up next. `subprocess` is a numbered tier
+because it is a specific, recurring shape in this codebase -- a test that can
+only be honest by spawning a real process (`bash`, `sh`, `git`) because the
+thing under test *is* a shell script or an install flow that cannot be
+unit-tested in-process.
+
+### Tier 1: Unit (default, unmarked)
+
+No marker, no external dependency, no real subprocess. This is the vast
+majority of the suite (~4,130 of ~4,340 tests) and runs on every
+`uv run pytest`, `make test`, and `make check`.
+
+| What it covers | Representative files |
+|-----------------|----------------------|
+| Pure functions, domain types | `test_types*.py`, `test_normalize.py`, `test_resolve.py` |
+| Mocked-provider-boundary synthesis | `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py`, `test_say_provider.py`, `test_espeak_provider.py`, `test_core.py` |
+| Real pydub/ffmpeg encode, mocked network | `test_chunked.py`, `test_core.py`, `test_public_api.py` (see [The MP3 Problem](#the-mp3-problem) -- the one real ffmpeg encode is cached once per session, not per test) |
+| WebSocket client/daemon wire protocol (in-process) | `test_client*.py`, `test_wire_reply.py`, `test_voxd_*.py` |
+| Hook dispatch logic (config/audio patched) | `test_hooks.py`, `test_hook_envelope.py`, `test_hook_payload.py`, `test_nudge_hook.py` |
+| Static shell-script assertions (no subprocess) | `test_hook_scripts.py` -- reads and greps the `.sh` files as text; does not execute them |
+| Filesystem/config I/O against `tmp_path` | `test_config.py`, `test_frontmatter.py`, `test_atomic_file.py` |
+| Service lifecycle, subprocess calls mocked via `@patch` | `test_service_process.py`, `test_service_launchctl.py`, `test_service_systemd.py` -- these spawn zero real processes; `subprocess.run` is patched at every call site |
+| Z-spec partition tests | `test_server_partition.py` |
+| Lux music-player / audio-programs subsystems (mocked Lux client) | `tests/music_player/`, `tests/programs/` -- ~854 tests, the largest subpackage, all in-memory/mocked |
+
+### The `slow` marker: real-git-subprocess ratchet tests
+
+`@pytest.mark.slow` is applied to four files whose tests each spin up a real
+`git init`/`commit`/`checkout` sequence in a tmp directory and then invoke the
+ratchet tool itself as a subprocess, per assertion:
+
+| File | Tests | What it drives |
+|------|-------|-----------------|
+| `test_oo_ratchet.py` | 55 | `tools/oo_ratchet` against real tmp git repos |
+| `test_oo_cli.py` | 10 | `tools/oo_ratchet.cli` argument parsing + a real git-repo fixture |
+| `test_coupling_ratchet.py` | 46 | `tools/coupling` merge-base scoping against real tmp git repos |
+| `test_suppression_ratchet.py` | 42 | `tools/suppression` counting + CLI dispatch against real tmp git repos |
+
+These are the single largest identifiable per-test cost in the suite: on this
+box, in isolation, the 153 tests took 32s (vs. ~0.02s/test for the unmarked
+default tier) -- real `git` subprocess round trips dominate, not CPU work
+(observed CPU utilization during these tests is well under 100% of one core,
+meaning the wall time is mostly the OS scheduling and I/O of spawning `git`
+processes, not computation). They are correct as real-subprocess tests --
+the ratchet tools must be proven against real git history, not a mock -- so
+the fix is not to make them lie about git; it is to make them opt-in.
+
+### Tier 3a: `subprocess` -- real shell/git subprocess spawns
+
+`@pytest.mark.subprocess` is applied to the three files that can only be
+honest by spawning a real process, because the thing under test is a shell
+script that cannot run in-process:
+
+| File | Tests | What it drives |
+|------|-------|-----------------|
+| `test_hook_gate.py` | 18 | Real `bash plugin/hooks/*.sh` invocations -- the per-repo enablement gate and the panel-spawn block |
+| `test_plugin_surface.py` | 8 | Real `bash scripts/check-plugin-surface.sh` invocations against fixture surfaces |
+| `test_install_script.py` | 13 | Real `sh install.sh` invocations under a sandboxed `PATH` of stub executables |
+
+`test_hook_scripts.py` looks like it belongs in this tier by name but does
+not: it makes static text assertions over the `.sh` files (`grep`-shaped
+checks for dead references), imports no `subprocess`, and spawns nothing. It
+stays in the default tier.
+
+This tier is the vox equivalent of biff's tier 3a (`StdioTransport`
+subprocess tests) -- the same underlying problem (a real process, real
+stdio/exit-code plumbing) applied to shell scripts instead of an MCP server
+process. When `conversation_mode` lands and needs to spawn a real
+`claude -p --resume` process, its subprocess-spawning tests belong under this
+same `subprocess` marker, not a new one -- it is the same problem repeated in
+a different domain.
+
+### Tier 3b: `integration` -- reserved, deliberately empty
+
+`@pytest.mark.integration` is declared but **no test currently carries it**.
+This is deliberate, not an oversight, and it is a different situation from
+biff's tier 3d/4: biff has one relay protocol to smoke-test against a real
+deployment; vox has **five independently-billed provider APIs**
+(ElevenLabs, OpenAI, Polly, macOS `say`, espeak-ng), each needing its own
+credentials sourced from the platform keychain, never committed. Writing
+real smoke tests against five live providers is a real piece of work --
+credential plumbing, cost/quota management per provider, flakiness triage
+for whichever provider is having a bad day -- and doing it well is out of
+scope for a tiering/documentation pass with no operator-approved
+credentials-in-CI plan. It is recommended as a follow-up (see below), not
+done here by fabricating tests against APIs this pass has no way to verify.
+
+### Tier 4: `sdk` -- reserved, deliberately empty
+
+`@pytest.mark.sdk` is declared but **no test currently carries it**. This is
+the vox equivalent of biff's tier 4: a marker reserved for a real Claude
+Agent SDK session, real API cost per test, local-only by design and never in
+CI. It has no tests yet because `conversation_mode` (the subsystem that will
+need it) has not landed in this worktree -- the marker exists so that work,
+when it arrives, has the tier ready rather than inventing its own name for
+"the same problem biff already solved."
+
+## Why the Suite Takes as Long as It Does
+
+A `make check` pytest pass was observed taking 22+ minutes wall-clock during
+today's review-fix cycle. Investigating that number directly:
+
+**A clean, isolated run of the full unmarked suite (4,340 tests, before this
+change) took 2:52 on this machine** (`uv run pytest`, no marker filter,
+nothing else running). That is nowhere near 22 minutes. The single largest
+identifiable per-test cost -- the git-subprocess ratchet tests, now marked
+`slow` -- accounts for 32s of that 2:52; the shell-subprocess tests, now
+marked `subprocess`, account for another 21s. Together they are ~18% of a
+2:52 run, not the ~25-30% of a 22-minute run their per-test overhead would
+suggest.
+
+The gap between 2:52 (isolated) and 22+ minutes (observed) does not point to
+a structural defect at the scale the observed number implies. The most
+likely explanation is **CPU contention from concurrent agents sharing this
+dev machine** -- this workspace's `CLAUDE.md` documents exactly this
+scenario ("when multiple agents share one worktree..."), and the evidence is
+consistent with it: an early measurement of just the ratchet-subprocess
+files, taken while other activity may have been running, showed 25% CPU
+utilization and took 4:35 for tests that took 32s under a later, uncontended
+measurement of the identical files -- roughly an 8x slowdown with no code
+change in between, which is a contention signature (I/O/scheduler wait), not
+a CPU-bound one. **This is a real, if intermittent, cost**: whatever
+consumed 8x the wall-clock time on a shared box will do it again to the next
+person who runs `make check` while another agent is active, and it is worth
+flagging plainly rather than resolving with only "the isolated number looks
+fine."
+
+**No `pytest-xdist` is installed.** `time`'s CPU-utilization column shows the
+suite pinning close to one CPU-core's worth of work throughout even the
+uncontended runs, on an 8-core machine. This is the highest-leverage
+structural fix available and is *not* applied here (see Follow-ups) --
+adding it and running `-n auto` would let the suite use the seven idle cores
+instead of one, independent of whether the box is contended by other agents
+or not.
+
+Two candidates were investigated and ruled out:
+
+- **Real ffmpeg encode per test** (the historical MP3 problem) -- checked:
+  `conftest.py` generates the valid MP3 bytes exactly once per session
+  (`_VALID_MP3_BYTES` module-level cache) and every mock provider reuses the
+  cached bytes. Not a repeated cost.
+- **The two `asyncio.sleep(5.0)` calls in `tests/music_player/`**
+  (`test_composition.py`, `test_lux_scene_publisher.py`) look like an
+  obvious 10-second tax at first read. They are not: both live inside a
+  `_BlockingClient`/`_BlockingSceneAccessor` double used to prove a writer
+  or publisher does not block on a slow render, and every test using them
+  cancels the background task well before the 5s sleep resolves.
+  `--durations=10` on both files confirms it: the slowest individual test
+  call across both files is 0.24s. Left unmarked, correctly.
+
 ## The MP3 Problem
 
 pydub hands audio files to ffmpeg, which validates MP3 headers. Mocks that return `b"fake mp3"` cause ffmpeg to reject the data, producing confusing failures far from the mock site.
@@ -281,11 +463,24 @@ verify:
 - Key validation (unknown keys raise `ValueError`)
 - Edge cases: missing file, empty frontmatter, no frontmatter delimiters
 
+## Markers
+
+| Marker | Tier | What it requires | Default run? |
+|--------|------|-------------------|---------------|
+| *(none)* | 1 -- Unit | Nothing | Yes |
+| `slow` | cross-cutting | Nothing (real `git`/subprocess round trips, no external service) | No |
+| `subprocess` | 3a | `bash`/`sh`/`git` on `PATH` (present on every dev box and CI runner already) | No |
+| `integration` | 3b | Real, credentialed provider API access (reserved -- no tests yet) | No |
+| `sdk` | 4 | `ANTHROPIC_API_KEY`, real Claude Agent SDK session (reserved -- no tests yet) | No |
+
+`pytest -m <marker>` always selects exactly that tier -- no marker is a
+superset of another, matching the discipline biff's tier markers hold.
+
 ## Running Tests
 
 ```bash
-# Full suite (required before every commit)
-uv run pytest tests/ -v
+# Default: tier 1 only -- fast, no external dependency, no real subprocess
+uv run pytest
 
 # Single file
 uv run pytest tests/test_hooks.py -v
@@ -293,13 +488,92 @@ uv run pytest tests/test_hooks.py -v
 # Single test
 uv run pytest tests/test_hooks.py::TestHandleStop::test_voice_mode_blocks_clean_reason -v
 
+# slow -- real-git-subprocess ratchet tests
+uv run pytest -m slow
+
+# subprocess -- real shell-script/install.sh subprocess tests
+uv run pytest -m subprocess
+
+# Everything except the reserved, currently-empty integration/sdk tiers
+uv run pytest -m "slow or subprocess or (not slow and not integration and not subprocess and not sdk)"
+
 # With coverage
 uv run pytest tests/ --cov=src --cov-report=term-missing
 ```
 
 ## Integration Tests
 
-Tests requiring real API credentials are marked `@pytest.mark.integration` and excluded from the default run. None currently exist — all provider tests use mocks. The marker is reserved for future smoke tests against live APIs.
+Tests requiring real, credentialed provider API calls are marked
+`@pytest.mark.integration` and excluded from the default run. None currently
+exist. See [Tier 3b](#tier-3b-integration----reserved-deliberately-empty)
+above for why that is a deliberate call, not an oversight, and what would be
+needed to populate it.
+
+## Dev box vs CI
+
+Every gap below has a concrete reason, not a permanent design choice unless
+stated otherwise -- the same discipline biff's testing doc holds.
+
+### On your dev box
+
+| Tier | Command | When to run it |
+|------|---------|-----------------|
+| 1 (default) | `uv run pytest` | Constantly. No external dependency; this is the inner loop. |
+| `slow` | `uv run pytest -m slow` | Before touching `tools/oo_ratchet`, `tools/coupling`, or `tools/suppression`. |
+| `subprocess` (3a) | `uv run pytest -m subprocess` | Before touching `plugin/hooks/*.sh`, `install.sh`, or `scripts/check-plugin-surface.sh`. No extra infra -- `bash`/`sh`/`git` are already required to develop this repo at all. |
+| `integration` (3b) | *(no tests yet)* | N/A until populated -- see the reserved-tier rationale above. |
+| `sdk` (4) | *(no tests yet)* | N/A until `conversation_mode` lands and needs it. Local-only by design once it exists, same as biff's tier 4 -- real API cost per test, never in CI. |
+
+### In CI
+
+What runs on every push/PR (`.github/workflows/test.yml`): **the default
+tier, plus `slow` and `subprocess`, as two separate `pytest` invocations in
+the same job.** Before this taxonomy existed, all of these ran unmarked in
+one `uv run pytest` call; splitting the invocation keeps that coverage
+intact rather than silently dropping it the moment the markers exist and the
+default `addopts` starts excluding them.
+
+- **`integration`** -- no CI job, and none planned. Five independently
+  billed provider APIs is a materially different problem from biff's one
+  relay protocol; see the reserved-tier rationale above.
+- **`sdk`** -- no CI job, by design, matching biff's tier 4. It will cost
+  real money per test once it exists; it will never be a default CI job.
+
+## Follow-ups Deliberately Left Out of This Pass
+
+These are named here rather than done, because each is a bigger structural
+change than "apply the taxonomy that already exists" -- reorganizing
+directories, adding a new dev dependency, or standing up real
+credentialed-API test infrastructure. Filed as recommendations, not silently
+skipped:
+
+- **Add `pytest-xdist` and run the default tier with `-n auto`.** The
+  single highest-leverage speedup available: this box has 8 cores and the
+  suite currently uses close to one throughout. This is a new dev dependency
+  and needs its own verification pass (the `hermetic_config` /
+  `hermetic_vibe_trace` / `hermetic_client_log` autouse fixtures in
+  `conftest.py` use `tmp_path_factory`, which is `xdist`-safe by design, but
+  that should be confirmed under `-n auto` before relying on it, not assumed).
+- **Split `test_voxd_*.py` into a subpackage.** 21 files, the single largest
+  flat cluster in `tests/` after `music_player/`/`programs/`. Not touched
+  here per the task's explicit "no directory restructuring" constraint, but
+  a real candidate for the same subpackage treatment `music_player/` and
+  `programs/` already have.
+- **Populate the `integration` tier.** Needs an operator decision on
+  credentials-in-CI (or explicitly local-only, matching `sdk`) before any
+  test is written against a live provider, plus a per-provider cost/quota
+  plan for five separately billed APIs.
+- **Wire the `subprocess`/`sdk` markers into `conversation_mode`'s tests
+  when that subsystem lands.** The markers are reserved and documented now
+  so that work does not reinvent them.
+- **Investigate the machine-contention finding.** The 22-minute observation
+  this task started from was not reproduced in isolation (2:52 for the full
+  suite) but the 8x slowdown signature between a contended and an
+  uncontended run of the identical ratchet-subprocess files is real and
+  will recur for the next person running `make check` while another agent
+  is active on a shared box. Worth a session-level fix (e.g. a `make check`
+  guard that warns when other heavy processes are running) rather than a
+  test-suite fix, since the suite itself is not the defect.
 
 ## Quality Gates
 

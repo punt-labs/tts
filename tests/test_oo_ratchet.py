@@ -22,6 +22,12 @@ from tools.oo_ratchet.ratchet import Ratchet
 from tools.oo_ratchet.scorer import Scorer
 from tools.oo_ratchet.writer import BaselineWriter
 
+# Every test drives a real ``git init``/``commit``/``checkout`` sequence plus a
+# real ``tools/oo_ratchet`` subprocess invocation per assertion -- genuinely
+# slow relative to the mocked-boundary suite (measured: this file plus its
+# three siblings, 153 tests, took 4m35s wall on a dev box; see TESTING.md).
+pytestmark = pytest.mark.slow
+
 GOOD = '''from __future__ import annotations
 
 
