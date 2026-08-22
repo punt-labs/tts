@@ -68,6 +68,19 @@ class PlaybackNotice:
         """Return the warning for a stop that could not apply."""
         return cls.warning(_STOP_FAILED)
 
+    @classmethod
+    def resolve_failed(cls, anchor: str) -> Self:
+        """Return the warning for a play whose anchor names no catalogued album.
+
+        The click carried a real name -- a row the user just saw -- but the
+        catalog no longer holds it (a vanished album, or a stale row cache the
+        click resolved against). Different from :meth:`play_failed`, which
+        names an already-resolved album that refused to play; here nothing
+        resolved in the first place, so the message names the anchor text the
+        user clicked, not an album id.
+        """
+        return cls.warning(f"⚠ couldn't play {anchor} — no longer in the crate")
+
     @property
     def is_present(self) -> bool:
         """Return whether a status line should render (a non-empty message)."""

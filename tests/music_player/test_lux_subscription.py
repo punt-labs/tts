@@ -100,6 +100,7 @@ class _FakeOpener:
         self.play_failures: list[AlbumId] = []
         self.stop_failures = 0
         self.transport_failures = 0
+        self.resolve_failures: list[str] = []
         self._boom = boom
 
     def notify_changed(self) -> None:
@@ -119,6 +120,12 @@ class _FakeOpener:
 
     def present_transport_failure(self) -> None:
         self.transport_failures += 1
+        if self._boom:
+            msg = "surface blew up"
+            raise RuntimeError(msg)
+
+    def present_resolve_failure(self, anchor: str) -> None:
+        self.resolve_failures.append(anchor)
         if self._boom:
             msg = "surface blew up"
             raise RuntimeError(msg)
@@ -659,6 +666,94 @@ async def test_on_event_survives_a_presenter_that_fails_to_surface(
         await sub.on_event("music.play", {"anchor": "Techno Mix"})  # must not raise
 
     assert any("could not surface" in r.getMessage() for r in caplog.records)
+
+
+async def test_malformed_frame_drops_silently(
+    caplog: pytest.LogCaptureFixture,
+    album_of: AlbumFactory,
+) -> None:
+    # An empty play payload names no anchor at all -- the codec raises plain
+    # ValueError, the boundary drops the frame silently (WARN/ERROR log, no
+    # scene warning), and the subscription keeps consuming.
+    album = album_of("aa11bb", name="Techno Mix")
+    service = _FakeCommands((album,))
+    opener = _FakeOpener()
+    sub = LuxSubscription(
+        service, opener, _FakeMenu(), _connect(_RecordingListener(), [])
+    )
+
+    with caplog.at_level(logging.WARNING):
+        await sub.on_event("music.play", {})  # malformed: no anchor
+
+    assert service.played == []  # nothing applied
+    assert opener.resolve_failures == []  # no scene warning surfaces
+    assert opener.play_failures == []
+    assert any("dropping music event" in r.getMessage() for r in caplog.records)
+    # Subscription is still usable: a valid play after the drop dispatches cleanly.
+    await sub.on_event("music.play", {"anchor": "Techno Mix"})
+    assert service.played == [AlbumId("aa11bb")]
+
+
+async def test_vanished_album_surfaces_notice(
+    caplog: pytest.LogCaptureFixture,
+    album_of: AlbumFactory,
+) -> None:
+    # A well-formed anchor for a vanished album: the codec raises
+    # AnchorUnresolvedError, the boundary logs a WARN AND surfaces
+    # present_resolve_failure(anchor) so the click never looks silently ignored.
+    album = album_of("aa11bb", name="Techno Mix")
+    service = _FakeCommands((album,))
+    opener = _FakeOpener()
+    sub = LuxSubscription(
+        service, opener, _FakeMenu(), _connect(_RecordingListener(), [])
+    )
+
+    with caplog.at_level(logging.WARNING):
+        await sub.on_event("music.play", {"anchor": "Ghost Album"})
+
+    assert opener.resolve_failures == ["Ghost Album"]  # surfaced
+    assert service.played == []  # nothing applied
+    assert any("names no catalogued album" in r.getMessage() for r in caplog.records)
+
+
+async def test_receive_loop_survives_both(album_of: AlbumFactory) -> None:
+    # Malformed then vanished then valid: the boundary keeps consuming, and only
+    # the valid frame reaches the service (invariants I, II, V).
+    album = album_of("aa11bb", name="Techno Mix")
+    service = _FakeCommands((album,))
+    opener = _FakeOpener()
+    sub = LuxSubscription(
+        service, opener, _FakeMenu(), _connect(_RecordingListener(), [])
+    )
+
+    await sub.on_event("music.play", {})  # malformed, dropped silently
+    await sub.on_event("music.play", {"anchor": "Ghost Album"})  # vanished, surfaced
+    await sub.on_event("music.play", {"anchor": "Techno Mix"})  # valid, applied
+
+    assert service.played == [AlbumId("aa11bb")]
+    assert opener.resolve_failures == ["Ghost Album"]
+
+
+async def test_resolve_failure_surface_that_itself_raises_is_logged(
+    caplog: pytest.LogCaptureFixture,
+    album_of: AlbumFactory,
+) -> None:
+    # Boundary: a presenter that itself raises when surfacing the resolve failure
+    # is logged and dropped, so the connection survives a click that could not
+    # even be surfaced.
+    album = album_of("aa11bb", name="Techno Mix")
+    service = _FakeCommands((album,))
+    sub = LuxSubscription(
+        service, _FakeOpener(boom=True), _FakeMenu(), _connect(_RecordingListener(), [])
+    )
+
+    with caplog.at_level(logging.ERROR):
+        await sub.on_event("music.play", {"anchor": "Ghost Album"})  # must not raise
+
+    assert any(
+        "could not surface the resolve failure" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 async def test_on_callback_opens_the_scene_for_the_music_menu() -> None:

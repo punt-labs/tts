@@ -12,7 +12,7 @@ no-op; the subscription boundary logs and drops what it raises.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.music_player.album_names import AlbumNames
 from punt_vox.voxd.music_player.player_events import (
@@ -32,7 +32,36 @@ if TYPE_CHECKING:
     from punt_vox.voxd.programs.album_id import AlbumId
     from punt_vox.voxd.programs.catalog import Album
 
-__all__ = ["PlayerEventCodec"]
+__all__ = ["AnchorUnresolvedError", "PlayerEventCodec"]
+
+
+@final
+class AnchorUnresolvedError(ValueError):
+    """A well-formed ``music.play`` anchor named no catalogued album.
+
+    Distinct from a malformed frame (empty/missing anchor, plain ``ValueError``):
+    the click carried a real name, but the catalog no longer holds it -- a
+    vanished album, a stale row-cache click. The receive boundary surfaces this
+    as a transient warning rather than the silent drop malformed frames get.
+    """
+
+    __slots__ = ("_anchor",)
+    _anchor: str
+
+    def __new__(  # pyright: ignore[reportInconsistentConstructor]
+        cls, anchor: str
+    ) -> Self:
+        # BaseException.__init__ also runs (with the same arg) and stores the
+        # message in ``.args`` -- keep the __new__ signature narrow so callers
+        # cannot omit the anchor a warning depends on.
+        self = super().__new__(cls, f"music.play anchor {anchor!r} names no album")
+        self._anchor = anchor
+        return self
+
+    @property
+    def anchor(self) -> str:
+        """Return the unresolved anchor string the click carried."""
+        return self._anchor
 
 
 @final
@@ -78,10 +107,17 @@ class PlayerEventCodec:
         Reads ``payload['anchor']`` (the selected row's name cell), tolerating and
         ignoring any sibling keys lux carries alongside it (``row_ids``, and shapes
         still settling in ``lux-r4pp``). An absent anchor is the empty-payload
-        transitional state -- inert -- and, like an anchor naming no album, raises.
+        transitional state -- inert -- and raises plain ``ValueError`` so the
+        boundary drops it silently. A well-formed anchor that names no catalogued
+        album is a different failure -- the album vanished, or the row cache is
+        stale -- and raises :class:`AnchorUnresolvedError` so the boundary can
+        surface a transient warning instead of a silent drop.
         """
         anchor = payload.get(ANCHOR_KEY)
         if not isinstance(anchor, str) or not anchor:
             msg = f"music.play payload carries no {ANCHOR_KEY!r} anchor: {payload!r}"
             raise ValueError(msg)
-        return AlbumNames(albums).resolve(anchor).id
+        try:
+            return AlbumNames(albums).resolve(anchor).id
+        except ValueError as exc:
+            raise AnchorUnresolvedError(anchor) from exc

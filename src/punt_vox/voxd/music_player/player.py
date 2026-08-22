@@ -66,6 +66,18 @@ class MusicPlayer:
         """Re-project the scene warning that the stop could not apply (transient)."""
         self._submit(self._service.catalog_albums(), PlaybackNotice.stop_failed())
 
+    def present_resolve_failure(self, anchor: str) -> None:
+        """Re-project with a warning that ``anchor`` names no album (transient).
+
+        Parallel to :meth:`present_play_failure`, but nothing resolved: the
+        anchor was well-formed yet the catalog no longer holds it. The warning
+        names the clicked anchor text, not an id, and the next legitimate change
+        clears it.
+        """
+        self._submit(
+            self._service.catalog_albums(), PlaybackNotice.resolve_failed(anchor)
+        )
+
     def present_transport_failure(self) -> None:
         """Re-project the scene silently after a refused transport control.
 
