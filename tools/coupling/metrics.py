@@ -124,13 +124,16 @@ class ModuleCouplingMetrics:
 
     @staticmethod
     def _method_self_attrs(method: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+        # Count every ``self.<name>`` reference, public or private. Restricting to
+        # ``_``-prefixed names under-reads cohesion on frozen dataclass value
+        # objects whose fields are public by contract (PY-CC-6) -- their methods
+        # share state through those fields and would otherwise score LCOM 1.0.
         return {
             node.attr
             for node in ast.walk(method)
             if isinstance(node, ast.Attribute)
             and isinstance(node.value, ast.Name)
             and node.value.id == "self"
-            and node.attr.startswith("_")
         }
 
     @staticmethod
