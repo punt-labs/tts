@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Self, cast, final
 
@@ -28,6 +29,13 @@ if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
 
 __all__ = ["ClaudeSessionAttach"]
+
+# plugin/hooks/call-lock.sh reads this to bypass the UserPromptSubmit lock
+# it otherwise enforces while a call is active. Set only on the relay
+# subprocess this class spawns -- if that subprocess itself fires
+# UserPromptSubmit hooks, its own turn must never be blocked by the lock
+# the outer call already holds for the *human's* interactive input.
+_RELAY_ENV_VAR = "VOX_CALL_RELAY"
 
 
 @final
@@ -58,6 +66,7 @@ class ClaudeSessionAttach:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, _RELAY_ENV_VAR: "1"},
         )
         if process.stdin is None or process.stdout is None:
             msg = f"{self._claude_bin} subprocess has no stdin/stdout pipe"
