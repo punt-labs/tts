@@ -22,8 +22,8 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_lux import OpError
 
-from punt_vox.cascade import Cascade, RosterError
-from punt_vox.client_errors import VoxdConnectionError
+from punt_vox.cascade import Cascade, RosterError, RosterRejectedError
+from punt_vox.client_errors import VoxdConnectionError, VoxdRejectionError
 from punt_vox.models import MODEL_TABLE
 from punt_vox.panel.model_control import ModelControl
 from punt_vox.panel.panel_notice import PanelNotice
@@ -117,7 +117,9 @@ class VoxPanelService:
     def refresh(self) -> None:
         """Re-read settings from disk and voxd; note staleness if voxd is down."""
         self._resync(
-            PanelNotice.silent(), on_read_failure=PanelNotice.voxd_unavailable()
+            PanelNotice.silent(),
+            on_read_failure=PanelNotice.voxd_unavailable(),
+            on_rejection=PanelNotice.voxd_rejected,
         )
 
     def recover_from_write_failure(self, field: str) -> None:
@@ -125,6 +127,9 @@ class VoxPanelService:
         self._resync(
             PanelNotice.write_failed(field),
             on_read_failure=PanelNotice.write_failed_and_voxd_unavailable(field),
+            on_rejection=lambda detail: PanelNotice.write_failed_and_voxd_rejected(
+                field, detail
+            ),
         )
 
     def note_rejection(self, detail: str) -> None:
@@ -220,8 +225,18 @@ class VoxPanelService:
                 provider,
                 result.message,
             )
+            # A daemon-sent rejection carries the reason voxd refused (an
+            # unknown provider name, a wire mismatch from a long-lived
+            # panel talking to a fresh strict daemon) — surface it
+            # verbatim so the operator sees WHY the roster is missing
+            # rather than a generic "unavailable" line that reads as
+            # "the daemon is down" when the daemon is right there and
+            # said no.
             with self._lock:
-                self._notice = PanelNotice.voxd_unavailable()
+                if isinstance(result, RosterRejectedError):
+                    self._notice = PanelNotice.voxd_rejected(result.message)
+                else:
+                    self._notice = PanelNotice.voxd_unavailable()
             return None
         return tuple(result)
 
@@ -373,19 +388,32 @@ class VoxPanelService:
         return False
 
     def _resync(
-        self, notice_on_success: PanelNotice, *, on_read_failure: PanelNotice
+        self,
+        notice_on_success: PanelNotice,
+        *,
+        on_read_failure: PanelNotice,
+        on_rejection: Callable[[str], PanelNotice],
     ) -> None:
         """Re-read settings fresh, holding the last-known ones if voxd is down.
 
-        *on_read_failure* is the caller's choice, not a hardcoded
-        ``voxd_unavailable()``: ``recover_from_write_failure`` already has a
-        specific "couldn't save X" notice in flight, and if the resync meant
-        to confirm the reverted value also finds voxd down, that specific
-        notice must not be silently replaced by a generic one blaming an
-        unrelated subsystem -- the caller passes a notice that names both.
+        *on_read_failure* and *on_rejection* are the caller's choice, not
+        hardcoded generic notices: ``recover_from_write_failure`` already
+        has a specific "couldn't save X" notice in flight, and if the
+        resync meant to confirm the reverted value also finds voxd down
+        OR gets refused, that specific write-failure context must not be
+        silently replaced by a generic one blaming an unrelated
+        subsystem -- the caller supplies a composed notice for each.
         """
         try:
             fresh = PanelState.read(self._client, self._store)
+        except VoxdRejectionError as exc:
+            # Daemon was reached and refused the roster fetch. The caller
+            # supplies the composition so a write-failure in flight is not
+            # dropped when the confirming read also hits a rejection.
+            logger.warning("vox-panel: voxd refused the resync: %s", exc)
+            with self._lock:
+                self._notice = on_rejection(str(exc))
+            return
         except VoxdConnectionError:
             logger.warning(
                 "vox-panel: voxd unreachable during resync: %s",

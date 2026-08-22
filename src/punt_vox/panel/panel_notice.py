@@ -58,3 +58,10 @@ class PanelNotice:
         meant to confirm the reverted value both fail -- two unrelated
         subsystems (local disk, voxd), so neither message may be dropped."""
         return cls(f"⚠ couldn't save {field}, and voxd is unreachable too")
+
+    @classmethod
+    def write_failed_and_voxd_rejected(cls, field: str, detail: str) -> Self:
+        """Return the warning when a failed *field* persist AND the resync
+        meant to confirm the reverted value hit a daemon refusal -- two
+        unrelated failures (local disk, voxd rejection), neither dropped."""
+        return cls(f"⚠ couldn't save {field}, and voxd rejected the resync -- {detail}")

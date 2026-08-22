@@ -18,3 +18,14 @@ class VoxdConnectionError(VoxError):
 
 class VoxdProtocolError(VoxError):
     """Raised when voxd returns an unexpected response."""
+
+
+class VoxdRejectionError(VoxdProtocolError):
+    """Raised when voxd answered with a typed ``{"type": "error"}`` frame.
+
+    Distinct from a bare :class:`VoxdProtocolError` (malformed JSON, a
+    missing key, an unexpected frame type): the daemon was reached and
+    said no, carrying a caller-facing reason. A surface may render the
+    reason verbatim; a bare ``VoxdProtocolError`` names a bug and
+    propagates.
+    """

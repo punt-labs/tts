@@ -18,28 +18,6 @@ if TYPE_CHECKING:
 __all__ = ["PanelState"]
 
 
-def _normalise(raw: str | None) -> str | None:
-    """Return ``raw`` stripped, or ``None`` if the result is empty.
-
-    Panel state is the panel's single normalisation point for the provider
-    and model fields. Every downstream site (``_model_for``,
-    ``_commit_model``, ``_commit_provider``, the scene projection, the
-    daemon roster fetch) then trusts one invariant: the stored value is
-    either a non-empty stripped string OR ``None``.
-
-    Without this normalisation, a hand-edited ``provider: "   "`` in
-    ``vox.md`` is truthy and slips every ``if provider:`` guard the panel
-    holds, re-triggering the daemon-side guessing this bead exists to
-    remove. Stripping at the boundary means one guard rather than three,
-    and the same argument that produced ``SessionSpec`` in the first
-    place (one place to normalise, not five).
-    """
-    if raw is None:
-        return None
-    stripped = raw.strip()
-    return stripped if stripped else None
-
-
 @final
 @dataclass(frozen=True, slots=True)
 class PanelState:
@@ -51,6 +29,27 @@ class PanelState:
     roster: tuple[str, ...]
     provider: str | None = None
     model: str | None = None
+
+    @staticmethod
+    def _normalise(raw: str | None) -> str | None:
+        """Return ``raw`` stripped, or ``None`` if the result is empty.
+
+        Panel state is the panel's single normalisation point for the
+        provider and model fields. Every downstream site (the panel's
+        commit paths, the scene projection, the daemon roster fetch)
+        then trusts one invariant: the stored value is either a
+        non-empty stripped string OR ``None``.
+
+        Without this normalisation, a hand-edited ``provider: "   "``
+        in ``vox.md`` is truthy and slips every ``if provider:`` guard
+        the panel holds, re-triggering the daemon-side guessing this
+        method exists to remove. Stripping at the boundary means one
+        guard rather than three.
+        """
+        if raw is None:
+            return None
+        stripped = raw.strip()
+        return stripped if stripped else None
 
     @classmethod
     def empty(cls) -> Self:
@@ -76,8 +75,8 @@ class PanelState:
         provider.
         """
         cfg = store.read()
-        provider = _normalise(cfg.provider)
-        model = _normalise(cfg.model)
+        provider = cls._normalise(cfg.provider)
+        model = cls._normalise(cfg.model)
         roster = tuple(client.voices(provider)) if provider else ()
         return cls(
             notify=cfg.notify,

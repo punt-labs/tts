@@ -9,7 +9,11 @@ import pytest
 from punt_lux import OpError
 from punt_lux.operations import Ok
 
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_errors import (
+    VoxdConnectionError,
+    VoxdProtocolError,
+    VoxdRejectionError,
+)
 from punt_vox.panel.panel_notice import PanelNotice
 from punt_vox.panel.service import VoxPanelService
 from punt_vox.panel.state import PanelState
@@ -347,6 +351,66 @@ class TestApplyEvent:
         assert client.roster_reads_by_provider == []
         assert service.scene().voice == "benno"
 
+    def test_provider_roster_wire_rejection_surfaces_reason_verbatim(self) -> None:
+        """A daemon-sent rejection during a roster fetch shows voxd's reason.
+
+        A long-lived panel talking to a fresh strict daemon (or any wire
+        skew) triggers a typed ``VoxdRejectionError`` on the roster call.
+        Previously the panel logged this as generic ``voxd_unavailable``,
+        hiding WHY the roster went missing behind a "daemon is down" line.
+        The rejection now becomes ``PanelNotice.voxd_rejected(...)`` so the
+        operator sees the daemon's message.
+        """
+        detail = "Unknown provider 'openai'. Available: elevenlabs, say"
+
+        class _RejectingClient:
+            call_count = 0
+
+            def voices(self, provider: str | None = None) -> list[str]:
+                self.call_count += 1
+                if self.call_count > 1:  # first call is the prefetch
+                    raise VoxdRejectionError(detail)
+                return ["benno", "aria"]
+
+            def synthesize(self, *args: object, **kwargs: object) -> object:
+                raise NotImplementedError
+
+        service = VoxPanelService(
+            _RejectingClient(),  # type: ignore[arg-type]
+            (store := _FakeStore(_config(voice="benno", provider="elevenlabs"))),
+        )
+        service.prefetch()
+        service.apply_event(PanelTopic.PROVIDER, {"value": 1})  # openai
+        assert "provider" not in store.written
+        assert "voice" not in store.written
+        notice = service.scene().notice
+        assert notice == PanelNotice.voxd_rejected(detail)
+        assert detail in notice.message
+
+    def test_prefetch_wire_rejection_surfaces_notice_not_empty_state(self) -> None:
+        """A wire rejection during the roster read now sets the rejection notice.
+
+        Regression: a ``VoxdRejectionError`` propagating out of the resync
+        left the panel at ``PanelState.empty()`` (``roster=()``), rendering
+        ``Voice: (empty)`` with no explanation. The rejection is caught at
+        the service boundary now and surfaced via ``PanelNotice.voxd_rejected``.
+        """
+        detail = "Unknown provider ''. Available: elevenlabs, say"
+
+        class _RejectingClient:
+            def voices(self, provider: str | None = None) -> list[str]:
+                raise VoxdRejectionError(detail)
+
+            def synthesize(self, *args: object, **kwargs: object) -> object:
+                raise NotImplementedError
+
+        service = VoxPanelService(_RejectingClient(), _FakeStore(_config()))  # type: ignore[arg-type]
+        service.refresh()
+        notice = service.scene().notice
+        assert notice == PanelNotice.voxd_rejected(detail)
+        assert detail in notice.message
+        assert service.scene().voice == PanelState.empty().voice
+
     def test_provider_roster_fetch_error_aborts_the_write(self) -> None:
         """VoxdConnectionError on the roster fetch surfaces a notice, no disk write.
 
@@ -611,6 +675,28 @@ class TestRefreshAndRecover:
         assert notice == PanelNotice.write_failed_and_voxd_unavailable("notify")
         assert "notify" in notice.message
         assert "voxd" in notice.message
+
+    def test_recover_from_write_failure_when_resync_is_rejected_composes_both(
+        self,
+    ) -> None:
+        """The write-failure notice must not be dropped when the confirming
+        resync hits a wire rejection -- two unrelated failures (disk, voxd
+        rejection), each must survive into the scene message."""
+        detail = "Unknown provider 'openai'"
+
+        class _RejectingClient:
+            def voices(self, provider: str | None = None) -> list[str]:
+                raise VoxdRejectionError(detail)
+
+            def synthesize(self, *args: object, **kwargs: object) -> object:
+                raise NotImplementedError
+
+        service = VoxPanelService(_RejectingClient(), _FakeStore(_config()))  # type: ignore[arg-type]
+        service.recover_from_write_failure("notify")
+        notice = service.scene().notice
+        assert notice == PanelNotice.write_failed_and_voxd_rejected("notify", detail)
+        assert "notify" in notice.message
+        assert detail in notice.message
 
 
 class TestNoteRejection:

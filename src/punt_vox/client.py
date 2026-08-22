@@ -29,7 +29,11 @@ if TYPE_CHECKING:
 
 from punt_vox.bare_name import BareName
 from punt_vox.client_env import DaemonEnv
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_errors import (
+    VoxdConnectionError,
+    VoxdProtocolError,
+    VoxdRejectionError,
+)
 from punt_vox.paths import run_dir as _user_run_dir
 from punt_vox.types_programs import (
     CommandOutcome,
@@ -361,7 +365,7 @@ class _VoxdTransport:
         except json.JSONDecodeError as exc:
             raise VoxdProtocolError(f"invalid JSON from voxd: {exc}") from exc
         if resp.get("type") == "error":
-            raise VoxdProtocolError(str(resp.get("message", "unknown error")))
+            raise VoxdRejectionError(str(resp.get("message", "unknown error")))
         return resp
 
     async def fetch_stream(
