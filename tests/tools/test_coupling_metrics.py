@@ -71,6 +71,34 @@ def test_private_field_cohesion_still_counted() -> None:
     assert metrics["max_lcom"] == 0.0
 
 
+def test_shared_helper_calls_do_not_fake_cohesion() -> None:
+    """A shared ``self.helper()`` call is method dispatch, not shared state.
+
+    LCOM measures data cohesion; the call target ``helper`` is not a field.
+    Two methods that both call ``self.helper()`` but touch no common
+    ``self.<field>`` are data-disjoint and must score LCOM 1.0.
+    """
+    metrics = _score(
+        """
+        class Split:
+            a: int = 1
+            b: int = 2
+
+            def helper(self) -> None:
+                pass
+
+            def reads_a(self) -> int:
+                self.helper()
+                return self.a
+
+            def reads_b(self) -> int:
+                self.helper()
+                return self.b
+        """
+    )
+    assert metrics["max_lcom"] == 1.0
+
+
 def test_disjoint_methods_score_incohesive() -> None:
     """Two methods that touch no shared ``self`` attribute score LCOM 1.0."""
     metrics = _score(

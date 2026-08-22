@@ -124,16 +124,24 @@ class ModuleCouplingMetrics:
 
     @staticmethod
     def _method_self_attrs(method: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
-        # Count every ``self.<name>`` reference, public or private. Restricting to
-        # ``_``-prefixed names under-reads cohesion on frozen dataclass value
-        # objects whose fields are public by contract (PY-CC-6) -- their methods
-        # share state through those fields and would otherwise score LCOM 1.0.
+        # LCOM measures DATA cohesion -- fields shared between methods. Count
+        # every ``self.<name>`` field read/write, public or private (an
+        # underscore-only filter under-reads frozen dataclass value objects
+        # whose fields are public by contract, PY-CC-6), but exclude
+        # ``self.helper()`` call targets: sharing a helper method is method
+        # dispatch, not shared state.
+        call_targets = {
+            node.func
+            for node in ast.walk(method)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        }
         return {
             node.attr
             for node in ast.walk(method)
             if isinstance(node, ast.Attribute)
             and isinstance(node.value, ast.Name)
             and node.value.id == "self"
+            and node not in call_targets
         }
 
     @staticmethod
