@@ -15,7 +15,12 @@ from punt_vox.client import (
     read_port_file,
     read_token_file,
 )
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError, VoxError
+from punt_vox.client_errors import (
+    VoxdConnectionError,
+    VoxdProtocolError,
+    VoxdRejectionError,
+    VoxError,
+)
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.paths import run_dir
 from punt_vox.types_programs.prompts import PromptSet
@@ -1355,6 +1360,29 @@ class TestVoxClientVoices:
 
         with pytest.raises(VoxdProtocolError, match="missing 'voices' key"):
             await client.voices("say")
+
+    @pytest.mark.asyncio
+    async def test_voices_wire_rejection_raises_typed_error(self) -> None:
+        """A ``{"type": "error"}`` frame surfaces as ``VoxdRejectionError``.
+
+        The daemon carries the reason (unknown provider name) in ``message``;
+        the client must raise a rejection subtype so surface code renders it
+        distinctly from a legitimate empty roster.
+        """
+        mock_ws = _make_mock_ws()
+        mock_ws.recv = AsyncMock(
+            return_value=json.dumps(
+                {
+                    "type": "error",
+                    "message": "Unknown provider ''. Available: elevenlabs, say",
+                }
+            )
+        )
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(VoxdRejectionError, match="Unknown provider"):
+            await client.voices("")
 
 
 class TestVoxClientHealth:

@@ -22,8 +22,8 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_lux import OpError
 
-from punt_vox.cascade import Cascade, RosterError
-from punt_vox.client_errors import VoxdConnectionError
+from punt_vox.cascade import Cascade, RosterError, RosterRejectedError
+from punt_vox.client_errors import VoxdConnectionError, VoxdRejectionError
 from punt_vox.models import MODEL_TABLE
 from punt_vox.panel.model_control import ModelControl
 from punt_vox.panel.panel_notice import PanelNotice
@@ -220,8 +220,18 @@ class VoxPanelService:
                 provider,
                 result.message,
             )
+            # A daemon-sent rejection carries the reason voxd refused (an
+            # unknown provider name, a wire mismatch from a long-lived
+            # panel talking to a fresh strict daemon) — surface it
+            # verbatim so the operator sees WHY the roster is missing
+            # rather than a generic "unavailable" line that reads as
+            # "the daemon is down" when the daemon is right there and
+            # said no.
             with self._lock:
-                self._notice = PanelNotice.voxd_unavailable()
+                if isinstance(result, RosterRejectedError):
+                    self._notice = PanelNotice.voxd_rejected(result.message)
+                else:
+                    self._notice = PanelNotice.voxd_unavailable()
             return None
         return tuple(result)
 
@@ -386,6 +396,17 @@ class VoxPanelService:
         """
         try:
             fresh = PanelState.read(self._client, self._store)
+        except VoxdRejectionError as exc:
+            # Daemon was reached and refused the roster fetch — carry the
+            # reason into the scene rather than letting the exception fall
+            # through and leave the panel showing an empty combo with no
+            # explanation. Distinct from ``VoxdConnectionError`` (voxd
+            # unreachable) so the operator sees "voxd said no because X"
+            # instead of a generic "unavailable" hint.
+            logger.warning("vox-panel: voxd refused the resync: %s", exc)
+            with self._lock:
+                self._notice = PanelNotice.voxd_rejected(str(exc))
+            return
         except VoxdConnectionError:
             logger.warning(
                 "vox-panel: voxd unreachable during resync: %s",

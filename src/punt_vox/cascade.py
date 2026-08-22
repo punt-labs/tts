@@ -30,7 +30,11 @@ from typing import TYPE_CHECKING, Protocol, final, runtime_checkable
 
 from websockets.exceptions import WebSocketException
 
-from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
+from punt_vox.client_errors import (
+    VoxdConnectionError,
+    VoxdProtocolError,
+    VoxdRejectionError,
+)
 from punt_vox.models import MODEL_TABLE
 
 if TYPE_CHECKING:
@@ -41,10 +45,12 @@ __all__ = ["Cascade", "RosterClient", "RosterError"]
 logger = logging.getLogger(__name__)
 
 
-# Non-connect faults on the voxd voices() wire funnel to the same typed
-# sentinel. VoxdConnectionError (the daemon is down) is common and prosaic;
-# the others (protocol errors, websocket faults, OS errors, ValueError from
-# a malformed response) log with .exception() before wrapping so a real bug
+# Non-connect, non-rejection faults on the voxd voices() wire funnel to the
+# same typed sentinel. VoxdConnectionError (the daemon is down) is common
+# and prosaic; VoxdRejectionError (the daemon said no with a reason) is
+# handled separately so the caller can render the reason; the others
+# (bare protocol errors, websocket faults, OS errors, ValueError from a
+# malformed response) log with .exception() before wrapping so a real bug
 # leaves a diagnostic trail. Matches how the retired ``mic:who`` tool split
 # the two classes.
 _VOICES_FAULT_ERRORS = (VoxdProtocolError, WebSocketException, OSError, ValueError)
@@ -69,7 +75,6 @@ class RosterClient(Protocol):
         ...
 
 
-@final
 @dataclass(frozen=True, slots=True)
 class RosterError:
     """A daemon fault on the roster fetch, wrapped as a typed sentinel.
@@ -78,9 +83,27 @@ class RosterError:
     string ``""`` is a valid modelless-roster answer). Wrapping the failure
     in a distinct type lets the caller ``isinstance``-branch cleanly
     instead of comparing against magic values.
+
+    The concrete subtype :class:`RosterRejectedError` narrows a wire-level
+    rejection (voxd was reached and answered with a typed error frame)
+    apart from the base case (voxd was unreachable or malformed) so a
+    caller can render voxd's reason verbatim rather than a generic
+    "unavailable" line that hides why the roster is missing.
     """
 
     message: str
+
+
+@final
+@dataclass(frozen=True, slots=True)
+class RosterRejectedError(RosterError):
+    """A ``{"type": "error"}`` frame surfaced during the roster fetch.
+
+    Distinct from the base :class:`RosterError` (an unreachable daemon,
+    a malformed reply): voxd was reached and said no with a caller-facing
+    ``message``. A surface may render that message verbatim so the operator
+    sees the daemon's reason rather than a generic "unavailable" hint.
+    """
 
 
 @final
@@ -135,6 +158,8 @@ class Cascade:
         """
         try:
             return client.voices(provider=provider)
+        except VoxdRejectionError as exc:
+            return RosterRejectedError(str(exc))
         except VoxdConnectionError as exc:
             return RosterError(str(exc))
         except _VOICES_FAULT_ERRORS as exc:
