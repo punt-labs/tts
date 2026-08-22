@@ -268,7 +268,7 @@ ratchet tool itself as a subprocess, per assertion:
 | `test_suppression_ratchet.py` | 42 | `tools/suppression` counting + CLI dispatch against real tmp git repos |
 
 These are the single largest identifiable per-test cost in the suite: on this
-box, in isolation, the 163 tests took 32s (vs. ~0.02s/test for the unmarked
+box, in isolation, the 153 tests took 32s (vs. ~0.02s/test for the unmarked
 default tier) -- real `git` subprocess round trips dominate, not CPU work
 (observed CPU utilization during these tests is well under 100% of one core,
 meaning the wall time is mostly the OS scheduling and I/O of spawning `git`

@@ -1,4 +1,5 @@
-"""Unit tests for argument parsing and the CLI entry point."""
+"""Argument-parsing unit tests plus a CLI entry-point test against a real
+git fixture -- module-level `slow`, see the marker rationale below."""
 
 from __future__ import annotations
 

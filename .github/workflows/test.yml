@@ -12,9 +12,10 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # 20m was already tight for the default tier alone (see TESTING.md,
-    # "Why the suite is slow"); the second step below adds the slow/
-    # subprocess tiers in the same job, so the ceiling needs headroom.
+    # This job now runs two pytest invocations in sequence (default tier,
+    # then slow/subprocess -- see TESTING.md, "Why the Suite Takes as Long
+    # as It Does"); 30m gives headroom for both rather than the 20m ceiling
+    # sized for the single unmarked run that preceded this taxonomy.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
