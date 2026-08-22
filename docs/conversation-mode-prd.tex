@@ -1,0 +1,1325 @@
+%
+% conversation-mode-prd.tex
+%
+% Product requirements for vox Conversation Mode: a live voice call between
+% one human and one Claude Code agent session, mediated by voxd. Written from
+% the product-manager altitude --- what the feature must do and for whom,
+% not how it is implemented. Use cases and functional requirements are
+% traced to each other so a reviewer can check coverage in both directions.
+% Architecture, protocol shapes, and the Z specification for the call state
+% machine are deliberately out of this document; they follow it, per
+% docs/WORKFLOW.md's design-before-implementation gate.
+%
+% Every use case and requirement is tagged [P1] or [P2]. P1 is the bar to
+% hit before anything else is built: an outstanding call with ElevenLabs,
+% for a user wearing headphones. P2 broadens that proven experience to
+% local providers, Linux, and headphone-free use, against the same
+% interfaces P1 defines --- it is sequencing, not a statement that P2 items
+% matter less.
+%
+% Revised after five live spikes (docs/conversation-mode-spikes.md, run
+% 2026-08-22) validated or corrected the original requirements against
+% real hardware, a real ElevenLabs account, and a real human. Chapter 2
+% is new: a technical design chapter synthesizing what the spikes proved
+% about how to build this, added at the operator's direction once real
+% evidence existed to design from, rather than left for a separate
+% document with nothing concrete backing it yet.
+%
+
+\documentclass[a4paper,11pt]{report}
+\usepackage[margin=1in]{geometry}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+\usepackage{enumitem}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{parskip}
+
+\newcommand{\uc}[1]{\textbf{UC-#1}}
+\newcommand{\fr}[1]{\textbf{FR-#1}}
+\newcommand{\nfr}[1]{\textbf{NFR-#1}}
+\newcommand{\pone}{\textsc{[p1]}}
+\newcommand{\ptwo}{\textsc{[p2]}}
+
+\begin{document}
+
+\title{Vox Conversation Mode: Product Requirements}
+\author{Punt Labs}
+\date{August 2026}
+\hypersetup{
+  pdftitle={Vox Conversation Mode: Product Requirements},
+  pdfauthor={Punt Labs},
+  pdfsubject={Product Requirements Document}
+}
+\maketitle
+\tableofcontents
+
+\chapter{Product Requirements}
+
+\section{Overview}
+
+Vox today speaks: an agent calls \texttt{mic:unmute} and text becomes audio.
+Conversation Mode adds the other half. A human presses a hotkey, talks
+naturally, and a Claude Code agent session hears them, thinks, and answers
+out loud --- a phone call with an agent, hands and eyes free, while the
+human keeps working, walking, or looking away from the screen.
+
+This is not a new product. It is a mode of the existing \texttt{voxd}
+daemon: the same process that owns playback and the music program grows the
+ability to also own capture, turn-taking, and a live call. Nothing about
+Conversation Mode changes how vox speaks when it is not in a call.
+
+The best version of this feature is measured by one thing: whether a human
+would rather have this conversation than type it. That bar is not met by
+transcription accuracy or voice quality alone --- both existing TTS
+providers already clear that bar. It is met by the call \emph{feeling}
+alive during the several seconds an agent spends reading files and running
+tools, and by an interruption landing as fast as it would with a person on
+the other end of a phone.
+
+\textbf{Primary listening scenario: headphones.} The default assumption for
+Conversation Mode is a human wearing headphones. This is a product decision,
+not an incidental detail: with headphones, the agent's voice never reaches
+an open microphone, so the hardest problem in a full-duplex call ---
+acoustic echo between the speaker and the mic --- does not exist for the
+primary scenario. A secondary scenario, a user on a laptop or desktop
+speaker at ordinary office distance without headphones, is real and in
+scope, but it is sequenced after the headphone experience is proven, not
+solved at the same time.
+
+\subsection{Priorities and phasing}
+
+Conversation Mode ships in two phases, not as one undifferentiated feature:
+
+\begin{description}
+  \item[Phase 1 --- prove the bar (\pone).] One provider, ElevenLabs, used
+    for both speech recognition and speech synthesis. One listening
+    scenario, headphones. One platform, macOS. The goal of Phase 1 is
+    narrow on purpose: prove that a call with the best available provider,
+    in the easiest audio configuration, is good enough that a person would
+    choose to talk instead of type. Everything that makes a call
+    \emph{feel} alive --- turn-taking, barge-in, the agent's think-time
+    presence, sentence-level response streaming --- is proven here, against
+    a single provider, before it is asked to also work across providers or
+    platforms.
+  \item[Phase 2 --- broaden it (\ptwo).] Local providers on macOS and
+    Linux, the no-headphones office scenario, and any additional cloud
+    provider. Phase 2 is built against the interfaces Phase 1 already
+    defined, not a redesign --- see \fr{21}.
+\end{description}
+
+Every use case and functional requirement below carries a \pone{} or
+\ptwo{} tag. A \ptwo{} tag is a sequencing decision, not a statement that
+the requirement is optional or unimportant.
+
+\subsection{Goals}
+
+\begin{itemize}
+  \item \pone{} A human can start, hold, and end a natural spoken
+    conversation with one Claude Code agent session, hands-free after the
+    initial hotkey, wearing headphones, with ElevenLabs configured.
+  \item \pone{} The experience is excellent on that path --- Conversation
+    Mode is designed to its best provider first, not down to the weakest
+    one it will eventually support.
+  \item \ptwo{} A user who wants a fully private conversation --- no audio
+    leaving the machine --- can have one, on both macOS and Linux, by
+    choosing a local provider configuration.
+  \item \ptwo{} The feature works on both macOS and Linux, and without
+    headphones, though not necessarily with identical provider options or
+    identical audio handling in every configuration.
+\end{itemize}
+
+\subsection{Non-Goals}
+
+\begin{itemize}
+  \item Multi-party calls (more than one human, or more than one agent).
+  \item Calls that span multiple agent sessions or hand off between agents.
+  \item Telephony (PSTN, dial-in numbers, SMS).
+  \item Video or any non-audio modality.
+  \item Provider-side conversational orchestration (e.g.\ ElevenLabs Agents
+    Platform or OpenAI's own reasoning model standing in for the Claude Code
+    agent). The agent's reasoning is always a Claude Code session; cloud
+    providers supply audio transport only.
+  \item Automatic mid-call failover between providers, or any other
+    runtime resilience behavior. A call uses the provider configuration
+    it started with; if that provider becomes unusable, the call ends
+    with a clear reason, the same way vox's existing TTS surface fails
+    today rather than silently switching providers underneath the user.
+    This also covers a provider that degrades rather than fails outright
+    (slow, glitchy, briefly unresponsive) mid-call: the system does not
+    detect or compensate for degraded-but-still-functioning service ---
+    the same scope cut, applied consistently.
+  \item A persisted, reviewable record of a call after it ends. Conversation
+    Mode optimizes for the live conversation; a post-call transcript is a
+    plausible fast-follow, not a launch requirement, and raises its own
+    question (does a transcript get written to disk even in the fully
+    local, no-network configuration?) that is better answered when it is
+    actually being built.
+  \item Changing how vox behaves outside an active call.
+\end{itemize}
+
+\subsection{Personas}
+
+\begin{description}
+  \item[The pair-programmer] Runs Claude Code all day, wants to describe a
+    bug or ask a question without stopping to type, especially when their
+    hands are occupied or they are away from the keyboard. Wears
+    headphones most of the working day already --- the primary persona for
+    Phase 1.
+  \item[The privacy-conscious user] Wants the option to hold the entire
+    conversation on-device, with no audio leaving the machine, matching the
+    posture vox already offers via local TTS providers. Phase 2.
+  \item[The Linux user] Expects the same feature, accepts that the
+    platform-native convenience some macOS users get is not available, and
+    should never be told the feature simply does not exist on their
+    platform. Phase 2.
+\end{description}
+
+\section{Use Cases}
+
+Each use case names the actor, the trigger, the expected flow, and what
+``done well'' looks like. Functional requirements in \S\ref{sec:fr} cite the
+use cases they satisfy.
+
+\begin{description}
+
+\item[\uc{1} Start a call. \pone{}] \emph{Actor: any user.} The user presses
+  the conversation-mode hotkey while working in an editor or terminal, with
+  an active Claude Code session already open. The call begins listening
+  within a perceptible instant; no setup dialog, no mode selection, is
+  required if a working configuration already exists. \emph{Done well:} the
+  user does not have to think about which provider is about to answer them,
+  and the agent they are now talking to is the same session they were
+  already working with --- it has the context of what they were just doing,
+  not a blank start.
+
+\item[\uc{2} Ask a question and get a spoken answer. \pone{}] \emph{Actor:
+  any user.} The user speaks a complete thought, pauses, and the agent
+  processes it and answers audibly. \emph{Done well:} the human never
+  wonders whether the system heard them, and the reply begins as soon as
+  the agent has anything to say --- not only once the agent has finished
+  saying all of it.
+
+\item[\uc{3} Interrupt the agent mid-answer. \pone{}] \emph{Actor: any
+  user.} The agent is mid-sentence; the human starts talking over it,
+  either to correct a wrong assumption or to redirect. \emph{Done well:}
+  the agent's voice stops as fast as a human would stop talking when
+  interrupted, and what the human said while interrupting is not lost. On
+  headphones this does not require echo cancellation to work reliably ---
+  the mic only ever hears the human, never the agent's own voice.
+
+\item[\uc{4} Pause mid-thought without ending the turn. \pone{}]
+  \emph{Actor: any user.} The human stops speaking briefly --- to think, to
+  cough, to react to something in the room --- without intending to hand
+  the turn to the agent. \emph{Done well:} the system does not prematurely
+  send a half-formed thought, and does not require the human to learn a
+  special cadence of speech to avoid this.
+
+\item[\uc{5} Wait through a long agent turn. \pone{}] \emph{Actor: any
+  user.} The agent's answer requires reading files, running a search, or
+  several tool calls, taking anywhere from a few seconds to tens of
+  seconds. \emph{Done well:} the call never goes silent in a way that
+  makes the human wonder if it dropped; something --- an acknowledgment, a
+  narrated step, an audible cue --- signals the agent is still working.
+
+\item[\uc{6} Hold a fully private conversation. \ptwo{}] \emph{Actor: the
+  privacy-conscious user.} The user has configured only local providers, or
+  has no network connection at all. \emph{Done well:} the call functions
+  end to end with no audio or transcript leaving the machine, on both
+  macOS and Linux, even though voice quality and latency may be
+  noticeably lower than the cloud experience.
+
+\item[\uc{7} Run the feature on Linux. \ptwo{}] \emph{Actor: the Linux
+  user.} The user has no cloud provider configured and no macOS-only local
+  option available. \emph{Done well:} the feature still works, using
+  whichever local provider is available on that platform, and any setup
+  step this requires (e.g.\ a one-time model download) is explained, not
+  silently imposed.
+
+\item[\uc{8} Talk without headphones, in an office. \ptwo{}] \emph{Actor:
+  any user.} The user is on a laptop or desktop, at ordinary conversational
+  distance from the built-in or external mic and speaker --- not across a
+  room --- without headphones, in a typical office with some ambient noise.
+  \emph{Done well:} the system does not mistake ordinary room noise for
+  speech, does not mistake the agent's own voice coming through the
+  speaker for a human interruption, does not require silence to function,
+  and when it genuinely cannot make out what was said, it asks the human
+  to repeat themselves rather than acting on a guess. This use case is
+  explicitly not about far-field or across-the-room use --- that is out of
+  scope entirely, not merely deferred.
+
+\item[\uc{9} End the call. \pone{}] \emph{Actor: any user.} The user says
+  goodbye, presses the hotkey again, or simply stops engaging.
+  \emph{Done well:} an explicit hangup ends the call immediately; an
+  inactive call ends itself after a bounded timeout rather than holding
+  the microphone open indefinitely.
+
+\item[\uc{10} Start a call for the first time, unconfigured. \pone{}]
+  \emph{Actor: a new user.} No provider has been configured yet and the
+  user presses the hotkey. \emph{Done well:} the user is told what is
+  needed to get a call working (an ElevenLabs key, in Phase 1) rather than
+  the call silently failing to start or starting into a broken state.
+
+\item[\uc{11} Start a call the configured provider cannot reach. \pone{}]
+  \emph{Actor: any user.} The user presses the hotkey while their
+  configured provider is unreachable --- no network, an expired key, a
+  provider outage. \emph{Done well:} the call does not start, and the user
+  is told why, immediately and in a way they can act on, rather than being
+  dropped into a call that will not work.
+
+\end{description}
+
+\section{Functional Requirements}
+\label{sec:fr}
+
+Requirements are grouped by capability area. Each cites the use case(s) it
+exists to satisfy and carries the same \pone{}/\ptwo{} phase tag.
+
+\subsection{Call lifecycle}
+
+\begin{description}
+  \item[\fr{1} \pone{}] The system shall let a user start a call with a
+    single action (hotkey or equivalent), with no required configuration
+    step beyond what already makes vox speak today. (\uc{1}) When no
+    provider is configured, the system shall tell the user what is needed
+    rather than failing silently. (\uc{10})
+  \item[\fr{2} \pone{}] The system shall let a user end a call explicitly
+    at any time, and shall end an inactive call automatically after a
+    bounded timeout. (\uc{9})
+  \item[\fr{3} \pone{}] \textbf{Revised.} The system shall communicate
+    every call-state transition (ready to listen, agent finished
+    speaking, call ending) \emph{audibly}, through the same voice channel
+    already used for replies. A visual or text signal is not sufficient
+    on its own: live testing (Spike 5) confirmed that a hands/eyes-free
+    user genuinely does not see on-screen text, so a state signal that
+    depends on being read is not a signal at all for the primary
+    scenario. The original wording (``somewhere the user can check it'')
+    is too weak and is superseded by this. (\uc{1}, \uc{5})
+  \item[\fr{4} \pone{}] A call shall involve exactly one human and one
+    Claude Code agent session for the lifetime of that call, and that
+    session shall be the user's active session --- carrying whatever task
+    context it already had --- not a newly started, context-free session.
+    (\uc{1})
+\end{description}
+
+\subsection{Hearing the human}
+
+\begin{description}
+  \item[\fr{5} \pone{}] The system shall detect when the human has
+    finished a turn, without requiring an explicit ``done'' signal from
+    the human. (\uc{2})
+  \item[\fr{6} \pone{}] The system shall not end a turn on an ordinary
+    thinking pause, a cough, or an incidental noise. (\uc{4}, \uc{8})
+  \item[\fr{7} \pone{}] The system shall not treat steady background room
+    noise as human speech. (\uc{8})
+  \item[\fr{7a} \ptwo{}] Without headphones, the system shall not treat the
+    agent's own voice audible through an open speaker as human speech.
+    On headphones (\pone{}) this requirement is structurally satisfied ---
+    the mic never hears the speaker at all. (\uc{8})
+\end{description}
+
+\subsection{Interruption}
+
+\begin{description}
+  \item[\fr{8} \pone{}] The system shall let the human interrupt the agent
+    while it is speaking, and shall stop the agent's speech promptly on
+    interruption. \textbf{Revised:} ``promptly'' is two separate,
+    additive latencies (Spike 5), not one number --- see \nfr{1}.
+    (\uc{3})
+  \item[\fr{9} \pone{}] The system shall not discard what the human said
+    while interrupting; that speech shall carry forward as the start of
+    the next turn. (\uc{3})
+  \item[\fr{10} \ptwo{}] Without headphones, the system shall distinguish
+    a genuine interruption from the agent's own voice leaking into the
+    microphone, so an interruption is never falsely triggered by the
+    system hearing itself. Not required on headphones (\pone{}) for the
+    same structural reason as \fr{7a}. (\uc{8})
+  \item[\fr{22} \pone{} \textbf{(new)}] The system shall distinguish a
+    deliberate interruption from an incidental conversational reaction
+    (a brief acknowledgment, exclamation, or backchannel sound like
+    ``mm'') by requiring a minimum duration of sustained speech before
+    treating audio as an interruption. This holds on headphones too ---
+    unlike \fr{10}, it has nothing to do with echo; a human can react
+    audibly while wearing headphones. Spike 5 found this by accident (an
+    operator's unintentional reaction stopped the agent) and could not
+    resolve it from acoustic-duration statistics alone; a working
+    threshold (approximately 500\,ms of sustained speech) was reached
+    only through direct live tuning against human feedback, and that
+    number is one operator's preference in one session, not a validated
+    default. See Chapter 2 for the mechanism and \S\ref{sec:oq} for what
+    remains open. (\uc{3})
+\end{description}
+
+\subsection{The agent's turn}
+
+\begin{description}
+  \item[\fr{11} \pone{}] The system shall begin speaking the agent's reply
+    as soon as the first complete portion of it is available, rather than
+    waiting for the entire reply to be ready. (\uc{2}, \uc{5})
+  \item[\fr{12} \pone{}] \textbf{Revised.} While the agent is working on a
+    reply, the system shall play a pre-authored, bundled ambience loop
+    (quiet workspace foley --- typing, paper shuffle, room tone) on the
+    daemon's existing background audio channel, independent of the
+    foreground speech channel. The original candidate mechanism ---
+    \texttt{mic:music}'s live Music-generation API, ducked under the call
+    --- is superseded: Spike 4 found the Music-generation model produces
+    repetitive, non-representative content for foley-type sound (it is
+    tuned for melody, not realistic ambience) and requires expensive
+    per-refresh runtime generation. The corrected mechanism is described
+    in Chapter 2. (\uc{5})
+  \item[\fr{13} \pone{}] The microphone shall remain available to the
+    human throughout the agent's turn, so a human who wants to add or
+    correct something is never locked out. (\uc{3}, \uc{5})
+\end{description}
+
+\subsection{Providers}
+
+\begin{description}
+  \item[\fr{14} \pone{}] The system shall support ElevenLabs as a
+    Conversation Mode provider, for both speech recognition and speech
+    synthesis, on macOS. (\uc{1})
+  \item[\fr{14a} \ptwo{}] The system shall additionally support at least
+    one fully local speech provider on each of macOS and Linux. (\uc{6},
+    \uc{7})
+  \item[\fr{15} \pone{}] The system shall let a user configure which
+    provider is used for Conversation Mode, consistent with how providers
+    are already configured for vox's existing text-to-speech surface. A
+    call uses the configuration it was started with for its entire
+    duration. (\uc{1})
+  \item[\fr{16} \ptwo{}] The system shall not require any cloud account,
+    API key, or network connection to hold a complete call on either
+    supported platform, when configured for a local provider. (\uc{6},
+    \uc{7})
+  \item[\fr{17} \ptwo{}] The system shall clearly account for any setup
+    cost unique to a platform's local provider (for example, a one-time
+    model download on Linux) rather than presenting it as a silent
+    limitation. (\uc{7})
+  \item[\fr{18} \pone{}] If the configured provider cannot be reached when
+    a call is started, the system shall fail to start the call with a
+    clear reason, rather than starting the call and finding out
+    mid-conversation. (\uc{11})
+  \item[\fr{21} \pone{}] The interfaces between voxd's call logic and a
+    speech provider (capture, recognition, turn-taking signals, synthesis)
+    shall be defined without assuming ElevenLabs is the only possible
+    implementation behind them, so that Phase 2 providers can be added
+    later without renegotiating the interface boundary. Phase 1 still
+    ships exactly one implementation behind that interface --- the
+    abstraction is scoped now so it does not have to be retrofitted, not
+    because Phase 1 needs more than one provider to prove its point.
+\end{description}
+
+\subsection{Feedback and trust}
+
+\begin{description}
+  \item[\fr{19} \pone{}] The system shall never fabricate or guess at what
+    the human said when audio is ambiguous or capture fails; it shall ask
+    the human to repeat themselves rather than act on a low-confidence
+    guess. (\uc{8}, and generally whenever capture confidence is low)
+\end{description}
+
+\section{Non-Functional Requirements}
+
+\begin{description}
+  \item[\nfr{1} \pone{} (Interruption latency)] \textbf{Revised, validated
+    with real data.} Total perceived interruption latency is two
+    additive, separately-measured quantities, not one number:
+    \begin{enumerate}
+      \item \emph{Detection latency} --- sustained speech required before
+        the system treats audio as a deliberate interruption (\fr{22}).
+        Validated live: 500\,ms was tuned against direct human feedback
+        and judged ``good enough'' by the operator. This is a starting
+        default, not a proven-optimal or universal constant.
+      \item \emph{Termination latency} --- from the stop decision to
+        audible silence. Spike 2 measured process-kill time alone
+        (0.3--5.3\,ms, real hardware, real interruption) and mistook it
+        for the whole quantity; Spike 5 found that killing the playback
+        process does not guarantee already-buffered audio stops
+        immediately, and this buffer-tail component was never measured.
+        \textbf{Open}, not closed --- see \S\ref{sec:oq}.
+    \end{enumerate}
+    The original single ``under 300\,ms'' target is superseded: it did
+    not distinguish these two quantities, and the validated detection
+    component alone (500\,ms) already exceeds it. (Supports \fr{8},
+    \fr{22}.)
+  \item[\nfr{2} \pone{} (Time to first spoken word)] \textbf{Confirmed
+    with real data, target retained.} Measured end to end against a real
+    agent and real tool-use turns (Spikes 3 and 5, 5 trials total):
+    580--683\,ms, flat regardless of total reply length (the longest
+    reply in Spike 3 had the lowest latency). Spike 1 separately measured
+    the ElevenLabs TTS provider floor in isolation, with no agent in the
+    loop --- 145--162\,ms across 5 trials --- which is a different
+    quantity (provider latency alone) supporting the same conclusion from
+    a different angle: it establishes the headroom the end-to-end number
+    above has to work with, not an additional sample of the same
+    measurement. The original ``about one second'' provisional target
+    holds with real headroom; no revision needed to the target itself,
+    only to its confidence: this is now measured, not provisional.
+    (Supports
+    \fr{11}.)
+  \item[\nfr{3} \ptwo{} (Platform and provider breadth)] Phase 1 targets
+    macOS with ElevenLabs only. Phase 2 extends the same interfaces to
+    Linux, to local providers on both platforms, and to the no-headphones
+    scenario; the platforms and providers are not required to reach that
+    experience through identical mechanisms.
+  \item[\nfr{4} \ptwo{} (Privacy posture)] In a fully local configuration,
+    no audio or transcript content shall leave the machine at any point
+    during a call.
+  \item[\nfr{5} \pone{} (No regression to existing behavior)] Vox's
+    behavior when Conversation Mode is not active shall be unchanged by
+    this feature's existence.
+  \item[\nfr{6} \pone{} \textbf{(new)} (Audible-only state signaling)]
+    No call-state transition (\fr{3}) may depend on a visual or text
+    channel as its only signal. A generic, unverified audio cue is not
+    sufficient either: Spike 5 found a standalone system chime unreliable
+    for a reason never root-caused, while vox's own TTS voice
+    (\texttt{mic:unmute}), already proven all session, worked every time.
+    The call's own voice channel is the only channel this document treats
+    as trustworthy for state signaling until an alternative is separately
+    verified.
+\end{description}
+
+\section{Open Questions}
+\label{sec:oq}
+
+\begin{itemize}
+  \item \textbf{Termination latency's buffer-tail component} (\nfr{1}).
+    Process-kill time is measured (0.3--5.3\,ms); the time from kill
+    signal to actual audible silence, inclusive of any output buffer
+    already handed to the OS, is not. This likely requires controlling
+    playback through a continuously-owned audio stream rather than
+    spawning and killing a player subprocess per segment --- see Chapter
+    2, \S\ref{sec:design-termination}.
+  \item \textbf{Is 500\,ms the right default for \fr{22}, and should it
+    be tunable per user or per session?} Reached through one operator's
+    live feedback in one room on one day. Reasonable as a shipped
+    default given how it was derived, but not validated across
+    speakers, rooms, or microphones.
+  \item \textbf{The audible ready-to-listen cue is unresolved.}
+    \nfr{6} establishes that it must be audible and that vox's own TTS
+    voice is the only channel proven reliable; \fr{3}'s ``ready to
+    listen'' transition specifically was never made to work reliably in
+    Spike 5 using a non-speech chime. Does the listening cue need to be
+    spoken (costing a beat of latency and a few words of vocabulary) or
+    is there a non-speech sound that can be independently verified as
+    reliable before Phase 1 ships?
+  \item \textbf{Multi-session audio contention.} During Spike 5, other
+    concurrent Claude Code sessions on the same machine were suspected
+    (incorrectly, on investigation) of bleeding audio into the call's
+    microphone. The suspicion was wrong in that instance, but the
+    underlying question --- what happens to a call when another vox
+    client on the same daemon plays audio at the same time --- was never
+    actually tested and is not addressed anywhere in this document.
+  \item Is a one-time local-model download (\fr{17}) acceptable as part of
+    vox's existing install story, or does it need its own onboarding step?
+    (Phase 2 question; not blocking Phase 1.)
+  \item \fr{18} (fail closed at call start) and the mid-call-degradation
+    non-goal are a deliberate simplification to keep scope small --- is
+    that the right call, or does early user feedback push toward
+    resilience sooner than expected?
+  \item How many ambience loops (\fr{12}) ship in the bundle, of what
+    length, and does the presence mechanism need a fourth
+    \texttt{Format} in the existing Program state machine or a simpler
+    static-asset path that bypasses it? Both are architecturally
+    supported (Chapter 2, \S\ref{sec:design-presence}); the choice is
+    undecided.
+\end{itemize}
+
+\chapter{Technical Design Solution}
+
+Chapter 1 states what Conversation Mode must do. This chapter states how,
+at the level of components and data flow rather than code --- synthesized
+from five live spikes (\texttt{docs/conversation-mode-spikes.md}), not
+from advance design. Where a spike left something unresolved, this
+chapter says so rather than papering over it; the open items here are the
+same items in \S\ref{sec:oq}, restated as design gaps instead of
+questions. This chapter is still not the Z specification --- per
+\texttt{docs/WORKFLOW.md}'s stateful-audio gate, the call state machine
+(\fr{4}'s single-session lifecycle, idle/listening/waiting/speaking) gets
+its own formal model before implementation. This chapter is the design
+that model will formalize.
+
+\section{Component overview}
+
+A call is one continuously-running loop with five components, each
+independently proven by a spike:
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Component & Proven by & Real measurement \\
+\midrule
+Turn detection (capture $\to$ end-of-turn) & Spikes 2, 5 & see \S\ref{sec:design-turn} \\
+Speech recognition (audio $\to$ text) & Spike 1 & 2.2--2.5\,s to first partial \\
+Agent turn (text $\to$ reply) & Spike 3, 5 & N/A --- Claude Code itself \\
+Sentence-streamed synthesis (reply $\to$ audio) & Spike 3 & 580--683\,ms first word \\
+Barge-in (audio $\to$ stop signal) & Spikes 2, 5 (partial) & see \S\ref{sec:design-termination} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+None of these components block another: turn detection and barge-in
+detection are both continuous, audio-only processes that run for the
+entire life of a call, independent of which of the other three
+components is currently active. \textbf{Correction:} an earlier draft of
+this document claimed this meant Spike 5 had ``no orchestration layer to
+get wrong.'' That overstates it --- Spike 5's own findings include a
+process-coordination bug (finding (a)), an audio-routing bug (finding
+(b)), and a barge-in test harness that produced meaningless data because
+it never closed the loop between detection and playback (finding (e)),
+all genuinely orchestration-level failures between otherwise-correct
+components. The corrected claim is narrower: the five components'
+\emph{internal} correctness was independently established by different
+spikes, which is why fixing each one individually (rather than debugging
+an entangled whole) was possible --- not that wiring them together was
+uneventful.
+
+\textbf{Design requirement added after Chapter 3's test-plan review:}
+these components being independent and continuous means they can call
+into the shared call state machine (\S\ref{sec:design-session-attach}
+onward) concurrently --- turn detection, barge-in detection, and
+sentence-streamed synthesis are three separate processes that may all
+observe or attempt to change call state at overlapping moments. If the
+state machine is implemented with \texttt{voxd/programs/program.py}'s
+\texttt{Program} shape (recommended --- see the design-mission note in
+\S\ref{sec:design-termination}), that shape is only safe under
+\texttt{Program}'s own documented assumption of a single serializing
+writer; \texttt{Program} itself has no internal lock. \textbf{The call
+state machine must be reachable only through one serialized dispatch
+point} (a queue, an actor, or an explicit lock at the call boundary) ---
+this is a requirement on the orchestration layer wrapping the state
+machine, not something the pure state class can guarantee by construction.
+Where exactly that serialization point lives is part of what
+\S\ref{sec:design-session-attach}'s Z specification must settle, not an
+implementation detail to discover afterward.
+
+\section{The unresolved core: session attachment}
+\label{sec:design-session-attach}
+
+Before any other mechanism in this chapter, one gap has to be named
+plainly, because everything else described here is downstream of it and
+an earlier draft under-weighted it into a single bullet in Known
+Unknowns: \textbf{how a transcribed turn reaches, and how a streamed
+reply is pulled from, the user's already-running Claude Code session is
+undesigned.} FR-4 requires the call to use the user's active
+session --- carrying its existing task context --- not a fresh one. Every
+spike that stood in for ``the agent'' actually used \emph{this authoring
+session itself}, driven by hand: Spike 3's real agent turns were ``seeded
+by a genuinely multi-second real turn in this session,'' and Spike 5's
+integration loop ran inside the live authoring conversation with the
+operator. No spike attempted programmatic injection of transcribed audio
+into an independent, already-running session, nor programmatic extraction
+of that session's streamed reply. Turn detection, barge-in, and
+sentence-streamed synthesis are all real, all measured, and all
+irrelevant if there is no mechanism to actually connect them to a live
+agent session that isn't the one authoring this document. \textbf{This
+needs at least a sketch of the injection/extraction API shape --- is it a
+hook into the Claude Code session surface, a queue the session polls,
+does it require the session to run inside \texttt{voxd}'s process space
+or communicate over IPC --- before an implementation mission dispatches,}
+even if that sketch is only an ADR-style list of rejected and chosen
+alternatives, not a full design.
+
+One direct consequence for the rest of this chapter: \textbf{every
+latency number reported in \nfr{1} and \nfr{2} was measured with the
+agent role played by this authoring session, not through whatever
+session-attach mechanism is eventually built.} Those numbers establish
+that the audio-facing legs of the pipeline (STT, TTS, detection) are fast
+enough --- they do not yet establish that the full system will be, once a
+real attach mechanism's own latency is added. Treat \nfr{1}/\nfr{2} as
+validated for the components measured, provisional for the system as a
+whole.
+
+\section{Decisions required before implementation}
+
+Three forks in this chapter are explicitly reserved for the operator, per
+this project's own workflow rules (design review must surface substantive
+issues \emph{before} an implementation mission dispatches, not let them
+surface as defects during it). Collected here so none of the three can be
+missed by being one bullet among many elsewhere in this chapter:
+
+\begin{enumerate}
+  \item \textbf{Session attachment} (\S\ref{sec:design-session-attach}).
+    No recommendation is offered here --- this needs investigation into
+    what Claude Code's session surface actually permits before a shape
+    can even be proposed.
+  \item \textbf{Continuous-stream playback ownership}
+    (\S\ref{sec:design-termination}): built into production
+    \texttt{PlaybackQueue} directly, or as a new sibling component that
+    reuses its diagnostics without inheriting its subprocess-per-item
+    architecture. The first risks \nfr{5} by modifying code every
+    existing vox feature depends on; the second risks the ``two
+    pipelines'' duplication this chapter argues against elsewhere. No
+    recommendation offered; the trade-off is genuinely close.
+  \item \textbf{Presence-signal mechanism}
+    (\S\ref{sec:design-presence}): a fourth Program \texttt{Format}, or a
+    simpler static-asset path outside the \texttt{Program} state
+    machine. Unlike the other two, this chapter's own analysis leans one
+    way and should say so rather than leave the trade-off unresolved:
+    \textbf{recommend the static-asset path.} The \texttt{Format} path's
+    only argument is consistency with the existing state machine, but
+    that machine's retry and generation semantics exist to handle a Part
+    that can fail to generate --- meaningless for a bundled asset that
+    already exists on disk and cannot fail to generate. Consistency with
+    machinery that would sit entirely unexercised is not a real argument
+    for carrying it. This is a recommendation for the operator to
+    confirm or overrule, not a decision already made.
+\end{enumerate}
+
+\section{Turn detection}
+\label{sec:design-turn}
+
+\textbf{Model: accumulated audible-run duration, not a consecutive-chunk
+streak.} The first implementation in Spike 5 tracked consecutive strong
+chunks and failed twice: too permissive (2 consecutive chunks, ~60ms) let
+transients (coughs, clicks) end a turn falsely; too strict (14
+consecutive chunks, ~420ms, an overcorrection) missed genuine continuous
+speech, because real speech has brief amplitude dips between syllables
+that reset a strict consecutive counter. The corrected model accumulates
+audible duration across a \emph{run}, resetting only on a genuine silence
+gap ($\geq$200\,ms) --- brief within-word dips do not reset it. This
+mirrors Unramble's \texttt{LiveTurnPauseDetector} design (researched
+earlier in this project) more closely than the first port did; the first
+port's failure was simplifying that design past the point where it still
+worked, not a flaw in the underlying approach.
+
+\textbf{Calibration must precede tuning, not substitute for it.} Every
+threshold in this system (audible ceiling, strong ceiling, sustain
+duration) is relative to an adaptively-tracked noise floor, not an
+absolute constant --- but the \emph{multipliers} against that floor were
+initially guessed from a prior spike's numbers, in a different room, and
+failed silently (returning STT tags like \texttt{[background noise]}
+rather than an error) until real RMS data was captured
+(\texttt{calibrate.py}: median 0.035, peak 0.377, real silent gaps
+mid-utterance) and the model was fixed against evidence. A production
+implementation needs an explicit calibration step --- even a few seconds
+of ``say something'' at call start --- rather than shipping fixed
+multipliers tuned once in one room.
+
+\textbf{Scoping gap: this model is tuned against continuous human
+speech's amplitude profile, and it is not established whether that
+profile is reliably distinguishable, by duration and gap statistics
+alone, from bursty non-speech noise} --- a dog barking intermittently, a
+knock, irregular nearby typing --- which by construction can produce the
+same ``brief gaps within a longer run'' pattern the model was built to
+tolerate. Headphones (P1) remove speaker echo but not ambient room noise
+reaching an open mic, so this is not automatically a P2-only
+(no-headphones) concern the way \fr{7a}/\fr{10} are; it is unclear from
+this design whether P1 also assumes a quiet room, and that assumption
+should be stated explicitly rather than left implicit.
+
+\section{Barge-in and its two latencies}
+\label{sec:design-termination}
+
+Total perceived interruption latency is \textbf{detection latency +
+termination latency}, and they need entirely different engineering:
+
+\textbf{Detection latency} uses the same accumulated-run model as turn
+detection (\S\ref{sec:design-turn}), with a longer sustain requirement
+(\fr{22}): real interruption behavior sustains for a second or more;
+backchannel reactions (``mm,'' a short exclamation) run a few hundred
+milliseconds. Spike 5's attempts to derive a clean separating threshold
+from acoustic-duration statistics alone failed for three different,
+each-diagnosable reasons (methodology flaws in the test, not
+inconsistency in human behavior --- see \texttt{conversation-mode-spikes.md}
+Spike 5(e) for the detail); direct human-in-the-loop tuning (pick a
+value, ask ``too slow or too fast,'' adjust) reached a working number
+(500\,ms) where statistical derivation did not. \textbf{Recommendation:
+ship this as a live-tunable parameter with a 500\,ms default}, not a
+hardcoded constant --- the derivation method that worked once (ask the
+user) is also the mechanism that should exist at runtime if the default
+turns out wrong for a given voice or room.
+
+\textbf{Termination latency is not process-kill latency.} Spike 5's
+prototype stopped playback by sending \texttt{SIGTERM} to an
+\texttt{afplay} subprocess per synthesized sentence; Spike 2 measured
+that kill taking 0.3--5.3\,ms and treated the interruption problem as
+solved. It measured the wrong thing: killing the \emph{process} does not
+guarantee audio already handed to the OS output buffer stops
+\emph{sounding}, and this buffer-tail latency was never isolated from the
+kill-signal latency in any spike. \textbf{Design implication: production
+playback should not shell out to a per-segment player subprocess at all.}
+It should own a single, continuously-running output audio stream that can
+be silenced by clearing its buffer directly, not by killing and
+restarting a process. This also removes the per-sentence subprocess-spawn
+overhead the spike prototypes paid on every segment.
+
+\textbf{Only the direction is settled here, not the concurrency
+discipline around it.} ``Clear the buffer directly'' does not by itself
+answer: what happens when a barge-in stop-signal arrives at the same
+moment a segment finishes naturally on its own (a race between
+turn-completion and interruption)? What happens if a second barge-in
+fires while the first stop's buffer-clear is still in flight --- a
+stop-during-a-stop? From what thread is the buffer cleared, under what
+lock, relative to whatever thread is concurrently writing newly
+synthesized audio into that same stream? This document does not need to
+answer these at the code level, but per the deferred Z specification
+noted at this chapter's start, the single-stream design's ordering
+guarantees are a required \emph{input} to that formal model, not a detail
+the model can discover while being written.
+
+\textbf{Correction:} an earlier draft of this document described this as
+``comparable to \texttt{voxd}'s existing \texttt{PlaybackQueue}.'' On
+inspection, \texttt{PlaybackQueue.play\_audio()}
+(\texttt{voxd/playback.py:329--466}) spawns one subprocess per file via
+\texttt{asyncio.create\_subprocess\_exec}, awaits completion or a
+timeout-based kill, and exposes no mid-playback interrupt method at all
+--- it is architecturally the same subprocess-per-segment shape this
+section is diagnosing as insufficient, not an existing approximation of
+the target. \texttt{PlaybackQueue} is the right \emph{place} to add a
+continuous-stream capability, so this feature inherits its existing
+failure diagnostics instead of duplicating them, but that capability does
+not exist in production code today and would be new work.
+
+\textbf{Undecided, and belongs to the operator, not this document:}
+whether that new capability is built \emph{into} \texttt{PlaybackQueue}
+directly, or as a new sibling component that reuses its diagnostics
+without inheriting its subprocess-per-item architecture. The first risks
+\nfr{5} (vox's behavior outside a call must be unchanged) by modifying
+code every existing vox feature --- chimes, TTS replies, music ---
+depends on. The second avoids that regression risk but risks the
+``two pipelines instead of one'' duplication this document argues against
+in the synthesis section below. This is exactly the kind of fork this
+project's own workflow reserves for an explicit operator decision before
+an implementation mission dispatches, and it has not been made.
+
+\section{Sentence-streamed synthesis: one pipeline, not two}
+
+Confirmed by Spike 3, built and measured, not merely proposed: vox's
+existing batch TTS path (\texttt{core.py:split\_text} $\to$
+\texttt{providers/chunked.py:chunked\_synthesize} $\to$
+\texttt{stitch\_audio}) and Conversation Mode's incremental path are the
+same segmentation problem with one difference --- whether the full input
+is known upfront or arrives over time. The design that survived contact
+with real code: \textbf{one segmentation core, built on
+\texttt{split\_text}'s actual sentence-boundary regex, with two flush
+policies on top} --- \texttt{GREEDY} (accumulate to \texttt{max\_chars},
+matching today's batch behavior byte-for-byte) for the existing TTS
+surface, and \texttt{EAGER} (flush every complete sentence immediately)
+for Conversation Mode. The naive port failed once, cleanly diagnosed:
+incremental code has to answer ``did the sentence end, or did the input
+just end?'' as a real question, which \texttt{split\_text} never has to
+ask because it always sees the whole string. That distinction is exactly
+what the flush-policy split resolves, without needing two segmenters.
+
+\textbf{Recommendation: build the real implementation directly on this
+shape}, not on a re-derivation of it --- the unification was validated in
+working code (\texttt{.tmp/spikes/conversation-mode/spike3-streaming/}),
+not just argued for.
+
+\textbf{Gap: the async/sync boundary, which Spike 3 itself named as the
+dominant unsolved problem, has no design here.} \texttt{voxd}'s handlers
+are \texttt{async def} throughout, but \texttt{chunked\_synthesize} and
+the per-provider synthesis calls it drives are synchronous, blocking
+calls. Spike 3's own write-up states plainly that bridging this boundary,
+not the segmenter, is where the real design effort has to go for a
+production implementation --- and that bridging design does not exist
+yet, here or anywhere else in this document. See \S\ref{sec:known-unknowns}.
+
+\section{Presence signal: a quips-shaped pool, not a single asset and not
+\texttt{Program}}
+\label{sec:design-presence}
+
+Spike 4 falsified the original candidate (\texttt{mic:music}'s
+Music-generation API, ducked under the call) on content grounds ---
+repetitive, not representative of real workspace foley, because a
+music-generation model is tuned for melody and rhythm, not realistic
+ambient sound --- before the level problem (needed to be turned up loud
+enough that other audio became uncomfortably loud) was even reached. Two
+further rounds of design discussion, after the spike, corrected the
+mechanism twice more; this section states where that landed, not the
+intermediate steps.
+
+\textbf{The design settled on a fourth existing vox pattern this
+document had not previously considered: \texttt{quips.py}.}
+\texttt{quips.py} holds fixed-size pools of plain text
+(\texttt{STOP\_PHRASES}, \texttt{IDLE\_PHRASES}, and others --- seven to
+ten entries each), picked via \texttt{random.choice()} at the moment a
+hook fires and passed straight into a live synthesis call
+(\texttt{hooks.py:254}). What makes repetition cheap is \texttt{cache.py}:
+audio is content-addressed by \texttt{(text, voice, provider)}, so the
+first time any phrase plays it is a real API call, and every later
+occurrence of the same phrase is a cache hit. This is a fourth pattern
+already live in vox, distinct from bundled binary assets (chimes) and
+from live dynamic generation with retry/pool semantics
+(\texttt{Program}/\texttt{Format}, used for Music), and it turned out to
+be the correct fit here --- not either of the two this document
+previously weighed against each other:
+
+\begin{itemize}
+  \item \textbf{A single bundled loop, replayed every call, was rejected
+    on product grounds, not technical ones.} Chimes are fine as static,
+    endlessly-repeated assets because they are short and purely
+    functional --- nobody notices a chime repeating. A multi-second
+    ambient loop replayed identically across every call is exactly the
+    kind of content a person does notice, and gets tired of.
+  \item \textbf{\texttt{Program}/\texttt{Format} reuse was rejected for
+    the reason given in an earlier draft of this section} (retry and
+    generation-failure semantics are meaningless for content that is
+    authored once and cached, not generated live per call) \textbf{and
+    that reasoning still holds} --- but it is now moot rather than a live
+    trade-off, because the quips pattern already solves the actual
+    problem \texttt{Program}'s pool/rotate/anti-repeat machinery exists
+    for (avoiding repetition fatigue) at a fraction of the complexity,
+    since nothing here needs to be generated live.
+\end{itemize}
+
+The settled design:
+
+\begin{enumerate}
+  \item \textbf{Author a fixed pool of Sound Effects prompts} ---
+    discussed as approximately five distinct scenarios --- the same
+    shape as a \texttt{quips.py} phrase pool, but each entry is a Sound
+    Effects prompt (confirmed purpose-built for foley/ambient sound, with
+    native seamless looping, via ElevenLabs' Sound Effects API) instead
+    of a spoken phrase. \textbf{Correction, carried from an earlier
+    draft:} a prior version of this document claimed Sound Effects costs
+    ``roughly 1/50th the per-second cost'' of Music; that compared a
+    per-second Sound-Effects rate against a per-\emph{track} Music price
+    without converting units, and was wrong --- on a like-for-like basis
+    Sound Effects is more expensive per second, not cheaper. The real
+    economic argument is that each pool entry is synthesized at most once
+    per install (see item 2), not the per-second provider rate.
+  \item \textbf{Synthesize each pool entry once, cache via the existing
+    \texttt{cache.py} infrastructure}, exactly as quip phrases already
+    are --- no bundled binary assets shipped in the package, no
+    per-call runtime generation. First use of each scenario on a given
+    machine pays one real synthesis call; every use after that, of any
+    scenario, is a cache hit. Gain-normalization (a live listening test
+    found a generated clip needed +6\,dB to be audible at a comfortable
+    level) is a one-time authoring-time step per pool entry, the same as
+    any other quality check on a quip's phrasing.
+  \item \textbf{Select with the same anti-repetition discipline
+    \texttt{quips.py} already uses} --- random choice across the pool,
+    or a simple last-played exclusion, rather than always the same entry
+    or a fixed sequence. This is what actually solves the repetition
+    problem chimes don't have and \texttt{Program}'s pool/rotate exists
+    for, without needing \texttt{Program}'s generation-failure machinery
+    to get it.
+  \item \textbf{Runs on the existing background channel, independent of
+    speech}, the same channel \texttt{Program}-based Music already uses.
+    Confirmed live and by code (\texttt{speech\_handlers.py} has zero
+    references to \texttt{Program}, pause, or duck): \texttt{voxd}
+    already runs two independent audio channels, foreground
+    speech/chime (\texttt{playback.py}) and background Program
+    (\texttt{music\_player}). Whether this pool should play through that
+    same background channel via a lightweight sibling to
+    \texttt{music\_player}, or through a new, smaller mechanism of its
+    own, is not decided by this document; either way, no ducking exists
+    between foreground speech and background audio today, and whether
+    the presence loop needs to duck under speech or can coexist at
+    authored levels is untested.
+\end{enumerate}
+
+\textbf{Out of scope for this design, raised in discussion but not
+committed as a requirement:} a user supplying their own ambience (either
+an existing audio file, which fits this same cached/static shape with no
+generation step, or a custom prompt generated on demand, which would
+need \texttt{Program}/\texttt{Format}'s actual retry-and-generate
+machinery, since on-demand generation genuinely can fail transiently the
+way a fixed authored pool never does). Chapter 1 has no requirement for
+user-customizable presence audio; if that becomes real scope, the
+correct design is a hybrid --- quips-style pool for the shipped defaults,
+\texttt{Program}/\texttt{Format} reuse specifically for user-triggered
+custom generation --- not a reason to revisit the choice made here for
+the default case.
+
+\section{Audio-first state signaling}
+
+\nfr{6} is a design constraint, not just a requirement: \textbf{every
+call-state cue routes through vox's existing TTS voice channel
+(\texttt{mic:unmute}), not a new subsystem.} A standalone system chime
+(\texttt{afplay /System/Library/Sounds/Tink.aiff}) was verified working
+in isolation but was not reliably heard when invoked from inside the
+listener process, for a reason not root-caused in this session ---
+plausibly output-device routing differing between a bare shell
+invocation and one nested inside a Python subprocess, but not confirmed.
+Switching to the same TTS channel already proven reliable all session
+worked immediately and consistently. \textbf{Do not build a second,
+unverified audio-cue mechanism when a trusted one already exists} ---
+if a lighter-weight non-speech cue is wanted later for latency reasons,
+it needs its own dedicated reliability verification before anything
+depends on it, not an assumption carried over from working once,
+standalone, outside the real call path. The chime failure's root cause
+should be understood, not just worked around, before it is attempted
+again in any form --- it is a plausible symptom of an audio-routing issue
+that could resurface in the presence loop's background channel or any
+future non-speech cue, not something specific to
+\texttt{/System/Library/Sounds/Tink.aiff} alone.
+
+\section{Known unknowns}
+\label{sec:known-unknowns}
+
+Carried forward from \S\ref{sec:oq} as concrete design gaps, not
+open-ended risk. The first two were missing from this section entirely
+until an independent design review caught them; they are the largest
+gaps in this chapter, not minor additions.
+
+\begin{itemize}
+  \item \textbf{How a transcribed turn reaches, and how a streamed reply
+    is pulled from, the user's already-running Claude Code session ---
+    undesigned, and untested by any spike.} \fr{4} requires the call to
+    use the user's active session with its existing task context, not a
+    fresh one. Every spike that involved ``the agent'' actually used
+    \emph{this authoring session itself} as the agent, driven by hand
+    (Spike 3: ``seeded by a genuinely multi-second real turn in this
+    session''; Spike 5: the integration loop ran inside the live
+    authoring conversation). No spike tested programmatic injection of
+    transcribed audio into an independent, already-running session, nor
+    programmatic extraction of that session's streamed reply. This may
+    require a session-attach surface that does not exist in this
+    codebase today, and is the single largest unaddressed architecture
+    question in this document.
+  \item \textbf{Provider-agnostic interfaces (\fr{21}, P1) have no design
+    content anywhere in this chapter.} Every spike hardcoded ElevenLabs
+    directly --- Spike 1 reused \texttt{providers/elevenlabs.py}
+    wholesale; Spike 4 bypassed \texttt{mic:music} to call the
+    ElevenLabs SDK directly rather than go through any abstraction.
+    \fr{21} requires the capture/recognition/turn-taking/synthesis
+    interface boundary to be defined without assuming ElevenLabs is the
+    only implementation, and nothing in this chapter sketches what that
+    boundary looks like. Silently treating this as solved would be
+    wrong; it has not been attempted.
+  \item \textbf{The async/sync boundary} between \texttt{voxd}'s
+    \texttt{async def} handlers and the synchronous
+    \texttt{chunked\_synthesize}/provider synthesis calls they currently
+    drive --- named by Spike 3 itself as the dominant unsolved
+    engineering problem, ahead of the segmenter --- has no design here.
+  \item \textbf{Termination's buffer-tail latency} is unmeasured. The
+    architectural fix (\S\ref{sec:design-termination}, a continuously-owned
+    output stream instead of per-segment subprocess playback) is proposed
+    but not built or measured.
+  \item \textbf{Whether the new continuous-stream playback capability
+    modifies production \texttt{PlaybackQueue} directly or is built as a
+    separate component} is an explicit operator decision, not yet made
+    (\S\ref{sec:design-termination}).
+  \item \textbf{The 500\,ms interruption-detection default} is one
+    operator's live-tuned preference, not validated across voices, rooms,
+    or microphones. Ship it as a runtime-tunable parameter, not a
+    constant.
+  \item \textbf{Multi-session audio contention} --- what a call does when
+    another vox client on the same daemon plays audio concurrently --- was
+    never tested. Spike 5 suspected it incorrectly in one instance; the
+    underlying scenario is untested, not disproven.
+  \item \textbf{Presence-signal ducking against speech} is untested; the
+    two channels are confirmed independent today, and whether that is
+    sufficient or needs explicit ducking is open.
+  \item \textbf{Ambience-Format vs.\ static-asset path} for
+    \S\ref{sec:design-presence} item 4 is an implementation choice not
+    yet made.
+  \item \textbf{FR-19 (never fabricate on ambiguous audio)} has no design
+    coverage here, despite two directly relevant spike findings: Spike
+    1's ElevenLabs partial transcripts self-correcting mid-stream, and
+    Spike 5's turn detector producing false triggers before it was
+    fixed. How the production system surfaces low-confidence capture to
+    the human is undesigned.
+  \item \textbf{Mid-call self-correction.} Spike 3 found that a live
+    agent composing a reply sentence-by-sentence will, at least
+    occasionally, speak a first sentence that a later sentence's
+    reasoning contradicts or walks back --- and flagged this explicitly
+    as belonging in the design mission's open questions. Whether the
+    agent should audibly self-correct mid-call the way a human would is
+    not addressed anywhere in this document.
+  \item \textbf{Which detector governs a human speaking during the
+    agent's silent think-time (the waiting state, before any reply audio
+    starts)} is not stated. Barge-in detection is described as active
+    ``while it is speaking''; turn detection covers human speech
+    generally; neither section says which one applies, if either,
+    between a transcribed turn being sent and the reply's first audio.
+    This is exactly the kind of state-machine edge case the deferred Z
+    specification needs to resolve, and it should be named before that
+    modeling starts, not discovered during it.
+  \item \textbf{A stuck or free-running detector has no described
+    recovery.} Both turn detection and barge-in detection are described
+    as continuous processes running the whole life of a call, but nothing
+    addresses a detector thread that hangs (the call goes silently deaf;
+    \uc{9}'s bounded timeout is a call-level backstop, not a
+    component-health check) or one that free-runs and never accumulates
+    silence (the human's turn never ends). Per \nfr{6}, the TTS voice is
+    the only trusted signaling channel --- but a stuck detector by
+    definition produces no signal to send through it, so the human would
+    have no way to know this is happening mid-call.
+  \item \textbf{A synthesis call that never returns mid-turn} is
+    unaddressed. \fr{18} covers a provider unreachable \emph{before} a
+    call starts; nothing covers a provider that accepts the call and then
+    hangs on a synthesis request partway through. Likely a one-sentence
+    fix (a timeout on the synthesis call, ending the turn the same way
+    \fr{18} ends the call) rather than new design, but it is not stated
+    anywhere as written.
+  \item \textbf{No debugging story for a live call.} A user-facing
+    transcript is an explicit Non-Goal, correctly, for launch scope --- but
+    an internal, developer-facing record of state transitions, detector
+    decisions, and per-segment latencies is a different thing and is not
+    mentioned. Given Phase 1's entire purpose is validating a subjective
+    bar (``would a human rather have this conversation than type it''),
+    there is currently no way to determine \emph{why} a given call felt
+    bad --- a false barge-in trigger, a slow synthesis segment, a missed
+    turn end --- after the fact.
+  \item \textbf{Whether anything in this design is actually macOS-specific
+    is not established.} P1 is scoped to macOS, framed as a complexity
+    reduction alongside headphones-only and single-provider. Headphones
+    genuinely eliminate an entire class of problem (echo cancellation);
+    single-provider genuinely defers multi-provider complexity. But
+    nothing in this chapter identifies what part of the design --- if
+    any --- is actually coupled to macOS versus incidentally macOS
+    because that is where the spikes happened to run. If the design is
+    in fact platform-portable, ``macOS-only for P1'' is not reducing
+    complexity, it is leaving Linux untested, which is a different
+    (and smaller) claim than the phasing rationale in Chapter 1 makes.
+\end{itemize}
+
+\chapter{Test Plan}
+
+Chapter 2 designs the system; this chapter designs how it is proven
+correct, including what has to be \emph{built} to make that possible ---
+this project has no existing test tier for continuous audio-hardware
+behavior, and two of the new components have no fake/test-double
+equivalent of the ones already established elsewhere in vox. Grounded in
+real, present conventions: the four-tier testing pyramid and Humble
+Object pattern already documented for this project (\texttt{TESTING.md},
+\texttt{punt-kit/standards/python.md}), and the structural, non-inheritance
+fake style already in use (\texttt{tests/\_program\_fakes.py}'s
+\texttt{FakeProgramGateway}, which records every call and lets a test
+control results without a live daemon).
+
+\section{Testing tiers}
+
+\begin{center}
+\begin{tabular}{@{}p{2.3cm}p{5.6cm}p{3.3cm}p{2.5cm}@{}}
+\toprule
+Tier & What it tests & Status for this feature & Runs in CI \\
+\midrule
+1. Unit & Pure logic: turn/barge-in detectors, the call state machine,
+  segmenter flush policies, presence-pool selection & \textbf{Needs new
+  fakes} (\S\ref{sec:test-di}) & Yes \\
+2. Integration & Cross-component wiring: provider protocol conformance,
+  the commands-layer surface, the Z spec's transitions exercised
+  end-to-end in memory & \textbf{Needs a fake session-attach double}
+  (\S\ref{sec:test-di}) & Yes \\
+3. Subprocess/E2E & Wire protocol, real provider calls, real (non-human)
+  process lifecycle & \textbf{Exists in prototype form only} --- every
+  spike script (\texttt{.tmp/spikes/conversation-mode/*}) is this tier,
+  unformalized & Optional \\
+4. SDK & End-to-end with a real Claude Code session, costs money &
+  \textbf{New for this feature} --- prior vox SDK-tier tests never
+  attached to an independent live session; this is Slice 1b's core
+  claim and has no existing harness & No \\
+5. \textbf{Live audio, human-judged (new tier)} & Does it \emph{sound}
+  right --- barge-in feel, presence-signal naturalness, overall call
+  quality & \textbf{Does not exist as a tier today}; this project's
+  audio-demo gate (\texttt{docs/WORKFLOW.md}) is the closest precedent
+  but has never been formalized into a repeatable checklist for a
+  \emph{continuous, full-duplex} feature & No, by
+  construction \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Tier 5 must be built, not assumed.} The project's existing
+audio-demo discipline (\texttt{docs/WORKFLOW.md}) asks a human to confirm
+audio sounds right, but every prior use of it was for discrete,
+single-shot playback (a chime, a spoken reply) with an obvious pass/fail.
+Conversation Mode's audio-demo gate covers a \emph{continuous, two-way}
+experience --- barge-in timing, presence-signal fatigue, whether a call
+feels alive during a long wait --- which needs its own checklist, not a
+reuse of the existing one by name only. This chapter treats writing that
+checklist as a required Tier 5 deliverable, owed by Slice 5/Slice 6
+(where failure modes and call endings are defined) rather than left
+implicit.
+
+\textbf{Tier 3 exists only as five throwaway spike scripts.} Each of
+Spikes 1, 2, 3, and 5 built a real, working subprocess-level test
+harness against real hardware and real ElevenLabs calls
+(\texttt{.tmp/spikes/conversation-mode/*}), explicitly marked throwaway
+per \texttt{docs/conversation-mode-spikes.md}. \textbf{Recommendation:
+promote the patterns these scripts already validated} (measuring
+sentence-1-ready-to-first-audio-byte, measuring detection-to-kill
+latency, driving a real turn through a real session) into permanent,
+optional-in-CI Tier 3 tests, rather than re-deriving the same harnesses
+from scratch during implementation. The scripts are throwaway as
+\emph{code}; the measurement patterns they proved out are not.
+
+\section{Design requirements for testability}
+\label{sec:test-di}
+
+Each requirement below exists because a component in Chapter 2 currently
+has no seam for a test double, and the fix is the same one vox's
+\texttt{FakeProgramGateway} and its five-provider \texttt{TTSProvider}
+already demonstrate: a structural (Protocol-shaped, non-inheritance)
+interface, injected, not owned, by the component under test.
+
+\begin{enumerate}
+  \item \textbf{Detectors take PCM chunks as plain method arguments;
+    they never own an audio device.} The turn detector and barge-in
+    detector (\S\ref{sec:design-turn}, \S\ref{sec:design-termination})
+    must be constructible and fully testable with zero real microphone
+    access --- feed a chunk, assert the signal. This is not a new
+    invention: it is what every spike script already did by hand
+    (\texttt{calibrate.py} fed captured PCM into pure functions). The
+    requirement is to keep that shape in production code, not let the
+    detector's constructor reach for \texttt{sounddevice} directly the
+    way the spike prototypes did for expedience.
+  \item \textbf{Chunk duration/timestamp is passed as data, never read
+    from the wall clock.} \textbf{Correction, from peer review:} the
+    accumulated-run model (\S\ref{sec:design-turn}) depends on real-time
+    durations --- a $\geq$200\,ms silence gap resets a run, ${\sim}$500\,ms
+    sustained speech triggers an interruption. If the detector reads
+    \texttt{time.monotonic()} (or equivalent) internally rather than
+    taking elapsed time as a parameter, every test built against item 1
+    becomes wall-clock-dependent and flaky --- the exact failure mode
+    item 1 already polices for the microphone, missed for the clock. The
+    detector's public interface must accept duration/timestamp
+    explicitly.
+  \item \textbf{An \texttt{STTProvider} protocol, following the same
+    \emph{pattern} as \texttt{TTSProvider} --- not the same shape.}
+    \textbf{Correction, from peer review:} an earlier draft of this
+    chapter said ``conforming to the same shape as the existing
+    \texttt{TTSProvider}.'' Read literally that is wrong:
+    \texttt{TTSProvider}'s members (\texttt{name}, \texttt{default\_voice},
+    \texttt{supports\_expressive\_tags}, voice catalog/resolution
+    methods) are half voice-catalog logic with no STT analogue, and
+    \texttt{STTProvider} needs partial/streaming transcript delivery
+    (Spike 1's self-correcting mid-stream partials, Chapter 2) and a
+    confidence signal (\fr{19}: ask the human to repeat rather than act
+    on a low-confidence guess) that \texttt{TTSProvider} has no
+    counterpart for. The pattern that transfers is: \texttt{@runtime\_checkable
+    Protocol}, a \texttt{check\_health() -> list[HealthCheck]} method,
+    one conforming implementation per vendor, structural (not
+    inheritance-based) conformance --- not the member list. A fake STT
+    provider built against this returns a scripted transcript
+    \emph{and} a scripted confidence value without a network call, the
+    same way any \texttt{TTSProvider} test substitutes a fake without
+    hitting ElevenLabs.
+  \item \textbf{A session-attach protocol, with a fake session double
+    that scripts a \emph{sequence} of reply chunks, not one reply} ---
+    the single largest gap this chapter adds to Chapter 2.
+    \textbf{Correction, from peer review:} an earlier draft specified the
+    fake as returning one scripted reply value, which cannot exercise
+    \fr{11} (speaking begins on the reply's first complete portion, not
+    once the whole reply exists) --- the exact behavior that makes a
+    long agent turn (\uc{5}) feel alive. The fake must return a scripted
+    sequence of reply chunks with independently controllable timing
+    between them, mirroring what it stands in for: a stream, not a
+    call-response pair. Structurally the same discipline as
+    \texttt{FakeProgramGateway} (records every injected transcript,
+    caller controls what comes back) --- but the ``what comes back''
+    shape has to be a stream to be useful. \textbf{This fake does not
+    exist today and is new required work.}
+  \item \textbf{A playback-sink protocol, with an in-memory fake ---
+    necessary but not sufficient on its own.} \textbf{Correction, from
+    peer review:} an earlier draft implied a call-recording fake alone
+    makes the buffer-clear ordering questions
+    (\S\ref{sec:design-termination}: stop-during-a-stop, buffer-clear
+    racing a concurrent writer) unit-testable. It does not --- those are
+    genuinely concurrent races that only exist when two call sites
+    contend, and a fake driven single-threadedly proves nothing about a
+    race. The in-memory sink is still required (it removes the
+    real-audio-output dependency), but it must be paired with a
+    concurrency/interleaving harness --- controlled \texttt{asyncio} task
+    scheduling with deterministic yield points, or a threaded stress
+    test run N times --- that actually drives the race, not just a fake
+    that records calls made from one thread.
+  \item \textbf{The call state machine is a pure class plus an injected
+    policy, reachable only through a single serialized dispatch point.}
+    \textbf{Correction, from peer review:} mirroring
+    \texttt{voxd/programs/program.py}'s \texttt{Program} for the pure
+    state/transition shape is right, but an earlier draft said to mirror
+    it ``exactly'' without also copying the discipline that makes it
+    safe: \texttt{Program} has no internal lock and does bare
+    \texttt{self.\_state = self.\_state.with\_updates(...)} assignments,
+    safe only because \texttt{Program}'s own docstring states something
+    upstream serializes every call into one writer. The call state
+    machine's actual callers --- turn detection, barge-in detection, and
+    sentence-streamed synthesis --- are three independently-running,
+    continuous processes (\S``Component overview'') that can race
+    exactly the way \S\ref{sec:design-termination} already flags as
+    unresolved. Copying \texttt{Program}'s pure-class shape without also
+    requiring a single serialized dispatch point (a queue, an actor, or
+    an explicit lock at the call boundary) reproduces a data race, not a
+    design --- this is a requirement on Chapter 2's orchestration layer,
+    not something the pure class or its fake can supply alone.
+  \item \textbf{Presence-pool selection takes an injectable source of
+    randomness / play-history}, not a bare call to \texttt{random.choice}
+    at the call site. A test needs to assert anti-repeat behavior
+    deterministically (``the same entry never plays twice in a row''),
+    which requires controlling what ``last played'' and ``next pick''
+    resolve to, the same way any seeded-random test would.
+  \item \textbf{The async/sync bridge between \texttt{voxd}'s
+    \texttt{async def} handlers and the synchronous STT/TTS provider
+    calls must itself be injectable.} \textbf{Added per peer review:} an
+    earlier draft of this chapter had no testability treatment at all
+    for the boundary Chapter 2 names as ``the dominant unsolved
+    engineering problem'' (\S``Sentence-streamed synthesis''), despite
+    applying exactly this discipline to the microphone (item 1) and the
+    clock (item 2). Whatever bridges the boundary --- a thread pool
+    executor, subprocess isolation, or an async-native provider client
+    --- must be substitutable with (a) a fake that completes
+    synchronously, proving the bridge introduces no deadlock, and (b) a
+    fake that stalls, proving a slow synthesis call does not block the
+    event loop for its duration.
+\end{enumerate}
+
+\section{Test coverage requirements}
+
+\textbf{Corrected per peer review: items 1, 2, 3, and 5 below originally
+stated intent with no enforcement mechanism} --- compare to item 4, which
+was already enforceable the way \texttt{PL-TT-2} is elsewhere in this
+project's standards (a tool check, not a sentence). Each now names a
+concrete, greppable artifact.
+
+\begin{enumerate}
+  \item \textbf{Every operation in the deferred Z specification has at
+    least one Tier 1 test exercising it}, once that spec exists (Slice
+    1a). \textbf{Enforcement:} test names include the Z-spec operation
+    name verbatim (per \texttt{docs/WORKFLOW.md}'s ``assert the modeled
+    properties by name''); a script diffs the operation names in the
+    \texttt{.tex} Z spec against test names under
+    \texttt{tests/conversation\_mode/} and fails on any operation with
+    zero matches. A state transition with no corresponding test is
+    exactly the class of defect the Z-spec gate exists to prevent.
+  \item \textbf{Every functional and non-functional requirement in
+    Chapter 1 maps to at least one test at a named tier.}
+    \textbf{Enforcement:} a coverage-matrix file (FR/NFR id $\to$ tier
+    $\to$ test path) checked in alongside the tests; a script diffs its
+    FR/NFR ids against this document's \fr{} and \nfr{} labels and fails
+    on any requirement missing a row. Where a requirement is genuinely
+    only checkable by ear (NFR-6's ``does this sound right,'' FR-12's
+    presence-signal naturalness), the mapped tier is 5, not a missing
+    row. \fr{19} is the counter-example worth naming explicitly: despite
+    sounding like a judgment call, it is Tier-1-testable and cheap once
+    the \texttt{STTProvider} fake (\S\ref{sec:test-di} item 3) exists ---
+    script a low-confidence result, assert the system asks the human to
+    repeat rather than acting on it. Not everything audio-adjacent
+    defaults to Tier 5.
+  \item \textbf{Every Known Unknown that gets resolved during
+    implementation ships with a regression-style test or measurement
+    harness, not just a one-time manual check.} \textbf{Enforcement:}
+    Tier 3 regression harnesses live under a required, named directory
+    (\texttt{tests/conversation\_mode/harnesses/}) so their presence is
+    greppable, not merely encouraged. Termination's buffer-tail latency
+    (currently unmeasured) and \textbf{multi-session audio contention}
+    (Chapter 2's Known Unknowns; untested by any spike, and the thing
+    Spike 5 incorrectly suspected mid-session) are this item's two
+    named worked examples --- once either is resolved, its measurement
+    becomes a harness in that directory, re-runnable, not a number
+    recorded once and never checked again.
+  \item \textbf{Coverage never decreases on a touched file}, per this
+    project's existing standard (\texttt{python-testing.md}, PL-TT-2:
+    \texttt{pytest --co -q} before/after, count must not decrease) ---
+    restated here because Conversation Mode's components (detectors, the
+    state machine, the segmenter) are exactly the kind of new pure logic
+    where it is cheapest to hold this line from the first commit, not
+    retrofit it later.
+  \item \textbf{The barge-in-vs-backchannel discrimination default
+    (500\,ms, \fr{22}) ships with its calibration methodology as a
+    reusable Tier 3 harness}, not just the number. \textbf{Enforcement:}
+    this harness is one of the named entries required under
+    \texttt{tests/conversation\_mode/harnesses/} by item 3 above, not a
+    separate, unenforced requirement. The number came from one
+    operator's live-tuned preference in one room; the harness that
+    produced it (play a real passage, stop on a sustained-duration
+    threshold, ask for feedback, adjust) is what makes that default
+    re-tunable for a different voice or room later, per
+    \S\ref{sec:oq}'s open question on this --- ship the method, not just
+    its output.
+\end{enumerate}
+
+\end{document}
