@@ -12,7 +12,11 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # This job now runs two pytest invocations in sequence (default tier,
+    # then slow/subprocess -- see TESTING.md, "Why the Suite Takes as Long
+    # as It Does"); 30m gives headroom for both rather than the 20m ceiling
+    # sized for the single unmarked run that preceded this taxonomy.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
@@ -22,3 +26,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng
       - run: uv sync --frozen --all-extras
       - run: uv run pytest
+      # slow + subprocess were folded into the unmarked default run before
+      # this taxonomy existed; run them explicitly so marking them opt-in
+      # locally does not silently drop them from CI coverage.
+      - run: uv run pytest -m "slow or subprocess"

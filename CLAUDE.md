@@ -150,11 +150,13 @@ Split by **rollback granularity**, not size. Ask: if this broke production, what
 
 ### Pyramid
 
-| Layer | Make target | Runs in CI | What it covers |
-|-------|-------------|------------|----------------|
-| Unit | `make test` | yes | types, core, output, config, dirs, hooks, normalize, cache, keys, server, service, applet, all 5 providers |
-| Integration | `@pytest.mark.integration` | no (needs AWS creds) | Real provider synthesis end-to-end |
-| Shell scripts | `make lint` (shellcheck) | yes | plugin/hooks/*.sh, scripts/*.sh, install.sh |
+| Layer | Marker | Runs in CI | What it covers |
+|-------|--------|------------|----------------|
+| Unit (default) | *(none)* | yes | types, core, output, config, dirs, hooks, normalize, cache, keys, server, service, applet, all 5 providers |
+| Real-git-subprocess (ratchet) | `slow` | yes, as a second `pytest` step | `tools/oo_ratchet`, `tools/coupling`, `tools/suppression` against real tmp git repos |
+| Shell/install subprocess | `subprocess` | yes, as a second `pytest` step | `plugin/hooks/*.sh`, `install.sh`, `scripts/check-plugin-surface.sh` spawned as real processes |
+| Provider integration | `integration` | no (reserved, no tests yet — 5 providers, no credentials-in-CI plan) | Real provider synthesis end-to-end |
+| Shell scripts (static) | `make lint` (shellcheck) | yes | plugin/hooks/*.sh, scripts/*.sh, install.sh |
 
 Tests mirror source: one `test_*.py` per module plus `conftest.py` for shared fixtures. See [TESTING.md](TESTING.md) for the full testing philosophy and architecture.
 

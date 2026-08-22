@@ -22,6 +22,11 @@ from tools.suppression.pyproject import PerFileIgnoresCounter, PyprojectError
 from tools.suppression.report import SuppressionReport
 from tools.suppression.scanner import Scanner
 
+# Every ratchet/CLI test drives a real git init/commit/checkout sequence --
+# see the marker rationale on test_oo_ratchet.py and the measured timing in
+# TESTING.md.
+pytestmark = pytest.mark.slow
+
 WITH_SUPPRESSIONS = (
     "from __future__ import annotations\n\n"
     "x = 1  # noqa: E501\n"

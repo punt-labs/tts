@@ -23,6 +23,9 @@ import pytest
 
 _INSTALL_SH = Path(__file__).resolve().parent.parent / "install.sh"
 
+# Every test spawns a real `sh install.sh` subprocess under a sandboxed PATH.
+pytestmark = pytest.mark.subprocess
+
 # Each stub logs its own name + argv to $VOX_TEST_LOG, then behaves just enough
 # for install.sh to proceed. `claude plugin list` must echo the installed
 # plugin id so the post-install verification grep passes; `ssh` must report

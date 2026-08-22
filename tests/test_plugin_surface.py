@@ -15,7 +15,12 @@ import stat
 import subprocess
 from pathlib import Path
 
+import pytest
+
 _SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check-plugin-surface.sh"
+
+# Every test spawns the real bash gate script as a subprocess.
+pytestmark = pytest.mark.subprocess
 
 
 def _run(surface: Path) -> subprocess.CompletedProcess[str]:

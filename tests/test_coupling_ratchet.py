@@ -24,6 +24,11 @@ from tools.coupling.ratchet import CouplingRatchet
 from tools.coupling.scorer import CouplingScorer
 from tools.coupling.writer import CouplingWriter
 
+# Every test drives a real git init/commit/checkout sequence plus a real
+# tools/coupling subprocess invocation -- see the marker rationale on
+# test_oo_ratchet.py and the measured timing in TESTING.md.
+pytestmark = pytest.mark.slow
+
 # A shared bulky header so git reliably detects a rename across the small metric
 # change between LOW and HIGH (the body dominates the similarity score).
 _BODY = (
