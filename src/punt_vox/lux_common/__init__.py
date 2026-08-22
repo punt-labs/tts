@@ -1,4 +1,4 @@
-"""Shared building blocks used by both panel and voxd Lux surfaces."""
+"""Shared building blocks used by Lux surfaces (panel, music player)."""
 
 from __future__ import annotations
 
