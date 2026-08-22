@@ -7,7 +7,7 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/__main__.py": {
-    "efferent_coupling": 19.0,
+    "efferent_coupling": 20.0,
     "public_names": 37.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
