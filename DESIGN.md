@@ -2859,3 +2859,64 @@ means moving root files into a subdirectory; this decision does not attempt it.
 
 Design of record: this ADR, and the rollout spec shared by the nine non-pilot
 plugin repos. Pattern copied from the ethos pilot.
+
+## DES-064: Conversation Mode Session Attachment — Headless `--resume` Subprocess, Stream-JSON Both Ways
+
+**Status:** recommended, pending operator ratification (vox-gs9u.1, Slice
+1a). Design of record: `docs/conversation-mode-session-attach-adr.md`; call
+state model: `docs/conversation-mode-call-state.tex`.
+
+### Context
+
+`docs/conversation-mode-prd.tex` FR-4 requires a Conversation Mode call to
+use the human's already-running Claude Code session, carrying its existing
+task context, not a fresh context-free one. None of the five Conversation
+Mode spikes tested programmatic injection of a transcribed turn into an
+independent, already-running session, or programmatic extraction of that
+session's streamed reply — every spike drove the authoring session itself
+by hand. This was the largest named gap in the PRD's Chapter 2, explicitly
+left with no recommendation pending investigation.
+
+### Decision (recommended, not yet ratified)
+
+Investigation of the installed `claude` CLI's documented flags found a real
+mechanism: `voxd` discovers the user's active session ID via `claude agents
+--json --cwd <path>`, then spawns `claude -p --resume <id> --input-format
+stream-json --output-format stream-json --include-partial-messages` per
+human turn — a subprocess that resumes the named session's full
+conversation history, accepts one JSON user-message per turn on stdin, and
+streams JSON assistant-message deltas back on stdout, including partial
+chunks (feeding FR-11's "speak on the first complete portion"
+requirement directly). No custom IPC is needed — the PRD's own open
+question ("does it require IPC?") is answered by this subprocess's
+documented stdin/stdout JSON protocol.
+
+### Rejected Alternatives
+
+- **Hook into Claude Code's own hook surface** (SessionStart,
+  UserPromptSubmit, Stop). Rejected: hooks are reactive to events already
+  happening inside a session; nothing lets an external, unrelated process
+  inject a new turn into an otherwise-idle session.
+- **A queue the session polls.** Rejected: nothing in Claude Code's
+  documented surface lets a running interactive session poll an external
+  queue mid-conversation; building it would mean modifying Claude Code
+  itself, out of scope for a vox change.
+- **Run the agent inside `voxd`'s own process space.** Rejected: this would
+  be a second, disconnected agent instance, not the session the user was
+  already in (defeats FR-4's actual point), and would reimplement tool
+  execution and context management the `claude` binary already owns.
+
+### Open Risk, Not Yet Resolved
+
+Concurrent-resume safety — whether Claude Code's session storage tolerates
+the user's interactive terminal and a headless `--resume` of the same
+session ID running at the same time — is unverified from this
+investigation. This is the load-bearing precondition for the recommended
+mechanism and is Slice 1b's first task: a spike against a real running
+interactive session, before any further plumbing is built on the
+assumption.
+
+See `docs/conversation-mode-session-attach-adr.md` for the full
+investigation, the CLI evidence, and the explicit operator escalation
+(three decisions: confirm the mechanism, confirm the FR-4 reading it relies
+on, confirm the concurrent-resume spike as Slice 1b's first task).
