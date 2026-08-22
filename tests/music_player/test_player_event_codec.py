@@ -116,6 +116,15 @@ def test_decode_rejects_an_anchor_naming_no_album(album_of: AlbumFactory) -> Non
     assert info.value.anchor == "Ghost Album"
 
 
+def test_anchor_unresolved_error_str_carries_the_descriptive_message() -> None:
+    # BaseException.__init__ would otherwise overwrite .args and collapse str(exc)
+    # to the bare anchor; __str__ composes the descriptive message from _anchor.
+    exc = AnchorUnresolvedError("Ghost Album")
+    assert str(exc) == "music.play anchor 'Ghost Album' names no catalogued album"
+    assert exc.anchor == "Ghost Album"
+    assert exc.args == ("Ghost Album",)  # anchor preserved for pickling/reflection
+
+
 def test_decode_stop_builds_a_stop_music() -> None:
     assert PlayerEventCodec().decode("music.stop", {}, ()) == StopMusic()
 

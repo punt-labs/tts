@@ -51,10 +51,10 @@ class AnchorUnresolvedError(ValueError):
     def __new__(  # pyright: ignore[reportInconsistentConstructor]
         cls, anchor: str
     ) -> Self:
-        # BaseException.__init__ also runs (with the same arg) and stores the
-        # message in ``.args`` -- keep the __new__ signature narrow so callers
-        # cannot omit the anchor a warning depends on.
-        self = super().__new__(cls, f"music.play anchor {anchor!r} names no album")
+        # Pass ``anchor`` through so BaseException.__init__ stores it in
+        # ``.args`` (structured data for pickling and reflection); the descriptive
+        # message is composed in :meth:`__str__` from ``self._anchor``.
+        self = super().__new__(cls, anchor)
         self._anchor = anchor
         return self
 
@@ -62,6 +62,9 @@ class AnchorUnresolvedError(ValueError):
     def anchor(self) -> str:
         """Return the unresolved anchor string the click carried."""
         return self._anchor
+
+    def __str__(self) -> str:
+        return f"music.play anchor {self._anchor!r} names no catalogued album"
 
 
 @final
