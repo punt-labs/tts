@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_lux import HubUnavailableError
 
 from punt_vox.client_errors import VoxdProtocolError
-from punt_vox.panel.hub_outage_log import HubOutageLog
+from punt_vox.lux_common.hub_outage_log import HubOutageLog
 
 if TYPE_CHECKING:
     import logging

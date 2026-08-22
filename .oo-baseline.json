@@ -701,6 +701,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/lux_common/hub_outage_log.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.67,
+    "max_complexity": 3.0,
+    "avg_complexity": 1.67,
+    "module_size": 59.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/markdown_doc.py": {
     "avg_complexity": 3.27,
     "avg_params": 0.91,
@@ -909,19 +922,6 @@
     "module_size": 102.0,
     "public_attr_violations": 0.0
   },
-  "src/punt_vox/panel/hub_outage_log.py": {
-    "avg_complexity": 1.67,
-    "avg_params": 0.67,
-    "class_to_func_ratio": 1.0,
-    "classes_per_module": 1.0,
-    "encapsulation_ratio": 1.0,
-    "future_annotations": 1.0,
-    "init_violations": 0.0,
-    "max_complexity": 3.0,
-    "method_ratio": 1.0,
-    "module_size": 59.0,
-    "public_attr_violations": 0.0
-  },
   "src/punt_vox/panel/leg.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -977,10 +977,10 @@
   "src/punt_vox/panel/panel_notice.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.83,
+    "avg_params": 1.0,
     "max_complexity": 1.0,
     "avg_complexity": 1.0,
-    "module_size": 53.0,
+    "module_size": 48.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

@@ -3,10 +3,10 @@
 A control change can fail after the UI already shows it optimistically:
 persisting the new value to config can raise, or voxd can be unreachable for a
 preview or a background refresh. Either way the scene must say so rather than
-silently reverting with no explanation. This is a Null Object (PY-DP-9):
-:meth:`silent` is the normal state and renders no status line; the named
-failure constructors each carry a one-line, user-facing message.
-:class:`~punt_vox.panel.service.VoxPanelService` holds it alongside its
+silently reverting with no explanation. The base :class:`LuxNotice` owns the
+Null-Object shape (PY-DP-9); this subclass adds the panel-specific failure
+constructors that phrase every warning in one place. The
+:class:`~punt_vox.panel.service.VoxPanelService` holds a notice alongside its
 settings snapshot, never as a flag baked into that snapshot, so a recovered
 outage clears cleanly back to silent without touching the settings it
 describes.
@@ -14,23 +14,18 @@ describes.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Self, final
+
+from punt_vox.lux_common.notice import LuxNotice
 
 __all__ = ["PanelNotice"]
 
 
 @final
-@dataclass(frozen=True, slots=True)
-class PanelNotice:
-    """A transient scene status: a warning message, or silent (the Null state)."""
+class PanelNotice(LuxNotice):
+    """The panel's :class:`LuxNotice` -- silent, or one of the named warnings."""
 
-    message: str  # the empty string is the silent Null state -- no status line
-
-    @classmethod
-    def silent(cls) -> Self:
-        """Return the silent notice -- the normal state, rendering no status line."""
-        return cls("")
+    __slots__ = ()
 
     @classmethod
     def voxd_unavailable(cls) -> Self:
