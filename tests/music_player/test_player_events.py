@@ -91,6 +91,7 @@ class _FakePresenter:
         self.play_failures: list[AlbumId] = []
         self.stop_failures = 0
         self.transport_failures = 0
+        self.resolve_failures: list[str] = []
 
     def present_play_failure(self, album: AlbumId) -> None:
         self.play_failures.append(album)
@@ -100,6 +101,9 @@ class _FakePresenter:
 
     def present_transport_failure(self) -> None:
         self.transport_failures += 1
+
+    def present_resolve_failure(self, anchor: str) -> None:
+        self.resolve_failures.append(anchor)
 
 
 def test_play_album_surfaces_its_own_play_failure() -> None:

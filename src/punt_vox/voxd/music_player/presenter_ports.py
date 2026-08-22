@@ -39,6 +39,17 @@ class FailurePresenter(Protocol):
         """Re-project the scene with a warning that the stop could not apply."""
         ...
 
+    def present_resolve_failure(self, anchor: str) -> None:
+        """Re-project the scene with a warning that ``anchor`` names no album.
+
+        The click carried a well-formed name but the catalog no longer holds it
+        -- a vanished album, or a stale row-cache click. Parallel to
+        :meth:`present_play_failure`, which names an already-resolved album that
+        refused to play; here nothing resolved, so the warning names the anchor
+        text the user clicked, not an album id.
+        """
+        ...
+
     def present_transport_failure(self) -> None:
         """Re-project the scene after a transport control (prev/next/pause/resume).
 

@@ -93,10 +93,20 @@ def _mark_enabled(repo: Path) -> None:
     marker.write_text("", encoding="utf-8")
 
 
-def _poll_until(predicate: Callable[[], bool], *, timeout: float = 2.0) -> None:
+def _poll_until(predicate: Callable[[], bool], *, timeout: float = 10.0) -> None:
     """Poll *predicate* until it's true -- the spawn is backgrounded
-    (``nohup ... &``), so its effects land some milliseconds after the hook
-    process itself has already exited."""
+    (``nohup ... & disown``), so its effects land some time after the hook
+    process itself has already exited, with no parent left to bound the wait.
+
+    10s, not 2s: a 15-run isolated rerun of this poll (no concurrent
+    load) still missed a 2s deadline once, so 2s is not a safe bound for
+    OS scheduling of an already-disowned background process even at
+    rest. The predicate resolves in milliseconds on the happy path --
+    this loop returns as soon as it's true -- so a generous ceiling costs
+    nothing when the spawn is prompt and only matters on the rare slow
+    tail. 10s matches this file's own tolerance for hook subprocess
+    timing elsewhere (``subprocess.run(..., timeout=30)`` below).
+    """
     deadline = time.monotonic() + timeout
     while not predicate():
         if time.monotonic() > deadline:

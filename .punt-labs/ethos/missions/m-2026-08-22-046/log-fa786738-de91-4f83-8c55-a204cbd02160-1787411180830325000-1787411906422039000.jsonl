@@ -1,0 +1,2 @@
+{"ts":"2026-08-22T15:06:20.830325Z","event":"result","actor":"rmh","details":{"confidence":0.85,"evidence_entries":5,"files_changed":13,"round":1,"verdict":"pass"}}
+{"ts":"2026-08-22T15:18:26.422039Z","event":"reflect","actor":"gvr","details":{"converging":true,"recommendation":"stop","round":1,"signal_count":9}}
