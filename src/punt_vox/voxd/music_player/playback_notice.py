@@ -6,17 +6,18 @@ no change signal fires and the scene would otherwise show nothing at all -- the 
 would look ignored. The receive leg instead builds a warning notice and drives a
 re-push carrying it, and the scene renders it as a one-line status.
 
-The notice is a Null Object (PY-DP-9): :meth:`silent` is the normal state and renders
-no status line; :meth:`warning` carries a message. It is deliberately transient -- the
-next legitimate projection (a successful play, a stop, a catalog edit) carries the
-silent notice and clears the warning. It is a *value the scene carries*, never a flag
+The base :class:`LuxNotice` owns the Null-Object shape (PY-DP-9) -- silence, warning,
+equality, and the ``is_present`` predicate. This subclass adds the music-domain
+factory constructors that phrase every warning in one place, so the player only
+decides *when* to raise one. The notice is a *value the scene carries*, never a flag
 on the :class:`PlayerView`, so the modelled view invariants stay untouched.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self, final
+
+from punt_vox.lux_common import LuxNotice
 
 if TYPE_CHECKING:
     from punt_vox.voxd.programs.album_id import AlbumId
@@ -28,25 +29,10 @@ _STOP_FAILED = "⚠ couldn't stop the music"
 
 
 @final
-@dataclass(frozen=True, slots=True)
-class PlaybackNotice:
-    """A transient scene status: a warning message, or silent (the Null state).
+class PlaybackNotice(LuxNotice):
+    """The music player's :class:`LuxNotice` -- silent, or one of the named warnings."""
 
-    The named constructors phrase every warning here, so all the user-facing failure
-    text lives in one place and the player only decides *when* to raise one.
-    """
-
-    message: str  # the empty string is the silent Null state -- no status line
-
-    @classmethod
-    def silent(cls) -> Self:
-        """Return the silent notice -- the normal state, rendering no status line."""
-        return cls("")
-
-    @classmethod
-    def warning(cls, message: str) -> Self:
-        """Return a warning notice carrying ``message`` for the scene status line."""
-        return cls(message)
+    __slots__ = ()
 
     @classmethod
     def play_failed(cls, album: AlbumId, albums: tuple[Album, ...]) -> Self:
@@ -80,8 +66,3 @@ class PlaybackNotice:
         user clicked, not an album id.
         """
         return cls.warning(f"⚠ couldn't play {anchor} — no longer in the crate")
-
-    @property
-    def is_present(self) -> bool:
-        """Return whether a status line should render (a non-empty message)."""
-        return bool(self.message)
