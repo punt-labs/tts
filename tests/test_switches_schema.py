@@ -106,6 +106,24 @@ async def test_speak_schema_does_not_expose_voice() -> None:
     assert "voice" not in properties
 
 
+@pytest.mark.parametrize("tool_name", ["speak", "notify"])
+@pytest.mark.asyncio
+async def test_undeclared_kwarg_is_rejected_by_name(tool_name: str) -> None:
+    """A retired parameter (``voice=``) must fail loud, not drop silently.
+
+    FastMCP's Pydantic argument model strips any key the tool schema does not
+    declare, so absent a guard the caller receives a success envelope while the
+    intended write never lands. The vox-owned ``_LoggingFastMCP`` wraps
+    ``call_tool`` to name the offending key back at the caller -- verified here
+    by asserting both the rejection AND that the message identifies ``voice``.
+    """
+    import punt_vox.server as srv
+
+    with pytest.raises(Exception, match="voice") as exc:
+        await srv.mcp.call_tool(tool_name, {"mode": "y", "voice": "benno"})
+    assert tool_name in str(exc.value)
+
+
 def _has_string_type(prop: dict[str, Any]) -> bool:
     """Return True when *prop* accepts ``string`` in any FastMCP encoding.
 
