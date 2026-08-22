@@ -73,8 +73,15 @@ class CallActor:
     async def enqueue(self, command: CallCommand) -> None:
         """Queue *command* for the dispatch loop; returns once it is queued.
 
-        Producers (turn detection, barge-in detection, synthesis) call this
-        and return immediately -- they never apply a transition themselves.
+        For callers with a genuinely concurrent producer relative to the
+        rest of the call (a future barge-in detector task, a turn-detection
+        task) -- they enqueue and return immediately, never applying a
+        transition themselves. A caller that is *itself* already the sole
+        serialized driver (no concurrent producer to guard against, e.g.
+        :class:`~.call_session.CallSession` in this slice, which has no
+        detector tasks yet) should call :meth:`apply` directly instead;
+        routing through the queue with nothing draining it would simply
+        never take effect.
         """
         await self._queue.put(command)
 
@@ -89,13 +96,21 @@ class CallActor:
             command = await self._queue.get()
             if command is None:
                 return
-            self._apply(command)
+            self.apply(command)
 
     async def stop(self) -> None:
         """Signal :meth:`run` to return once it has drained pending commands."""
         await self._queue.put(None)
 
-    def _apply(self, command: CallCommand) -> None:
+    def apply(self, command: CallCommand) -> None:
+        """Apply *command* to the state immediately and notify observers.
+
+        Bypasses the queue -- correct only when the caller is already the
+        single serialized dispatch point (see :meth:`enqueue`'s docstring
+        for the distinction). :meth:`run` calls this for each command it
+        dequeues; it is also the direct entry point for a sequential caller
+        with no concurrent producer to guard against.
+        """
         before = self._state.mode
         command.apply(self._state)
         after = self._state.mode
