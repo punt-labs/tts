@@ -13,7 +13,7 @@ than once per :data:`_RESTATE_SECONDS`, and every other tick stays at DEBUG.
 coroutine (``_listen_once``) and its ``asyncio.to_thread`` worker (``_apply``)
 on the same instance, so the read-modify-write of ``_started_at``/
 ``_last_logged_at`` needs the same lock discipline as
-:class:`~punt_vox.panel.service.VoxPanelService`'s held state -- otherwise a
+the panel service's held state -- otherwise a
 ``clear()`` racing a ``note()`` can null ``_started_at`` mid-computation and
 raise inside the unguarded ``serve()`` retry loop, permanently killing
 reconnection for the rest of the session.

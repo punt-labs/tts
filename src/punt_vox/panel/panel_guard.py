@@ -10,7 +10,7 @@ the reason voxd gave. Both answers live here, which leaves
 than about the ways it can be let down.
 
 The logger is the leg's, injected the same way
-:class:`~punt_vox.panel.hub_outage_log.HubOutageLog` takes it: these lines are
+:class:`~punt_vox.lux_common.HubOutageLog` takes it: these lines are
 about the panel's one connection, and reading them under a second module name
 would split one story across two.
 """
@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Self, final
 from punt_lux import HubUnavailableError
 
 from punt_vox.client_errors import VoxdProtocolError
-from punt_vox.panel.hub_outage_log import HubOutageLog
+from punt_vox.lux_common.hub_outage_log import HubOutageLog
 
 if TYPE_CHECKING:
     import logging
