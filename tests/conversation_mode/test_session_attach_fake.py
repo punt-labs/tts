@@ -8,6 +8,8 @@ itself.
 
 from __future__ import annotations
 
+import time
+
 from conversation_mode._session_attach_fakes import FakeSessionAttach, ScriptedChunk
 from punt_vox.voxd.conversation_mode.reply import ReplyChunk
 from punt_vox.voxd.conversation_mode.session_attach import SessionAttachError
@@ -58,40 +60,52 @@ async def test_caller_can_start_speaking_before_the_reply_finishes() -> None:
 
     A single-reply fake cannot exercise this -- there would be nothing to
     observe between "the call started" and "the whole reply arrived." This
-    test proves the fake's sequence genuinely yields chunk-by-chunk: the
-    first chunk is observable while later chunks have not been produced yet,
-    the same shape a caller streaming into synthesis depends on.
+    test measures real elapsed time between chunks to prove ``delay_s`` is
+    genuinely awaited (via ``asyncio.sleep`` in ``send_turn``), not merely
+    accepted and ignored -- the shape a caller streaming into synthesis
+    depends on.
     """
+    delay_s = 0.05
     script = (
         ScriptedChunk(ReplyChunk(text="First.", is_final=False), delay_s=0.0),
-        ScriptedChunk(ReplyChunk(text="Second.", is_final=True), delay_s=0.02),
+        ScriptedChunk(ReplyChunk(text="Second.", is_final=True), delay_s=delay_s),
     )
     fake = FakeSessionAttach(script)
 
     seen: list[str] = []
+    timestamps: list[float] = []
     async for chunk in fake.send_turn(TranscribedTurn(text="turn")):
         seen.append(chunk.text)
-        if len(seen) == 1:
-            # The second chunk has an independently controllable delay ahead
-            # of it -- at this point in the iteration it has not been
-            # produced yet, proving the stream is genuinely incremental.
-            assert seen == ["First."]
+        timestamps.append(time.monotonic())
 
     assert seen == ["First.", "Second."]
+    elapsed = timestamps[1] - timestamps[0]
+    # 80% of the scripted delay tolerates scheduler jitter while still
+    # failing if the fake ignored delay_s (elapsed would be ~0).
+    assert elapsed >= delay_s * 0.8
 
 
 async def test_independently_controllable_timing_between_chunks() -> None:
     """Each scripted chunk's delay is set independently, not one fixed pace."""
+    delay_s = 0.05
     script = (
         ScriptedChunk(ReplyChunk(text="fast", is_final=False), delay_s=0.0),
-        ScriptedChunk(ReplyChunk(text="slow", is_final=False), delay_s=0.05),
+        ScriptedChunk(ReplyChunk(text="slow", is_final=False), delay_s=delay_s),
         ScriptedChunk(ReplyChunk(text="fast again", is_final=True), delay_s=0.0),
     )
     fake = FakeSessionAttach(script)
 
-    chunks = await _collect(fake, TranscribedTurn(text="turn"))
+    texts: list[str] = []
+    timestamps: list[float] = []
+    async for chunk in fake.send_turn(TranscribedTurn(text="turn")):
+        texts.append(chunk.text)
+        timestamps.append(time.monotonic())
 
-    assert [c.text for c in chunks] == ["fast", "slow", "fast again"]
+    assert texts == ["fast", "slow", "fast again"]
+    fast_to_slow_gap = timestamps[1] - timestamps[0]
+    slow_to_fast_gap = timestamps[2] - timestamps[1]
+    assert fast_to_slow_gap >= delay_s * 0.8
+    assert slow_to_fast_gap < delay_s * 0.8
 
 
 async def test_attach_error_raised_before_any_chunk() -> None:

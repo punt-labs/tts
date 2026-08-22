@@ -41,7 +41,7 @@ class ScriptedChunk:
 
 
 @final
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class SessionAttachCall:
     """One recorded call against the fake: the turn it was asked to forward."""
 
@@ -52,13 +52,13 @@ class SessionAttachCall:
 class FakeSessionAttach:
     """A stateful, subprocess-free ``SessionAttach`` for Conversation Mode tests."""
 
-    __slots__ = ("_attach_error", "_script", "calls")
+    __slots__ = ("_attach_error", "_calls", "_script")
     _script: tuple[ScriptedChunk, ...]
     # When set, ``send_turn`` raises this as a session-unreachable/session-ended
     # fault -- the path a real implementation hits when the agent session cannot
     # be resumed or ends a turn abnormally (SessionAttachError's contract).
     _attach_error: str | None
-    calls: list[SessionAttachCall]
+    _calls: list[SessionAttachCall]
 
     def __new__(
         cls,
@@ -69,11 +69,11 @@ class FakeSessionAttach:
         self = super().__new__(cls)
         self._script = tuple(script)
         self._attach_error = attach_error
-        self.calls = []
+        self._calls = []
         return self
 
     async def send_turn(self, turn: TranscribedTurn) -> AsyncIterator[ReplyChunk]:
-        self.calls.append(SessionAttachCall(turn=turn))
+        self._calls.append(SessionAttachCall(turn=turn))
         if self._attach_error is not None:
             raise SessionAttachError(self._attach_error)
         for scripted in self._script:
@@ -81,9 +81,13 @@ class FakeSessionAttach:
                 await asyncio.sleep(scripted.delay_s)
             yield scripted.chunk
 
+    def calls(self) -> list[SessionAttachCall]:
+        """Return the recorded calls in call order."""
+        return list(self._calls)
+
     def turns(self) -> list[str]:
         """Return the recorded turn texts in call order (a test-readability helper)."""
-        return [call.turn.text for call in self.calls]
+        return [call.turn.text for call in self._calls]
 
 
 __all__ = ["FakeSessionAttach", "ScriptedChunk", "SessionAttachCall"]
