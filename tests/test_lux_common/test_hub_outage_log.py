@@ -1,4 +1,4 @@
-"""Tests for :mod:`punt_vox.panel.hub_outage_log`."""
+"""Tests for :mod:`punt_vox.lux_common.hub_outage_log`."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import logging
 import threading
 from unittest.mock import Mock
 
-from punt_vox.panel.hub_outage_log import HubOutageLog
+from punt_vox.lux_common.hub_outage_log import HubOutageLog
 
 
 def _mock_logger() -> Mock:
