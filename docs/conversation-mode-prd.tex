@@ -58,7 +58,8 @@
 \section{Overview}
 
 Vox today speaks: an agent calls \texttt{mic:unmute} and text becomes audio.
-Conversation Mode adds the other half. A human presses a hotkey, talks
+Conversation Mode adds the other half. A human runs \texttt{vox call start}
+(or \texttt{/call start} from within a text conversation), talks
 naturally, and a Claude Code agent session hears them, thinks, and answers
 out loud --- a phone call with an agent, hands and eyes free, while the
 human keeps working, walking, or looking away from the screen.
@@ -115,8 +116,8 @@ the requirement is optional or unimportant.
 
 \begin{itemize}
   \item \pone{} A human can start, hold, and end a natural spoken
-    conversation with one Claude Code agent session, hands-free after the
-    initial hotkey, wearing headphones, with ElevenLabs configured.
+    conversation with one Claude Code agent session, hands-free after
+    starting the call, wearing headphones, with ElevenLabs configured.
   \item \pone{} The experience is excellent on that path --- Conversation
     Mode is designed to its best provider first, not down to the weakest
     one it will eventually support.
@@ -182,8 +183,8 @@ use cases they satisfy.
 
 \begin{description}
 
-\item[\uc{1} Start a call. \pone{}] \emph{Actor: any user.} The user presses
-  the conversation-mode hotkey while working in an editor or terminal, with
+\item[\uc{1} Start a call. \pone{}] \emph{Actor: any user.} The user runs
+  \texttt{/call start} while working in an editor or terminal, with
   an active Claude Code session already open. The call begins listening
   within a perceptible instant; no setup dialog, no mode selection, is
   required if a working configuration already exists. \emph{Done well:} the
@@ -248,19 +249,19 @@ use cases they satisfy.
   scope entirely, not merely deferred.
 
 \item[\uc{9} End the call. \pone{}] \emph{Actor: any user.} The user says
-  goodbye, presses the hotkey again, or simply stops engaging.
-  \emph{Done well:} an explicit hangup ends the call immediately; an
-  inactive call ends itself after a bounded timeout rather than holding
-  the microphone open indefinitely.
+  goodbye, runs \texttt{/call stop} (or \texttt{vox call stop}), or simply
+  stops engaging. \emph{Done well:} an explicit hangup ends the call
+  immediately; an inactive call ends itself after a bounded timeout rather
+  than holding the microphone open indefinitely.
 
 \item[\uc{10} Start a call for the first time, unconfigured. \pone{}]
   \emph{Actor: a new user.} No provider has been configured yet and the
-  user presses the hotkey. \emph{Done well:} the user is told what is
+  user runs \texttt{/call start}. \emph{Done well:} the user is told what is
   needed to get a call working (an ElevenLabs key, in Phase 1) rather than
   the call silently failing to start or starting into a broken state.
 
 \item[\uc{11} Start a call the configured provider cannot reach. \pone{}]
-  \emph{Actor: any user.} The user presses the hotkey while their
+  \emph{Actor: any user.} The user runs \texttt{/call start} while their
   configured provider is unreachable --- no network, an expired key, a
   provider outage. \emph{Done well:} the call does not start, and the user
   is told why, immediately and in a way they can act on, rather than being
@@ -278,9 +279,10 @@ exists to satisfy and carries the same \pone{}/\ptwo{} phase tag.
 
 \begin{description}
   \item[\fr{1} \pone{}] The system shall let a user start a call with a
-    single action (hotkey or equivalent), with no required configuration
-    step beyond what already makes vox speak today. (\uc{1}) When no
-    provider is configured, the system shall tell the user what is needed
+    single action (\texttt{vox call start} or \texttt{/call start}), with
+    no required configuration step beyond what already makes vox speak
+    today. (\uc{1}) When no provider is configured, the system shall tell
+    the user what is needed
     rather than failing silently. (\uc{10})
   \item[\fr{2} \pone{}] The system shall let a user end a call explicitly
     at any time, and shall end an inactive call automatically after a
