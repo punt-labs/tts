@@ -37,9 +37,12 @@ _HOOK = (
 # pinning the whole sentence.
 _STOP_MARK = "reply with no text, no summary, no narration. Stop."
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("jq") is None, reason="suppress-output.sh requires jq"
-)
+pytestmark = [
+    pytest.mark.subprocess,
+    pytest.mark.skipif(
+        shutil.which("jq") is None, reason="suppress-output.sh requires jq"
+    ),
+]
 
 
 def _run_hook(
