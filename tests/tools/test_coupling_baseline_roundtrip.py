@@ -63,10 +63,10 @@ class _Package:
         self._root = tmp
         self._pkg = tmp / "sample_pkg"
         self._pkg.mkdir()
-        (self._pkg / "__init__.py").write_text("")
-        (self._pkg / "a.py").write_text(_MOD_A)
-        (self._pkg / "b.py").write_text(_MOD_B)
-        (self._pkg / "c.py").write_text(_MOD_C)
+        (self._pkg / "__init__.py").write_text("", encoding="utf-8")
+        (self._pkg / "a.py").write_text(_MOD_A, encoding="utf-8")
+        (self._pkg / "b.py").write_text(_MOD_B, encoding="utf-8")
+        (self._pkg / "c.py").write_text(_MOD_C, encoding="utf-8")
         return self
 
     @property
