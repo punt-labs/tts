@@ -34,16 +34,14 @@ dependencies = [
     "audioop-lts>=0.2.1",
     "typer>=0.24.1",
     "websockets>=14.0",
-    # voxd hosts the lux music-player app: the public LuxRestClient + LuxHubClient
-    # are a hard runtime dependency — identity/lease (for_identity, ClientIdentity),
-    # the rendered session menu (register_callback), the subscribe/callback listener
-    # (reconnect with port re-resolution), and the publish-button surface. 0.22.1
-    # adds the listener on_connect hook (fired after every handshake, including
-    # internal reconnects) that voxd uses to re-register the Music menu register-fresh.
-    # 0.24.0 makes AppletIdentity.for_session take the declaring program as its
-    # first argument, so two applets in one session (lux-beads and vox-panel)
-    # resolve to two Hub connections instead of collapsing onto one (vox-iyny).
-    "punt-lux>=0.24.0",
+    # voxd hosts the lux music-player app and the vox-panel applet: the public
+    # LuxClient facade is a hard runtime dependency — identity/lease
+    # (LuxClient.for_identity, ClientIdentity), scene push (client.scene.show),
+    # session menu registration (client.callback.register), and the subscribe/
+    # callback listener (client.listener) with per-handshake on_connect for
+    # register-fresh. 0.28.0 retires LuxRestClient/LuxHubClient from the public
+    # surface in favour of the noun-grouped LuxClient facade with async accessors.
+    "punt-lux>=0.28.0",
 ]
 
 [project.urls]

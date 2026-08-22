@@ -18,7 +18,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self, final
 
-from punt_lux.rest_client import LuxRestClient
+from punt_lux import LuxClient
 
 from punt_vox.panel.menu_entry import PanelMenuEntry
 from punt_vox.panel.panel_guard import PanelGuard
@@ -29,7 +29,6 @@ if TYPE_CHECKING:
 
     from punt_lux.domain.hub.client_identity import ClientIdentity
 
-    from punt_vox.panel.ports import PanelRestClient
     from punt_vox.panel.service import VoxPanelService
 
 logger = logging.getLogger(__name__)
@@ -46,7 +45,7 @@ class VoxPanelLeg:
 
     _service: VoxPanelService
     _topics: tuple[str, ...]
-    _rest_factory: Callable[[], PanelRestClient]
+    _rest_factory: Callable[[], LuxClient]
     _tasks: set[asyncio.Task[None]]
     _guard: PanelGuard
     _runner: PanelRunner
@@ -67,14 +66,12 @@ class VoxPanelLeg:
         service: VoxPanelService,
         *,
         topics: tuple[str, ...],
-        rest_factory: Callable[[], PanelRestClient] | None = None,
+        rest_factory: Callable[[], LuxClient] | None = None,
     ) -> Self:
         self = super().__new__(cls)
         self._service = service
         self._topics = topics
-        self._rest_factory = rest_factory or (
-            lambda: LuxRestClient.for_identity(identity)
-        )
+        self._rest_factory = rest_factory or (lambda: LuxClient.for_identity(identity))
         self._tasks = set()
         self._guard = PanelGuard(service, self._rest_factory, logger)
         self._runner = PanelRunner(service, self._rest_factory, self._guard, logger)

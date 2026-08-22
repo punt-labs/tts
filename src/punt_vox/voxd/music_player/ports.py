@@ -12,12 +12,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from punt_lux import OpError, RenderRequest, SceneShown
+    from punt_lux import RenderRequest
 
     from punt_vox.types_programs.status import ProgramStatus
     from punt_vox.voxd.programs.catalog import Album
 
-__all__ = ["LuxRenderer", "PlayerService", "ScenePublisher"]
+__all__ = ["PlayerService", "ScenePublisher"]
 
 
 @runtime_checkable
@@ -39,18 +39,4 @@ class ScenePublisher(Protocol):
 
     def submit(self, request: RenderRequest) -> None:
         """Accept the newest scene without blocking the caller's thread."""
-        ...
-
-
-@runtime_checkable
-class LuxRenderer(Protocol):
-    """The public lux client surface the scene publisher renders through (PY-DP-11).
-
-    The concrete ``LuxRestClient`` satisfies this structurally; depending on the
-    Protocol -- not the ``@final`` client -- lets the publisher be tested with a
-    fake renderer and keeps the raw-REST client out of the publisher's contract.
-    """
-
-    def render(self, request: RenderRequest) -> SceneShown | OpError:
-        """Install a whole scene, returning the result or a typed error."""
         ...

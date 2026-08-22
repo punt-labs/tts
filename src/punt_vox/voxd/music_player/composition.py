@@ -6,8 +6,8 @@ injected so tests drive fakes): the push leg -- :class:`LuxScenePublisher` and t
 change-listening :class:`MusicPlayer` -- and the receive leg -- :class:`LuxSubscription`
 with its :class:`LuxMenuRegistrar`. Its :meth:`run` runs both legs for the daemon's
 lifetime as one cancellable task; the initial scene push and the ``Music`` menu
-registration ride the receive leg's ``on_connect`` hook (fired on every handshake),
-so a down luxd never blocks either and every reconnect repaints both.
+registration ride the receive leg's ``on_connect`` hook, fired on every handshake, so
+a down luxd never blocks either and every reconnect repaints both.
 """
 
 from __future__ import annotations
@@ -54,10 +54,10 @@ class MusicPlayerSubsystem:
     ) -> Self:
         lux = clients if clients is not None else VoxLuxClients()
         self = super().__new__(cls)
-        self._publisher = LuxScenePublisher(lux.rest)
+        self._publisher = LuxScenePublisher(lux.client)
         self._player = MusicPlayer(service, self._publisher)
         self._subscription = LuxSubscription(
-            service, self._player, LuxMenuRegistrar(lux.rest), lux.hub
+            service, self._player, LuxMenuRegistrar(lux.client), lux.hub
         )
         changes.subscribe(self._player)
         return self

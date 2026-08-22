@@ -26,11 +26,12 @@ from punt_vox.panel.topics import PanelTopic
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from punt_lux import LuxClient
+
     from punt_vox.panel.panel_runner import PanelRunner
-    from punt_vox.panel.ports import PanelRestClient
 
 
-def _luxd_is_down() -> PanelRestClient:
+def _luxd_is_down() -> LuxClient:
     raise HubUnavailableError("down")
 
 
@@ -109,7 +110,7 @@ class TestClicked:
     ) -> None:
         caplog.set_level(logging.DEBUG, logger=PANEL_LOGGER.name)
 
-        def _raise() -> PanelRestClient:
+        def _raise() -> LuxClient:
             msg = "boom"
             raise RuntimeError(msg)
 

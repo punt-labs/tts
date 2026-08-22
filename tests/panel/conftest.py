@@ -24,10 +24,10 @@ from punt_vox.panel.panel_runner import PanelRunner
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from punt_lux import LuxClient
     from punt_lux.domain.hub.client_identity import ClientIdentity
 
     from panel.doubles import FakeService
-    from punt_vox.panel.ports import PanelRestClient
     from punt_vox.panel.service import VoxPanelService
 
 # The leg is built with an identity it only ever hands to the REST factory,
@@ -41,7 +41,7 @@ def build_leg() -> Callable[..., VoxPanelLeg]:
 
     def _build(
         service: FakeService,
-        rest_factory: Callable[[], PanelRestClient],
+        rest_factory: Callable[[], LuxClient],
         *,
         topics: tuple[str, ...] = (),
     ) -> VoxPanelLeg:
@@ -64,7 +64,7 @@ def build_runner() -> Callable[..., PanelRunner]:
     """
 
     def _build(
-        service: FakeService, rest_factory: Callable[[], PanelRestClient]
+        service: FakeService, rest_factory: Callable[[], LuxClient]
     ) -> PanelRunner:
         held = cast("VoxPanelService", service)
         guard = PanelGuard(held, rest_factory, PANEL_LOGGER)
@@ -78,7 +78,7 @@ def build_entry() -> Callable[..., PanelMenuEntry]:
     """Return a factory for a menu entry and the guard it answers failures with."""
 
     def _build(
-        service: FakeService, rest_factory: Callable[[], PanelRestClient]
+        service: FakeService, rest_factory: Callable[[], LuxClient]
     ) -> PanelMenuEntry:
         held = cast("VoxPanelService", service)
         guard = PanelGuard(held, rest_factory, PANEL_LOGGER)

@@ -38,10 +38,10 @@ def test_vox_lux_clients_is_a_client_factory() -> None:
     assert isinstance(VoxLuxClients(), LuxClientFactory)
 
 
-def test_rest_raises_when_luxd_is_down(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_client_raises_when_luxd_is_down(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("punt_lux.hub_paths.HubPaths.read_port", _no_port)
     with pytest.raises(HubUnavailableError):
-        VoxLuxClients().rest()
+        VoxLuxClients().client()
 
 
 def test_hub_raises_when_luxd_is_down(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -57,14 +57,14 @@ def test_hub_raises_when_luxd_is_down(monkeypatch: pytest.MonkeyPatch) -> None:
         VoxLuxClients().hub(on_event, on_callback, on_connect)
 
 
-def test_rest_logs_the_connect_with_resolved_port(
+def test_client_logs_the_connect_with_resolved_port(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     # The connecting audit line names the resolved port so a grep of vox.log shows
     # exactly where each leg reached luxd.
     monkeypatch.setattr("punt_lux.hub_paths.HubPaths.read_port", _port_8080)
     with caplog.at_level(logging.INFO):
-        VoxLuxClients().rest()
+        VoxLuxClients().client()
     connecting = [
         r
         for r in caplog.records

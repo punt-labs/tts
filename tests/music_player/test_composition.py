@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from punt_lux import (
         CallbackHandler,
         EventHandler,
+        LuxClient,
         OpError,
         RenderRequest,
         SceneShown,
@@ -119,36 +120,60 @@ class _FlakyService:
 
 
 @final
-class _FakeRenderer:
-    """A LuxClient double: records rendered scenes and menu registrations."""
+class _FakeSceneAccessor:
+    def __init__(self, outer: _FakeClient) -> None:
+        self._outer = outer
 
-    def __init__(self) -> None:
-        self.rendered: list[RenderRequest] = []
-        self.menus: list[tuple[str, str]] = []
-
-    def render(self, request: RenderRequest) -> SceneShown | OpError:
+    async def show(self, request: RenderRequest) -> SceneShown | OpError:
         from punt_lux import SceneShown
 
-        self.rendered.append(request)
+        self._outer.rendered.append(request)
         return SceneShown(scene_id=request.scene_id)
 
-    def register_callback(self, callback_id: str, label: str) -> Ok | OpError:
-        self.menus.append((callback_id, label))
+
+@final
+class _FakeCallbackAccessor:
+    def __init__(self, outer: _FakeClient) -> None:
+        self._outer = outer
+
+    async def register(self, callback_id: str, label: str) -> Ok | OpError:
+        self._outer.menus.append((callback_id, label))
         return Ok()
 
 
 @final
-class _BlockingRenderer:
-    """A LuxClient double whose render blocks, to prove the writer never waits."""
+class _FakeClient:
+    """A LuxClient stand-in: records rendered scenes and menu registrations."""
 
-    def render(self, request: RenderRequest) -> SceneShown | OpError:
+    def __init__(self) -> None:
+        self.rendered: list[RenderRequest] = []
+        self.menus: list[tuple[str, str]] = []
+        self.scene = _FakeSceneAccessor(self)
+        self.callback = _FakeCallbackAccessor(self)
+
+
+@final
+class _BlockingSceneAccessor:
+    async def show(self, request: RenderRequest) -> SceneShown | OpError:
         from punt_lux import SceneShown
 
-        time.sleep(5.0)
+        await asyncio.sleep(5.0)
         return SceneShown(scene_id=request.scene_id)
 
-    def register_callback(self, callback_id: str, label: str) -> Ok | OpError:
+
+@final
+class _BlockingCallbackAccessor:
+    async def register(self, callback_id: str, label: str) -> Ok | OpError:
         return Ok()
+
+
+@final
+class _BlockingClient:
+    """A LuxClient stand-in whose show blocks, to prove the writer never waits."""
+
+    def __init__(self) -> None:
+        self.scene = _BlockingSceneAccessor()
+        self.callback = _BlockingCallbackAccessor()
 
 
 @final
@@ -178,16 +203,20 @@ class _FakeHubListener:
         self._stopped.set()
 
 
+def _as_client(fake: object) -> LuxClient:
+    return cast("LuxClient", fake)
+
+
 @final
 class _FakeClients:
-    """A LuxClientFactory double handing out one renderer and one hub listener."""
+    """A LuxClientFactory double handing out one facade and one hub listener."""
 
-    def __init__(self, renderer: _FakeRenderer | _BlockingRenderer) -> None:
-        self._renderer = renderer
+    def __init__(self, client: _FakeClient | _BlockingClient) -> None:
+        self._client = client
         self.hub_calls = 0
 
-    def rest(self) -> _FakeRenderer | _BlockingRenderer:
-        return self._renderer
+    def client(self) -> LuxClient:
+        return _as_client(self._client)
 
     def hub(
         self,
@@ -260,20 +289,20 @@ async def test_run_pushes_the_initial_scene_then_re_pushes_on_change(
 ) -> None:
     service = _FakeService(ProgramStatus.idle(), (album_of("aa11bb", name="Mix"),))
     changes = ChangeSignal()
-    renderer = _FakeRenderer()
-    sub = MusicPlayerSubsystem(service, changes, _FakeClients(renderer))
+    client = _FakeClient()
+    sub = MusicPlayerSubsystem(service, changes, _FakeClients(client))
 
     with caplog.at_level(logging.INFO):
         task = await _run(sub, settle=0.1)
-        assert len(renderer.rendered) == 1  # the initial vox.music scene
+        assert len(client.rendered) == 1  # the initial vox.music scene
 
         changes.emit()  # a state change, as the control channel / catalog fires it
         await asyncio.sleep(0.1)
-        assert len(renderer.rendered) == 2  # re-pushed on the change
-        assert renderer.menus == [("music", "Music")]  # the receive leg registered
+        assert len(client.rendered) == 2  # re-pushed on the change
+        assert client.menus == [("music", "Music")]  # the receive leg registered
 
         await _stop(task)
-    assert all(r.scene_id == "vox.music" for r in renderer.rendered)
+    assert all(r.scene_id == "vox.music" for r in client.rendered)
     assert any(
         "[lux]" in r.getMessage() and "starting both lux legs" in r.getMessage()
         for r in caplog.records
@@ -285,7 +314,7 @@ async def test_emit_returns_at_once_even_when_lux_is_slow(
 ) -> None:
     service = _FakeService(ProgramStatus.idle(), (album_of("aa11bb"),))
     changes = ChangeSignal()
-    sub = MusicPlayerSubsystem(service, changes, _FakeClients(_BlockingRenderer()))
+    sub = MusicPlayerSubsystem(service, changes, _FakeClients(_BlockingClient()))
 
     task = await _run(sub, settle=0.05)  # the initial push is now blocking in lux
     start = time.monotonic()
@@ -305,17 +334,17 @@ async def test_a_failing_on_connect_projection_does_not_kill_the_publisher(
     # change re-projects onto the still-live drainer.
     service = _FlakyService(ProgramStatus.idle(), (album_of("aa11bb"),))
     changes = ChangeSignal()
-    renderer = _FakeRenderer()
-    sub = MusicPlayerSubsystem(service, changes, _FakeClients(renderer))
+    client = _FakeClient()
+    sub = MusicPlayerSubsystem(service, changes, _FakeClients(client))
 
     with caplog.at_level(logging.ERROR):
         task = await _run(sub, settle=0.1)
-        assert renderer.rendered == []  # the on_connect projection raised -> no push
-        assert renderer.menus == [("music", "Music")]  # menu still registered first
+        assert client.rendered == []  # the on_connect projection raised -> no push
+        assert client.menus == [("music", "Music")]  # menu still registered first
 
         changes.emit()  # a later change re-projects onto the still-live drainer
         await asyncio.sleep(0.1)
-        assert len(renderer.rendered) == 1  # the publisher survived and drained it
+        assert len(client.rendered) == 1  # the publisher survived and drained it
 
     await _stop(task)
     assert any("scene projection on connect" in r.getMessage() for r in caplog.records)
@@ -328,7 +357,7 @@ async def test_a_fatal_leg_fault_restarts_both_legs(
 ) -> None:
     monkeypatch.setattr(composition, "_RESTART_SECONDS", 0.0)  # no backoff wait
     service = _FakeService(ProgramStatus.idle(), (album_of("aa11bb"),))
-    sub = MusicPlayerSubsystem(service, ChangeSignal(), _FakeClients(_FakeRenderer()))
+    sub = MusicPlayerSubsystem(service, ChangeSignal(), _FakeClients(_FakeClient()))
     publisher = _CollapsingLeg()  # the push leg collapses fatally once
     subscription = _BlockingLeg()  # the sibling the TaskGroup cancels
     _inject_legs(sub, publisher, subscription)
@@ -350,7 +379,7 @@ async def test_shutdown_cancellation_exits_the_loop_without_restart(
 ) -> None:
     monkeypatch.setattr(composition, "_RESTART_SECONDS", 0.0)
     service = _FakeService(ProgramStatus.idle(), (album_of("aa11bb"),))
-    sub = MusicPlayerSubsystem(service, ChangeSignal(), _FakeClients(_FakeRenderer()))
+    sub = MusicPlayerSubsystem(service, ChangeSignal(), _FakeClients(_FakeClient()))
     publisher = _BlockingLeg()
     subscription = _BlockingLeg()
     _inject_legs(sub, publisher, subscription)

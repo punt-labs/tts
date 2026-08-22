@@ -17,7 +17,7 @@ would split one story across two.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from typing import TYPE_CHECKING, Self, final
 
 from punt_lux import HubUnavailableError
@@ -27,9 +27,10 @@ from punt_vox.panel.hub_outage_log import HubOutageLog
 
 if TYPE_CHECKING:
     import logging
-    from collections.abc import Callable, Generator
+    from collections.abc import AsyncGenerator, Callable, Generator
 
-    from punt_vox.panel.ports import PanelRestClient
+    from punt_lux import LuxClient
+
     from punt_vox.panel.service import VoxPanelService
 
 __all__ = ["PanelGuard"]
@@ -40,7 +41,7 @@ class PanelGuard:
     """Swallow luxd being away and voxd refusing, each answered in its own way."""
 
     _service: VoxPanelService
-    _rest_factory: Callable[[], PanelRestClient]
+    _rest_factory: Callable[[], LuxClient]
     _logger: logging.Logger
     _outage: HubOutageLog
     __slots__ = ("_logger", "_outage", "_rest_factory", "_service")
@@ -48,7 +49,7 @@ class PanelGuard:
     def __new__(
         cls,
         service: VoxPanelService,
-        rest_factory: Callable[[], PanelRestClient],
+        rest_factory: Callable[[], LuxClient],
         logger: logging.Logger,
     ) -> Self:
         self = super().__new__(cls)
@@ -70,20 +71,20 @@ class PanelGuard:
         except HubUnavailableError:
             self._outage.note(message)
 
-    @contextmanager
-    def rejection(self, what: str) -> Generator[None]:
+    @asynccontextmanager
+    async def rejection(self, what: str) -> AsyncGenerator[None]:
         """Swallow voxd refusing *what*, correcting the scene to say so instead.
 
-        The opposite of :meth:`outage`, which swallows a transient the next
-        tick retries away: voxd answering with a refusal is a real failure, so
-        it is logged loud AND pushed back into the scene, never reduced to a
-        log line by the blanket handler around the caller.
+        The opposite of :meth:`outage`, which swallows a transient the next tick
+        retries away: voxd answering with a refusal is a real failure, so it is
+        logged loud AND pushed back into the scene, never reduced to a log line
+        by the blanket handler around the caller.
         """
         try:
             yield
         except VoxdProtocolError as exc:
             self._note(exc, what)
-            self.repush()
+            await self.repush()
 
     @contextmanager
     def offscreen_rejection(self, what: str) -> Generator[None]:
@@ -101,10 +102,10 @@ class PanelGuard:
         except VoxdProtocolError as exc:
             self._note(exc, what)
 
-    def repush(self) -> None:
+    async def repush(self) -> None:
         """Send the held scene back out, letting an absent luxd drop it."""
         with self.outage("luxd unavailable; dropped the panel re-push"):
-            self._service.push_scene(self._rest_factory())
+            await self._service.push_scene(self._rest_factory())
 
     def _note(self, exc: VoxdProtocolError, what: str) -> None:
         """Log voxd's refusal of *what* loud, and carry its reason into the scene."""

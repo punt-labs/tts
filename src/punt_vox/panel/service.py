@@ -1,21 +1,20 @@
 """``VoxPanelService`` -- the ``Vox`` menu entry a session owns.
 
-Reads vox's current settings, applies a control change to the same config
-store and daemon RPCs the CLI and MCP tool already use, and pushes the
-confirmed scene. Satisfies :class:`punt_lux.applets.AppletService`
-structurally (``callback_id``, ``label``, ``prefetch``, ``acknowledge``,
-``service``) plus the extra methods :class:`~punt_vox.panel.leg.VoxPanelLeg`
-calls when a subscribed control-change event arrives.
+Reads vox's current settings, applies a control change to the same config store
+and daemon RPCs the CLI and MCP tool already use, and pushes the confirmed scene.
+Satisfies :class:`punt_lux.applets.AppletService` structurally (``callback_id``,
+``label``, ``prefetch``, ``acknowledge``, ``service``) plus the extra methods
+:class:`~punt_vox.panel.leg.VoxPanelLeg` calls when a control event arrives.
 
-The held ``_state``/``_notice`` pair is read and replaced from more than one
-thread: a menu click and a subscribed control event each run on their own
-``asyncio.to_thread`` worker, so two can be mid-update at once. ``_lock``
-serializes every read-modify-write against that pair so one thread's commit
-can never be silently overwritten by another's.
+The held ``_state``/``_notice`` pair is read from more than one thread: a menu
+click and a control event each run their sync work on an ``asyncio.to_thread``
+worker, so two can be mid-update at once. ``_lock`` serializes every
+read-modify-write so one thread's commit is never overwritten.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import threading
 from dataclasses import replace
@@ -44,10 +43,11 @@ from punt_vox.types_synthesis_errors import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
+    from punt_lux import LuxClient
     from punt_lux.applets import ClickLatency
 
     from punt_vox.panel.panel_scene import PanelScene
-    from punt_vox.panel.ports import PanelDaemonClient, PanelRestClient, SettingsStore
+    from punt_vox.panel.ports import PanelDaemonClient, SettingsStore
 
 logger = logging.getLogger(__name__)
 
@@ -92,25 +92,25 @@ class VoxPanelService:
         """Read settings once before any click, so the first click has some to show."""
         self.refresh()
 
-    def acknowledge(self, client: PanelRestClient, latency: ClickLatency) -> None:
+    async def acknowledge(self, client: LuxClient, latency: ClickLatency) -> None:
         """Push the held scene now -- the visible half of the click."""
         with latency.answering():
-            self.push_scene(client)
+            await self.push_scene(client)
 
-    def service(self, client: PanelRestClient, latency: ClickLatency) -> None:
+    async def service(self, client: LuxClient, latency: ClickLatency) -> None:
         """Re-read settings fresh and push the confirmed scene."""
         with latency.stage("refreshed"):
-            self.refresh()
-        self.push_scene(client)
+            await asyncio.to_thread(self.refresh)
+        await self.push_scene(client)
 
     def scene(self) -> PanelScene:
         """Return the currently-held settings and notice as a scene."""
         with self._lock:
             return replace(self._state.scene(), notice=self._notice)
 
-    def push_scene(self, client: PanelRestClient) -> None:
+    async def push_scene(self, client: LuxClient) -> None:
         """Push the currently-held scene, logging (never raising) a refusal."""
-        result = client.render(self.scene().render_request())
+        result = await client.scene.show(self.scene().render_request())
         if isinstance(result, OpError):
             logger.error("vox-panel: luxd rejected the scene: %s", result.reason)
 
