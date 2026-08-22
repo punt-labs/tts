@@ -19,9 +19,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, final
 
-from punt_lux import HubUnavailableError
+from punt_lux import HubUnavailableError, LuxClient
 
+from punt_vox.lux_common import HubOutageLog
 from punt_vox.types_programs.status import ProgramStatus
+from punt_vox.voxd.music_player.lux_menu import LuxMenuRegistrar
 from punt_vox.voxd.music_player.lux_subscription import LuxSubscription
 from punt_vox.voxd.music_player.wire import MusicTopic
 from punt_vox.voxd.programs.album_id import AlbumId
@@ -399,6 +401,104 @@ async def test_run_logs_the_reconnect_when_luxd_is_down(
         "[lux]" in r.getMessage() and "luxd down" in r.getMessage()
         for r in caplog.records
     )
+
+
+async def test_run_throttles_repeated_outage_ticks_to_debug(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The receive-leg retry no longer spams WARNING per tick: the shared
+    # HubOutageLog opens the outage at WARNING once and quiets later ticks
+    # to DEBUG, so a long luxd outage stays legible without flooding vox.log.
+    monkeypatch.setattr(
+        "punt_vox.voxd.music_player.lux_subscription._RETRY_SECONDS", 0.001
+    )
+    listener = _RecordingListener()
+    attempts: list[int] = []
+
+    def connect(
+        on_event: EventHandler,
+        on_callback: CallbackHandler,
+        on_connect: ConnectHandler,
+    ) -> HubListener:
+        attempts.append(1)
+        if len(attempts) <= 3:  # three ticks of outage before recovery
+            raise HubUnavailableError("luxd down")
+        listener.bind(on_connect)
+        return listener
+
+    sub = LuxSubscription(_FakeCommands(), _FakeOpener(), _FakeMenu(), connect)
+
+    with caplog.at_level(logging.DEBUG):
+        await sub.run()
+
+    warn_hits = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "music receive leg" in r.getMessage()
+    ]
+    debug_hits = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.DEBUG and "music receive leg" in r.getMessage()
+    ]
+    assert len(warn_hits) == 1  # first tick opens the outage loudly
+    assert len(debug_hits) == 2  # later ticks throttled
+
+
+async def test_shared_outage_is_used_by_both_subscription_and_menu(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The design ruling: composition injects ONE HubOutageLog into the receive
+    # leg and the menu registrar so a single luxd outage escalates once across
+    # both call sites. Build both sites on the same instance and pin the shape:
+    # the subscription's first retry opens the outage at WARNING, and the
+    # menu's own tick during the same outage inherits the window at DEBUG.
+    monkeypatch.setattr(
+        "punt_vox.voxd.music_player.lux_subscription._RETRY_SECONDS", 0.001
+    )
+    outage = HubOutageLog(logging.getLogger("test.shared-outage"))
+    listener = _RecordingListener()
+    attempts: list[int] = []
+
+    def connect_hub(
+        on_event: EventHandler,
+        on_callback: CallbackHandler,
+        on_connect: ConnectHandler,
+    ) -> HubListener:
+        attempts.append(1)
+        if len(attempts) == 1:  # one down tick, then recover
+            raise HubUnavailableError("luxd down")
+        listener.bind(on_connect)
+        return listener
+
+    def connect_rest() -> LuxClient:
+        raise HubUnavailableError("luxd down")
+
+    # The registrar's connect fake raises before returning, so the LuxClient
+    # return annotation is inert -- it satisfies the seam without any real client.
+    menu = LuxMenuRegistrar(connect_rest, outage=outage)
+    sub = LuxSubscription(
+        _FakeCommands(), _FakeOpener(), _FakeMenu(), connect_hub, outage=outage
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="test.shared-outage"):
+        await sub.run()  # subscription opens outage at WARNING, then handshake clears
+        # Simulate a stale outage the menu tries under: re-open the window,
+        # then a menu register during the same window logs at DEBUG.
+        outage.note("[lux] receive leg re-opened the outage")  # WARNING
+        await menu.register("music", "Music")  # DEBUG under shared window
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    debugs = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.DEBUG and "not registered" in r.getMessage()
+    ]
+    # Exactly two WARNINGs: the initial subscription tick + the manual re-open.
+    # The menu's own tick under the second window lands at DEBUG, not a third
+    # WARNING -- confirming the shared instance carries the outage between sites.
+    assert len(warnings) == 2
+    assert len(debugs) == 1
 
 
 async def test_on_event_logs_the_inbound_play(

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_lux import HubUnavailableError, OpError
 
+from punt_vox.lux_common import HubOutageLog
 from punt_vox.voxd.music_player.lux_trace import LuxTrace
 
 if TYPE_CHECKING:
@@ -32,28 +33,42 @@ _trace = LuxTrace(logger)
 class LuxMenuRegistrar:
     """Register one menu callback over the ``LuxClient`` facade, failure-tolerant."""
 
-    __slots__ = ("_connect",)
+    __slots__ = ("_connect", "_outage")
     _connect: Callable[[], LuxClient]
+    _outage: HubOutageLog
 
-    def __new__(cls, connect: Callable[[], LuxClient]) -> Self:
+    def __new__(
+        cls,
+        connect: Callable[[], LuxClient],
+        # None means the registrar throttles its own registrations; the
+        # composition injects the receive-leg's outage log so a single luxd
+        # outage escalates once across both sites, not twice.
+        outage: HubOutageLog | None = None,
+    ) -> Self:
         self = super().__new__(cls)
         self._connect = connect
+        self._outage = outage if outage is not None else HubOutageLog(logger)
         return self
 
     async def register(self, callback_id: str, label: str) -> None:
         """Register the ``label`` menu entry, dropping any lux failure.
 
-        This is a best-effort REST I/O boundary. A down luxd logs a warning; any
+        This is a best-effort REST I/O boundary. A down luxd is noted through the
+        shared :class:`HubOutageLog` so the first tick lands as WARNING and later
+        ticks quiet to DEBUG (with a 30s INFO restatement) -- the receive leg's
+        retry loop and this per-registration site share one escalation window. Any
         other transport fault -- a refused connection, a timeout, a client-side
-        error -- is logged with its traceback and swallowed. Nothing is raised, so a
-        failed menu registration can never escape into the receive leg's guarded
+        error -- is logged with its traceback and swallowed. Nothing is raised, so
+        a failed menu registration can never escape into the receive leg's guarded
         restart and turn a missing menu into a dropped connection.
         """
         try:
             client = self._connect()
             result = await client.callback.register(callback_id, label)
         except HubUnavailableError:
-            _trace.warning("luxd unavailable; %r menu entry not registered", label)
+            self._outage.note(
+                f"[lux] luxd unavailable; {label!r} menu entry not registered"
+            )
             return
         except Exception:
             logger.exception("[lux] %r menu registration failed", label)

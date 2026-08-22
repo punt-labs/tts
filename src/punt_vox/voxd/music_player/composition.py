@@ -16,6 +16,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.lux_common import HubOutageLog
 from punt_vox.voxd.music_player.lux_clients import VoxLuxClients
 from punt_vox.voxd.music_player.lux_menu import LuxMenuRegistrar
 from punt_vox.voxd.music_player.lux_scene_publisher import LuxScenePublisher
@@ -56,8 +57,16 @@ class MusicPlayerSubsystem:
         self = super().__new__(cls)
         self._publisher = LuxScenePublisher(lux.client)
         self._player = MusicPlayer(service, self._publisher)
+        # One HubOutageLog spans both music_player call sites: the receive-leg
+        # retry loop and the menu registrar's best-effort I/O share one
+        # escalation window so a single luxd outage reports once, not twice.
+        outage = HubOutageLog(logger)
         self._subscription = LuxSubscription(
-            service, self._player, LuxMenuRegistrar(lux.client), lux.hub
+            service,
+            self._player,
+            LuxMenuRegistrar(lux.client, outage=outage),
+            lux.hub,
+            outage=outage,
         )
         changes.subscribe(self._player)
         return self

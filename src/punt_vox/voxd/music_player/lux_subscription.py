@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_lux import HubUnavailableError
 
+from punt_vox.lux_common import HubOutageLog
 from punt_vox.voxd.music_player.lux_trace import LuxTrace
 from punt_vox.voxd.music_player.player_event_codec import (
     AnchorUnresolvedError,
@@ -59,12 +60,20 @@ _RETRY_SECONDS = 5.0
 class LuxSubscription:
     """Own voxd's one hub connection, the ``Music`` menu, and event dispatch."""
 
-    __slots__ = ("_codec", "_connect_hub", "_menu", "_presenter", "_service")
+    __slots__ = (
+        "_codec",
+        "_connect_hub",
+        "_menu",
+        "_outage",
+        "_presenter",
+        "_service",
+    )
     _service: ProgramSeam
     _presenter: ScenePresenter
     _menu: MenuRegistrar
     _connect_hub: Callable[[EventHandler, CallbackHandler, ConnectHandler], HubListener]
     _codec: PlayerEventCodec
+    _outage: HubOutageLog
 
     def __new__(
         cls,
@@ -74,6 +83,10 @@ class LuxSubscription:
         connect_hub: Callable[
             [EventHandler, CallbackHandler, ConnectHandler], HubListener
         ],
+        # None means the receive leg owns its own outage window; the composition
+        # injects a shared instance so the menu registrar's best-effort I/O and
+        # this retry loop escalate one continuous outage together.
+        outage: HubOutageLog | None = None,
     ) -> Self:
         self = super().__new__(cls)
         self._service = service
@@ -81,6 +94,7 @@ class LuxSubscription:
         self._menu = menu
         self._connect_hub = connect_hub
         self._codec = PlayerEventCodec()
+        self._outage = outage if outage is not None else HubOutageLog(logger)
         return self
 
     async def run(self) -> None:
@@ -106,10 +120,12 @@ class LuxSubscription:
                 _trace.info("music receive leg stopped cleanly")
                 return
             except HubUnavailableError:
-                _trace.warning(
-                    "luxd down; retrying the music receive leg in %.1fs (attempt %d)",
-                    _RETRY_SECONDS,
-                    attempt,
+                # HubOutageLog throttles the retry storm: the first tick lands as
+                # WARNING, later ticks as DEBUG, with an INFO restatement every 30s
+                # -- so a long luxd outage stays legible without spamming the log.
+                self._outage.note(
+                    f"[lux] luxd down; retrying the music receive leg in "
+                    f"{_RETRY_SECONDS:.1f}s"
                 )
                 await asyncio.sleep(_RETRY_SECONDS)
             except Exception:
@@ -231,6 +247,9 @@ class LuxSubscription:
         logs-and-continues if this raises, so the session survives regardless.
         """
         _trace.info("hub handshake complete; re-registering menu and re-pushing scene")
+        # The handshake is the ground-truth "luxd is back" signal for both legs,
+        # so it closes the shared outage window before the menu register runs.
+        self._outage.clear()
         await self._menu.register(_MENU_CALLBACK_ID, _MENU_LABEL)
         try:
             self._presenter.notify_changed()

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, cast, final
 from punt_lux import HubUnavailableError, LuxClient, OpError
 from punt_lux.operations import Ok
 
+from punt_vox.lux_common import HubOutageLog
 from punt_vox.voxd.music_player.lux_menu import LuxMenuRegistrar
 
 if TYPE_CHECKING:
@@ -81,6 +82,62 @@ async def test_register_swallows_a_down_luxd(
         await LuxMenuRegistrar(connect).register("music", "Music")  # must not raise
 
     assert any("not registered" in r.getMessage() for r in caplog.records)
+
+
+async def test_register_throttles_repeat_outage_ticks_to_debug(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A luxd outage that repeats registration attempts must not spam WARNING per
+    # tick: the shared HubOutageLog opens the outage at WARNING once and quiets
+    # subsequent ticks to DEBUG until the outage clears.
+    def connect() -> LuxClient:
+        raise HubUnavailableError("luxd down")
+
+    registrar = LuxMenuRegistrar(connect)
+    with caplog.at_level(logging.DEBUG):
+        await registrar.register("music", "Music")
+        await registrar.register("music", "Music")
+        await registrar.register("music", "Music")
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    debugs = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.DEBUG and "not registered" in r.getMessage()
+    ]
+    assert len(warnings) == 1  # first tick loud, later ticks quiet
+    assert len(debugs) == 2  # subsequent ticks throttled to DEBUG
+
+
+async def test_register_shares_outage_window_with_the_subscription(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The composition injects one HubOutageLog into both the receive leg and this
+    # registrar. Once the subscription's retry has already opened the outage at
+    # WARNING, the registrar's own tick during the same outage must not re-open a
+    # second WARNING -- it inherits the ongoing window and logs at DEBUG instead.
+    def connect() -> LuxClient:
+        raise HubUnavailableError("luxd down")
+
+    shared = HubOutageLog(logging.getLogger("test.shared-outage"))
+    shared.note("[lux] subscription opened the outage first")  # pretend sub ticked
+
+    registrar = LuxMenuRegistrar(connect, outage=shared)
+    with caplog.at_level(logging.DEBUG, logger="test.shared-outage"):
+        await registrar.register("music", "Music")
+
+    warnings = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.WARNING and "not registered" in r.getMessage()
+    ]
+    debugs = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.DEBUG and "not registered" in r.getMessage()
+    ]
+    assert warnings == []  # the shared window is already open, no fresh WARNING
+    assert len(debugs) == 1  # the registrar's tick lands at DEBUG
 
 
 async def test_register_logs_a_refused_registration(
