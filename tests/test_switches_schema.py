@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 import pytest
+from mcp.server.fastmcp.exceptions import ToolError
 
 
 @pytest.mark.asyncio
@@ -119,9 +120,9 @@ async def test_undeclared_kwarg_is_rejected_by_name(tool_name: str) -> None:
     """
     import punt_vox.server as srv
 
-    with pytest.raises(Exception, match="voice") as exc:
+    with pytest.raises(ToolError, match="voice") as exc:
         await srv.mcp.call_tool(tool_name, {"mode": "y", "voice": "benno"})
-    assert tool_name in str(exc.value)
+    assert f"mic:{tool_name}" in str(exc.value)
 
 
 def _has_string_type(prop: dict[str, Any]) -> bool:
