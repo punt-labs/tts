@@ -9,6 +9,10 @@ import pytest
 
 from tools.oo_ratchet.cli import Options, main
 
+# Shares a real git-tmp-repo fixture with test_oo_ratchet.py -- see the
+# marker rationale there and the measured timing in TESTING.md.
+pytestmark = pytest.mark.slow
+
 GOOD = '''from __future__ import annotations
 
 

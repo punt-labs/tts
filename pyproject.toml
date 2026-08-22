@@ -204,14 +204,15 @@ reportUnknownMemberType = false
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = "-ra -q -m 'not slow and not integration and not e2e'"
+addopts = "-ra -q -m 'not slow and not integration and not subprocess and not sdk'"
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
 markers = [
-    "integration: marks tests as integration tests (requires provider API credentials)",
-    "slow: marks tests as slow",
-    "e2e: marks end-to-end tests requiring full stack",
+    "integration: marks tests requiring real, credentialed provider API calls (run with -m integration)",
+    "slow: marks tests with heavy real-subprocess or real-filesystem overhead (run with -m slow)",
+    "subprocess: marks tests that spawn real shell/git subprocesses (hook scripts, install.sh, plugin-surface gate; run with -m subprocess)",
+    "sdk: marks tests that drive a real Claude Agent SDK session and cost real money (run with -m sdk)",
 ]
 filterwarnings = [
     # Upstream elevenlabs SDK bug: pydantic v1 compat on Python 3.14. Remove when elevenlabs ships a fix.

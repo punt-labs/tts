@@ -12,7 +12,10 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 20m was already tight for the default tier alone (see TESTING.md,
+    # "Why the suite is slow"); the second step below adds the slow/
+    # subprocess tiers in the same job, so the ceiling needs headroom.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
@@ -22,3 +25,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng
       - run: uv sync --frozen --all-extras
       - run: uv run pytest
+      # slow + subprocess were folded into the unmarked default run before
+      # this taxonomy existed; run them explicitly so marking them opt-in
+      # locally does not silently drop them from CI coverage.
+      - run: uv run pytest -m "slow or subprocess"
