@@ -243,7 +243,7 @@ and `make check`. A handful of unmarked tests still spawn real local
 subprocesses -- `test_core.py` invokes `ffmpeg` directly outside the
 cached-MP3-bytes fixture path, and `test_public_api.py` runs a `python -c`
 import-lightness probe -- but none reach the network or a credentialed API, so
-the tier's contract ("safe to run anywhere, no external dependency") holds. Tests that spawn a real *shell script* under test move to
+the tier's contract ("safe to run anywhere, no external service dependency") holds. Tests that spawn a real *shell script* under test move to
 Tier 3a; local `ffmpeg`/interpreter spawns from tests whose subject is
 in-process code stay here.
 
