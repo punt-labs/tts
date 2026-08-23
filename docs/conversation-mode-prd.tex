@@ -443,21 +443,44 @@ exists to satisfy and carries the same \pone{}/\ptwo{} phase tag.
     not distinguish these two quantities, and the validated detection
     component alone (500\,ms) already exceeds it. (Supports \fr{8},
     \fr{22}.)
-  \item[\nfr{2} \pone{} (Time to first spoken word)] \textbf{Confirmed
-    with real data, target retained.} Measured end to end against a real
-    agent and real tool-use turns (Spikes 3 and 5, 5 trials total):
-    580--683\,ms, flat regardless of total reply length (the longest
-    reply in Spike 3 had the lowest latency). Spike 1 separately measured
-    the ElevenLabs TTS provider floor in isolation, with no agent in the
-    loop --- 145--162\,ms across 5 trials --- which is a different
-    quantity (provider latency alone) supporting the same conclusion from
-    a different angle: it establishes the headroom the end-to-end number
-    above has to work with, not an additional sample of the same
-    measurement. The original ``about one second'' provisional target
-    holds with real headroom; no revision needed to the target itself,
-    only to its confidence: this is now measured, not provisional.
-    (Supports
+  \item[\nfr{2} \pone{} (Time to first spoken word)] \textbf{Component
+    legs confirmed; system-level number now measured too, and it
+    falsifies the target.} The 580--683\,ms figure below was, and remains,
+    correct for what it measured: the audio-facing legs (STT, TTS,
+    detection) with the agent role played by hand by the authoring
+    session, per \S\ref{sec:design-session-attach}'s own caveat that this
+    was ``provisional for the system as a whole.'' That system-wide number
+    is no longer provisional --- Slice 1b (vox-gs9u.2) measured it for
+    real, through the actual ratified session-attach mechanism
+    (\S\ref{sec:design-session-attach}, Decision 1), on 2026-08-23: a
+    20-run benchmark (\texttt{claude -p}, both a resumed real session and
+    a fresh session, sonnet and haiku, no accumulated context) put
+    time-to-first-word at a \textbf{13--25\,s median}, not
+    580--683\,ms --- one to two orders of magnitude over target, dominated
+    by process-spawn and hook-bootstrap cost external to the agent's own
+    reported turn duration (a fresh-session run reported
+    \texttt{duration\_api\_ms: 2243} internally against a 13.2\,s external
+    wall clock). \textbf{Per-turn subprocess spawn is confirmed
+    unworkable for this NFR and is off the table.} See the resolution
+    note in \S\ref{sec:design-session-attach} and \S\ref{sec:known-unknowns}
+    for the two-track response: a near-term mitigation (a spoken
+    acknowledgment on turn-end, covering the wait, tracked as vox-36xc)
+    and a longer-term redesign investigation (a persistent, non-per-turn
+    call agent, tracked as vox-hobl). The original component-level
+    measurement below is retained as evidence the audio pipeline itself
+    is not the bottleneck --- the session-attach mechanism is. (Supports
     \fr{11}.)
+
+    Original component-level measurement, retained for reference:
+    measured end to end against a real agent and real tool-use turns
+    (Spikes 3 and 5, 5 trials total): 580--683\,ms, flat regardless of
+    total reply length (the longest reply in Spike 3 had the lowest
+    latency). Spike 1 separately measured the ElevenLabs TTS provider
+    floor in isolation, with no agent in the loop --- 145--162\,ms across
+    5 trials --- which is a different quantity (provider latency alone)
+    supporting the same conclusion from a different angle: it establishes
+    the headroom the end-to-end number above has to work with, not an
+    additional sample of the same measurement.
   \item[\nfr{3} \ptwo{} (Platform and provider breadth)] Phase 1 targets
     macOS with ElevenLabs only. Phase 2 extends the same interfaces to
     Linux, to local providers on both platforms, and to the no-headphones
@@ -631,6 +654,33 @@ real attach mechanism's own latency is added. Treat \nfr{1}/\nfr{2} as
 validated for the components measured, provisional for the system as a
 whole.
 
+\paragraph{Resolution (2026-08-23).} The session-attach shape was
+designed (the ADR below, Decision 1: a headless \texttt{claude -p
+--resume} subprocess per human turn), implemented, and shipped in Slice
+1b (vox-gs9u.2). The \emph{provisional} qualifier above is now
+\emph{resolved, negatively}: real end-to-end testing (a live operator call
+plus a 20-run repeatable benchmark, both documented in \nfr{2}) found the
+per-turn subprocess design costs 13--25\,s median per turn, one to two
+orders of magnitude over the component-level number this section warned
+might not hold. The dominant cost is not the model call --- it is process
+spawn plus Claude Code's own SessionStart hook cascade (9--28 hooks
+observed per invocation depending on resume-vs-fresh, entirely orthogonal
+to this feature's own audio pipeline). \textbf{Spawning a fresh agent
+process per conversational turn is confirmed unworkable and is off the
+table going forward.} Two tracks follow from this, both tracked outside
+this document in beads rather than re-litigated here: a near-term
+mitigation to make the current per-turn design tolerable (vox-36xc: a
+spoken acknowledgment on turn-end, background audio during the wait, and
+a stripped-down harness invocation to shave what latency is honestly
+available) and a longer-term architecture investigation (vox-hobl: a
+persistent call agent kept alive for the whole call instead of respawned
+per turn, running read-only against the codebase/project, with any
+codebase-write consequences of the call deferred to a summary the primary
+session applies after the call ends). The second track is a genuine fork
+from Decision 1 as ratified and needs its own design pass and operator
+ratification before implementation, per this project's own workflow
+discipline --- it is named here, not designed here.
+
 \section{Decisions required before implementation}
 
 Three forks in this chapter are explicitly reserved for the operator, per
@@ -641,9 +691,17 @@ missed by being one bullet among many elsewhere in this chapter:
 
 \begin{enumerate}
   \item \textbf{Session attachment} (\S\ref{sec:design-session-attach}).
-    No recommendation is offered here --- this needs investigation into
-    what Claude Code's session surface actually permits before a shape
-    can even be proposed.
+    \textbf{Ratified and superseded.} Ratified 2026-08-22 as the
+    session-attach ADR's Option D (a headless \texttt{claude -p --resume}
+    subprocess per human turn); implemented and shipped in Slice 1b
+    (vox-gs9u.2). Real measurement on 2026-08-23 found the per-turn
+    version of this design costs 13--25\,s median per turn and is
+    unworkable for a conversational experience --- see
+    \S\ref{sec:design-session-attach}'s resolution note. The decision
+    recorded here is not reversed (a headless \texttt{claude -p} process
+    is still the mechanism), but the \emph{per-turn} respawn cadence is
+    superseded by a follow-on design investigation (vox-hobl: keep one
+    call agent alive for the whole call instead of one process per turn).
   \item \textbf{Continuous-stream playback ownership}
     (\S\ref{sec:design-termination}): built into production
     \texttt{PlaybackQueue} directly, or as a new sibling component that
@@ -959,18 +1017,22 @@ gaps in this chapter, not minor additions.
 \begin{itemize}
   \item \textbf{How a transcribed turn reaches, and how a streamed reply
     is pulled from, the user's already-running Claude Code session ---
-    undesigned, and untested by any spike.} \fr{4} requires the call to
-    use the user's active session with its existing task context, not a
-    fresh one. Every spike that involved ``the agent'' actually used
-    \emph{this authoring session itself} as the agent, driven by hand
-    (Spike 3: ``seeded by a genuinely multi-second real turn in this
-    session''; Spike 5: the integration loop ran inside the live
-    authoring conversation). No spike tested programmatic injection of
-    transcribed audio into an independent, already-running session, nor
-    programmatic extraction of that session's streamed reply. This may
-    require a session-attach surface that does not exist in this
-    codebase today, and is the single largest unaddressed architecture
-    question in this document.
+    designed, implemented, measured, and found too slow as designed.}
+    \textbf{Resolved as of 2026-08-23}, superseding the rest of this
+    bullet as written during design: the session-attach mechanism was
+    designed (session-attach ADR, Decision 1: a headless \texttt{claude -p
+    --resume} subprocess per human turn), implemented in Slice 1b
+    (vox-gs9u.2), and measured for real. The measurement is the new
+    unknown this bullet leaves open: per-turn subprocess spawn costs
+    13--25\,s median (20-run benchmark, 2026-08-23), dominated by process
+    startup and Claude Code's SessionStart hook cascade, not model
+    latency. Per-turn spawn is confirmed off the table; see
+    \S\ref{sec:design-session-attach}'s resolution note and \nfr{2} for
+    the full data and the two-track response (vox-36xc near-term,
+    vox-hobl for the persistent-agent redesign). The original unresolved
+    question this bullet asked --- undesigned, untested by any spike ---
+    is answered; a new one (how to keep a call agent alive across turns
+    without per-turn respawn cost) has replaced it.
   \item \textbf{Provider-agnostic interfaces (\fr{21}, P1) have no design
     content anywhere in this chapter.} Every spike hardcoded ElevenLabs
     directly --- Spike 1 reused \texttt{providers/elevenlabs.py}
