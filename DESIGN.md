@@ -3011,12 +3011,13 @@ receive another patch — see DES-066.
 
 ---
 
-## DES-066: Persistent Call Agent, Held in `tmux` via `pi-tools`' `keep` Extension — Proposed, Untested
+## DES-066: Persistent Call Agent via `pi --mode rpc` — Mechanism Spiked and Confirmed, Lifecycle Not Yet Designed
 
-**Status:** proposed, not yet spiked. This is a design direction, not a
-ratified decision — the concurrent-resume-style open risk DES-064 left
-unresolved was found the hard way (DES-065); this entry is written to be
-falsified quickly, not assumed correct.
+**Status:** core mechanism confirmed live (2026-08-23 spike, below); still
+not a ratified decision — the process-supervision layer (`tmux`/`keep` vs.
+a direct `subprocess.Popen`), the read-only enforcement mechanism, and the
+context-handoff design are all still open. Not yet a design an
+implementation mission can be dispatched against.
 
 ### Context
 
@@ -3069,14 +3070,54 @@ ecosystem, which is precisely what DES-065 found costly. `pi --mode rpc
 `agent_end` event protocol this integration needs, natively, rather than
 repurposing a general interactive CLI's `-p` flag for it.
 
-### Known unknowns — this is why it is a spike, not a decision
+### Spike result — 2026-08-23, mechanism confirmed
 
-- **`pi --mode rpc` did not produce a reply in initial testing** —
-  accepted a prompt, echoed it back, then produced nothing further. Root
-  cause not found (plausibly an RPC framing or stdin-lifecycle issue,
-  analogous to DES-064's own subprocess wiring taking several rounds to
-  get right). This must be resolved and demonstrated working, end to end,
-  before anything is built on top of it.
+Ran the exact two-turn liveness spike this entry's own "Next step" called
+for: a bare Python harness (`.tmp/pi_rpc_spike.py`, scratch, not committed)
+spawns `pi --mode rpc --no-session` once, writes one JSON `prompt` command
+per turn to its stdin, reads JSON-line events back from stdout.
+
+- **First attempt reproduced the original failure exactly**: prompt
+  accepted (`{"type":"response","command":"prompt","success":true}`),
+  `agent_start`/`turn_start`/the user `message_start`/`message_end` all
+  fired, the assistant's own `message_start` arrived with
+  `"stopReason":"pending"` — then nothing. No `message_update`, no
+  `message_end`, no `agent_end`, for 20s+. Interleaved in the stream were
+  repeated `extension_ui_request` `setStatus` events from `biff-bridge`
+  (`"biff: connected"`), pi-tools' Biff-polling extension, which loads by
+  default alongside `keep`.
+- **Root cause, isolated by bisection**: adding `--no-extensions` (no
+  other change) made the assistant stream complete normally — thinking
+  and text deltas arrived within roughly a second of wall clock, both
+  turns replied correctly (`PONG-ONE`, `PONG-TWO`), and the process exited
+  cleanly (code 0) after stdin closed. The hang is `biff-bridge`
+  interfering with the RPC stdout stream when both are active
+  simultaneously in this environment, not a defect in `pi`'s core RPC
+  mode. Not root-caused further than that (i.e., *why* the extension
+  interferes) — unnecessary to, since the call agent has no legitimate
+  reason to load `biff-bridge` in the first place: a live phone call has
+  nothing to do with team messaging.
+- **The persistence claim is now demonstrated, not assumed**: turn two's
+  usage block shows `"cacheRead":12733` tokens against turn one's prompt
+  cache, versus turn one's own `"cacheRead":0` — direct evidence the
+  second turn reused the still-warm first turn's context inside the same
+  live process, rather than re-establishing it from nothing. This is
+  exactly the cost DES-065 identified as unavoidable in the per-turn-spawn
+  design (every turn re-pays full bootstrap) and confirms the persistent-
+  process shape eliminates it.
+
+Practical takeaway for the real implementation: launch the call agent with
+`--no-extensions` (or a narrower per-extension disable if `pi-tools` grows
+one, once `keep`'s own bridge role is no longer needed inside the call
+agent's own process — the call agent doesn't need `keep` on itself, only
+the *outer* driver needs `keep` to hold the call agent's tmux pane) and
+drive it with the documented RPC command/event JSONL protocol
+(`prompt`/`steer`/`follow_up`/`abort` in; `message_update`/`agent_end` out)
+directly, rather than through `pi-tools`' own tool surface, since the
+driver here is vox's own Python daemon, not another `pi` agent.
+
+### Remaining known unknowns
+
 - **Read-only enforcement mechanism is undecided.** A permission-mode
   flag, a sandboxed/read-only filesystem view, and tool-level restriction
   at the harness are all candidates; none is chosen. A prompt instruction
@@ -3089,14 +3130,29 @@ repurposing a general interactive CLI's `-p` flag for it.
   (resuming the *literal* session) needs an explicit operator re-read,
   since the call agent is now deliberately disconnected from the primary
   session's live state by design, not by accident.
+- **tmux/`keep_run` supervision itself is not yet spiked** — this spike
+  drove the RPC protocol directly over `subprocess.Popen` pipes to isolate
+  the protocol question from the process-supervision question. Holding
+  the same process inside a `keep_run` tmux pane and reaching it via
+  `keep_send`/`keep_capture` from vox's own code (rather than another
+  `pi` agent's own tool calls) is a distinct integration surface — likely
+  thinner than the protocol work just proven, since `keep`'s job is just
+  keeping the pane alive and returning its output, but not yet run.
 
 ### Next step
 
-A narrow spike: get `pi --mode rpc` (or `keep_run` + `keep_send` +
-`keep_capture` directly) to hold one process alive across two sequential
-turns and return a real reply to both, before any further design or
-implementation. This is exactly the kind of stateful-subsystem change this
-project's own workflow requires a Z spec for before implementation
-dispatches (call-agent lifecycle, context-injection, post-call summary
-handoff) — write that once the spike confirms the mechanism works at all,
-not before.
+Design and Z-model the call-agent lifecycle now that the core mechanism is
+proven live: process spawn/teardown per call, the context-snapshot
+handoff at start, the read-only enforcement mechanism, and the post-call
+summary handoff to the primary session — per this project's own rule that
+a 3+-state stateful subsystem gets a Z spec before implementation
+dispatches. Decide there whether `keep_run`/`tmux` or a direct
+`subprocess.Popen` (as this spike used) is the right supervision layer for
+vox's own daemon to hold the call agent's process across a call — `keep`
+was written for an interactive `pi` session managing panes a human or
+another agent inspects, not necessarily for a headless daemon; a direct
+`subprocess.Popen` held by `voxd` itself, with `--no-extensions`, may be
+the simpler and more directly analogous fit to the mic/STT/turn-detection
+layers `CallSession` already owns, without a `tmux`/`pi-tools` runtime
+dependency added to vox's own `pyproject.toml`. Decide explicitly rather
+than defaulting to the `pi-tools` mechanism because it existed first.
