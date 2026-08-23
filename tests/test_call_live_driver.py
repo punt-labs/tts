@@ -82,6 +82,16 @@ def _control(tmp_path: Path) -> CallControl:
     return CallControl(tmp_path / "call.control")
 
 
+async def _no_op_chime() -> None:
+    """A :class:`~punt_vox.voxd.conversation_mode.wait_cue.ChimeFn` fake.
+
+    Never invoked by these gate/inactivity/create tests -- none of them
+    drive a turn through :meth:`CallSession._speak_reply`'s wait cue -- but
+    every construction still needs a real, structurally-valid ``chime``
+    collaborator to pass.
+    """
+
+
 def _driver(
     tmp_path: Path, *, live_chunks: list[AudioChunk], reply_text: str = "a reply"
 ) -> tuple[LiveCallDriver, _FakeMicSource, list[str]]:
@@ -94,6 +104,7 @@ def _driver(
     driver = LiveCallDriver(
         session_attach=_FakeSessionAttach(reply_text),
         speak=speak,
+        chime=_no_op_chime,
         control=_control(tmp_path),
         apply_control=_never_stop,
         detector=TurnDetector(),
@@ -195,6 +206,7 @@ class TestLiveCallDriverCreate:
             driver = await LiveCallDriver.create(
                 session_attach=_FakeSessionAttach("reply"),
                 speak=speak,
+                chime=_no_op_chime,
                 control=_control(tmp_path),
                 apply_control=_never_stop,
             )
