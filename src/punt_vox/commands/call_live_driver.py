@@ -51,6 +51,16 @@ _CALIBRATION_S = 2.0
 # reopened-too-early gate is exactly the bug this exists to bound.
 _MIC_GATE_SAFETY_MARGIN_S = 0.75
 
+# Ceiling on how long the mic-echo hold sleep may run. Neither ``/call
+# stop`` nor FR-2's inactivity timeout is evaluated while this sleep is in
+# progress -- an uncapped estimate on a very long reply (a multi-paragraph
+# answer) would make the call unresponsive for as long as that reply takes
+# to read aloud, which can run to minutes. Capping means a pathological
+# reply degrades to "gate reopens slightly before the reply actually
+# finishes" (the existing, already-documented estimation error) rather than
+# "the call stops responding."
+_MIC_GATE_MAX_HOLD_S = 20.0
+
 # FR-2's bounded-inactivity timeout: how long the call may sit in listening
 # with no completed turn before it ends itself. No live-tunable config
 # surface in this slice (the PRD's stated preference for barge-in timing
@@ -166,14 +176,22 @@ class LiveCallDriver:
         module docstring's "Known limitation") -- the gate closes before
         ``speak`` is even awaited (covering the enqueue round trip) and
         stays closed for an *estimated* speech duration afterward, not the
-        real one. try/finally: the gate must reopen and the queue must
-        drain even if ``speak`` itself raises, or a failed utterance would
-        leave the microphone permanently deaf for the rest of the call.
+        real one, capped at :data:`_MIC_GATE_MAX_HOLD_S` -- neither
+        ``/call stop`` nor FR-2's inactivity timeout is evaluated while this
+        sleep runs, so an uncapped estimate on a very long reply would make
+        the whole call unresponsive for as long as the estimate says the
+        reply takes to read. try/finally: the gate must reopen and the queue
+        must drain even if ``speak`` itself raises, or a failed utterance
+        would leave the microphone permanently deaf for the rest of the
+        call.
         """
         self._mic_source.set_listening(listening=False)
         try:
             await self._speak(text)
-            hold_s = estimate_speech_duration_s(text) + _MIC_GATE_SAFETY_MARGIN_S
+            hold_s = min(
+                estimate_speech_duration_s(text) + _MIC_GATE_SAFETY_MARGIN_S,
+                _MIC_GATE_MAX_HOLD_S,
+            )
             await asyncio.sleep(hold_s)
         finally:
             self._mic_source.drain_pending()
