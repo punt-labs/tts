@@ -101,22 +101,20 @@ def ensure_user_dirs(state_root: Path | None = None) -> None:
 def installed_version() -> str:
     """Return the installed ``punt-vox`` package version.
 
-    Reads ``importlib.metadata.version("punt-vox")`` and falls back
-    to ``punt_vox.__version__`` when the package metadata is not
-    available (e.g., running from an uninstalled source tree during
-    development). Used by both the ``vox doctor`` daemon-staleness
-    check and by voxd at startup when populating the health response.
-    Centralizing the fallback here guarantees doctor and voxd resolve
-    the same value when both fall back, so the comparison in
-    ``vox daemon restart`` is apples-to-apples.
+    Reads ``importlib.metadata.version("punt-vox")``. An uninstalled
+    source tree — no distribution metadata to read — is a broken
+    environment for anything that needs the version: fail fast rather
+    than fall back to a literal, per the org's "no 0.0.0 fallback"
+    version-reporting standard. Used by both the ``vox doctor``
+    daemon-staleness check and by voxd at startup when populating the
+    health response, so both always resolve the one true version.
     """
     try:
         return importlib.metadata.version("punt-vox")
-    except importlib.metadata.PackageNotFoundError:
-        # Inline import — hoisting would create a cycle because
-        # punt_vox.__init__ is at the top of the module graph and
-        # several modules in this package import paths.py during
-        # their own import (voxd.py, service.py, __main__.py).
-        from punt_vox import __version__
-
-        return __version__
+    except importlib.metadata.PackageNotFoundError as exc:
+        # PackageNotFoundError.__str__ hardcodes "No package metadata was
+        # found for {args[0]}" -- args[0] is a package NAME, not free text,
+        # so raising it with a sentence mangles the message. RuntimeError
+        # has no such contract; the hint reaches vox doctor / voxd startup verbatim.
+        msg = "punt-vox not installed as a package -- run 'uv tool install punt-vox'"
+        raise RuntimeError(msg) from exc

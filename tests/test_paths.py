@@ -14,6 +14,8 @@ import stat
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from punt_vox.paths import (
     config_dir,
     ensure_user_dirs,
@@ -121,21 +123,34 @@ def test_installed_version_returns_string() -> None:
     )
 
 
-def test_installed_version_fallback_on_missing_metadata() -> None:
-    """When importlib.metadata has no record of punt-vox, fall back to __version__.
+def test_installed_version_raises_on_missing_metadata() -> None:
+    """No package metadata means no fallback -- fail fast, with an actionable hint.
 
-    This path fires when running from an uninstalled source tree. The
-    fallback must match ``punt_vox.__version__`` exactly so that
-    ``vox doctor`` and voxd report the same value when both resolve
-    via the fallback.
+    An uninstalled source tree has no distribution to report a version
+    for. Per the org's version-reporting standard, that is a broken
+    environment. Raises ``RuntimeError``, not ``PackageNotFoundError``:
+    that type's ``__str__`` treats its argument as a package *name*
+    ("No package metadata was found for {name}"), which would mangle an
+    actionable sentence rather than deliver it.
     """
-    from punt_vox import __version__
-
-    with patch.object(
-        importlib.metadata,
-        "version",
-        side_effect=importlib.metadata.PackageNotFoundError("punt-vox"),
+    with (
+        patch.object(
+            importlib.metadata,
+            "version",
+            side_effect=importlib.metadata.PackageNotFoundError("punt-vox"),
+        ),
+        pytest.raises(RuntimeError, match="uv tool install punt-vox"),
     ):
-        result = installed_version()
+        installed_version()
 
-    assert result == __version__
+
+def test_punt_vox_version_matches_installed_metadata() -> None:
+    """``punt_vox.__version__`` is read from installed metadata, not a literal.
+
+    A hardcoded ``__version__`` string can drift from ``pyproject.toml``
+    the moment one is bumped without the other. Asserting the two always
+    agree makes that class of drift impossible to reintroduce.
+    """
+    import punt_vox
+
+    assert punt_vox.__version__ == importlib.metadata.version("punt-vox")

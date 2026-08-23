@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.1] - 2026-08-23
+
+### Fixed
+
+- **The published v5.0.0 PyPI release could not start `voxd`.** The tagged tree
+  predated `bdfe559` (#439, `vox-oyfs`), which migrated `voxd`'s lux client to
+  the `punt-lux>=0.28` `LuxClient` facade. The released build still imported
+  `LuxHubClient` and `LuxRestClient` directly from `punt_lux` at module load
+  time — names that facade removed — so `voxd` raised `ImportError` on every
+  launch against any current `punt-lux` install. launchd retried and
+  throttled it into a permanent crash loop (`spawn scheduled`, exit code 1),
+  and every hook silently degraded to "voxd not running, skipping
+  chime/speech" with no other symptom. This release re-tags the already-fixed
+  `main` so `voxd` starts cleanly again.
+- **`punt_vox.__version__` was a literal that missed this same release's
+  version bump.** `src/punt_vox/__init__.py` hardcoded `__version__ =
+  "5.0.0"` — the CLI's `--version`, the MCP server's advertised version, and
+  `vox doctor`'s daemon-staleness check all read it, and none of them noticed
+  `pyproject.toml` had moved on. `__version__` is now computed once at import
+  time from `importlib.metadata.version("punt-vox")`, the single source of
+  truth `pyproject.toml` already feeds. `paths.installed_version()`, which
+  backed the same value for `vox doctor` and `voxd`'s health response, no
+  longer falls back to the literal on `PackageNotFoundError` — an uninstalled
+  source tree is a broken environment, so it now raises with a message
+  naming the fix (`reinstall with 'uv tool install punt-vox'`) instead of
+  reporting a version that may not match what's actually running.
+
 ## [5.0.0] - 2026-08-19
 
 ### Fixed
