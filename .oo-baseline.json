@@ -364,14 +364,27 @@
     "public_attr_violations": 0.0
   },
   "src/punt_vox/commands/call.py": {
-    "method_ratio": 0.95,
+    "method_ratio": 0.917,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.76,
-    "max_complexity": 7.0,
-    "avg_complexity": 1.71,
-    "module_size": 249.0,
-    "classes_per_module": 3.0,
-    "class_to_func_ratio": 0.75,
+    "avg_params": 1.23,
+    "max_complexity": 5.0,
+    "avg_complexity": 2.08,
+    "module_size": 225.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 0.5,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
+  "src/punt_vox/commands/call_scripted.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.73,
+    "max_complexity": 3.0,
+    "avg_complexity": 1.36,
+    "module_size": 106.0,
+    "classes_per_module": 2.0,
+    "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
@@ -1299,6 +1312,19 @@
     "module_size": 108.0,
     "public_attr_violations": 0.0
   },
+  "src/punt_vox/providers/elevenlabs_stt.py": {
+    "method_ratio": 0.833,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.83,
+    "max_complexity": 5.0,
+    "avg_complexity": 2.67,
+    "module_size": 159.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 0.5,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/providers/espeak.py": {
     "avg_complexity": 3.0,
     "avg_params": 0.81,
@@ -2163,7 +2189,7 @@
     "avg_params": 0.0,
     "max_complexity": 0.0,
     "avg_complexity": 0.0,
-    "module_size": 14.0,
+    "module_size": 26.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
@@ -2296,6 +2322,19 @@
     "module_size": 13.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
+  "src/punt_vox/voxd/conversation_mode/mic_audio_source.py": {
+    "method_ratio": 0.857,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 2.25,
+    "max_complexity": 3.0,
+    "avg_complexity": 1.75,
+    "module_size": 165.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 0.5,
     "init_violations": 0.0,
     "public_attr_violations": 0.0,
     "future_annotations": 1.0

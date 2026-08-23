@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`vox call start` places a real voice call by default -- live microphone capture and ElevenLabs speech-to-text (vox-gs9u.2).** Two prior gaps in the Conversation Mode slice are closed: `punt_vox.providers.elevenlabs_stt.ElevenLabsSTTProvider` transcribes each closed turn via `speech_to_text.convert` (a batch call, model `scribe_v1` by default), deriving an honest `[0.0, 1.0]` confidence from the SDK's per-word log-probabilities (a transcript-level confidence the SDK does not itself report) so FR-19's "ask the human to repeat rather than act on an ambiguous or failed capture" gate has a real signal instead of the scripted fake's canned value; `punt_vox.voxd.conversation_mode.mic_audio_source.MicAudioSource` captures the system microphone through `sounddevice` (a new dependency) and yields `AudioChunk` at the same cadence `TurnDetector` was designed against. `--script` (a JSON Lines file of pre-written turns) is now an explicit opt-in for demos, tests, and CI -- it no longer stands in for the primary way to place a call. `ScriptedTurn`/`ScriptedSTTProvider` moved to the new `punt_vox.commands.call_scripted` module.
+
+### Known limitation
+
+- **`vox call transfer` re-resolves the target session but does not yet feed it into the running call.** This limitation predates this release (the scripted path already had it); it now applies identically to the live path. Re-attaching an in-progress `CallSession` to a new `SessionAttach` is tracked as follow-up work, not fixed here.
+
 ## [5.0.0] - 2026-08-19
 
 ### Fixed
