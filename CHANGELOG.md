@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.1] - 2026-08-23
+
+### Fixed
+
+- **The published v5.0.0 PyPI release could not start `voxd`.** The tagged tree
+  predated `bdfe559` (#439, `vox-oyfs`), which migrated `voxd`'s lux client to
+  the `punt-lux>=0.28` `LuxClient` facade. The released build still imported
+  `LuxHubClient` and `LuxRestClient` directly from `punt_lux` at module load
+  time — names that facade removed — so `voxd` raised `ImportError` on every
+  launch against any current `punt-lux` install. launchd retried and
+  throttled it into a permanent crash loop (`spawn scheduled`, exit code 1),
+  and every hook silently degraded to "voxd not running, skipping
+  chime/speech" with no other symptom. This release re-tags the already-fixed
+  `main` so `voxd` starts cleanly again; no source change beyond version bump.
+
 ## [5.0.0] - 2026-08-19
 
 ### Fixed
