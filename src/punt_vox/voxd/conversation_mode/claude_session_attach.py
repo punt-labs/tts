@@ -35,6 +35,21 @@ __all__ = ["ClaudeSessionAttach"]
 # the outer call already holds for the *human's* interactive input.
 _RELAY_ENV_VAR = "VOX_CALL_RELAY"
 
+# claude -p --resume is meant to resume the human's own already-authenticated
+# claude.ai session identity (docs/conversation-mode-session-attach-adr.md's
+# option D). A stale/mismatched ANTHROPIC_API_KEY in the parent environment --
+# common in any dev shell sourcing this org's .envrc -- takes precedence over
+# that login instead, per claude's own printed warning ("claude.ai connectors
+# are disabled because ANTHROPIC_API_KEY or another auth source is set and
+# takes precedence over your claude.ai login"). The relay subprocess must not
+# inherit it: every real attempt observed the same failure -- 10 api_retry
+# frames at HTTP 401 "authentication_failed" with exponentially growing
+# retry_delay_ms, burning the whole reply timeout before giving up
+# (terminal_reason: "aborted_streaming") -- never a fast, clean auth error.
+# `claude --help` names only this one env var in the "takes precedence over
+# claude.ai login" family; no sibling (e.g. a CLAUDE_API_KEY) is documented.
+_STRIPPED_ENV_VARS = ("ANTHROPIC_API_KEY",)
+
 # A ceiling on how long one turn's reply may take. Without one, a stalled
 # subprocess (network hang, a tool call that never returns) leaves the call
 # waiting forever with no signal that anything is wrong -- distinct from a
@@ -129,7 +144,7 @@ class ClaudeSessionAttach:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env={**os.environ, _RELAY_ENV_VAR: "1"},
+            env=self._subprocess_env(),
             # See _STDOUT_LINE_LIMIT: the default 64KB StreamReader line
             # buffer is too small for --verbose's larger per-line stream-json
             # payloads. Only stdout is read by line (readline() via `async
@@ -158,6 +173,20 @@ class ClaudeSessionAttach:
             await process.wait()
             raise
         return process
+
+    @staticmethod
+    def _subprocess_env() -> dict[str, str]:
+        """Return the relay subprocess's environment, minus its auth traps.
+
+        See :data:`_STRIPPED_ENV_VARS` for why: forwarding the parent
+        environment wholesale (the prior ``{**os.environ, ...}``) let a
+        stale ``ANTHROPIC_API_KEY`` silently outrank the resumed session's
+        own claude.ai login, failing every turn's auth instead of resuming
+        the identity ``claude -p --resume`` is meant to resume.
+        """
+        env = {k: v for k, v in os.environ.items() if k not in _STRIPPED_ENV_VARS}
+        env[_RELAY_ENV_VAR] = "1"
+        return env
 
     async def _exchange(
         self, stdout: asyncio.StreamReader, stderr: asyncio.StreamReader

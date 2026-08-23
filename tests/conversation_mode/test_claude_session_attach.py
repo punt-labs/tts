@@ -110,6 +110,31 @@ async def test_spawn_argv_includes_verbose() -> None:
     assert "--verbose" in argv
 
 
+async def test_spawn_strips_anthropic_api_key_from_the_subprocess_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: forwarding the parent environment wholesale let a stale
+    ANTHROPIC_API_KEY silently outrank the resumed session's own claude.ai
+    login -- claude prints "claude.ai connectors are disabled because
+    ANTHROPIC_API_KEY or another auth source is set and takes precedence
+    over your claude.ai login", then every turn's auth fails: 10 api_retry
+    frames at HTTP 401, burning the whole reply timeout before giving up.
+    The relay subprocess must never inherit this org's own .envrc-exported
+    key, even when it is genuinely present in the parent process's environ.
+    """
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-stale-org-key")
+    process = _fake_process([])
+    with patch("asyncio.create_subprocess_exec", return_value=process) as mock_exec:
+        attach = ClaudeSessionAttach(session_id="session-a")
+        async for _ in attach.send_turn(TranscribedTurn(text="hello")):
+            pass
+    spawned_env = mock_exec.call_args.kwargs["env"]
+    assert "ANTHROPIC_API_KEY" not in spawned_env
+    # The relay marker must still be present -- stripping the auth trap
+    # must not accidentally drop the unrelated env var call-lock.sh reads.
+    assert spawned_env["VOX_CALL_RELAY"] == "1"
+
+
 async def test_spawn_raises_the_stdout_line_limit() -> None:
     """Regression: the default 64KB StreamReader line-buffer limit raised
     ValueError ("Separator is not found, and chunk exceed the limit") on
