@@ -145,10 +145,9 @@ def test_installed_version_raises_on_missing_metadata() -> None:
 def test_punt_vox_version_matches_installed_metadata() -> None:
     """``punt_vox.__version__`` is read from installed metadata, not a literal.
 
-    Guards against the v5.0.1 regression: a release bumped
-    ``pyproject.toml`` but a hardcoded ``__version__`` string in
-    ``__init__.py`` was left stale. Asserting the two always agree
-    makes that class of drift impossible.
+    A hardcoded ``__version__`` string can drift from ``pyproject.toml``
+    the moment one is bumped without the other. Asserting the two always
+    agree makes that class of drift impossible to reintroduce.
     """
     import punt_vox
 

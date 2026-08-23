@@ -37,5 +37,5 @@ __all__ = [
     "__version__",
 ]
 
-# Read from installed metadata; a literal here is what went stale in v5.0.1.
+# Read from installed metadata; a literal here drifts from pyproject.toml.
 __version__ = installed_version()

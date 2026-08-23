@@ -109,4 +109,8 @@ def installed_version() -> str:
     daemon-staleness check and by voxd at startup when populating the
     health response, so both always resolve the one true version.
     """
-    return importlib.metadata.version("punt-vox")
+    try:
+        return importlib.metadata.version("punt-vox")
+    except importlib.metadata.PackageNotFoundError as exc:
+        msg = "punt-vox not installed as a package -- run 'uv tool install punt-vox'"
+        raise importlib.metadata.PackageNotFoundError(msg) from exc
