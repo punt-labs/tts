@@ -376,6 +376,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/commands/call_live_driver.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 2.17,
+    "max_complexity": 5.0,
+    "avg_complexity": 1.83,
+    "module_size": 161.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/commands/call_scripted.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
