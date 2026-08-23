@@ -24,6 +24,22 @@ Two ways to drive one call, chosen at ``vox call start`` by whether
 Every other component in the pipeline -- the detector, the call state
 machine, session discovery, ``ClaudeSessionAttach``, the audible cues -- is
 shared between both paths, unchanged by which one is chosen.
+
+**Known limitation: the mic-echo guard is duration-estimated, not
+signal-based.** ``VoxClientSync.synthesize`` (via ``client.py``'s
+``send_and_drain(..., early_terminal="playing")``) returns as soon as voxd
+reports audio *enqueued*, not when it finishes playing -- ``client.py``
+does not expose a true playback-completion signal, and extending it to do
+so is out of this slice's write-set (it is locked by a separate, still-open
+mission). :class:`~.call_live_driver.LiveCallDriver` closes the microphone
+gate before speaking and holds it shut for an *estimated* speech duration
+plus a safety margin, not the real one -- see
+:func:`~punt_vox.providers.convert.estimate_speech_duration_s`. This bounds
+the echo window; it does not eliminate it. A real fix needs
+either ``client.py`` to expose a genuine "wait for playback done" option, or
+routing playback through :class:`~.playback_sink_actor.PlaybackSinkActor`
+(built in an earlier slice but not yet wired to any caller) -- both are
+follow-up work, not attempted here.
 """
 
 from __future__ import annotations
@@ -36,14 +52,13 @@ from typing import TYPE_CHECKING, Annotated, Self, final
 import typer
 
 from punt_vox.client_sync import VoxClientSync
+from punt_vox.commands.call_live_driver import LiveCallDriver
 from punt_vox.commands.call_scripted import ScriptedSTTProvider, ScriptedTurn
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_repo_root
-from punt_vox.providers.elevenlabs_stt import ElevenLabsSTTProvider
 from punt_vox.voxd.conversation_mode.call_control import CallControl
 from punt_vox.voxd.conversation_mode.call_lock import CallLock, CallLockActiveError
 from punt_vox.voxd.conversation_mode.call_session import CallSession, SpeakFn
 from punt_vox.voxd.conversation_mode.claude_session_attach import ClaudeSessionAttach
-from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
 from punt_vox.voxd.conversation_mode.session_discovery import SessionDiscovery
 from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
 
@@ -53,12 +68,6 @@ if TYPE_CHECKING:
 __all__ = ["build_call_app"]
 
 logger = logging.getLogger(__name__)
-
-# FR-1's "a few seconds of 'say something'" calibration step, for the live
-# path: how long to sample ambient microphone audio before the call opens
-# for real speech, so :class:`TurnDetector`'s noise floor reflects the
-# room the human is actually calling from.
-_CALIBRATION_S = 2.0
 
 
 _ScriptOpt = Annotated[
@@ -108,12 +117,27 @@ class CallCli:
         asyncio.run(self._run(script, session))
 
     def stop(self) -> None:
-        """Ask the running call to hang up (FR-2's explicit end)."""
+        """Ask the running call to hang up (FR-2's explicit end).
+
+        Refuses to write a request when no call is currently live: a stop
+        (or transfer) written against a dead lock would sit in the mailbox
+        until the *next* ``vox call start`` consumed it on its first chunk
+        and silently ended immediately, with no explanation to whoever
+        started that later call.
+        """
+        self._require_live_call()
         CallControl(self._lock_dir() / "call.control").request_stop()
 
     def transfer(self, session: _TransferSessionOpt = None) -> None:
         """Ask the running call to re-attach to a different active session."""
+        self._require_live_call()
         CallControl(self._lock_dir() / "call.control").request_transfer(session)
+
+    def _require_live_call(self) -> None:
+        state = CallLock(self._lock_dir() / "call.lock").read()
+        if state is None:
+            msg = "no call is active"
+            raise typer.BadParameter(msg)
 
     @staticmethod
     def _lock_dir() -> Path:
@@ -185,7 +209,13 @@ class CallCli:
             if script is not None:
                 await self._run_scripted(script, session_attach, speak, control)
             else:
-                await self._run_live(session_attach, speak, control)
+                driver = await LiveCallDriver.create(
+                    session_attach=session_attach,
+                    speak=speak,
+                    control=control,
+                    apply_control=self._apply_control,
+                )
+                await driver.run()
         except Exception as exc:
             # System boundary (PY-EH-6): the CLI entry point for a live call.
             # Without this, a provider fault, a subprocess failure, or a mic
@@ -223,52 +253,6 @@ class CallCli:
                 break
             for chunk in turn.synthetic_chunks():
                 await session.process_chunk(chunk)
-        await session.hangup()
-
-    async def _run_live(
-        self,
-        session_attach: SessionAttach,
-        speak: SpeakFn,
-        control: CallControl,
-    ) -> None:
-        """Drive one call from the real microphone, transcribed by ElevenLabs."""
-        mic_source = MicAudioSource()
-        detector = TurnDetector()
-        detector.calibrate(await mic_source.capture_seconds(_CALIBRATION_S))
-
-        async def _speak_and_drain(text: str) -> None:
-            # The microphone keeps capturing while ANY cue plays through the
-            # speakers and picks it back up -- not only the reply itself.
-            # "Ready." is spoken after the speaking -> listening transition
-            # has already fired, and the ask-to-repeat cue has no transition
-            # around it at all (the call stays in listening throughout), so
-            # a drain tied to the mode transition alone misses both.
-            # CallSession.process_chunk already refuses to feed the turn
-            # detector while speaking, but nothing stops that self-captured
-            # audio from queuing up in mic_source's own buffer meanwhile;
-            # draining unconditionally after every utterance -- the one
-            # thing every cue has in common -- is what actually clears it,
-            # regardless of which mode the call is in when the utterance
-            # finishes.
-            await speak(text)
-            mic_source.drain_pending()
-
-        session = CallSession(
-            turn_detector=detector,
-            stt_provider=ElevenLabsSTTProvider(),
-            session_attach=session_attach,
-            speak=_speak_and_drain,
-        )
-
-        await session.start()
-        chunks = mic_source.chunks()
-        try:
-            async for chunk in chunks:
-                if await self._apply_control(control, session, _speak_and_drain):
-                    break
-                await session.process_chunk(chunk)
-        finally:
-            await chunks.aclose()
         await session.hangup()
 
     async def _apply_control(
