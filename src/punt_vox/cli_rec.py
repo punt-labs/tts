@@ -31,8 +31,6 @@ from punt_vox.bare_name import BareName
 from punt_vox.cli_io import OutputFlags, TextInput
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
-from punt_vox.config import ConfigStore
-from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.output_formatter import OutputFormatter
 from punt_vox.session_spec import SessionSpec
 from punt_vox.types_synthesis import SynthesisSpec
@@ -357,9 +355,8 @@ class RecCli:
         cleanly through :meth:`_fail`, matching the CLI's other
         gateway-error path.
         """
-        config = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
         try:
-            return SessionSpec(config).fill(spec)
+            return SessionSpec.for_repo().fill(spec)
         except (ProviderNotConfiguredError, ModelNotAvailableError) as exc:
             self._fail(str(exc))
 

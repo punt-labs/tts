@@ -116,9 +116,8 @@ def _fill_from_state(spec: SynthesisSpec) -> SynthesisSpec:
     exit 1 -- and an incompatible provider/model pair is the F7 refusal,
     same treatment.
     """
-    config = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
     try:
-        return SessionSpec(config).fill(spec)
+        return SessionSpec.for_repo().fill(spec)
     except (ProviderNotConfiguredError, ModelNotAvailableError) as exc:
         message = str(exc)
         _formatter.error(message, f"Error: {message}")

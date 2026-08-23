@@ -175,6 +175,33 @@ def test_new_uses_configured_provider_from_state(
     assert sent_spec.voice == "matilda"
 
 
+def test_new_fills_provider_through_session_spec_for_repo(
+    hermetic_config: Path,
+) -> None:
+    """Regression: ``_fill_from_state`` must route through
+    ``SessionSpec.for_repo()`` -- the one config-lookup path every
+    synthesis surface is meant to share -- not a private, duplicated
+    ``ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()`` that
+    would silently drift from ``vox say``/``vox call``'s.
+    """
+    from unittest.mock import patch
+
+    from punt_vox.session_spec import SessionSpec
+
+    hermetic_config.joinpath("vox.md").write_text('---\nprovider: "elevenlabs"\n---\n')
+    gateway = MagicMock(spec=RecordGateway)
+    gateway.new.return_value = RecordResult(
+        id="x.mp3", name="x.mp3", store_path=Path("x.mp3"), byte_count=3
+    )
+    cli = RecCli(MagicMock(spec=OutputFormatter), lambda: gateway)
+
+    with patch.object(
+        SessionSpec, "for_repo", wraps=SessionSpec.for_repo
+    ) as spy_for_repo:
+        cli.new(text="hi")
+    spy_for_repo.assert_called_once()
+
+
 def test_new_unconfigured_provider_exits_1(hermetic_config: Path) -> None:
     """No provider in state -- ``vox rec new`` exits 1 (F1), never sends.
 
