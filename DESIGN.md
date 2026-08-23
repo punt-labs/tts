@@ -3189,3 +3189,41 @@ Both were run before any further design/implementation investment, per
 the standing instruction to spike first rather than build a day's worth
 of code on an unverified mechanism (the same failure mode DES-065 itself
 was the postmortem for).
+
+### Security review, 2026-08-23: two gaps the `--tools` allowlist alone does not close
+
+A read-only *tool* allowlist blocks writes; it does not address
+disclosure, and this design's own threat model (per the operator: not
+adversarial isolation, but avoiding accidental collision plus not handing
+out credentials the call agent has no legitimate use for) has one
+disclosure vector and one credential-hygiene gap neither of which the
+spikes above tested:
+
+- **Reading is a real exfiltration path here, specifically because the
+  agent's output is spoken audio, not text on a screen.** `read`/`grep`/
+  `find`/`ls` alone are sufficient to read `.env`, a credentials file, or
+  any other secret sitting in the repo and narrate its contents aloud —
+  worse than the equivalent in a normal Claude Code session, because a
+  spoken secret is audible to anyone in the room, not just visible on a
+  screen the human controls. Nothing spiked or designed so far scopes
+  this in or out. **Action for the implementation mission**: either an
+  explicit deny-list of sensitive paths (`.env*`, anything matching this
+  repo's own `.gitignore` secret patterns) passed to the call agent's
+  system prompt as a hard instruction, or accept the residual risk
+  explicitly and document why (e.g., if the call is scoped to a
+  repo/session the user already trusts with spoken output). Silence on
+  this in DES-066 was itself the gap — not a decision either way.
+- **`subprocess.Popen` inherits the parent environment by default, and
+  `voxd` already holds provider API keys in its own env.** This project
+  hit exactly this class of bug once already this session:
+  `ANTHROPIC_API_KEY` shadowing OAuth login in the now-superseded
+  per-turn spawn (DES-065), fixed by `ClaudeSubprocessEnv` stripping it
+  before every `claude` subprocess launch
+  (`src/punt_vox/voxd/conversation_mode/claude_subprocess_env.py`). The
+  call-agent spawn needs the same discipline applied to whatever
+  provider credentials `voxd` itself holds (ElevenLabs, OpenAI, AWS) —
+  the call agent has no legitimate use for them and should not receive
+  them by default just because `subprocess.Popen` passes the full parent
+  environment unless told otherwise. Not yet designed; add to the
+  implementation mission's contract alongside the `--tools` allowlist,
+  not as a follow-on fix after the fact.
