@@ -868,7 +868,7 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/session_spec.py": {
-    "efferent_coupling": 4.0,
+    "efferent_coupling": 6.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.4,

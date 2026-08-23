@@ -58,6 +58,11 @@ from punt_vox.client_sync import VoxClientSync
 from punt_vox.commands.call_live_driver import LiveCallDriver
 from punt_vox.commands.call_scripted import ScriptedSTTProvider, ScriptedTurn
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_repo_root
+from punt_vox.session_spec import SessionSpec
+from punt_vox.types_synthesis_errors import (
+    ModelNotAvailableError,
+    ProviderNotConfiguredError,
+)
 from punt_vox.voxd.conversation_mode.call_control import CallControl
 from punt_vox.voxd.conversation_mode.call_lock import CallLock, CallLockActiveError
 from punt_vox.voxd.conversation_mode.call_session import CallSession, SpeakFn
@@ -198,6 +203,19 @@ class CallCli:
     async def _run(self, script: Path | None, session_id: str | None) -> None:
         """Dispatch to the scripted or live path, per whether *script* is set."""
         client = VoxClientSync()
+        # A bare client.synthesize(text) sends no provider on the wire --
+        # voxd's speech_handlers.py requires one (parse_required_str) and
+        # does not guess, so an unresolved spec rejects with "Unknown
+        # provider ''" on the very first utterance. SessionSpec.for_repo()
+        # is the resolution every other synthesis surface (vox say, vox rec
+        # new) already goes through: state (vox.md) is the authority, never
+        # the daemon. Resolved once, before the call state machine starts --
+        # a call that cannot speak should refuse to start, not begin and
+        # then have every speak() call fail silently on the wire.
+        try:
+            spec = SessionSpec.for_repo().fill()
+        except (ProviderNotConfiguredError, ModelNotAvailableError) as exc:
+            raise typer.BadParameter(str(exc)) from exc
 
         async def speak(text: str) -> None:
             # asyncio.to_thread, not a bare call: VoxClientSync.synthesize blocks
@@ -207,7 +225,7 @@ class CallCli:
             # synthesis takes. Discards SynthesizeResult -- SpeakFn's contract is
             # "spoken", not "the daemon's synthesis metadata", and a call
             # orchestrator has no use for it.
-            await asyncio.to_thread(client.synthesize, text)
+            await asyncio.to_thread(client.synthesize, text, spec)
 
         lock = CallLock(self._lock_dir() / "call.lock")
         control = CallControl(self._lock_dir() / "call.control")

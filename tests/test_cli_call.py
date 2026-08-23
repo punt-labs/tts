@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from contextlib import AbstractContextManager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -20,11 +21,30 @@ from typer.testing import CliRunner
 
 from punt_vox.commands.call import build_call_app
 from punt_vox.commands.call_scripted import ScriptedTurn
+from punt_vox.session_spec import SessionSpec
+from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.call_control import CallControl
 from punt_vox.voxd.conversation_mode.call_lock import CallLock
 
 runner = CliRunner()
+
+
+def _resolved_session_spec(
+    provider: str = "elevenlabs",
+) -> AbstractContextManager[MagicMock]:
+    """Patch ``SessionSpec.for_repo`` so tests never touch the real ``vox.md``.
+
+    ``call.py``'s ``_run`` resolves a :class:`SynthesisSpec` through
+    ``SessionSpec.for_repo().fill()`` before the call state machine starts
+    (the same fill-from-``vox.md`` path ``vox say``/``vox rec new`` use).
+    Faking it here keeps these tests hermetic -- they must pass on a CI
+    machine with no configured provider, not only on a workstation that
+    happens to have this repo's own vox enabled.
+    """
+    fake_spec = MagicMock()
+    fake_spec.fill.return_value = SynthesisSpec(provider=provider)
+    return patch.object(SessionSpec, "for_repo", return_value=fake_spec)
 
 
 def _script_file(tmp_path: Path, lines: list[dict[str, object]]) -> Path:
@@ -113,6 +133,38 @@ def test_start_no_longer_requires_the_script_option() -> None:
     assert "not required" not in result.stdout  # sanity: help text renders
 
 
+async def test_run_call_passes_a_resolved_spec_with_a_provider_to_synthesize(
+    tmp_path: Path,
+) -> None:
+    """Regression: a bare ``client.synthesize(text)`` sends no provider on the
+    wire, and voxd's ``speech_handlers.py`` rejects with ``Unknown provider
+    ''`` -- ``parse_required_str`` requires one and does not guess. Every
+    ``speak()`` call inside ``_run`` must pass a :class:`SynthesisSpec` whose
+    ``provider`` survived ``SessionSpec.for_repo().fill()`` resolution, not
+    just call ``speak()`` at all.
+    """
+    from punt_vox.commands import call as call_module
+
+    script = _script_file(tmp_path, [])  # empty script: only the "Listening." cue
+
+    received: list[SynthesisSpec | None] = []
+
+    class _FakeClient:
+        def synthesize(self, text: str, spec: SynthesisSpec | None = None) -> None:
+            del text
+            received.append(spec)
+
+    with (
+        patch.object(call_module, "VoxClientSync", return_value=_FakeClient()),
+        _resolved_session_spec("elevenlabs"),
+        patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path),
+    ):
+        await call_module.CallCli()._run(script, "session-a")
+
+    assert received  # at least the "Listening." cue was spoken
+    assert all(spec is not None and spec.provider == "elevenlabs" for spec in received)
+
+
 async def test_run_call_speaks_the_reply_and_holds_the_lock_only_while_active(
     tmp_path: Path,
 ) -> None:
@@ -124,11 +176,13 @@ async def test_run_call_speaks_the_reply_and_holds_the_lock_only_while_active(
     spoken: list[str] = []
 
     class _FakeClient:
-        def synthesize(self, text: str) -> None:
+        def synthesize(self, text: str, spec: SynthesisSpec | None = None) -> None:
+            del spec
             spoken.append(text)
 
     with (
         patch.object(call_module, "VoxClientSync", return_value=_FakeClient()),
+        _resolved_session_spec(),
         patch(
             "punt_vox.voxd.conversation_mode.claude_session_attach.asyncio.create_subprocess_exec",
             return_value=_fake_process("It returns the sum."),
@@ -206,11 +260,13 @@ async def test_run_call_live_path_captures_from_mic_and_transcribes(
     spoken: list[str] = []
 
     class _FakeClient:
-        def synthesize(self, text: str) -> None:
+        def synthesize(self, text: str, spec: SynthesisSpec | None = None) -> None:
+            del spec
             spoken.append(text)
 
     with (
         patch.object(call_module, "VoxClientSync", return_value=_FakeClient()),
+        _resolved_session_spec(),
         patch(
             "punt_vox.commands.call_live_driver.MicAudioSource", return_value=mic_source
         ),
@@ -258,11 +314,13 @@ async def test_run_call_live_path_times_out_after_inactivity(tmp_path: Path) -> 
     spoken: list[str] = []
 
     class _FakeClient:
-        def synthesize(self, text: str) -> None:
+        def synthesize(self, text: str, spec: SynthesisSpec | None = None) -> None:
+            del spec
             spoken.append(text)
 
     with (
         patch.object(call_module, "VoxClientSync", return_value=_FakeClient()),
+        _resolved_session_spec(),
         patch(
             "punt_vox.commands.call_live_driver.MicAudioSource", return_value=mic_source
         ),
