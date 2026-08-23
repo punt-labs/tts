@@ -581,3 +581,123 @@ class TestManifestRefusal:
         # the two is what made an unreadable manifest look like a prod one.
         assert "grep exit 2" in result.stdout
         assert "Permission denied" in result.stderr
+
+
+class TestCallLockHook:
+    """``call-lock.sh``: blocks interactive input while a live call holds the
+    lock, self-clears a stale one, and never blocks its own escape hatch."""
+
+    @staticmethod
+    def _lock_path(repo: Path) -> Path:
+        return repo / ".punt-labs" / "vox" / "call" / "call.lock"
+
+    @staticmethod
+    def _write_lock(repo: Path, *, pid: int, reason: str = "call active") -> None:
+        lock = TestCallLockHook._lock_path(repo)
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text(json.dumps({"reason": reason, "pid": pid}), encoding="utf-8")
+
+    @staticmethod
+    def _dead_pid() -> int:
+        """Return a pid guaranteed not to belong to any running process."""
+        process = subprocess.Popen(["true"])
+        process.wait()
+        return process.pid
+
+    @staticmethod
+    def _run(repo: Path, *, prompt: str = "hello") -> subprocess.CompletedProcess[str]:
+        payload = json.dumps(
+            {"cwd": str(repo), "hook_event_name": "UserPromptSubmit", "prompt": prompt}
+        )
+        return subprocess.run(
+            ["bash", str(_HOOKS_DIR / "call-lock.sh")],
+            input=payload,
+            text=True,
+            capture_output=True,
+            env=dict(os.environ),
+            check=False,
+        )
+
+    def test_no_lock_file_is_silent(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        _mark_enabled(repo)
+
+        result = self._run(repo)
+
+        assert result.returncode == 0
+
+    def test_live_lock_blocks_with_the_stop_hint(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        _mark_enabled(repo)
+        self._write_lock(repo, pid=os.getpid())  # this test process is alive
+
+        result = self._run(repo)
+
+        assert result.returncode == 2
+        assert "/call stop" in result.stderr
+
+    def test_stale_lock_self_clears_and_does_not_block(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        _mark_enabled(repo)
+        self._write_lock(repo, pid=self._dead_pid())
+
+        result = self._run(repo)
+
+        assert result.returncode == 0
+        assert not self._lock_path(repo).exists(), "stale lock was not self-cleared"
+
+    def test_call_stop_prompt_bypasses_a_live_lock(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        _mark_enabled(repo)
+        self._write_lock(repo, pid=os.getpid())
+
+        result = self._run(repo, prompt="/call stop")
+
+        assert result.returncode == 0
+
+    def test_call_transfer_prompt_bypasses_a_live_lock(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        _mark_enabled(repo)
+        self._write_lock(repo, pid=os.getpid())
+
+        result = self._run(repo, prompt="/call transfer --session abc")
+
+        assert result.returncode == 0
+
+    def test_unrelated_prompt_still_blocks_a_live_lock(self, tmp_path: Path) -> None:
+        """The escape hatch must not become a general bypass."""
+        repo = _make_repo(tmp_path)
+        _mark_enabled(repo)
+        self._write_lock(repo, pid=os.getpid())
+
+        result = self._run(repo, prompt="/call status")
+
+        assert result.returncode == 2
+
+    def test_disabled_repo_is_silent_even_with_a_live_lock(
+        self, tmp_path: Path
+    ) -> None:
+        repo = _make_repo(tmp_path)  # no marker written
+        self._write_lock(repo, pid=os.getpid())
+
+        result = self._run(repo)
+
+        assert result.returncode == 0
+
+    def test_relay_env_var_bypasses_a_live_lock(self, tmp_path: Path) -> None:
+        repo = _make_repo(tmp_path)
+        _mark_enabled(repo)
+        self._write_lock(repo, pid=os.getpid())
+        env = dict(os.environ)
+        env["VOX_CALL_RELAY"] = "1"
+
+        result = subprocess.run(
+            ["bash", str(_HOOKS_DIR / "call-lock.sh")],
+            input=json.dumps({"cwd": str(repo), "hook_event_name": "UserPromptSubmit"}),
+            text=True,
+            capture_output=True,
+            env=env,
+            check=False,
+        )
+
+        assert result.returncode == 0
