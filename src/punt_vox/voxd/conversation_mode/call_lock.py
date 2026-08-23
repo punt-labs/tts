@@ -11,10 +11,15 @@ spawns to relay a turn, and bypasses the block when it is present.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self, final
+
+from punt_vox.atomic_file import AtomicFile
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["CallLock", "CallLockActiveError", "CallLockState"]
 
@@ -95,33 +100,52 @@ class CallLock:
         own :meth:`release` and leaves a stale file behind; without the
         liveness check, that stale file would wedge every future call
         indefinitely. A lock whose recorded holder is gone is stale and is
-        silently overwritten.
+        silently overwritten. Written via :class:`AtomicFile`, not a bare
+        ``write_text``: a reader (``plugin/hooks/call-lock.sh``) polls this
+        file every 20ms, and a truncate-then-write is a window in which it
+        could read a partial, unparseable file.
         """
         existing = self.read()
         if existing is not None and self._process_is_alive(existing.pid):
             raise CallLockActiveError(existing)
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         payload = {"reason": reason, "pid": os.getpid()}
-        self._path.write_text(json.dumps(payload))
+        AtomicFile(self._path).replace(json.dumps(payload))
 
     def release(self) -> None:
         """Remove the lock file if present; a no-op if it is already gone."""
         self._path.unlink(missing_ok=True)
 
     def read(self) -> CallLockState | None:
-        """Return the current lock state, or ``None`` if no call is active."""
-        try:
-            raw = self._path.read_text()
-        except FileNotFoundError:
+        """Return the current lock state, or ``None`` if no call is active.
+
+        A file that exists but fails to parse or lacks the expected shape
+        (truncated by a racing writer, hand-edited, corrupted) is treated
+        the same as a missing one -- logged and reported as "no active
+        call" -- rather than raising and taking down whatever boundary
+        happens to be calling :meth:`acquire`.
+        """
+        raw = AtomicFile(self._path).read()
+        if not raw:
             return None
-        payload = json.loads(raw)
-        return CallLockState(reason=payload["reason"], pid=payload["pid"])
+        try:
+            payload = json.loads(raw)
+            return CallLockState(reason=payload["reason"], pid=payload["pid"])
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            logger.warning("call.lock is unreadable, treating as stale: %s", exc)
+            return None
 
     @staticmethod
     def _process_is_alive(pid: int) -> bool:
-        """Return whether *pid* names a live process, via a no-op signal probe."""
+        """Return whether *pid* names a live process, via a no-op signal probe.
+
+        ``PermissionError`` (the pid exists but is owned by another user)
+        still proves existence -- only ``ProcessLookupError`` means the pid
+        is genuinely gone.
+        """
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
             return False
+        except PermissionError:
+            return True
         return True

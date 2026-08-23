@@ -11,9 +11,14 @@ loop the next time it checks between turns.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Self, final
+
+from punt_vox.atomic_file import AtomicFile
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["CallControl", "ControlRequest"]
 
@@ -52,18 +57,32 @@ class CallControl:
         )
 
     def consume(self) -> ControlRequest | None:
-        """Return and clear the pending request, or ``None`` if there is none."""
-        try:
-            raw = self._path.read_text()
-        except FileNotFoundError:
+        """Return and clear the pending request, or ``None`` if there is none.
+
+        The file is unlinked before parsing, not after: a corrupt or
+        unparseable request (a racing partial write, a hand-edited file)
+        must still be cleared from the mailbox, or it would be re-read and
+        fail again on every future poll. Logged and reported as "no
+        request" rather than raised -- a caller mid-call must not have its
+        boundary handler end the whole call over a malformed control file.
+        """
+        raw = AtomicFile(self._path).read()
+        if not raw:
             return None
         self._path.unlink(missing_ok=True)
-        payload = json.loads(raw)
-        return ControlRequest(
-            kind=payload["kind"], target_session_id=payload.get("target_session_id")
-        )
+        try:
+            payload = json.loads(raw)
+            return ControlRequest(
+                kind=payload["kind"],
+                target_session_id=payload.get("target_session_id"),
+            )
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            logger.warning("call.control request is unreadable, discarding: %s", exc)
+            return None
 
     def _write(self, request: ControlRequest) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
+        # AtomicFile.replace, not a bare write_text: consume() polls this
+        # file between turns, and a truncate-then-write leaves a window in
+        # which it could read a partial, unparseable file.
         payload = {"kind": request.kind, "target_session_id": request.target_session_id}
-        self._path.write_text(json.dumps(payload))
+        AtomicFile(self._path).replace(json.dumps(payload))

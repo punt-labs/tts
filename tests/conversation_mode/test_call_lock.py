@@ -72,3 +72,39 @@ def test_acquire_overwrites_a_stale_lock_from_a_dead_process(tmp_path: Path) -> 
     assert state is not None
     assert state.reason == "fresh call"
     assert state.pid == os.getpid()
+
+
+def test_acquire_treats_a_permission_error_as_a_live_process(tmp_path: Path) -> None:
+    """A pid owned by another user still proves the process exists."""
+    lock = CallLock(tmp_path / "call.lock")
+    lock.acquire("owned by someone else")
+
+    with (
+        patch("os.kill", side_effect=PermissionError),
+        pytest.raises(CallLockActiveError),
+    ):
+        lock.acquire("second call")
+
+    # The rejected second acquire must not clobber the existing lock.
+    state = lock.read()
+    assert state is not None
+    assert state.reason == "owned by someone else"
+
+
+def test_read_treats_a_corrupt_lock_file_as_no_active_call(tmp_path: Path) -> None:
+    """FR-5's guard: a malformed lock file must not crash the boundary caller."""
+    path = tmp_path / "call.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("not json at all")
+
+    lock = CallLock(path)
+    assert lock.read() is None
+
+
+def test_read_treats_a_missing_pid_field_as_no_active_call(tmp_path: Path) -> None:
+    path = tmp_path / "call.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"reason": "call active"}')
+
+    lock = CallLock(path)
+    assert lock.read() is None
