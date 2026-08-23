@@ -107,5 +107,16 @@ class PlaybackSinkActor:
         rather than queue emptiness -- so it also covers the command
         :meth:`run` is mid-:meth:`~.sink_command.SinkCommand.apply` on, not
         just what is still waiting in the queue.
+
+        Known gap: a command :meth:`enqueue`-d *after* :meth:`stop` sits in
+        the queue forever -- :meth:`run` has already returned and nothing
+        will ever dequeue it, so this hangs indefinitely rather than
+        raising. Not fixed here: this actor has no production caller yet
+        (wiring it to a real synthesis pipeline and barge-in detector is
+        deferred, tracked separately from this module), so there is no real
+        producer today that could race a ``stop()``. Whoever wires the
+        first caller needs to decide the right behavior -- reject a
+        post-stop enqueue, or make ``drain`` itself bounded -- with real
+        callers to design against.
         """
         await self._queue.join()
