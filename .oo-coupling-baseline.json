@@ -371,8 +371,8 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/logging_config.py": {
-    "efferent_coupling": 5.0,
-    "public_names": 6.0,
+    "efferent_coupling": 6.0,
+    "public_names": 7.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
     "avg_lcom": 0.0
