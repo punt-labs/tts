@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, final
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 from websockets.exceptions import WebSocketException
 
 from punt_vox import __version__
@@ -77,10 +78,31 @@ class _LoggingFastMCP(FastMCP):
         # narrowing it would make this an invalid (contravariance-breaking) override.
         arguments: dict[str, Any],
     ) -> Sequence[ContentBlock] | dict[str, Any]:
-        """Re-apply the effective log level, name the tool, then delegate."""
+        """Re-apply the effective log level, name the tool, then delegate.
+
+        Reject any ``arguments`` key the tool's schema does not declare before
+        dispatch. FastMCP's Pydantic argument model silently drops undeclared
+        keys, so a caller sending a retired parameter (e.g. ``voice=`` on
+        ``mic:speak``) would see a success envelope while the intended write
+        never landed. Naming the offending key back at the caller turns a silent
+        drop into a diagnostic failure.
+        """
         reapply_client_log_level()
         logger.info("mic:%s", name)
+        self._reject_unknown_kwargs(name, arguments)
         return await super().call_tool(name, arguments)
+
+    def _reject_unknown_kwargs(self, name: str, arguments: dict[str, Any]) -> None:
+        """Raise ``ToolError`` when *arguments* has a key the tool did not declare."""
+        tool = self._tool_manager.get_tool(name)
+        if tool is None:
+            return
+        declared = set(tool.parameters.get("properties", {}))
+        extras = sorted(set(arguments) - declared)
+        if extras:
+            offending = ", ".join(extras)
+            msg = f"unexpected argument(s) for mic:{name}: {offending}"
+            raise ToolError(msg)
 
 
 mcp = _LoggingFastMCP(

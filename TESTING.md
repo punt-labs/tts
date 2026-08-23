@@ -237,15 +237,21 @@ unit-tested in-process.
 
 ### Tier 1: Unit (default, unmarked)
 
-No marker, no external dependency, no real subprocess. This is the vast
-majority of the suite (~4,130 of ~4,340 tests) and runs on every
-`uv run pytest`, `make test`, and `make check`.
+No marker, no external service dependency. This is the vast majority of the
+suite (~4,130 of ~4,340 tests) and runs on every `uv run pytest`, `make test`,
+and `make check`. A handful of unmarked tests still spawn real local
+subprocesses -- `test_core.py` invokes `ffmpeg` directly outside the
+cached-MP3-bytes fixture path, and `test_public_api.py` runs a `python -c`
+import-lightness probe -- but none reach the network or a credentialed API, so
+the tier's contract ("safe to run anywhere, no external service dependency") holds. Tests that spawn a real *shell script* under test move to
+Tier 3a; local `ffmpeg`/interpreter spawns from tests whose subject is
+in-process code stay here.
 
 | What it covers | Representative files |
 |-----------------|----------------------|
 | Pure functions, domain types | `test_types*.py`, `test_normalize.py`, `test_resolve.py` |
 | Mocked-provider-boundary synthesis | `test_polly_provider.py`, `test_openai_provider.py`, `test_elevenlabs_provider.py`, `test_say_provider.py`, `test_espeak_provider.py`, `test_core.py` |
-| Real pydub/ffmpeg encode, mocked network | `test_chunked.py`, `test_core.py`, `test_public_api.py` (see [The MP3 Problem](#the-mp3-problem) -- the one real ffmpeg encode is cached once per session, not per test) |
+| Real pydub/ffmpeg encode, mocked network | `test_chunked.py`, `test_core.py`, `test_public_api.py` (see [The MP3 Problem](#the-mp3-problem) -- within the mocked-provider fixture path the one real ffmpeg encode is cached once per session, not per test; tests that call `ffmpeg` directly, outside that fixture path, pay their own per-invocation cost) |
 | WebSocket client/daemon wire protocol (in-process) | `test_client*.py`, `test_wire_reply.py`, `test_voxd_*.py` |
 | Hook dispatch logic (config/audio patched) | `test_hooks.py`, `test_hook_envelope.py`, `test_hook_payload.py`, `test_nudge_hook.py` |
 | Static shell-script assertions (no subprocess) | `test_hook_scripts.py` -- reads and greps the `.sh` files as text; does not execute them |
@@ -278,15 +284,16 @@ the fix is not to make them lie about git; it is to make them opt-in.
 
 ### Tier 3a: `subprocess` -- real shell/git subprocess spawns
 
-`@pytest.mark.subprocess` is applied to the three files that can only be
-honest by spawning a real process, because the thing under test is a shell
-script that cannot run in-process:
+`@pytest.mark.subprocess` is applied to the files that can only be honest by
+spawning a real process, because the thing under test is a shell script that
+cannot run in-process:
 
 | File | Tests | What it drives |
 |------|-------|-----------------|
 | `test_hook_gate.py` | 18 | Real `bash plugin/hooks/*.sh` invocations -- the per-repo enablement gate and the panel-spawn block |
 | `test_plugin_surface.py` | 8 | Real `bash scripts/check-plugin-surface.sh` invocations against fixture surfaces |
 | `test_install_script.py` | 13 | Real `sh install.sh` invocations under a sandboxed `PATH` of stub executables |
+| `test_suppress_output.py` | 27 | Real `bash plugin/hooks/suppress-output.sh` invocations -- the PostToolUse two-channel display contract (also requires `jq` on `PATH`; auto-skipped when absent) |
 
 `test_hook_scripts.py` looks like it belongs in this tier by name but does
 not: it makes static text assertions over the `.sh` files (`grep`-shaped

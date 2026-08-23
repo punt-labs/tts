@@ -132,6 +132,16 @@ MagicMock/
 # registry-wide lock; this covers the one ethos takes on an individual mission.
 .punt-labs/ethos/missions/*/.lock
 
+# Per-mission verbatim activity logs written into the durable tree. Same class
+# as sessions/**/audit.jsonl above — runtime churn, not a durable record.
+.punt-labs/ethos/missions/**/log-*.jsonl
+
+# Local-path root (vox-6r6o): ethos writes per-session runtime state under
+# .punt-labs/local/ (currently just ethos/, but the whole subtree is machine-
+# local churn — no vox source lives here). Specific sessions/ patterns above
+# stay for clarity; this blanket ignore keeps future ethos-local artifacts out.
+.punt-labs/local/
+
 # Ethos's flock on a vendored identity file, taken while it rewrites one.
 # Same convention as SiblingLock below, but written by ethos, not by vox.
 .punt-labs/ethos/identities/*.lock

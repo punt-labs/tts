@@ -1,10 +1,13 @@
-.PHONY: help test lint type docs check check-oo update-oo check-coupling update-coupling check-suppressions update-suppressions report format build install clean depot metrics coverage prfaq clean-tex zspec zspec-test
+.PHONY: help test test-e2e lint type docs check check-oo update-oo check-coupling update-coupling check-suppressions update-suppressions report format build install clean depot metrics coverage prfaq clean-tex zspec zspec-test
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-12s %s\n", $$1, $$2}'
 
 test: ## Run tests
 	uv run pytest
+
+test-e2e: ## Packaging e2e -- drive the INSTALLED `vox` binary and `vox mcp` server (run `make install` first)
+	uv run pytest tests/e2e -v -m e2e
 
 lint: ## Lint and format check (Python + shell)
 	uv run ruff check .

@@ -30,3 +30,38 @@ jobs:
       # this taxonomy existed; run them explicitly so marking them opt-in
       # locally does not silently drop them from CI coverage.
       - run: uv run pytest -m "slow or subprocess"
+
+  # Packaging e2e: drive the INSTALLED wheel -- the `vox` binary as a
+  # subprocess and the `vox mcp` server over stdio. This job catches packaging
+  # faults (an entry point that does not resolve, a module missing from the
+  # wheel, an MCP server that fails to start over stdio) which the in-process
+  # pytest above cannot see. Kept in its own job so a packaging break does not
+  # mask a unit-test failure and vice versa.
+  #
+  # NOTE: distinct from the "Tier 5" designation in
+  # tests/conversation_mode/coverage-matrix.md, which names live-audio /
+  # human-judged testing. This is installed-wheel packaging smoke.
+  packaging-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      # ffmpeg + espeak-ng match the unit job so `vox doctor` reports the same
+      # environment the packaged binary is expected to run against.
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng
+      - run: uv sync --frozen --all-extras
+      # `make install` builds the wheel and does `uv tool install --force
+      # dist/*.whl`; uv drops the console script in `$HOME/.local/bin` by
+      # default. That directory is NOT on PATH in non-interactive Actions
+      # shells until we publish it, and the e2e tests resolve the binary at
+      # that path explicitly (see tests/e2e/test_installed_cli._vox) so a
+      # `uv run pytest` invocation cannot mask the wheel with the editable
+      # `.venv/bin/vox` shim.
+      - run: make install
+      - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: vox version
+      - run: make test-e2e

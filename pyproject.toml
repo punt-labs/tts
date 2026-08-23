@@ -79,7 +79,7 @@ dev = [
 ]
 
 [build-system]
-requires = ["uv_build>=0.9.14,<0.10.0"]
+requires = ["uv_build==0.12.5"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
@@ -216,7 +216,7 @@ reportUnknownMemberType = false
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = "-ra -q -m 'not slow and not integration and not subprocess and not sdk'"
+addopts = "-ra -q -m 'not slow and not integration and not subprocess and not sdk and not e2e'"
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
@@ -225,6 +225,7 @@ markers = [
     "slow: marks tests with heavy real-subprocess or real-filesystem overhead (run with -m slow)",
     "subprocess: marks tests that spawn real shell/git subprocesses (hook scripts, install.sh, plugin-surface gate; run with -m subprocess)",
     "sdk: marks tests that drive a real Claude Agent SDK session and cost real money (run with -m sdk)",
+    "e2e: marks packaging-e2e tests that drive the INSTALLED wheel -- `vox` binary as a subprocess and `vox mcp` over stdio; catches entry-point resolution / missing-wheel-data / stdio-startup faults no in-process test can see (run with -m e2e; requires `make install` first; distinct from the live-audio tier in tests/conversation_mode/coverage-matrix.md)",
 ]
 filterwarnings = [
     # Upstream elevenlabs SDK bug: pydantic v1 compat on Python 3.14. Remove when elevenlabs ships a fix.
