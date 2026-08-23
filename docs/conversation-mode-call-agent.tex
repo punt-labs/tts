@@ -1,0 +1,308 @@
+%
+% conversation-mode-call-agent.tex
+%
+% Z Specification for the persistent call-agent process lifecycle -- the
+% SessionAttach implementation DES-066 proposes to replace DES-064/DES-065's
+% per-turn claude -p --resume subprocess spawn.
+%
+
+\documentclass[a4paper,10pt,fleqn]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fuzz}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+
+\begin{document}
+
+\title{Vox Conversation Mode: A Z Specification for the Call-Agent Process Lifecycle}
+\author{Formal Model of dormant/ready/busy/ended}
+\date{August 2026}
+\hypersetup{
+  pdftitle={Vox Conversation Mode Call-Agent Process Lifecycle: A Z Specification},
+  pdfauthor={Punt Labs},
+  pdfsubject={Z Specification},
+  pdfcreator={fuzz/probcli}
+}
+\maketitle
+
+\tableofcontents
+\newpage
+
+\section{Introduction}
+
+\texttt{DESIGN.md}'s DES-065 records that the mechanism behind
+\texttt{SessionAttach} (a fresh \texttt{claude -p --resume} subprocess spawned
+per human turn) is confirmed unworkable: 13--25s median per-turn latency,
+dominated by re-paying Claude Code's plugin/hook bootstrap on every single
+exchange. DES-066 proposes the replacement, and its own 2026-08-23 spike
+confirmed the core mechanism live: one \texttt{pi --mode rpc} process, spawned
+once per \emph{call} and held alive for its whole duration, accepting one
+\texttt{prompt} command per turn over its stdin and streaming the reply back
+as JSON-line events on stdout.
+
+This document models that process's lifecycle formally, per
+\texttt{docs/WORKFLOW.md}'s stateful-audio gate: the process has four states
+and transitions between them, an invariant must hold across those transitions
+(a turn is never dispatched while another is still in flight -- exactly the
+rejection the spike observed live: \texttt{"Agent is already processing.
+Specify streamingBehavior (\-`steer\-' or \-`followUp\-') to queue the
+message."}), and getting a transition wrong here is exactly the class of
+defect \texttt{docs/WORKFLOW.md} requires this gate to catch before
+implementation, not after.
+
+This model is deliberately narrower than, and separate from,
+\texttt{docs/conversation-mode-call-state.tex}'s \texttt{CallState} machine
+(\texttt{idle}/\texttt{listening}/\texttt{waiting}/\texttt{speaking}). That
+model governs the call's own audio lifecycle and is unaffected by this
+change -- DES-065 names it retained. This model governs a distinct object:
+the single long-lived agent \emph{process} \texttt{CallState}'s
+\texttt{waiting}/\texttt{speaking} transitions dispatch into and read replies
+from, via \texttt{SessionAttach.send\_turn}. \S\ref{sec:relation} states the
+relationship between the two explicitly, rather than merging them into one
+schema, because they have different lifetimes: one \texttt{CallAgentState}
+instance persists for an entire call; \texttt{CallState}'s \texttt{mode}
+cycles through \texttt{listening}/\texttt{waiting}/\texttt{speaking} many
+times within that same call.
+
+\section{Basic Types}
+
+\begin{zed}
+  [TURN]
+\end{zed}
+
+$TURN$ is the same opaque handle \texttt{conversation-mode-call-state.tex}
+uses -- a transcribed human utterance. This model does not re-derive it; it
+only needs to know a turn is dispatched and, later, that its reply completed.
+
+\section{Free Types}
+
+\begin{zed}
+  AgentProc ::= dormant | ready | busy | ended
+\end{zed}
+
+\begin{zed}
+  ZBOOL ::= ztrue | zfalse
+\end{zed}
+
+Four states, directly evidenced by the spike's own RPC event stream:
+\texttt{dormant} (no process spawned yet), \texttt{ready} (process alive,
+context delivered, waiting for a prompt -- observed as the state after
+\texttt{agent\_settled}), \texttt{busy} (a prompt is in flight -- observed as
+the state between a \texttt{prompt} command's \texttt{response} and its
+matching \texttt{agent\_end}), and \texttt{ended} (process torn down, terminal).
+
+\section{State}
+\label{sec:state}
+
+\begin{schema}{CallAgentState}
+  procState : AgentProc \\
+  contextDelivered : ZBOOL \\
+  readOnly : ZBOOL \\
+  turnsHandled : \nat
+  \where
+  procState \in \{ready, busy\} \implies contextDelivered = ztrue \\
+  procState \neq dormant \implies readOnly = ztrue \\
+  procState = dormant \implies turnsHandled = 0
+\end{schema}
+
+Three invariants, each pinning an open question DES-066 named:
+
+\begin{enumerate}
+  \item \textbf{Context is never absent while the process can accept or is
+    processing a turn.} \texttt{contextDelivered} must be \texttt{ztrue}
+    whenever \texttt{procState} is \texttt{ready} or \texttt{busy} -- there is
+    no reachable state where a turn could be sent to a process that never
+    received its opening context snapshot (DES-066 \S``Proposed decision''
+    item 3).
+  \item \textbf{The process is read-only against the codebase for its entire
+    live extent, not just during a turn.} \texttt{readOnly} is \texttt{ztrue}
+    for every state except \texttt{dormant} -- the restriction does not
+    toggle on and off per turn; it is a property of the process having been
+    spawned as a call agent at all (DES-066 \S``Proposed decision'' item 4).
+    This model does not choose \emph{how} read-only is enforced (DES-066
+    still lists that as an open unknown) -- it only fixes \emph{when} it must
+    hold, so an implementation cannot satisfy the model while enforcing
+    read-only only during \texttt{busy} and leaving a window open in
+    \texttt{ready}.
+  \item \textbf{A dormant process has handled no turns.} Trivial, but it
+    blocks a spurious initial state where \texttt{turnsHandled} starts
+    nonzero -- the same discipline
+    \texttt{conversation-mode-call-state.tex}'s \texttt{hasPendingAddendum}
+    invariant applies to \texttt{mode = idle}.
+\end{enumerate}
+
+\section{Initialisation}
+
+\begin{schema}{Init}
+  CallAgentState'
+  \where
+  procState' = dormant \\
+  contextDelivered' = zfalse \\
+  readOnly' = zfalse \\
+  turnsHandled' = 0
+\end{schema}
+
+\section{Operations}
+
+\subsection{Process lifecycle}
+
+\begin{schema}{Spawn}
+  \Delta CallAgentState
+  \where
+  procState = dormant \\
+  procState' = ready \\
+  contextDelivered' = ztrue \\
+  readOnly' = ztrue \\
+  turnsHandled' = 0
+\end{schema}
+
+One process is spawned per call (DES-066's central claim, superseding
+DES-064/DES-065's per-turn spawn) and immediately receives its opening
+context snapshot -- \texttt{Spawn} does not leave an intermediate state where
+the process exists but has no context; \texttt{contextDelivered'} is set in
+the same operation. \texttt{readOnly'} is set here too, per
+\S\ref{sec:state}'s second invariant: read-only takes effect at spawn, not
+at the first turn.
+
+\begin{schema}{SendTurn}
+  \Delta CallAgentState \\
+  turn? : TURN
+  \where
+  procState = ready \\
+  procState' = busy
+\end{schema}
+
+The precondition \texttt{procState = ready} is not a design choice this model
+invents -- it is the exact behavior the 2026-08-23 spike observed live: a
+\texttt{prompt} command sent while \texttt{procState} is already \texttt{busy}
+is rejected by \texttt{pi}'s own RPC mode
+(\texttt{"Agent is already processing"}), not queued or silently dropped. A
+correct \texttt{SessionAttach} implementation must therefore never call
+\texttt{send\_turn} while a prior call's reply stream has not yet completed --
+this precondition is the formal statement of that caller obligation, the same
+role \texttt{docs/conversation-mode-call-state.tex}'s single-serialized-dispatch-point
+discipline (\S\ref{sec:relation}) already plays for \texttt{CallState}.
+
+\begin{schema}{ReplyComplete}
+  \Delta CallAgentState
+  \where
+  procState = busy \\
+  procState' = ready \\
+  turnsHandled' = turnsHandled + 1
+\end{schema}
+
+The spike's own \texttt{agent\_end}/\texttt{agent\_settled} event pair marks
+this transition: the assistant's reply finished, and the process returns to
+\texttt{ready} for the next turn without a fresh spawn -- this is the
+persistence property the spike's \texttt{cacheRead} evidence
+(turn two reused turn one's warm context) confirms actually happens, not just
+that the process theoretically could.
+
+\begin{schema}{Teardown}
+  \Delta CallAgentState
+  \where
+  procState \neq busy \\
+  procState \neq dormant \\
+  procState' = ended
+\end{schema}
+
+Teardown is safe from \texttt{ready} (the ordinary end-of-call path) but
+\emph{not} from \texttt{busy} -- the precondition \texttt{procState \neq busy}
+forbids killing the process while a reply is still streaming, per the same
+"a pending human utterance is never silently dropped" discipline
+\texttt{conversation-mode-call-state.tex}'s \texttt{hasPendingAddendum}
+invariant applies on the audio side. A call that hangs up mid-reply must
+drain or abort the in-flight turn first (\texttt{AbortTurn}, below), not
+tear the process down out from under it.
+
+\begin{schema}{AbortTurn}
+  \Delta CallAgentState
+  \where
+  procState = busy \\
+  procState' = ended
+\end{schema}
+
+The one path that \emph{does} end the process from \texttt{busy}: an explicit
+abort (the call hung up, or FR-2's inactivity timeout fired) while a reply was
+still in flight. This is a distinct operation from \texttt{Teardown}, not a
+relaxed precondition on it, because the two have different real-world
+consequences the implementation must account for differently -- an ordinary
+\texttt{Teardown} discards nothing in flight; an \texttt{AbortTurn} discards a
+partial reply the human never heard, which \texttt{CallSession} (the
+\texttt{CallState}-side caller, \S\ref{sec:relation}) must handle explicitly
+rather than silently swallow.
+
+\subsection{Observation}
+
+\begin{schema}{CanAcceptTurn}
+  \Xi CallAgentState \\
+  canAccept! : ZBOOL
+  \where
+  canAccept! = ztrue \iff procState = ready
+\end{schema}
+
+A non-mutating query a caller can use to decide whether \texttt{SendTurn}'s
+precondition currently holds, without attempting the call speculatively and
+handling the rejection reactively -- the same
+\texttt{"already processing"} case the spike hit when it fired a second
+prompt before the first one's turn had completed.
+
+\section{Relationship to the Call's Own Audio State Machine}
+\label{sec:relation}
+
+\texttt{CallSession} owns one \texttt{CallState} (audio mode) and one
+\texttt{CallAgentState} (this model) for the duration of a call, with a fixed
+correspondence between them:
+
+\begin{itemize}
+  \item \texttt{CallState.mode = listening} implies
+    \texttt{CallAgentState.procState \in \{ready, dormant\}} -- no turn can be
+    in flight while the call has not yet detected one to send.
+  \item The transition into \texttt{CallState.mode = waiting}
+    (\texttt{TurnDetected}) is exactly the caller-side trigger for
+    \texttt{SendTurn} -- the two operations fire together, in the same
+    caller-level step, though they are modelled separately because they
+    belong to different objects with different lifetimes (\S\ref{sec:state}).
+  \item \texttt{CallAgentState.procState = busy} therefore implies
+    \texttt{CallState.mode \in \{waiting, speaking\}} -- once
+    \texttt{ReplyBegins} fires on the audio side, the agent process may still
+    be \texttt{busy} composing the remainder of its reply (FR-11: speech
+    begins on the first complete portion, before the whole reply exists),
+    so \texttt{speaking} does not require \texttt{ReplyComplete} to have
+    fired yet.
+  \item \texttt{CallState}'s own \texttt{EndCall} (hangup from any active
+    mode, including mid-\texttt{speaking}) is exactly the caller-side trigger
+    for \texttt{AbortTurn} when \texttt{CallAgentState.procState = busy}, or
+    \texttt{Teardown} when it is \texttt{ready} -- \texttt{EndCall} alone
+    does not determine which; the caller reads
+    \texttt{CallAgentState.procState} first.
+\end{itemize}
+
+This correspondence is stated in prose, in the same manner
+\texttt{conversation-mode-call-state.tex}'s \S``The Single Serialized
+Dispatch Point'' states its own cross-cutting discipline in prose rather than
+as a further schema: Z models the shape of state and the
+preconditions/postconditions of a transition, not the scheduling discipline
+between two collaborating state machines owned by the same caller.
+
+\section{What This Model Does Not Cover}
+
+\begin{itemize}
+  \item \textbf{How read-only enforcement is implemented} -- a permission-mode
+    flag, a sandboxed filesystem view, or harness-level tool restriction are
+    all still open per DES-066; this model only fixes when the property must
+    hold (\S\ref{sec:state}, invariant 2).
+  \item \textbf{The context-snapshot's own content and construction} -- what
+    goes into the opening message \texttt{Spawn} delivers is a
+    \texttt{CallSession}-level concern (FR-4's task-context requirement),
+    out of this process-lifecycle model's scope.
+  \item \textbf{The post-call summary handoff to the primary session} -- DES-066
+    lists this as undesigned; it happens after \texttt{Teardown} or
+    \texttt{AbortTurn} reach \texttt{ended}, entirely outside this model.
+  \item \textbf{Process-supervision mechanics} (a bare \texttt{subprocess.Popen}
+    held by \texttt{voxd} itself, vs. \texttt{tmux}/\texttt{pi-tools}' \texttt{keep}
+    extension) -- an implementation choice about \emph{how} \texttt{Spawn} and
+    \texttt{Teardown} are realized, not a state or invariant this model needs
+    to express.
+\end{itemize}
+
+\end{document}

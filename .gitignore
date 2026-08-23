@@ -56,6 +56,7 @@ docs/*.tfm
 docs/*.aux
 docs/*.log
 docs/*.fuzz
+docs/*.fuzz.json
 docs/*.toc
 docs/z-spec/fuzz.sty
 docs/z-spec/*.mf
@@ -64,6 +65,7 @@ docs/z-spec/*.tfm
 docs/z-spec/*.aux
 docs/z-spec/*.log
 docs/z-spec/*.fuzz
+docs/z-spec/*.fuzz.json
 docs/z-spec/*.toc
 tools/docs/fuzz.sty
 tools/docs/*.mf
@@ -72,6 +74,7 @@ tools/docs/*.tfm
 tools/docs/*.aux
 tools/docs/*.log
 tools/docs/*.fuzz
+tools/docs/*.fuzz.json
 tools/docs/*.toc
 
 # Local uv overrides (depot find-links, etc.)
