@@ -325,6 +325,8 @@ pip install "punt-vox[call]"    # if you installed from PyPI
 
 `sounddevice` binds PortAudio, a system-level (non-Python) library `pip`/`uv` cannot install for you: on macOS, `brew install portaudio`; on most Linux distributions, install `libportaudio2` (e.g. `apt install libportaudio2`) through your package manager. Every other `vox` command works without either the extra or PortAudio -- only `vox call start`'s live (default) path needs them; `--script` bypasses the microphone and ElevenLabs speech-to-text, but a daemon-side TTS provider is still required either way to speak the reply, resolved the same way before the call starts.
 
+`vox call start` requires `ANTHROPIC_API_KEY` to be set. Each turn spawns `claude -p --resume --bare`, which eliminates the `SessionStart` hook cascade a non-bare spawn otherwise pays -- most of the per-turn latency a live call would otherwise wait through in silence -- but `--bare` has no OAuth support at all (`claude --help`: auth is "strictly `ANTHROPIC_API_KEY` or `apiKeyHelper` via `--settings`"). An OAuth-only setup with no API key configured fails fast, before any subprocess is spawned, with an actionable error rather than a silent hang.
+
 While a call is active, your own interactive prompts are paused (a `UserPromptSubmit` hook blocks them) until you run `/call stop` or `/call transfer` -- both remain available even while paused.
 
 ## Commands
