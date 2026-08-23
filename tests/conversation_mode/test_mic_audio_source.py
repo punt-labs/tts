@@ -133,6 +133,62 @@ class TestMicAudioSourceChunks:
         await gen.aclose()
 
 
+class TestMicAudioSourceDrainPending:
+    async def test_noop_before_chunks_has_started(self) -> None:
+        source = MicAudioSource(input_stream_factory=fake_input_stream_factory([]))
+        assert source.drain_pending() == 0
+
+    async def test_noop_after_chunks_has_finished(self) -> None:
+        created: list[FakeInputStream] = []
+        source = MicAudioSource(input_stream_factory=fake_input_stream_factory(created))
+        gen = source.chunks()
+        task = asyncio.ensure_future(gen.__anext__())
+        await _advance_to_first_await()
+        created[0].feed(b"\x00\x00")
+        await task
+        await gen.aclose()
+
+        assert source.drain_pending() == 0
+
+    async def test_discards_chunks_queued_but_not_yet_consumed(self) -> None:
+        created: list[FakeInputStream] = []
+        source = MicAudioSource(input_stream_factory=fake_input_stream_factory(created))
+        gen = source.chunks()
+        task = asyncio.ensure_future(gen.__anext__())
+        await _advance_to_first_await()
+        created[0].feed(b"\x01\x00")
+        await task  # this one is consumed -- not part of the backlog
+
+        # Two more arrive while nobody is pulling from the generator, e.g.
+        # while the caller is busy elsewhere.
+        created[0].feed(b"\x02\x00")
+        created[0].feed(b"\x03\x00")
+        await _advance_to_first_await()  # let call_soon_threadsafe land both puts
+
+        assert source.drain_pending() == 2
+
+        # The next real chunk still flows through normally after a drain.
+        next_task = asyncio.ensure_future(gen.__anext__())
+        await _advance_to_first_await()
+        created[0].feed(b"\x04\x00")
+        next_chunk = await next_task
+        assert next_chunk.pcm == b"\x04\x00"
+
+        await gen.aclose()
+
+    async def test_returns_zero_when_the_queue_is_already_empty(self) -> None:
+        created: list[FakeInputStream] = []
+        source = MicAudioSource(input_stream_factory=fake_input_stream_factory(created))
+        gen = source.chunks()
+        task = asyncio.ensure_future(gen.__anext__())
+        await _advance_to_first_await()
+        created[0].feed(b"\x00\x00")
+        await task
+
+        assert source.drain_pending() == 0
+        await gen.aclose()
+
+
 class TestMicAudioSourceCaptureSeconds:
     async def test_captures_exactly_the_requested_chunk_count(self) -> None:
         created: list[FakeInputStream] = []

@@ -23,8 +23,6 @@ import logging
 from collections.abc import Buffer
 from typing import TYPE_CHECKING, Protocol, Self, final, runtime_checkable
 
-from sounddevice import RawInputStream
-
 from punt_vox.voxd.conversation_mode.audio_chunk import SAMPLE_RATE_HZ, AudioChunk
 
 if TYPE_CHECKING:
@@ -91,11 +89,22 @@ class MicAudioSource:
     ``__exit__`` then releases the audio device.
     """
 
-    __slots__ = ("_channels", "_chunk_s", "_input_stream_factory", "_sample_rate_hz")
+    __slots__ = (
+        "_channels",
+        "_chunk_s",
+        "_input_stream_factory",
+        "_queue",
+        "_sample_rate_hz",
+    )
     _sample_rate_hz: int
     _chunk_s: float
     _channels: int
     _input_stream_factory: InputStreamFactory
+    # Set for the lifetime of one :meth:`chunks` call, ``None`` otherwise --
+    # exposed as an attribute (rather than a local variable inside
+    # :meth:`chunks`) solely so :meth:`drain_pending` can reach it from
+    # outside the generator.
+    _queue: asyncio.Queue[bytes] | None
 
     def __new__(
         cls,
@@ -111,6 +120,7 @@ class MicAudioSource:
         self._input_stream_factory = (
             input_stream_factory or _default_input_stream_factory
         )
+        self._queue = None
         return self
 
     async def chunks(self) -> AsyncGenerator[AudioChunk]:
@@ -128,6 +138,7 @@ class MicAudioSource:
         block_frames = max(1, round(self._chunk_s * self._sample_rate_hz))
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[bytes] = asyncio.Queue()
+        self._queue = queue
 
         def _callback(
             indata: Buffer, _frames: int, _time: object, status: CallbackFlags
@@ -143,10 +154,34 @@ class MicAudioSource:
             dtype="int16",
             callback=_callback,
         )
-        with stream:
-            while True:
-                pcm = await queue.get()
-                yield AudioChunk(pcm=pcm, duration_s=self._chunk_s)
+        try:
+            with stream:
+                while True:
+                    pcm = await queue.get()
+                    yield AudioChunk(pcm=pcm, duration_s=self._chunk_s)
+        finally:
+            self._queue = None
+
+    def drain_pending(self) -> int:
+        """Discard every chunk queued but not yet yielded by :meth:`chunks`.
+
+        The microphone keeps capturing while a caller is busy elsewhere --
+        most importantly, while the agent's own reply plays through the
+        speakers, which the microphone picks back up. Those self-captured
+        chunks queue up during that window; without draining them, the next
+        chunks :meth:`chunks` yields once the caller resumes consuming are a
+        backlog of the agent's own voice, which a turn detector would
+        process as if it were the human's next turn. A no-op (returns 0)
+        before :meth:`chunks` has started or after it has finished.
+        """
+        queue = self._queue
+        if queue is None:
+            return 0
+        drained = 0
+        while not queue.empty():
+            queue.get_nowait()
+            drained += 1
+        return drained
 
     async def capture_seconds(self, duration_s: float) -> list[AudioChunk]:
         """Capture *duration_s* of ambient audio, for
@@ -188,7 +223,17 @@ def _default_input_stream_factory(
     ``RawInputStream`` (not ``InputStream``) -- its callback hands raw CFFI
     buffer objects instead of NumPy arrays, so this project does not need
     NumPy as a dependency just to read 16-bit PCM bytes out of a callback.
+
+    Imports ``sounddevice`` here, not at module scope: ``sounddevice``
+    requires the PortAudio C library, a separate runtime dependency this
+    project does not otherwise need (it is declared as an optional extra,
+    not a hard dependency -- see ``pyproject.toml``'s ``call`` extra). A
+    module-scope import would make every ``vox`` invocation -- ``vox say``,
+    ``vox status``, every hook -- fail on a host without PortAudio installed,
+    even when nothing touches a live call. This is the only call site.
     """
+    from sounddevice import RawInputStream
+
     return RawInputStream(
         samplerate=samplerate,
         blocksize=blocksize,

@@ -42,8 +42,18 @@ dependencies = [
     # register-fresh. 0.28.0 retires LuxRestClient/LuxHubClient from the public
     # surface in favour of the noun-grouped LuxClient facade with async accessors.
     "punt-lux>=0.28.0",
-    "sounddevice>=0.5.6",
 ]
+
+[project.optional-dependencies]
+# PortAudio (the C library sounddevice binds) is a separate runtime
+# dependency this project does not otherwise need -- Homebrew's
+# ``portaudio`` on macOS, ``libportaudio2`` on most Linux distributions,
+# nothing `install.sh` provisions today. A hard top-level dependency here
+# would make every `vox` invocation -- `vox say`, `vox status`, every
+# hook -- fail on a host without it installed, even though only
+# `vox call start` (the live, microphone-capture path) needs it. Install
+# with `pip install punt-vox[call]` / `uv sync --extra call`.
+call = ["sounddevice>=0.5.6"]
 
 [project.urls]
 Homepage = "https://github.com/punt-labs/vox"
@@ -142,7 +152,7 @@ ignore = [
 "src/punt_vox/voices.py" = ["S311"]
 "src/punt_vox/providers/__init__.py" = ["PLC0415", "S603", "S607"]
 "src/punt_vox/providers/elevenlabs.py" = ["PLC0415"]
-"src/punt_vox/providers/elevenlabs_stt.py" = ["PLC0415"]
+"src/punt_vox/voxd/conversation_mode/mic_audio_source.py" = ["PLC0415"]
 "src/punt_vox/providers/elevenlabs_music.py" = ["PLC0415"]
 "src/punt_vox/providers/openai.py" = ["PLC0415"]
 "src/punt_vox/providers/polly.py" = ["PLC0415"]

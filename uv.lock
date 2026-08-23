@@ -1214,9 +1214,13 @@ dependencies = [
     { name = "openai" },
     { name = "punt-lux" },
     { name = "pydub" },
-    { name = "sounddevice" },
     { name = "typer" },
     { name = "websockets" },
+]
+
+[package.optional-dependencies]
+call = [
+    { name = "sounddevice" },
 ]
 
 [package.dev-dependencies]
@@ -1242,10 +1246,11 @@ requires-dist = [
     { name = "openai", specifier = ">=1.0.0" },
     { name = "punt-lux", specifier = ">=0.28.0" },
     { name = "pydub", specifier = ">=0.25.0" },
-    { name = "sounddevice", specifier = ">=0.5.6" },
+    { name = "sounddevice", marker = "extra == 'call'", specifier = ">=0.5.6" },
     { name = "typer", specifier = ">=0.24.1" },
     { name = "websockets", specifier = ">=14.0" },
 ]
+provides-extras = ["call"]
 
 [package.metadata.requires-dev]
 dev = [
