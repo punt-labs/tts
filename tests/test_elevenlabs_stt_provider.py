@@ -23,6 +23,11 @@ def _word(logprob: float) -> SpeechToTextWordResponseModel:
     return SpeechToTextWordResponseModel(text="w", type="word", logprob=logprob)
 
 
+def _spacing(logprob: float = 0.0) -> SpeechToTextWordResponseModel:
+    """A ``type="spacing"`` entry -- interleaved between words by the real SDK."""
+    return SpeechToTextWordResponseModel(text=" ", type="spacing", logprob=logprob)
+
+
 def _response(
     text: str, words: list[SpeechToTextWordResponseModel]
 ) -> SpeechToTextChunkResponseModel:
@@ -111,6 +116,67 @@ class TestElevenLabsSTTProviderAmbiguousCapture:
         client = MagicMock()
         client.speech_to_text.convert.side_effect = lambda **kwargs: _response(  # pyright: ignore[reportUnknownLambdaType]
             "", []
+        )
+        provider = ElevenLabsSTTProvider(client=client)
+        (event,) = [
+            event async for event in provider.transcribe(_chunks(b"\x01\x00" * 100))
+        ]
+        assert event.confidence == 0.0
+
+    async def test_interleaved_spacing_entries_do_not_move_the_score(self) -> None:
+        """Averaging non-word entries would inflate confidence toward 1.0.
+
+        The real SDK interleaves ``type="spacing"`` entries between words
+        with near-deterministic (near-zero) logprob; those must be excluded
+        from the average, or a genuinely mediocre transcript's low-logprob
+        words get diluted by the always-near-zero spacing entries and the
+        reported confidence lands artificially high.
+        """
+        client = MagicMock()
+        low_confidence_words = [_word(-6.0), _word(-5.5)]
+        client.speech_to_text.convert.side_effect = lambda **kwargs: _response(  # pyright: ignore[reportUnknownLambdaType]
+            "unintelligible mumble", low_confidence_words
+        )
+        provider_without_spacing = ElevenLabsSTTProvider(client=client)
+        (event_without_spacing,) = [
+            event
+            async for event in provider_without_spacing.transcribe(
+                _chunks(b"\x01\x00" * 100)
+            )
+        ]
+
+        interleaved = [
+            _spacing(),
+            low_confidence_words[0],
+            _spacing(),
+            low_confidence_words[1],
+            _spacing(),
+        ]
+
+        def _interleaved_response(
+            **kwargs: object,
+        ) -> SpeechToTextChunkResponseModel:
+            return _response("unintelligible mumble", interleaved)
+
+        client_with_spacing = MagicMock()
+        client_with_spacing.speech_to_text.convert.side_effect = _interleaved_response
+        provider_with_spacing = ElevenLabsSTTProvider(client=client_with_spacing)
+        (event_with_spacing,) = [
+            event
+            async for event in provider_with_spacing.transcribe(
+                _chunks(b"\x01\x00" * 100)
+            )
+        ]
+
+        assert event_with_spacing.confidence == event_without_spacing.confidence
+        # And it must stay low, not get pulled toward the spacing entries'
+        # near-zero logprob (which would round-trip to a confidence near 1.0).
+        assert event_with_spacing.confidence < 0.6
+
+    async def test_all_spacing_no_words_reports_zero_confidence(self) -> None:
+        client = MagicMock()
+        client.speech_to_text.convert.side_effect = lambda **kwargs: _response(  # pyright: ignore[reportUnknownLambdaType]
+            "", [_spacing(), _spacing()]
         )
         provider = ElevenLabsSTTProvider(client=client)
         (event,) = [
