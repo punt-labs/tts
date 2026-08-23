@@ -26,6 +26,7 @@ import pytest
 from conversation_mode._playback_sink_fakes import FakeSink, SinkReentrancyError
 from punt_vox.voxd.conversation_mode.playback_sink_actor import PlaybackSinkActor
 from punt_vox.voxd.conversation_mode.sink_clear import SinkClear
+from punt_vox.voxd.conversation_mode.sink_close import SinkClose
 from punt_vox.voxd.conversation_mode.sink_status import SinkStatus
 from punt_vox.voxd.conversation_mode.sink_write import SinkWrite
 
@@ -163,3 +164,31 @@ async def test_buffer_clear_vs_concurrent_writer_stress() -> None:
     # SinkReentrancyError would have propagated out of run() -> the task ->
     # this test, per the negative control above proving the detector works.
     assert sink.status in (SinkStatus.IDLE, SinkStatus.WRITING)
+
+
+async def test_a_raising_command_does_not_kill_run_or_deadlock_drain() -> None:
+    """Mirrors ``CallActor.apply``'s isolation for the identical failure mode.
+
+    ``SinkWrite.apply`` raises ``ValueError`` on a closed sink (a reachable
+    condition, not a test-only fault injection). Without per-command
+    isolation, that raise would kill the dispatch task silently -- nothing
+    supervises it -- and every future ``drain()``/``queue.join()`` caller
+    would block forever because ``task_done`` never fired for the failed
+    command.
+    """
+    sink = FakeSink()
+    await sink.close()
+    actor = PlaybackSinkActor(sink)
+    runner = await _run_actor(actor)
+
+    await actor.enqueue(SinkWrite(chunk=b"after-close"))  # raises inside apply()
+    await actor.drain()  # must not hang despite the raise above
+
+    # The loop is still alive and processing: a second command after the
+    # failure completes normally (SinkClose on an already-closed sink is
+    # documented idempotent).
+    await actor.enqueue(SinkClose())
+    await actor.drain()
+
+    await actor.stop()
+    await runner  # the task returned normally, not via an unhandled raise

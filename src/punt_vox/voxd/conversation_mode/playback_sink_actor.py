@@ -19,6 +19,7 @@ to enqueue against it.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.conversation_mode.sink_status import SinkStatus
@@ -26,6 +27,8 @@ from punt_vox.voxd.conversation_mode.sink_status import SinkStatus
 if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.playback_sink import PlaybackSink
     from punt_vox.voxd.conversation_mode.sink_command import SinkCommand
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["PlaybackSinkActor"]
 
@@ -69,14 +72,29 @@ class PlaybackSinkActor:
         correctness argument: two commands' effects on the sink can never
         interleave, because the second is not even dequeued until the
         first's ``apply`` coroutine has returned.
+
+        A command's ``apply`` is isolated in its own ``try``/``except``:
+        ``SinkWrite``/``SinkClear`` are documented to raise when
+        :attr:`~.playback_sink.PlaybackSink.status` is
+        :attr:`~.sink_status.SinkStatus.CLOSED`, a reachable condition, and
+        an uncaught raise here would kill this loop silently (nothing
+        supervises the task) while every producer waiting on
+        :meth:`drain`/``queue.join`` blocked forever. ``task_done`` runs in a
+        ``finally`` so that never happens, mirroring
+        :meth:`~.call_actor.CallActor.apply`'s per-observer isolation for
+        the same reason.
         """
         while True:
             command = await self._queue.get()
             if command is None:
                 self._queue.task_done()
                 return
-            await command.apply(self._sink)
-            self._queue.task_done()
+            try:
+                await command.apply(self._sink)
+            except Exception:
+                logger.exception("playback sink command %r raised", command)
+            finally:
+                self._queue.task_done()
 
     async def stop(self) -> None:
         """Signal :meth:`run` to return once it has drained pending commands."""

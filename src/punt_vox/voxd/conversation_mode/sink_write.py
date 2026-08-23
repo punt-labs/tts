@@ -16,9 +16,9 @@ __all__ = ["SinkWrite"]
 class SinkWrite:
     """Append *chunk* to whatever is currently playing.
 
-    The sentence-streamed synthesis pipeline (Slice 2b) is the producer:
-    each synthesized segment becomes one ``SinkWrite``, enqueued as it
-    completes -- never written to the sink directly.
+    The synthesis pipeline that produces these commands is the sentence-
+    streamed one: each synthesized segment becomes one ``SinkWrite``,
+    enqueued as it completes -- never written to the sink directly.
     """
 
     chunk: bytes

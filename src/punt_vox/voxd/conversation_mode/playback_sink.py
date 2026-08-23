@@ -8,10 +8,10 @@ shape :class:`~punt_vox.voxd.playback.PlaybackQueue` has today, and remains
 unchanged by this module -- see that section for why the two are
 architecturally distinct).
 
-A concrete sink (PortAudio, an OS mixer handle, a subprocess pipe -- Slice
-2b's decision) is out of this module's scope; this Protocol only fixes the
-three operations any such implementation must expose, and each operation's
-contract:
+A concrete sink (PortAudio, an OS mixer handle, a subprocess pipe -- the
+choice is deferred to whatever implements this Protocol) is out of this
+module's scope; this Protocol only fixes the three operations any such
+implementation must expose, and each operation's contract:
 
 * :meth:`write` appends synthesized audio to what is currently playing.
 * :meth:`clear` silences whatever is buffered *right now*, without closing
