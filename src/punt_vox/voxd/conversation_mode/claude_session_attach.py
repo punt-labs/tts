@@ -163,8 +163,9 @@ class ClaudeSessionAttach:
     def _subprocess_env() -> dict[str, str]:
         """Return the relay subprocess's environment, minus its auth traps.
 
-        See :func:`claude_subprocess_env` for why: forwarding the parent
-        environment wholesale (the prior ``{**os.environ, ...}``) let a
+        See :class:`~.claude_subprocess_env.ClaudeSubprocessEnv` for why:
+        forwarding the parent environment wholesale (the prior
+        ``{**os.environ, ...}``) let a
         stale ``ANTHROPIC_API_KEY`` silently outrank the resumed session's
         own claude.ai login, failing every turn's auth instead of resuming
         the identity ``claude -p --resume`` is meant to resume.
