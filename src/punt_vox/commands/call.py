@@ -44,7 +44,6 @@ from punt_vox.voxd.conversation_mode.call_lock import CallLock, CallLockActiveEr
 from punt_vox.voxd.conversation_mode.call_session import CallSession, SpeakFn
 from punt_vox.voxd.conversation_mode.claude_session_attach import ClaudeSessionAttach
 from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
-from punt_vox.voxd.conversation_mode.mode import Mode
 from punt_vox.voxd.conversation_mode.session_discovery import SessionDiscovery
 from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
 
@@ -220,7 +219,7 @@ class CallCli:
         )
         await session.start()
         for turn in turns:
-            if await self._apply_control(control, session):
+            if await self._apply_control(control, session, speak):
                 break
             for chunk in turn.synthetic_chunks():
                 await session.process_chunk(chunk)
@@ -236,38 +235,45 @@ class CallCli:
         mic_source = MicAudioSource()
         detector = TurnDetector()
         detector.calibrate(await mic_source.capture_seconds(_CALIBRATION_S))
+
+        async def _speak_and_drain(text: str) -> None:
+            # The microphone keeps capturing while ANY cue plays through the
+            # speakers and picks it back up -- not only the reply itself.
+            # "Ready." is spoken after the speaking -> listening transition
+            # has already fired, and the ask-to-repeat cue has no transition
+            # around it at all (the call stays in listening throughout), so
+            # a drain tied to the mode transition alone misses both.
+            # CallSession.process_chunk already refuses to feed the turn
+            # detector while speaking, but nothing stops that self-captured
+            # audio from queuing up in mic_source's own buffer meanwhile;
+            # draining unconditionally after every utterance -- the one
+            # thing every cue has in common -- is what actually clears it,
+            # regardless of which mode the call is in when the utterance
+            # finishes.
+            await speak(text)
+            mic_source.drain_pending()
+
         session = CallSession(
             turn_detector=detector,
             stt_provider=ElevenLabsSTTProvider(),
             session_attach=session_attach,
-            speak=speak,
+            speak=_speak_and_drain,
         )
-
-        def _drain_self_captured_speech(before: Mode, after: Mode) -> None:
-            # The microphone keeps capturing while the agent's reply plays,
-            # and picks its own voice back up. CallSession.process_chunk
-            # already refuses to feed those chunks to the turn detector
-            # while speaking, but they still sit queued in mic_source's own
-            # buffer; without draining them here, the *next* chunks pulled
-            # once listening resumes would be that backlog, not fresh room
-            # audio.
-            if before is Mode.SPEAKING and after is Mode.LISTENING:
-                mic_source.drain_pending()
-
-        session.actor.on_transition(_drain_self_captured_speech)
 
         await session.start()
         chunks = mic_source.chunks()
         try:
             async for chunk in chunks:
-                if await self._apply_control(control, session):
+                if await self._apply_control(control, session, _speak_and_drain):
                     break
                 await session.process_chunk(chunk)
         finally:
             await chunks.aclose()
         await session.hangup()
 
-    async def _apply_control(self, control: CallControl, session: CallSession) -> bool:
+    async def _apply_control(
+        self, control: CallControl, session: CallSession, speak: SpeakFn
+    ) -> bool:
         """Consume one pending control request; return whether the loop should stop.
 
         Shared by both drive loops so a stop/transfer request is handled
@@ -275,7 +281,13 @@ class CallCli:
         request re-resolves the session attach and feeds it into the
         already-running *session* via
         :meth:`~.call_session.CallSession.replace_session_attach`, so
-        ``/call transfer`` redirects the call without ending it.
+        ``/call transfer`` redirects the call without ending it -- including
+        when the resolution itself fails: zero or multiple discoverable
+        sessions raises ``typer.BadParameter``, and letting that escape
+        would hit the outer boundary handler and end the whole call over
+        what is only an invalid transfer request. Caught here instead, so
+        the human hears why the transfer didn't happen and the call
+        continues on its current session.
         """
         request = control.consume()
         if request is None:
@@ -283,9 +295,13 @@ class CallCli:
         if request.kind == "stop":
             return True
         if request.kind == "transfer":
-            new_attach = await self._resolve_session_attach(
-                Path.cwd(), request.target_session_id
-            )
+            try:
+                new_attach = await self._resolve_session_attach(
+                    Path.cwd(), request.target_session_id
+                )
+            except typer.BadParameter as exc:
+                await speak(f"Couldn't transfer the call: {exc}")
+                return False
             session.replace_session_attach(new_attach)
         return False
 

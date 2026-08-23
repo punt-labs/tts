@@ -206,6 +206,13 @@ async def test_run_call_live_path_captures_from_mic_and_transcribes(
 
     assert CallLock(tmp_path / "call.lock").read() is None  # released after hangup
 
+    # Regression: draining must happen after every utterance, not only on
+    # the speaking -> listening mode transition -- "Listening.", the reply
+    # itself, and "Ready." (spoken *after* that transition already fired)
+    # are three separate speak() calls, and each must drain the mic's
+    # self-captured backlog on its own.
+    assert mic_source.drain_calls == len(spoken) == 3
+
 
 if __name__ == "__main__":
     pytest.main([__file__])
