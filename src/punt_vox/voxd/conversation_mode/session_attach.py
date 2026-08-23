@@ -19,13 +19,13 @@ the session *is* the whole point of the object rather than an omitted axis.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
 
 if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.reply import ReplyChunk
     from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
 
-__all__ = ["SessionAttach", "SessionAttachError"]
+__all__ = ["BareAuthMissingError", "SessionAttach", "SessionAttachError"]
 
 
 class SessionAttachError(RuntimeError):
@@ -37,6 +37,32 @@ class SessionAttachError(RuntimeError):
     mid-call resilience, a call that hits this ends with a clear reason
     (mirroring FR-18's fail-closed call start), it does not silently retry.
     """
+
+
+class BareAuthMissingError(SessionAttachError):
+    """A ``--bare`` invocation has no ``ANTHROPIC_API_KEY`` to authenticate with.
+
+    Raised before the subprocess is even spawned (see
+    :class:`~.claude_session_attach.ClaudeSessionAttach`), not after a
+    doomed spawn times out -- ``claude --bare`` has no OAuth fallback at
+    all, so a missing key is a certain, immediate failure, not a transient
+    condition worth retrying into a 120s timeout.
+    """
+
+    @classmethod
+    def for_missing_key(cls) -> Self:
+        """Build the error for a ``--bare`` invocation with no key configured.
+
+        The error describes its own actionable message (PY-CC-5) so the
+        caller checking for the key does not also own the wording -- one
+        place to update if the guidance ever changes.
+        """
+        msg = (
+            "claude -p --resume --bare requires ANTHROPIC_API_KEY to be "
+            "set -- bare mode has no OAuth support (see `claude --help`); "
+            "set ANTHROPIC_API_KEY before running `vox call start`"
+        )
+        return cls(msg)
 
 
 @runtime_checkable

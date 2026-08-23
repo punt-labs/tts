@@ -45,15 +45,28 @@ class ClaudeSubprocessEnv:
     def __new__(cls) -> Self:
         return super().__new__(cls)
 
-    def __call__(self, *, extra: dict[str, str] | None = None) -> dict[str, str]:
+    def __call__(
+        self, *, extra: dict[str, str] | None = None, keep_api_key: bool = False
+    ) -> dict[str, str]:
         """Return the parent environment minus every stripped var.
 
         *extra* is merged in last, so a caller-specific marker (e.g.
         :class:`ClaudeSessionAttach`'s ``VOX_CALL_RELAY``) always wins over
         anything of the same name inherited from the parent -- not that any
         entry in *extra* is expected to collide with a stripped var today.
+
+        *keep_api_key*, default ``False``, preserves every other call site's
+        existing behavior -- ``ANTHROPIC_API_KEY`` stripped so a resumed
+        session uses its own claude.ai OAuth login (see this class's own
+        docstring). ``True`` is the exact opposite requirement: a ``claude
+        --bare`` invocation has no OAuth support at all and *requires*
+        ``ANTHROPIC_API_KEY`` explicitly (``claude --help``: "Anthropic auth
+        is strictly ANTHROPIC_API_KEY or apiKeyHelper via --settings") --
+        stripping it there does not fall back to OAuth, it fails every turn
+        with "Not logged in".
         """
-        env = {k: v for k, v in os.environ.items() if k not in self._STRIPPED_ENV_VARS}
+        stripped = () if keep_api_key else self._STRIPPED_ENV_VARS
+        env = {k: v for k, v in os.environ.items() if k not in stripped}
         if extra:
             env.update(extra)
         return env
