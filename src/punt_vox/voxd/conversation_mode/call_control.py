@@ -59,26 +59,42 @@ class CallControl:
     def consume(self) -> ControlRequest | None:
         """Return and clear the pending request, or ``None`` if there is none.
 
-        The file is unlinked before parsing, not after: a corrupt or
-        unparseable request (a racing partial write, a hand-edited file)
-        must still be cleared from the mailbox, or it would be re-read and
-        fail again on every future poll. Logged and reported as "no
-        request" rather than raised -- a caller mid-call must not have its
-        boundary handler end the whole call over a malformed control file.
+        Claim-and-remove is one atomic operation: ``os.replace`` renames the
+        mailbox file to a ``.consuming`` sibling before anything reads it.
+        A read-then-unlink sequence has a gap between the two steps in
+        which a fresh ``/call stop`` written into that gap would be deleted
+        unread -- the hang-up would silently do nothing. Renaming first
+        means there is no such gap: any request written after the rename
+        starts a new mailbox file untouched by this call.
+
+        A corrupt or unparseable request (a racing partial write, a
+        hand-edited file) is still cleared from the mailbox -- logged and
+        reported as "no request" rather than raised, since a caller
+        mid-call must not have its boundary handler end the whole call
+        over a malformed control file.
         """
-        raw = AtomicFile(self._path).read()
-        if not raw:
-            return None
-        self._path.unlink(missing_ok=True)
+        consuming_path = self._path.with_name(self._path.name + ".consuming")
         try:
-            payload = json.loads(raw)
-            return ControlRequest(
-                kind=payload["kind"],
-                target_session_id=payload.get("target_session_id"),
-            )
-        except (json.JSONDecodeError, KeyError, TypeError) as exc:
-            logger.warning("call.control request is unreadable, discarding: %s", exc)
+            self._path.replace(consuming_path)
+        except FileNotFoundError:
             return None
+        try:
+            raw = AtomicFile(consuming_path).read()
+            if not raw:
+                return None
+            try:
+                payload = json.loads(raw)
+                return ControlRequest(
+                    kind=payload["kind"],
+                    target_session_id=payload.get("target_session_id"),
+                )
+            except (json.JSONDecodeError, KeyError, TypeError) as exc:
+                logger.warning(
+                    "call.control request is unreadable, discarding: %s", exc
+                )
+                return None
+        finally:
+            consuming_path.unlink(missing_ok=True)
 
     def _write(self, request: ControlRequest) -> None:
         # AtomicFile.replace, not a bare write_text: consume() polls this

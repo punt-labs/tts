@@ -73,3 +73,39 @@ def test_consume_treats_a_missing_kind_field_as_no_request(tmp_path: Path) -> No
 
     control = CallControl(path)
     assert control.consume() is None
+
+
+def test_consume_leaves_no_consuming_temp_file_behind(tmp_path: Path) -> None:
+    """The atomic take-by-rename must clean up its own ``.consuming`` sibling."""
+    path = tmp_path / "call.control"
+    control = CallControl(path)
+    control.request_stop()
+    control.consume()
+    assert not path.with_name(path.name + ".consuming").exists()
+
+
+def test_consume_cleans_up_the_consuming_temp_file_even_on_corrupt_payload(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "call.control"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("not json at all")
+
+    control = CallControl(path)
+    control.consume()
+    assert not path.with_name(path.name + ".consuming").exists()
+
+
+def test_a_request_written_after_consume_is_not_lost(tmp_path: Path) -> None:
+    """The rename-based claim must not leave the mailbox permanently stuck."""
+    control = CallControl(tmp_path / "call.control")
+    control.request_stop()
+    first = control.consume()
+    assert first is not None
+    assert first.kind == "stop"
+
+    control.request_transfer("session-c")
+    second = control.consume()
+    assert second is not None
+    assert second.kind == "transfer"
+    assert second.target_session_id == "session-c"
