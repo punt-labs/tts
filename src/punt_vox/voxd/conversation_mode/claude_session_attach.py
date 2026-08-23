@@ -60,10 +60,22 @@ class ClaudeSessionAttach:
 
     async def send_turn(self, turn: TranscribedTurn) -> AsyncIterator[ReplyChunk]:
         process = await self._spawn(turn)
-        if process.stdout is None or process.stderr is None:
-            msg = f"{self._claude_bin} subprocess has no stdout/stderr pipe"
-            raise SessionAttachError(msg)
-        text, stderr = await self._exchange(process, process.stdout, process.stderr)
+        try:
+            if process.stdout is None or process.stderr is None:
+                msg = f"{self._claude_bin} subprocess has no stdout/stderr pipe"
+                raise SessionAttachError(msg)
+            text, stderr = await self._exchange(process.stdout, process.stderr)
+        except BaseException:
+            # ANY failure once the process is running -- not just a timeout
+            # or an ``Exception`` -- must not leak the subprocess. Ctrl-C
+            # during a call (the obvious way a human ends one) raises
+            # KeyboardInterrupt or CancelledError, both BaseException and
+            # neither Exception, since Python 3.8; a bare ``except
+            # Exception`` here would let either escape without killing or
+            # reaping the child.
+            process.kill()
+            await process.wait()
+            raise
         await process.wait()
         if process.returncode != 0:
             msg = (
@@ -74,7 +86,16 @@ class ClaudeSessionAttach:
         yield ReplyChunk(text=text, is_final=True)
 
     async def _spawn(self, turn: TranscribedTurn) -> asyncio.subprocess.Process:
-        """Start the relay subprocess and write *turn* to its stdin."""
+        """Start the relay subprocess and write *turn* to its stdin.
+
+        Kills and reaps the process before raising if anything after
+        creation fails -- a missing stdin pipe, or a
+        ``BrokenPipeError``/``ConnectionResetError`` writing to it (the
+        likely real case: ``claude`` can exit immediately on an invalid
+        session id). ``create_subprocess_exec`` succeeding only means the
+        process started, not that it is usable; a failure here must not
+        leak it.
+        """
         process = await asyncio.create_subprocess_exec(
             self._claude_bin,
             "-p",
@@ -90,26 +111,28 @@ class ClaudeSessionAttach:
             stderr=asyncio.subprocess.PIPE,
             env={**os.environ, _RELAY_ENV_VAR: "1"},
         )
-        if process.stdin is None:
-            msg = f"{self._claude_bin} subprocess has no stdin pipe"
-            raise SessionAttachError(msg)
+        try:
+            if process.stdin is None:
+                msg = f"{self._claude_bin} subprocess has no stdin pipe"
+                raise SessionAttachError(msg)
 
-        user_message = {
-            "type": "user",
-            "message": {"role": "user", "content": turn.text},
-        }
-        process.stdin.write(json.dumps(user_message).encode() + b"\n")
-        await process.stdin.drain()
-        process.stdin.close()
+            user_message = {
+                "type": "user",
+                "message": {"role": "user", "content": turn.text},
+            }
+            process.stdin.write(json.dumps(user_message).encode() + b"\n")
+            await process.stdin.drain()
+            process.stdin.close()
+        except BaseException:
+            process.kill()
+            await process.wait()
+            raise
         return process
 
     async def _exchange(
-        self,
-        process: asyncio.subprocess.Process,
-        stdout: asyncio.StreamReader,
-        stderr: asyncio.StreamReader,
+        self, stdout: asyncio.StreamReader, stderr: asyncio.StreamReader
     ) -> tuple[str, bytes]:
-        """Read the reply and stderr concurrently, killing *process* on any failure.
+        """Read the reply and stderr concurrently, under a bounded timeout.
 
         stdout and stderr are read concurrently, not stdout-to-EOF then
         stderr: ``claude -p`` is not quiet on stderr, and reading stdout to
@@ -122,29 +145,24 @@ class ClaudeSessionAttach:
         a network wedge) otherwise leaves the call waiting with no signal
         anything is wrong.
 
-        ANY failure mid-exchange -- not just the timeout -- must not leak
-        the subprocess. A malformed stream-json line raises
+        Translates a timeout into :class:`SessionAttachError`; any other
+        failure (a malformed stream-json line raising
         :class:`SessionAttachError` from :meth:`_collect_reply`, for
-        instance, and ``asyncio.gather`` without ``return_exceptions=True``
-        doesn't cancel the sibling ``stderr.read()`` task either; left
-        unkilled, every such occurrence accumulates one
-        ``claude -p --resume`` zombie.
+        instance) propagates unchanged. Killing and reaping the subprocess
+        on failure is :meth:`send_turn`'s job, not this method's -- it owns
+        the process object, this method only owns the two streams.
         """
         try:
             return await asyncio.wait_for(
                 asyncio.gather(self._collect_reply(stdout), stderr.read()),
                 timeout=_REPLY_TIMEOUT_S,
             )
-        except Exception as exc:
-            process.kill()
-            await process.wait()
-            if isinstance(exc, TimeoutError):
-                msg = (
-                    f"{self._claude_bin} -p --resume {self._session_id} did not "
-                    f"reply within {_REPLY_TIMEOUT_S:.0f}s"
-                )
-                raise SessionAttachError(msg) from None
-            raise
+        except TimeoutError:
+            msg = (
+                f"{self._claude_bin} -p --resume {self._session_id} did not "
+                f"reply within {_REPLY_TIMEOUT_S:.0f}s"
+            )
+            raise SessionAttachError(msg) from None
 
     async def _collect_reply(self, stdout: asyncio.StreamReader) -> str:
         """Read stream-json lines from *stdout*, concatenating assistant text deltas.

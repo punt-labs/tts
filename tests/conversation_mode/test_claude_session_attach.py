@@ -147,3 +147,44 @@ async def test_stderr_is_drained_alongside_stdout() -> None:
         async for _ in attach.send_turn(TranscribedTurn(text="hello")):
             pass
     process.stderr.read.assert_awaited_once()
+
+
+class _CancellingLineIterator:
+    """Raises CancelledError on first read -- simulates Ctrl-C during a call."""
+
+    def __aiter__(self) -> _CancellingLineIterator:
+        return self
+
+    async def __anext__(self) -> bytes:
+        raise asyncio.CancelledError
+
+
+async def test_cancellation_during_exchange_kills_and_reaps_the_process() -> None:
+    """Regression: CancelledError is a BaseException, not an Exception --
+    the obvious way a human ends a call (Ctrl-C) must not leak the
+    subprocess just because it isn't caught by ``except Exception``."""
+    process = _fake_process([])
+    process.stdout = _CancellingLineIterator()
+    process.kill = MagicMock()
+    with patch("asyncio.create_subprocess_exec", return_value=process):
+        attach = ClaudeSessionAttach(session_id="session-a")
+        with pytest.raises(asyncio.CancelledError):
+            async for _ in attach.send_turn(TranscribedTurn(text="hello")):
+                pass
+    process.kill.assert_called_once()
+    process.wait.assert_awaited()
+
+
+async def test_stdin_write_failure_kills_and_reaps_the_process() -> None:
+    """Regression: claude can exit immediately on an invalid session id,
+    breaking the pipe before this class ever reaches the read side."""
+    process = _fake_process([])
+    process.stdin.write = MagicMock(side_effect=BrokenPipeError)
+    process.kill = MagicMock()
+    with patch("asyncio.create_subprocess_exec", return_value=process):
+        attach = ClaudeSessionAttach(session_id="session-a")
+        with pytest.raises(BrokenPipeError):
+            async for _ in attach.send_turn(TranscribedTurn(text="hello")):
+                pass
+    process.kill.assert_called_once()
+    process.wait.assert_awaited()
