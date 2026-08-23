@@ -16,8 +16,20 @@ import pytest
 
 from punt_vox.voxd.conversation_mode import claude_session_attach
 from punt_vox.voxd.conversation_mode.claude_session_attach import ClaudeSessionAttach
-from punt_vox.voxd.conversation_mode.session_attach import SessionAttachError
+from punt_vox.voxd.conversation_mode.session_attach import (
+    BareAuthMissingError,
+    SessionAttachError,
+)
 from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
+
+
+@pytest.fixture(autouse=True)
+def _bare_auth(monkeypatch: pytest.MonkeyPatch) -> None:  # pyright: ignore[reportUnusedFunction]
+    """``--bare`` requires ``ANTHROPIC_API_KEY`` -- every test but the one
+    exercising its absence needs a key present, or every ``_spawn`` in this
+    file fails immediately with :class:`BareAuthMissingError` before
+    reaching the behavior under test."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
 
 
 def _discard(_written: bytes) -> None:
@@ -110,29 +122,55 @@ async def test_spawn_argv_includes_verbose() -> None:
     assert "--verbose" in argv
 
 
-async def test_spawn_strips_anthropic_api_key_from_the_subprocess_env(
+async def test_spawn_keeps_anthropic_api_key_in_the_subprocess_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Regression: forwarding the parent environment wholesale let a stale
-    ANTHROPIC_API_KEY silently outrank the resumed session's own claude.ai
-    login -- claude prints "claude.ai connectors are disabled because
-    ANTHROPIC_API_KEY or another auth source is set and takes precedence
-    over your claude.ai login", then every turn's auth fails: 10 api_retry
-    frames at HTTP 401, burning the whole reply timeout before giving up.
-    The relay subprocess must never inherit this org's own .envrc-exported
-    key, even when it is genuinely present in the parent process's environ.
+    """vox-36xc: --bare has no OAuth support at all -- the opposite of the
+    prior non-bare behavior, where a stale ANTHROPIC_API_KEY was stripped
+    so the resumed session used its own claude.ai login instead. Bare mode
+    *requires* the key explicitly (`claude --help`: "Anthropic auth is
+    strictly ANTHROPIC_API_KEY or apiKeyHelper via --settings"), so this
+    call site must forward it, not strip it.
     """
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-stale-org-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-a-real-key")
     process = _fake_process([])
     with patch("asyncio.create_subprocess_exec", return_value=process) as mock_exec:
         attach = ClaudeSessionAttach(session_id="session-a")
         async for _ in attach.send_turn(TranscribedTurn(text="hello")):
             pass
     spawned_env = mock_exec.call_args.kwargs["env"]
-    assert "ANTHROPIC_API_KEY" not in spawned_env
-    # The relay marker must still be present -- stripping the auth trap
-    # must not accidentally drop the unrelated env var call-lock.sh reads.
+    assert spawned_env["ANTHROPIC_API_KEY"] == "sk-ant-a-real-key"
+    # The relay marker must still be present alongside it.
     assert spawned_env["VOX_CALL_RELAY"] == "1"
+
+
+async def test_spawn_argv_includes_bare() -> None:
+    """--bare eliminates the SessionStart hook cascade (0 hooks vs 9-28
+    measured), most of the 13-25s median per-turn spawn latency."""
+    process = _fake_process([])
+    with patch("asyncio.create_subprocess_exec", return_value=process) as mock_exec:
+        attach = ClaudeSessionAttach(session_id="session-a")
+        async for _ in attach.send_turn(TranscribedTurn(text="hello")):
+            pass
+    argv = mock_exec.call_args.args
+    assert "--bare" in argv
+
+
+async def test_missing_api_key_raises_before_spawning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--bare has no OAuth fallback -- an absent key is a certain failure,
+    so it must be caught before the subprocess is even spawned, not left to
+    run into the 120s reply timeout and surface as an opaque "did not reply
+    within 120s".
+    """
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with patch("asyncio.create_subprocess_exec") as mock_exec:
+        attach = ClaudeSessionAttach(session_id="session-a")
+        with pytest.raises(BareAuthMissingError, match="ANTHROPIC_API_KEY"):
+            async for _ in attach.send_turn(TranscribedTurn(text="hello")):
+                pass
+    mock_exec.assert_not_called()
 
 
 async def test_spawn_raises_the_stdout_line_limit() -> None:

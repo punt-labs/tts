@@ -41,3 +41,20 @@ def test_no_extra_still_returns_a_dict(monkeypatch: pytest.MonkeyPatch) -> None:
     env = claude_subprocess_env()
     assert isinstance(env, dict)
     assert "ANTHROPIC_API_KEY" not in env
+
+
+def test_keep_api_key_forwards_it_instead_of_stripping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """vox-36xc: --bare's opposite auth requirement -- the one call site
+    that needs the key present passes keep_api_key=True."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-a-real-key")
+    env = claude_subprocess_env(keep_api_key=True)
+    assert env["ANTHROPIC_API_KEY"] == "sk-ant-a-real-key"
+
+
+def test_keep_api_key_default_still_strips(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default must not change for every other claude-spawn call site."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-stale")
+    env = claude_subprocess_env()
+    assert "ANTHROPIC_API_KEY" not in env
