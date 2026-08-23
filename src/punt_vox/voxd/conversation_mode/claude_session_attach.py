@@ -43,6 +43,17 @@ _RELAY_ENV_VAR = "VOX_CALL_RELAY"
 # just a language-model round trip.
 _REPLY_TIMEOUT_S = 120.0
 
+# asyncio.create_subprocess_exec's default StreamReader line-buffer limit is
+# 64KB -- readline() (what `async for line in stdout` uses) raises ValueError
+# ("Separator is not found, and chunk exceed the limit") if a single line
+# exceeds it before finding a newline. --verbose mode emits richer, larger
+# per-line JSON payloads than non-verbose stream-json did, and a single line
+# carrying a substantial assistant reply can exceed 64KB on its own -- this
+# raised before any real reply content was ever collected. 10MB is generous
+# enough that no real single stream-json line should ever hit it, while still
+# bounding memory against a pathological line.
+_STDOUT_LINE_LIMIT = 10 * 1024 * 1024
+
 
 @final
 class ClaudeSessionAttach:
@@ -119,6 +130,16 @@ class ClaudeSessionAttach:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env={**os.environ, _RELAY_ENV_VAR: "1"},
+            # See _STDOUT_LINE_LIMIT: the default 64KB StreamReader line
+            # buffer is too small for --verbose's larger per-line stream-json
+            # payloads. Only stdout is read by line (readline() via `async
+            # for line in stdout`); stderr.read() reads to EOF, which is not
+            # limit-bounded (CPython's StreamReader.read() docstring: "not
+            # limited with limit, configured at stream creation"). Both
+            # streams share this one limit -- create_subprocess_exec applies
+            # it to every pipe it creates, not per-stream -- but only stdout
+            # can actually hit it.
+            limit=_STDOUT_LINE_LIMIT,
         )
         try:
             if process.stdin is None:

@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from punt_vox.voxd.conversation_mode import claude_session_attach
 from punt_vox.voxd.conversation_mode.claude_session_attach import ClaudeSessionAttach
 from punt_vox.voxd.conversation_mode.session_attach import SessionAttachError
 from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
@@ -107,6 +108,40 @@ async def test_spawn_argv_includes_verbose() -> None:
             pass
     argv = mock_exec.call_args.args
     assert "--verbose" in argv
+
+
+async def test_spawn_raises_the_stdout_line_limit() -> None:
+    """Regression: the default 64KB StreamReader line-buffer limit raised
+    ValueError ("Separator is not found, and chunk exceed the limit") on
+    readline() once --verbose's larger per-line payloads exceeded it,
+    before any real reply content was ever collected.
+    """
+    process = _fake_process([])
+    with patch("asyncio.create_subprocess_exec", return_value=process) as mock_exec:
+        attach = ClaudeSessionAttach(session_id="session-a")
+        async for _ in attach.send_turn(TranscribedTurn(text="hello")):
+            pass
+    expected_limit = claude_session_attach._STDOUT_LINE_LIMIT
+    assert mock_exec.call_args.kwargs["limit"] == expected_limit
+
+
+async def test_collect_reply_handles_a_line_larger_than_the_old_64kb_default() -> None:
+    """The real regression, exercised against a real ``asyncio.StreamReader``
+    (not the mocked process the other tests use) configured with the
+    production limit: a single stream-json line comfortably past the old
+    64KB default must still be read and collected, not raise.
+    """
+    huge_text = "x" * (100 * 1024)  # 100KB -- well past the old 64KB default
+    frame = json.dumps(
+        {"type": "assistant", "message": {"content": [{"text": huge_text}]}}
+    )
+    reader = asyncio.StreamReader(limit=claude_session_attach._STDOUT_LINE_LIMIT)
+    reader.feed_data(frame.encode() + b"\n")
+    reader.feed_eof()
+
+    attach = ClaudeSessionAttach(session_id="session-a")
+    text = await attach._collect_reply(reader)
+    assert text == huge_text
 
 
 async def test_verbose_system_frames_are_not_treated_as_reply_text() -> None:
