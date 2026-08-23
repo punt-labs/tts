@@ -1,6 +1,6 @@
 ---
 description: "Start, transfer, or stop a Conversation Mode call"
-argument-hint: "start --script <path> [--session <id>] | transfer [--session <id>] | stop"
+argument-hint: "start [--script <path>] [--session <id>] | transfer [--session <id>] | stop"
 allowed-tools: ["Bash(vox call:*)"]
 ---
 
@@ -8,18 +8,18 @@ allowed-tools: ["Bash(vox call:*)"]
 
 Conversation Mode: a live voice call between the human and this Claude Code
 session, mediated by `voxd`. Unlike `/music` and `/rec`, there is no
-`mic:call` MCP tool yet -- it is deferred to a follow-up mission (blocked on
-`src/punt_vox/server.py`, currently locked by another open mission). Every
-`/call` verb shells out to the `vox call` CLI instead.
+`mic:call` MCP tool yet -- every `/call` verb shells out to the `vox call`
+CLI instead.
 
 ## Usage
 
-- `/call start --script <path>` -- start a call, reading scripted turns from
-  a JSON Lines file (`{"text": ..., "confidence": ...}` per line). Live
-  microphone capture and the real ElevenLabs speech-recognition provider are
-  deferred alongside the `mic:call` MCP tool; this is the interim entry
-  point while those land.
-- `/call start --script <path> --session <id>` -- attach to a specific
+- `/call start` -- start a real call: real microphone capture, transcribed
+  by ElevenLabs. This is the primary way to place a call.
+- `/call start --script <path>` -- dev/test path: read scripted turns from a
+  JSON Lines file (`{"text": ..., "confidence": ...}` per line) instead of
+  the microphone -- no hardware, no ElevenLabs credentials, no network. For
+  demos and CI.
+- `/call start [--script <path>] --session <id>` -- attach to a specific
   session id instead of letting `vox call start` discover one. Required
   when more than one Claude Code session is active for this directory --
   `vox call start` refuses to guess (verified unsafe in
@@ -38,6 +38,11 @@ via the cross-process control file
 (`src/punt_vox/voxd/conversation_mode/call_control.py`).
 
 While a call is active, `plugin/hooks/call-lock.sh` blocks the human's own
-interactive `UserPromptSubmit` -- the call's own turns are relayed by
-`vox call start` itself, which sets `VOX_CALL_RELAY=1` on its own process so
-the lock never blocks its own traffic.
+interactive `UserPromptSubmit`, self-clearing if the holding process has
+died. The escape hatch is never blocked by its own lock: `/call stop` and
+`/call transfer` prompts pass the hook unconditionally, and the call's own
+turns -- relayed through a `claude -p --resume` subprocess
+(`src/punt_vox/voxd/conversation_mode/claude_session_attach.py`) -- carry
+`VOX_CALL_RELAY=1` in that subprocess's own environment, set by the process
+that spawns it, so the lock the call holds for the *human's* input never
+blocks its own traffic.

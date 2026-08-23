@@ -12,9 +12,9 @@ FR-19 requires callers to distrust a low-confidence result rather than act on
 it, which is why confidence rides on every :class:`TranscriptEvent`, not just
 the final one.
 
-Production backs this with an ElevenLabs-based implementation, deferred to a
-follow-up mission once ``src/punt_vox/providers/`` is unblocked (see
-``src/punt_vox/commands/call.py``'s module docstring). Tests inject a fake.
+Production backs this with
+:class:`~punt_vox.providers.elevenlabs_stt.ElevenLabsSTTProvider`. Tests
+inject a fake.
 """
 
 from __future__ import annotations

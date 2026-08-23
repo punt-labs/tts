@@ -17,9 +17,10 @@ class BargeIn:
     """FR-8: the barge-in detector fired; the agent's audio stops.
 
     Discharges any pending addendum on the same transition -- see
-    ``docs/conversation-mode-call-state.tex`` section 5. Barge-in detection
-    itself is out of scope for this slice (Slice 2a territory); this command
-    exists so the state machine's full operation set is executable now.
+    ``docs/conversation-mode-call-state.tex`` section 5. A separate barge-in
+    *detector* task drives this command; it does not yet exist, so this
+    command's own transition is exercised directly rather than through a
+    live detector until one is wired in.
     """
 
     def apply(self, state: CallState) -> None:
