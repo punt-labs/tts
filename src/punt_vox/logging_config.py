@@ -24,10 +24,12 @@ from __future__ import annotations
 import contextlib
 import logging
 import logging.config
+import sys
 
 from punt_vox.append_log import AtomicAppendLog, SinkHealth
 from punt_vox.config import ConfigStore
-from punt_vox.log_format import Role
+from punt_vox.log_append_handler import AppendLogHandler
+from punt_vox.log_format import LOG_DATE_FORMAT, LOG_FORMAT, Role
 from punt_vox.paths import log_dir as _paths_log_dir
 from punt_vox.private_state import PrivateState
 
@@ -36,6 +38,7 @@ __all__ = [
     "apply_log_level",
     "configure_client_logging",
     "configure_daemon_logging",
+    "configure_turn_timer_logging",
     "log_health",
     "reapply_client_log_level",
 ]
@@ -44,6 +47,10 @@ logger = logging.getLogger(__name__)
 
 _LOG_DIR = _paths_log_dir()
 _LOG_FILE = _LOG_DIR / "vox.log"
+
+# The one logger vox call start's turn-by-turn latency trace uses --
+# see configure_turn_timer_logging.
+_TURN_TIMER_LOGGER_NAME = "punt_vox.voxd.conversation_mode.turn_timer"
 
 _APPEND_FACTORY = "punt_vox.log_append_handler.AppendLogHandler.for_file"
 
@@ -89,6 +96,45 @@ def configure_client_logging(*, role: Role, verbose: bool = False) -> None:
     _tighten_client_tree()
     level = _resolve_level(verbose=verbose)
     logging.config.dictConfig(_config(name_prefix=f"client.{role}.", level=level))
+
+
+def configure_turn_timer_logging(*, echo_to_console: bool) -> None:
+    """Force ``vox call``'s turn-latency trace to DEBUG on ``vox.log``, always.
+
+    A scoped exception to "one shared handler at one shared level" (this
+    module's own docstring): every other logger's DEBUG output only reaches
+    ``vox.log`` when the process's own ``--verbose``/``log_level`` raises the
+    *shared* handler past INFO, which is right for routine debugging noise
+    but wrong for a live call's turn-by-turn latency -- Option D's per-turn
+    subprocess spawn and a long reply's real synthesis time are exactly the
+    two things worth a permanent, greppable record on *every* call, not only
+    the ones someone remembered to run with ``--verbose``.
+
+    A second :class:`AppendLogHandler` instance, bound to the same
+    ``vox.log`` through the same ``flock``-guarded :class:`AtomicAppendLog`,
+    attaches only to the turn-timer's own logger, with ``propagate`` turned
+    off -- so this logger's DEBUG records reach the file unconditionally
+    without also forcing every *other* module's DEBUG noise durable for the
+    call's duration (which raising the shared handler's level would do).
+    ``echo_to_console`` (``vox call start --verbose``) additionally attaches
+    a stream handler at the same level and format, so the identical records
+    also print live to the terminal -- the file is never affected by this
+    flag either way.
+    """
+    logger_ = logging.getLogger(_TURN_TIMER_LOGGER_NAME)
+    logger_.setLevel(logging.DEBUG)
+    logger_.propagate = False
+    logger_.handlers.clear()  # idempotent: safe to call more than once per process
+    logger_.addHandler(
+        AppendLogHandler.bind(
+            AtomicAppendLog(_LOG_FILE), name_prefix="client.cli.", level="DEBUG"
+        )
+    )
+    if echo_to_console:
+        console = logging.StreamHandler(sys.stdout)
+        console.setLevel(logging.DEBUG)
+        console.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
+        logger_.addHandler(console)
 
 
 def log_health() -> SinkHealth:
