@@ -79,16 +79,24 @@ class CallControl:
         except FileNotFoundError:
             return None
         try:
-            raw = AtomicFile(consuming_path).read()
-            if not raw:
-                return None
             try:
+                # UnicodeDecodeError (from AtomicFile.read's utf-8 decode, on
+                # a hand-edited or partially-overwritten file with invalid
+                # bytes) is a ValueError subclass, same family as
+                # json.JSONDecodeError -- both mean "this mailbox entry is
+                # not usable", not "the call ended". Read and parse share one
+                # try so a decode failure hits the same discard path a parse
+                # failure already does, instead of propagating to the
+                # call-ending boundary handler this method exists to spare.
+                raw = AtomicFile(consuming_path).read()
+                if not raw:
+                    return None
                 payload = json.loads(raw)
                 return ControlRequest(
                     kind=payload["kind"],
                     target_session_id=payload.get("target_session_id"),
                 )
-            except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            except (ValueError, KeyError, TypeError) as exc:
                 logger.warning(
                     "call.control request is unreadable, discarding: %s", exc
                 )

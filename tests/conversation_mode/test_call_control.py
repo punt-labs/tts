@@ -96,6 +96,26 @@ def test_consume_cleans_up_the_consuming_temp_file_even_on_corrupt_payload(
     assert not path.with_name(path.name + ".consuming").exists()
 
 
+def test_consume_treats_invalid_utf8_bytes_as_no_request(tmp_path: Path) -> None:
+    """A non-UTF-8 file must not raise UnicodeDecodeError past this boundary.
+
+    AtomicFile.read() decodes with ``encoding="utf-8"``, which raises
+    UnicodeDecodeError -- not json.JSONDecodeError/KeyError/TypeError -- on
+    invalid bytes. consume()'s own docstring promises a corrupt file is
+    "logged and reported as 'no request' rather than raised"; a hand-edited
+    or partially-overwritten file with invalid UTF-8 must honor that promise
+    too, not propagate to the call-ending boundary handler this method
+    exists to spare.
+    """
+    path = tmp_path / "call.control"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\xff\xfe\x00not valid utf-8")
+
+    control = CallControl(path)
+    assert control.consume() is None
+    assert not path.exists()
+
+
 def test_a_request_written_after_consume_is_not_lost(tmp_path: Path) -> None:
     """The rename-based claim must not leave the mailbox permanently stuck."""
     control = CallControl(tmp_path / "call.control")
