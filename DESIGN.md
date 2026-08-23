@@ -2920,3 +2920,183 @@ See `docs/conversation-mode-session-attach-adr.md` for the full
 investigation, the CLI evidence, and the explicit operator escalation
 (three decisions: confirm the mechanism, confirm the FR-4 reading it relies
 on, confirm the concurrent-resume spike as Slice 1b's first task).
+
+---
+
+## DES-065: DES-064's Per-Turn Subprocess Spawn — Confirmed Unworkable, Superseded
+
+**Status:** rejected, with real measurement. Supersedes DES-064's
+recommendation for the per-turn cadence specifically; does not reverse the
+underlying mechanism (a headless `claude -p`-family subprocess speaking
+stream-json is still the right shape — see DES-066). vox-gs9u.2 (Slice 1b)
+implemented DES-064 as designed and shipped it; this entry records what
+happened when it was driven by a real human, repeatedly, on 2026-08-23.
+
+### What was implemented
+
+DES-064's design exactly: `SessionDiscovery` finds a candidate session via
+`claude agents --json --cwd <path>`; `ClaudeSessionAttach._spawn` runs
+`claude -p --resume <id> --input-format stream-json --output-format
+stream-json --include-partial-messages --verbose` fresh, per human turn,
+writes one JSON user-message to its stdin, and reads streamed
+assistant-message deltas back. Real ElevenLabs STT and TTS, real
+`sounddevice`/PortAudio microphone capture, a real turn-detection state
+machine, cross-process lock files for `vox call start|stop|transfer` — all
+built and working. Five review rounds converged clean. This is not a
+report of broken code; the code does exactly what DES-064 asked for.
+
+### What broke, with numbers
+
+Live operator testing plus a 20-run repeatable benchmark
+(`.tmp/bench.sh`, not committed — script itself is throwaway, the numbers
+below are not) found:
+
+- **Per-turn wall clock: 13–25s median**, even against a session with zero
+  accumulated context. A fresh-session run's own `result` frame reported
+  `duration_api_ms: 2243` (2.24s, the real model call) against a 13.2s
+  external wall clock — the remaining ~10s is process spawn plus
+  bootstrap, external to the agent's own accounting entirely.
+- **The dominant cost is Claude Code's `SessionStart` hook cascade**,
+  re-paid on *every single turn* because a fresh subprocess is spawned per
+  turn: 9 hooks on a bare fresh session, 28+ on a session with real
+  history (`--resume` re-fires `SessionStart:resume` for every registered
+  plugin — this repo's own dev environment alone registers ~15).
+  `--bare` (Claude Code's own "skip hooks, LSP, plugin sync,
+  auto-memory..." minimal mode) eliminates the cascade entirely — verified
+  empirically, zero hook frames — but requires `ANTHROPIC_API_KEY`
+  explicitly; it does not support OAuth at all
+  (`claude --help`: "Anthropic auth is strictly ANTHROPIC_API_KEY or
+  apiKeyHelper via --settings"). Wiring it in is therefore not a free
+  win: it inverts the auth model DES-?? (the `078a841` fix, same session)
+  had just corrected the other direction, and ships as a real breaking
+  change — `vox call` stops working on an OAuth-only setup.
+- **`--resume` is itself a recurring source of fragility**, independent of
+  the hook cost: a stale `ANTHROPIC_API_KEY` in the parent shell silently
+  shadows the target session's real login and fails auth (fixed,
+  `078a841`); resuming a session that is concurrently busy (the
+  interactive terminal actively mid-turn — DES-064's own named "open
+  risk, not yet resolved") hangs until the reply timeout; a `--bare`
+  invocation against a genuinely idle session, with auth and hooks both
+  confirmed correct, still hit the full 120s timeout live with the
+  spawned process visibly alive and in I/O wait (`ps` showed 1.11s of CPU
+  time consumed across the whole wait) rather than crashed — consistent
+  with either real API-side slowness or a `--resume`-specific cold-load
+  cost on the target session's history that `--bare` does not address,
+  neither root-caused.
+- Net operator assessment, verbatim: **"It's never going to work."**
+  Spawning a fresh general-purpose CLI, with its full plugin/hook
+  ecosystem, once per conversational turn, is confirmed the wrong shape
+  for a live voice exchange — not a tuning problem.
+
+### What is retained
+
+`SessionAttach` (DES-064's own abstraction) is a `Protocol`; `CallSession`
+and everything above it depend on the interface, not on
+`ClaudeSessionAttach`'s implementation. Real mic capture, real STT, the
+turn-detection state machine, the call lock/control mechanism, the call's
+own lifecycle state machine, the Slice 2a playback-sink ordering work, and
+the turn-timer diagnostics infrastructure are all implementation-agnostic
+to what sits behind `SessionAttach` and are unaffected by this rejection —
+roughly 88% of Slice 1b's ~9,200-line diff by line count. The ~12% being
+discarded is exactly `claude_session_attach.py`, `claude_subprocess_env.py`,
+`session_discovery.py`, `session_attach.py`, and their tests — the part
+DES-064 itself flagged as swappable by naming it behind a `Protocol`.
+
+### What is not retained
+
+Do not build further on the per-turn-spawn cadence. No more timeout
+tuning, no more `--bare`/OAuth auth-model chasing, no more `--resume`
+concurrent-access workarounds. The mechanism needs to change shape, not
+receive another patch — see DES-066.
+
+---
+
+## DES-066: Persistent Call Agent, Held in `tmux` via `pi-tools`' `keep` Extension — Proposed, Untested
+
+**Status:** proposed, not yet spiked. This is a design direction, not a
+ratified decision — the concurrent-resume-style open risk DES-064 left
+unresolved was found the hard way (DES-065); this entry is written to be
+falsified quickly, not assumed correct.
+
+### Context
+
+DES-065's numbers all trace to one shape: a subprocess spawned fresh, per
+turn, that must cold-boot Claude Code's full plugin/hook ecosystem and
+(via `--resume`) load a specific existing session's history, every single
+exchange. The fix is not a faster spawn — it is not spawning per turn at
+all.
+
+### Proposed decision
+
+Spawn one agent process per *call*, not per turn, and keep it alive for
+the call's full duration via `tmux`, using the `keep` extension already
+built and shipped in `../pi-tools` (`keep_run` starts a long-running
+interactive process in a tmux session; `keep_send` writes one line to it;
+`keep_capture`/`keep_watch` read its current output, the latter with a
+wake policy; `keep_stop` tears it down) — the same mechanism `pi-tools`
+already uses to chain one `pi` instance to another. Concretely, per call:
+
+1. `keep_run` starts one `pi --mode rpc` (or `claude`, TBD by the spike
+   below) process in a dedicated tmux session at call start.
+2. Each human turn is `keep_send` (or the RPC-mode stdin protocol
+   directly, if driven from Python rather than through `pi-tools`' own
+   tool surface) — no new process, no re-paid bootstrap.
+3. The call agent does **not** resume the primary interactive session.
+   It starts fresh and receives a compact context snapshot (current
+   task, relevant files, recent conversation gist) as its opening
+   message — satisfying FR-4's actual intent ("carrying task context")
+   without inheriting `--resume`'s cold-load cost, concurrent-access
+   hazard, or auth-model coupling to the primary session's own login.
+4. The call agent operates **read-only against the codebase/project**
+   for the call's duration. It may update beads or other out-of-band
+   coordination state live (the restriction is repo/codebase file
+   writes specifically, not every side effect).
+5. At call end, the call agent's conversation is summarized and handed to
+   the primary session; the primary session is the only one that ever
+   applies repo/codebase writes, and only after the call, from that
+   summary.
+
+### Why `pi` over `claude` for the agent inside the tmux session
+
+Measured 2026-08-23: `pi --list-models` (loads config, model catalog,
+provider connections — no API call) completes in ~1.35s, versus Claude
+Code's ~10–20s of hook/plugin bootstrap for the equivalent no-op. `pi`'s
+own documented design principle is a minimal core that deliberately
+excludes MCP, sub-agents, permission popups, and background bash, pushing
+them to opt-in extensions — the inverse of Claude Code's always-on plugin
+ecosystem, which is precisely what DES-065 found costly. `pi --mode rpc
+--no-session` exposes exactly the `prompt` → `message_update` →
+`agent_end` event protocol this integration needs, natively, rather than
+repurposing a general interactive CLI's `-p` flag for it.
+
+### Known unknowns — this is why it is a spike, not a decision
+
+- **`pi --mode rpc` did not produce a reply in initial testing** —
+  accepted a prompt, echoed it back, then produced nothing further. Root
+  cause not found (plausibly an RPC framing or stdin-lifecycle issue,
+  analogous to DES-064's own subprocess wiring taking several rounds to
+  get right). This must be resolved and demonstrated working, end to end,
+  before anything is built on top of it.
+- **Read-only enforcement mechanism is undecided.** A permission-mode
+  flag, a sandboxed/read-only filesystem view, and tool-level restriction
+  at the harness are all candidates; none is chosen. A prompt instruction
+  alone is not a mechanism.
+- **The summarize-and-handoff mechanism is undecided.** Whether the
+  primary session picks up the summary via a file its next
+  `UserPromptSubmit` hook reads, an injected context block, or something
+  else, is not designed.
+- **Whether this design still satisfies FR-4** as originally read
+  (resuming the *literal* session) needs an explicit operator re-read,
+  since the call agent is now deliberately disconnected from the primary
+  session's live state by design, not by accident.
+
+### Next step
+
+A narrow spike: get `pi --mode rpc` (or `keep_run` + `keep_send` +
+`keep_capture` directly) to hold one process alive across two sequential
+turns and return a real reply to both, before any further design or
+implementation. This is exactly the kind of stateful-subsystem change this
+project's own workflow requires a Z spec for before implementation
+dispatches (call-agent lifecycle, context-injection, post-call summary
+handoff) — write that once the spike confirms the mechanism works at all,
+not before.
