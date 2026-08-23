@@ -8,11 +8,15 @@ class must never make that choice itself.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from punt_vox.voxd.conversation_mode import (
+    session_discovery as session_discovery_module,
+)
 from punt_vox.voxd.conversation_mode.session_discovery import (
     SessionCandidate,
     SessionDiscovery,
@@ -81,3 +85,50 @@ async def test_missing_binary_raises_session_discovery_error() -> None:
         discovery = SessionDiscovery()
         with pytest.raises(SessionDiscoveryError, match="not found on PATH"):
             await discovery.discover(Path("/repo"))
+
+
+async def test_spawn_strips_anthropic_api_key_from_the_subprocess_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: SessionDiscovery had the identical ANTHROPIC_API_KEY
+    vulnerability ClaudeSessionAttach's fix addressed, and it runs BEFORE
+    that fixed code path -- a stale key inherited here fails claude agents
+    --json's own auth the same way, before the call state machine, the
+    lock, or any user-facing feedback exists.
+    """
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-stale-org-key")
+    with patch(
+        "asyncio.create_subprocess_exec", return_value=_fake_process(b"[]")
+    ) as mock_exec:
+        discovery = SessionDiscovery()
+        await discovery.discover(Path("/repo"))
+    spawned_env = mock_exec.call_args.kwargs["env"]
+    assert "ANTHROPIC_API_KEY" not in spawned_env
+
+
+class _HangingProcess:
+    """A subprocess double whose ``communicate()`` never returns -- simulates
+    a `claude agents --json` stuck in the same auth-retry loop that
+    motivated the timeout in the first place."""
+
+    def __init__(self) -> None:
+        self.returncode: int | None = None
+        self.kill = MagicMock()
+        self.wait = AsyncMock()
+
+    async def communicate(self) -> tuple[bytes, bytes]:
+        await asyncio.sleep(10)
+        return (b"[]", b"")  # pragma: no cover -- the timeout fires first
+
+
+async def test_discover_times_out_and_kills_the_process() -> None:
+    process = _HangingProcess()
+    with (
+        patch("asyncio.create_subprocess_exec", return_value=process),
+        patch.object(session_discovery_module, "_DISCOVERY_TIMEOUT_S", 0.05),
+    ):
+        discovery = SessionDiscovery()
+        with pytest.raises(SessionDiscoveryError, match="did not finish within"):
+            await discovery.discover(Path("/repo"))
+    process.kill.assert_called_once()
+    process.wait.assert_awaited()

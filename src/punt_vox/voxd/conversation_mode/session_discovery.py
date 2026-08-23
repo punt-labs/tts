@@ -18,7 +18,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Self, cast, final
 
+from punt_vox.voxd.conversation_mode.claude_subprocess_env import claude_subprocess_env
+
 __all__ = ["SessionCandidate", "SessionDiscovery", "SessionDiscoveryError"]
+
+# Discovery is a single, fast "list active sessions" query -- nothing here
+# should ever involve real language-model work the way a turn's reply does,
+# so this is much shorter than ClaudeSessionAttach's _REPLY_TIMEOUT_S. Without
+# a bound at all, a claude subprocess stuck in the same auth-retry loop
+# ClaudeSessionAttach's ANTHROPIC_API_KEY fix addresses would hang vox call
+# start indefinitely before the call state machine, the lock, or any
+# user-facing feedback exists -- no log line, no error, just nothing.
+_DISCOVERY_TIMEOUT_S = 20.0
 
 
 class SessionDiscoveryError(RuntimeError):
@@ -68,6 +79,11 @@ class SessionDiscovery:
                 str(cwd),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                # See claude_subprocess_env's docstring: a stale
+                # ANTHROPIC_API_KEY in the parent environment takes
+                # precedence over the human's own claude.ai login and fails
+                # auth, the same defect ClaudeSessionAttach had.
+                env=claude_subprocess_env(),
             )
         except FileNotFoundError as exc:
             # Every other failure mode in this class raises
@@ -77,7 +93,23 @@ class SessionDiscovery:
             # instead.
             msg = f"{self._claude_bin} not found on PATH"
             raise SessionDiscoveryError(msg) from exc
-        stdout, stderr = await process.communicate()
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=_DISCOVERY_TIMEOUT_S
+            )
+        except TimeoutError:
+            # Discovery runs before the call state machine, the lock, or
+            # any user-facing feedback exists -- an unbounded hang here is
+            # silent: no log line, no error, nothing on the terminal. Kill
+            # and reap so a stuck `claude agents --json` doesn't leak,
+            # matching ClaudeSessionAttach's kill+reap discipline.
+            process.kill()
+            await process.wait()
+            msg = (
+                f"{self._claude_bin} agents --json --cwd {cwd} did not "
+                f"finish within {_DISCOVERY_TIMEOUT_S:.0f}s"
+            )
+            raise SessionDiscoveryError(msg) from None
         if process.returncode != 0:
             msg = (
                 f"{self._claude_bin} agents --json --cwd {cwd} exited "
