@@ -3156,3 +3156,36 @@ the simpler and more directly analogous fit to the mic/STT/turn-detection
 layers `CallSession` already owns, without a `tmux`/`pi-tools` runtime
 dependency added to vox's own `pyproject.toml`. Decide explicitly rather
 than defaulting to the `pi-tools` mechanism because it existed first.
+
+### Two more open unknowns closed — 2026-08-23, same-session follow-up spikes
+
+The operator's own framing narrowed the read-only requirement before this
+was spiked further: the call agent does not need to avoid colliding with
+the primary interactive session's own state (they are already
+disconnected by this design, per the "Proposed decision" above) — the
+only real risk is the call agent writing to *repo files* while a human
+might be editing the same tree through the primary session. That is a
+much smaller problem than a full sandbox.
+
+- **Read-only enforcement, resolved**: `pi` has a native CLI tool
+  allowlist, confirmed via context7 (`/websites/pi_dev`), not guessed --
+  `--tools read,grep,find,ls` (the CLI form of the SDK's
+  `tools: [...]` config). Verified live: prompted the agent to write a
+  probe file with only `--tools read,grep,find,ls` set; it never invoked
+  a write tool at all (no `tool_execution_start` for one), and the file
+  never appeared on disk. No sandboxed filesystem, no permission-mode
+  plumbing — one flag, verified working.
+- **Real tool use at real latency, confirmed**: re-ran the two-turn
+  liveness spike with actual file-read questions against this repo
+  (`--no-extensions`, no other change) instead of canned "reply with
+  exactly X" prompts. Turn one (cold, includes a real file-read tool
+  call) reached first text at t+6.8s and completed at t+7.0s; turn two
+  (warm) completed 4.3s later. This is the persistence win holding under
+  real work, not just an echo test -- still an order of magnitude under
+  DES-065's 13-25s per-turn-spawn median, which did zero tool use for
+  that number.
+
+Both were run before any further design/implementation investment, per
+the standing instruction to spike first rather than build a day's worth
+of code on an unverified mechanism (the same failure mode DES-065 itself
+was the postmortem for).
