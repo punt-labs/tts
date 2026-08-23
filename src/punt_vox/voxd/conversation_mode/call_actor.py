@@ -16,6 +16,7 @@ structurally impossible to violate rather than merely stated.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Self, final
 
@@ -24,6 +25,8 @@ from punt_vox.voxd.conversation_mode.mode import Detector, Mode
 
 if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.call_command import CallCommand
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["CallActor"]
 
@@ -78,10 +81,10 @@ class CallActor:
         task) -- they enqueue and return immediately, never applying a
         transition themselves. A caller that is *itself* already the sole
         serialized driver (no concurrent producer to guard against, e.g.
-        :class:`~.call_session.CallSession` in this slice, which has no
-        detector tasks yet) should call :meth:`apply` directly instead;
-        routing through the queue with nothing draining it would simply
-        never take effect.
+        :class:`~.call_session.CallSession`, which drives chunks through a
+        single sequential loop with no detector tasks of its own) should
+        call :meth:`apply` directly instead; routing through the queue with
+        nothing draining it would simply never take effect.
         """
         await self._queue.put(command)
 
@@ -110,9 +113,25 @@ class CallActor:
         for the distinction). :meth:`run` calls this for each command it
         dequeues; it is also the direct entry point for a sequential caller
         with no concurrent producer to guard against.
+
+        One observer's exception must not stop the others from running, nor
+        propagate into the caller's control flow (a caller applying a
+        command has already committed the state transition; an observer
+        failing to react to it -- speaking a cue, draining a buffer -- is
+        that observer's problem, not a reason to unwind the call). Each is
+        run in its own ``try``/``except`` and a failure is logged, not
+        raised.
         """
         before = self._state.mode
         command.apply(self._state)
         after = self._state.mode
         for observer in self._observers:
-            observer(before, after)
+            try:
+                observer(before, after)
+            except Exception:
+                logger.exception(
+                    "call transition observer %r raised on %s -> %s",
+                    observer,
+                    before.name,
+                    after.name,
+                )

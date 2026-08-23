@@ -3,12 +3,12 @@
 Per the ADR's option D: one ``claude -p --resume`` subprocess per turn,
 writing one JSON user-message to stdin and reading a stream-json reply from
 stdout. These tests never spawn a real ``claude`` process -- the live
-concurrent-resume-safety spike the ADR calls for was run separately, before
-this mission's operator ratification (per this mission's contract context).
+concurrent-resume-safety spike the ADR calls for was run separately.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -29,7 +29,9 @@ def _fake_process(stdout_lines: list[bytes], returncode: int = 0) -> AsyncMock:
     process.stdin.write = _discard
     process.stdin.close = MagicMock()
     process.stdout = _AsyncLineIterator(stdout_lines)
-    process.communicate.return_value = (b"", b"")
+    process.stderr = AsyncMock()
+    process.stderr.read = AsyncMock(return_value=b"")
+    process.wait = AsyncMock(return_value=returncode)
     process.returncode = returncode
     return process
 
@@ -70,7 +72,7 @@ async def test_send_turn_collects_text_deltas_into_one_final_chunk() -> None:
 
 async def test_nonzero_exit_raises_session_attach_error() -> None:
     process = _fake_process([], returncode=1)
-    process.communicate.return_value = (b"", b"agent session ended abnormally")
+    process.stderr.read = AsyncMock(return_value=b"agent session ended abnormally")
     with patch("asyncio.create_subprocess_exec", return_value=process):
         attach = ClaudeSessionAttach(session_id="session-a")
         with pytest.raises(SessionAttachError, match="agent session ended abnormally"):
@@ -98,3 +100,44 @@ async def test_writes_the_turn_as_a_user_message_to_stdin() -> None:
     (payload,) = written
     assert b'"role": "user"' in payload
     assert b"turn on the lights" in payload
+
+
+class _HangingLineIterator:
+    """Never yields a line -- simulates a stalled subprocess for the timeout test."""
+
+    def __aiter__(self) -> _HangingLineIterator:
+        return self
+
+    async def __anext__(self) -> bytes:
+        await asyncio.sleep(10)
+        raise StopAsyncIteration  # pragma: no cover -- the timeout fires first
+
+
+async def test_stalled_reply_times_out_and_kills_the_process() -> None:
+    process = _fake_process([])
+    process.stdout = _HangingLineIterator()
+    process.kill = MagicMock()
+    with (
+        patch("asyncio.create_subprocess_exec", return_value=process),
+        patch(
+            "punt_vox.voxd.conversation_mode.claude_session_attach._REPLY_TIMEOUT_S",
+            0.05,
+        ),
+    ):
+        attach = ClaudeSessionAttach(session_id="session-a")
+        with pytest.raises(SessionAttachError, match="did not reply within"):
+            async for _ in attach.send_turn(TranscribedTurn(text="hello")):
+                pass
+    process.kill.assert_called_once()
+    process.wait.assert_awaited()
+
+
+async def test_stderr_is_drained_alongside_stdout() -> None:
+    """Regression: stdout-then-stderr sequencing risks a pipe deadlock."""
+    process = _fake_process([])
+    process.stderr.read = AsyncMock(return_value=b"some diagnostic noise")
+    with patch("asyncio.create_subprocess_exec", return_value=process):
+        attach = ClaudeSessionAttach(session_id="session-a")
+        async for _ in attach.send_turn(TranscribedTurn(text="hello")):
+            pass
+    process.stderr.read.assert_awaited_once()

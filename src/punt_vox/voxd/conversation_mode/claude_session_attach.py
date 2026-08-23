@@ -5,13 +5,11 @@ ratified by the operator: for each human turn, spawn ``claude -p --resume
 <id> --input-format stream-json --output-format stream-json
 --include-partial-messages``, write one JSON user-message object to its
 stdin, and read the stream of JSON assistant-message-delta objects from
-stdout. This slice speaks the reply as one block (sentence-streamed
-synthesis is Slice 2a+ territory per the epic's context), so this
-implementation collects every delta and yields exactly one final
-:class:`~.reply.ReplyChunk` rather than one per delta -- FR-11's
-first-complete-portion requirement is satisfied by the underlying subprocess
-still streaming; this class simply does not yet act on each delta as it
-arrives.
+stdout. The reply is spoken as one block rather than one utterance per
+delta -- FR-11's first-complete-portion requirement is satisfied by the
+underlying subprocess still streaming; sentence-streamed synthesis (acting on
+each delta as it arrives) is a distinct, larger change to this class's
+contract with :class:`~.call_session.CallSession`, not attempted here.
 """
 
 from __future__ import annotations
@@ -36,6 +34,14 @@ __all__ = ["ClaudeSessionAttach"]
 # UserPromptSubmit hooks, its own turn must never be blocked by the lock
 # the outer call already holds for the *human's* interactive input.
 _RELAY_ENV_VAR = "VOX_CALL_RELAY"
+
+# A ceiling on how long one turn's reply may take. Without one, a stalled
+# subprocess (network hang, a tool call that never returns) leaves the call
+# waiting forever with no signal that anything is wrong -- distinct from a
+# clean exit with a nonzero return code, which already raises. Generous
+# because a genuine agent turn can involve tool calls and real work, not
+# just a language-model round trip.
+_REPLY_TIMEOUT_S = 120.0
 
 
 @final
@@ -68,8 +74,8 @@ class ClaudeSessionAttach:
             stderr=asyncio.subprocess.PIPE,
             env={**os.environ, _RELAY_ENV_VAR: "1"},
         )
-        if process.stdin is None or process.stdout is None:
-            msg = f"{self._claude_bin} subprocess has no stdin/stdout pipe"
+        if process.stdin is None or process.stdout is None or process.stderr is None:
+            msg = f"{self._claude_bin} subprocess has no stdin/stdout/stderr pipe"
             raise SessionAttachError(msg)
 
         user_message = {
@@ -80,8 +86,33 @@ class ClaudeSessionAttach:
         await process.stdin.drain()
         process.stdin.close()
 
-        text = await self._collect_reply(process.stdout)
-        _, stderr = await process.communicate()
+        # stdout and stderr are read concurrently, not stdout-to-EOF then
+        # stderr: ``claude -p`` is not quiet on stderr, and reading stdout to
+        # completion first risks the classic pipe deadlock -- if the child
+        # writes more than the OS pipe buffer to stderr before it finishes
+        # stdout, the child blocks on that write, stdout stalls waiting for
+        # the child, and this coroutine waits on stdout forever with the
+        # call's ``UserPromptSubmit`` lock still held. A bounded timeout
+        # guards the whole exchange: a stalled subprocess (a hung tool call,
+        # a network wedge) otherwise leaves the call waiting with no signal
+        # anything is wrong.
+        try:
+            text, stderr = await asyncio.wait_for(
+                asyncio.gather(
+                    self._collect_reply(process.stdout), process.stderr.read()
+                ),
+                timeout=_REPLY_TIMEOUT_S,
+            )
+        except TimeoutError:
+            process.kill()
+            await process.wait()
+            msg = (
+                f"{self._claude_bin} -p --resume {self._session_id} did not "
+                f"reply within {_REPLY_TIMEOUT_S:.0f}s"
+            )
+            raise SessionAttachError(msg) from None
+
+        await process.wait()
         if process.returncode != 0:
             msg = (
                 f"{self._claude_bin} -p --resume {self._session_id} exited "

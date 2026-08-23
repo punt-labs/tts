@@ -29,6 +29,7 @@ shared between both paths, unchanged by which one is chosen.
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Self, final
 
@@ -39,10 +40,11 @@ from punt_vox.commands.call_scripted import ScriptedSTTProvider, ScriptedTurn
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_repo_root
 from punt_vox.providers.elevenlabs_stt import ElevenLabsSTTProvider
 from punt_vox.voxd.conversation_mode.call_control import CallControl
-from punt_vox.voxd.conversation_mode.call_lock import CallLock
+from punt_vox.voxd.conversation_mode.call_lock import CallLock, CallLockActiveError
 from punt_vox.voxd.conversation_mode.call_session import CallSession, SpeakFn
 from punt_vox.voxd.conversation_mode.claude_session_attach import ClaudeSessionAttach
 from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
+from punt_vox.voxd.conversation_mode.mode import Mode
 from punt_vox.voxd.conversation_mode.session_discovery import SessionDiscovery
 from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
 
@@ -50,6 +52,8 @@ if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.session_attach import SessionAttach
 
 __all__ = ["build_call_app"]
+
+logger = logging.getLogger(__name__)
 
 # FR-1's "a few seconds of 'say something'" calibration step, for the live
 # path: how long to sample ambient microphone audio before the call opens
@@ -159,21 +163,43 @@ class CallCli:
         """Dispatch to the scripted or live path, per whether *script* is set."""
         client = VoxClientSync()
 
-        def speak(text: str) -> None:
-            # Discards SynthesizeResult -- SpeakFn's contract is "spoken", not "the
-            # daemon's synthesis metadata", and a call orchestrator has no use for it.
-            client.synthesize(text)
+        async def speak(text: str) -> None:
+            # asyncio.to_thread, not a bare call: VoxClientSync.synthesize blocks
+            # its calling thread for the full round trip to the daemon, and this
+            # runs on the call's single event loop -- a blocking call here would
+            # stall audio capture and control-request handling for as long as
+            # synthesis takes. Discards SynthesizeResult -- SpeakFn's contract is
+            # "spoken", not "the daemon's synthesis metadata", and a call
+            # orchestrator has no use for it.
+            await asyncio.to_thread(client.synthesize, text)
 
         lock = CallLock(self._lock_dir() / "call.lock")
         control = CallControl(self._lock_dir() / "call.control")
         session_attach = await self._resolve_session_attach(Path.cwd(), session_id)
 
-        lock.acquire("conversation mode call active")
+        try:
+            lock.acquire("conversation mode call active")
+        except CallLockActiveError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+
         try:
             if script is not None:
                 await self._run_scripted(script, session_attach, speak, control)
             else:
                 await self._run_live(session_attach, speak, control)
+        except Exception as exc:
+            # System boundary (PY-EH-6): the CLI entry point for a live call.
+            # Without this, a provider fault, a subprocess failure, or a mic
+            # device-open error dies as a bare traceback with total silence to
+            # the human on the other end of the call -- the terminal is not
+            # where they are looking. Logs the full exception for diagnosis,
+            # speaks a short summary, then re-raises so the process still
+            # exits non-zero and the traceback remains available.
+            logger.exception("call ended unexpectedly")
+            await speak(
+                f"The call ended unexpectedly: {exc}. Check the terminal for details."
+            )
+            raise
         finally:
             lock.release()
 
@@ -194,7 +220,7 @@ class CallCli:
         )
         await session.start()
         for turn in turns:
-            if await self._apply_control(control):
+            if await self._apply_control(control, session):
                 break
             for chunk in turn.synthetic_chunks():
                 await session.process_chunk(chunk)
@@ -216,26 +242,40 @@ class CallCli:
             session_attach=session_attach,
             speak=speak,
         )
+
+        def _drain_self_captured_speech(before: Mode, after: Mode) -> None:
+            # The microphone keeps capturing while the agent's reply plays,
+            # and picks its own voice back up. CallSession.process_chunk
+            # already refuses to feed those chunks to the turn detector
+            # while speaking, but they still sit queued in mic_source's own
+            # buffer; without draining them here, the *next* chunks pulled
+            # once listening resumes would be that backlog, not fresh room
+            # audio.
+            if before is Mode.SPEAKING and after is Mode.LISTENING:
+                mic_source.drain_pending()
+
+        session.actor.on_transition(_drain_self_captured_speech)
+
         await session.start()
         chunks = mic_source.chunks()
         try:
             async for chunk in chunks:
-                if await self._apply_control(control):
+                if await self._apply_control(control, session):
                     break
                 await session.process_chunk(chunk)
         finally:
             await chunks.aclose()
         await session.hangup()
 
-    async def _apply_control(self, control: CallControl) -> bool:
+    async def _apply_control(self, control: CallControl, session: CallSession) -> bool:
         """Consume one pending control request; return whether the loop should stop.
 
         Shared by both drive loops so a stop/transfer request is handled
         identically whether the audio is scripted or live. A transfer
-        request re-resolves the session attach but -- like the pre-refactor
-        code this replaces -- does not yet feed the new attach back into the
-        already-running :class:`CallSession`; wiring that through is future
-        work, tracked outside this mission's scope.
+        request re-resolves the session attach and feeds it into the
+        already-running *session* via
+        :meth:`~.call_session.CallSession.replace_session_attach`, so
+        ``/call transfer`` redirects the call without ending it.
         """
         request = control.consume()
         if request is None:
@@ -243,7 +283,10 @@ class CallCli:
         if request.kind == "stop":
             return True
         if request.kind == "transfer":
-            await self._resolve_session_attach(Path.cwd(), request.target_session_id)
+            new_attach = await self._resolve_session_attach(
+                Path.cwd(), request.target_session_id
+            )
+            session.replace_session_attach(new_attach)
         return False
 
 

@@ -21,12 +21,14 @@ dependency an SDK type, not another provider's private helpers.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import os
 from io import BytesIO
 from typing import TYPE_CHECKING, Self, final
 
+from elevenlabs.client import ElevenLabs
 from elevenlabs.core import ApiError
 from elevenlabs.types import (
     SpeechToTextChunkResponseModel,
@@ -40,8 +42,6 @@ from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
-
-    from elevenlabs.client import ElevenLabs
 
 logger = logging.getLogger(__name__)
 
@@ -83,12 +83,7 @@ class ElevenLabsSTTProvider:
     ) -> Self:
         self = super().__new__(cls)
         self._model = model or _DEFAULT_MODEL
-        if client is not None:
-            self._client = client
-        else:
-            from elevenlabs.client import ElevenLabs
-
-            self._client = ElevenLabs()
+        self._client = client if client is not None else ElevenLabs()
         return self
 
     @property
@@ -108,14 +103,20 @@ class ElevenLabsSTTProvider:
         pcm = bytearray()
         async for chunk in chunks:
             pcm += chunk.pcm
-        yield self._convert(bytes(pcm))
+        yield await self._convert(bytes(pcm))
 
-    def _convert(self, pcm: bytes) -> TranscriptEvent:
+    async def _convert(self, pcm: bytes) -> TranscriptEvent:
         if not pcm:
             return TranscriptEvent(text="", confidence=0.0, is_final=True)
 
         try:
-            response = self._client.speech_to_text.convert(
+            # asyncio.to_thread, not a bare call: the SDK's convert() is a
+            # synchronous, blocking HTTP call, and this method runs on the
+            # call's single event loop -- a direct call here would stall
+            # audio capture and control-request handling for the full
+            # network round trip.
+            response = await asyncio.to_thread(
+                self._client.speech_to_text.convert,
                 model_id=self._model,
                 file=("turn.raw", BytesIO(pcm), "application/octet-stream"),
                 file_format=_FILE_FORMAT,

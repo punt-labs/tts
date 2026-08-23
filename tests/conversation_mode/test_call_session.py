@@ -2,10 +2,9 @@
 
 Drives the real :class:`TurnDetector` and :class:`CallActor` against
 :class:`FakeSTTProvider` and :class:`FakeSessionAttach` -- no daemon, no
-subprocess, no audio hardware -- exercising the full round trip this slice's
-mission exists to prove: a closed turn produces exactly one transcribed turn
-sent through session-attach, and the reply is spoken through the injected
-``speak`` callable.
+subprocess, no audio hardware -- exercising the full round trip: a closed
+turn produces exactly one transcribed turn sent through session-attach, and
+the reply is spoken through the injected ``speak`` callable.
 """
 
 from __future__ import annotations
@@ -18,7 +17,11 @@ from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.call_session import CallSession
 from punt_vox.voxd.conversation_mode.mode import Mode
 from punt_vox.voxd.conversation_mode.reply import ReplyChunk
+from punt_vox.voxd.conversation_mode.reply_begins import ReplyBegins
+from punt_vox.voxd.conversation_mode.reply_ends import ReplyEnds
 from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
+from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
+from punt_vox.voxd.conversation_mode.turn_detected import TurnDetected
 from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
 
 _CHUNK_S = 0.02
@@ -48,8 +51,12 @@ class _Recorder:
     def __init__(self) -> None:
         self.said: list[str] = []
 
-    def __call__(self, text: str) -> None:
+    async def __call__(self, text: str) -> None:
         self.said.append(text)
+
+
+async def _noop_speak(text: str) -> None:
+    return None
 
 
 async def _feed_one_turn(session: CallSession) -> None:
@@ -105,12 +112,32 @@ async def test_low_confidence_transcript_asks_the_human_to_repeat() -> None:
     assert session.actor.mode is Mode.LISTENING
 
 
+async def test_stt_provider_yielding_no_events_asks_the_human_to_repeat() -> None:
+    """FR-19: silence from the provider is exactly as ambiguous as a low score."""
+    speak = _Recorder()
+    stt = FakeSTTProvider([])  # yields nothing at all
+    session_attach = FakeSessionAttach()
+    session = CallSession(
+        turn_detector=_detector(),
+        stt_provider=stt,
+        session_attach=session_attach,
+        speak=speak,
+    )
+
+    await session.start()
+    await _feed_one_turn(session)
+
+    assert session_attach.turns() == []
+    assert any("repeat" in phrase.lower() for phrase in speak.said)
+    assert session.actor.mode is Mode.LISTENING
+
+
 async def test_hangup_returns_to_idle() -> None:
     session = CallSession(
         turn_detector=_detector(),
         stt_provider=FakeSTTProvider([]),
         session_attach=FakeSessionAttach(),
-        speak=lambda text: None,
+        speak=_noop_speak,
     )
     await session.start()
     await session.hangup()
@@ -122,7 +149,7 @@ async def test_timeout_from_listening_returns_to_idle() -> None:
         turn_detector=_detector(),
         stt_provider=FakeSTTProvider([]),
         session_attach=FakeSessionAttach(),
-        speak=lambda text: None,
+        speak=_noop_speak,
     )
     await session.start()
     await session.timeout()
@@ -140,3 +167,86 @@ async def test_start_speaks_the_listening_cue() -> None:
     )
     await session.start()
     assert speak.said == ["Listening."]
+
+
+async def test_replace_session_attach_redirects_subsequent_turns() -> None:
+    """``/call transfer`` re-attaches a live call without ending it."""
+    speak = _Recorder()
+    stt = FakeSTTProvider(
+        [TranscriptEvent(text="hello", confidence=0.95, is_final=True)]
+    )
+    old_attach = FakeSessionAttach(
+        (ScriptedChunk(ReplyChunk(text="old reply", is_final=True)),)
+    )
+    new_attach = FakeSessionAttach(
+        (ScriptedChunk(ReplyChunk(text="new reply", is_final=True)),)
+    )
+    session = CallSession(
+        turn_detector=_detector(),
+        stt_provider=stt,
+        session_attach=old_attach,
+        speak=speak,
+    )
+    await session.start()
+    await _feed_one_turn(session)
+
+    session.replace_session_attach(new_attach)
+    await _feed_one_turn(session)
+
+    assert old_attach.turns() == ["hello"]
+    assert new_attach.turns() == ["hello"]
+    assert "old reply" in speak.said
+    assert "new reply" in speak.said
+
+
+class TestProcessChunkGatedOnMode:
+    """FR-8/mode.py's ``activeDetector`` axiom: only ``listening``/``waiting``
+    feed the turn detector -- never ``speaking``, where the mic would be
+    picking up the agent's own voice.
+    """
+
+    async def test_a_full_turn_s_worth_of_chunks_while_speaking_is_ignored(
+        self,
+    ) -> None:
+        speak = _Recorder()
+        stt = FakeSTTProvider(
+            [TranscriptEvent(text="ignored", confidence=0.95, is_final=True)]
+        )
+        session_attach = FakeSessionAttach()
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=stt,
+            session_attach=session_attach,
+            speak=speak,
+        )
+        await session.start()
+        session.actor.apply(TurnDetected(turn=TranscribedTurn(text="prior turn")))
+        session.actor.apply(ReplyBegins())
+        assert session.actor.mode is Mode.SPEAKING
+
+        await _feed_one_turn(session)
+
+        assert session_attach.turns() == []
+
+    async def test_turn_detection_resumes_correctly_after_speaking_ends(self) -> None:
+        speak = _Recorder()
+        stt = FakeSTTProvider(
+            [TranscriptEvent(text="hello", confidence=0.95, is_final=True)]
+        )
+        session_attach = FakeSessionAttach()
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=stt,
+            session_attach=session_attach,
+            speak=speak,
+        )
+        await session.start()
+        session.actor.apply(TurnDetected(turn=TranscribedTurn(text="prior turn")))
+        session.actor.apply(ReplyBegins())
+        await _feed_one_turn(session)  # ignored: mode is speaking
+        session.actor.apply(ReplyEnds())
+        assert session.actor.mode is Mode.LISTENING
+
+        await _feed_one_turn(session)
+
+        assert session_attach.turns() == ["hello"]

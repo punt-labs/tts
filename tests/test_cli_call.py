@@ -132,6 +132,7 @@ class _FakeLiveMicSource:
     def __init__(self, calibration: list[AudioChunk], live: list[AudioChunk]) -> None:
         self._calibration = calibration
         self._live = live
+        self.drain_calls = 0
 
     async def capture_seconds(self, _duration_s: float) -> list[AudioChunk]:
         return self._calibration
@@ -139,6 +140,10 @@ class _FakeLiveMicSource:
     async def chunks(self) -> AsyncIterator[AudioChunk]:
         for chunk in self._live:
             yield chunk
+
+    def drain_pending(self) -> int:
+        self.drain_calls += 1
+        return 0
 
 
 class _FakeLiveSTT:
