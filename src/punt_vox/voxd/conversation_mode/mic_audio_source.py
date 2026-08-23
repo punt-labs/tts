@@ -93,6 +93,7 @@ class MicAudioSource:
         "_channels",
         "_chunk_s",
         "_input_stream_factory",
+        "_listening",
         "_queue",
         "_sample_rate_hz",
     )
@@ -105,6 +106,9 @@ class MicAudioSource:
     # :meth:`chunks`) solely so :meth:`drain_pending` can reach it from
     # outside the generator.
     _queue: asyncio.Queue[bytes] | None
+    # Checked inside the PortAudio callback itself, before a chunk is ever
+    # queued -- see :meth:`set_listening`.
+    _listening: bool
 
     def __new__(
         cls,
@@ -121,7 +125,25 @@ class MicAudioSource:
             input_stream_factory or _default_input_stream_factory
         )
         self._queue = None
+        self._listening = True
         return self
+
+    def set_listening(self, *, listening: bool) -> None:
+        """Gate capture at the source: a caller sets this ``False`` while it
+        does not want captured audio queued at all (most importantly, while
+        the call's own reply is likely still playing through the speakers).
+
+        Checked inside the PortAudio callback itself, before a chunk is ever
+        handed to :meth:`asyncio.Queue.put_nowait` -- a post-hoc
+        :meth:`drain_pending` can only clear what already made it into the
+        queue; it cannot un-fire a callback invocation that already queued a
+        chunk. Gating at the source means there is nothing to retroactively
+        clean up for whatever this flag was ``False`` for. Thread-safe to
+        set: it is a single ``bool`` attribute read by the callback thread
+        and written by the event-loop thread, and CPython attribute
+        assignment is atomic under the GIL.
+        """
+        self._listening = listening
 
     async def chunks(self) -> AsyncGenerator[AudioChunk]:
         """Capture indefinitely, yielding one :class:`AudioChunk` per block.
@@ -145,6 +167,11 @@ class MicAudioSource:
         ) -> None:
             if status.input_overflow:
                 logger.warning("mic capture: input overflow (callback ran late)")
+            if not self._listening:
+                # Dropped here, not queued and drained later: a chunk that
+                # already reached the queue cannot be un-queued, but one
+                # that never reaches it needs no cleanup at all.
+                return
             loop.call_soon_threadsafe(queue.put_nowait, bytes(indata))
 
         stream = self._input_stream_factory(

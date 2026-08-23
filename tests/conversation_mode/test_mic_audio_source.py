@@ -189,6 +189,60 @@ class TestMicAudioSourceDrainPending:
         await gen.aclose()
 
 
+class TestMicAudioSourceSetListening:
+    async def test_defaults_to_listening(self) -> None:
+        created: list[FakeInputStream] = []
+        source = MicAudioSource(input_stream_factory=fake_input_stream_factory(created))
+        gen = source.chunks()
+        task = asyncio.ensure_future(gen.__anext__())
+        await _advance_to_first_await()
+        created[0].feed(b"\x01\x00")
+        chunk = await task
+        assert chunk.pcm == b"\x01\x00"
+        await gen.aclose()
+
+    async def test_chunks_are_dropped_at_the_source_while_not_listening(self) -> None:
+        created: list[FakeInputStream] = []
+        source = MicAudioSource(input_stream_factory=fake_input_stream_factory(created))
+        gen = source.chunks()
+        task = asyncio.ensure_future(gen.__anext__())
+        await _advance_to_first_await()
+
+        source.set_listening(listening=False)
+        created[0].feed(b"\x01\x00")
+        await _advance_to_first_await()
+
+        # drain_pending proves nothing reached the queue -- not merely that
+        # the pending anext() hasn't resolved yet.
+        assert source.drain_pending() == 0
+
+        source.set_listening(listening=True)
+        created[0].feed(b"\x02\x00")
+        chunk = await task
+        assert chunk.pcm == b"\x02\x00"
+        await gen.aclose()
+
+    async def test_multiple_dropped_chunks_leave_no_backlog(self) -> None:
+        created: list[FakeInputStream] = []
+        source = MicAudioSource(input_stream_factory=fake_input_stream_factory(created))
+        gen = source.chunks()
+        task = asyncio.ensure_future(gen.__anext__())
+        await _advance_to_first_await()
+
+        source.set_listening(listening=False)
+        created[0].feed(b"\x01\x00")
+        created[0].feed(b"\x02\x00")
+        created[0].feed(b"\x03\x00")
+        await _advance_to_first_await()
+        assert source.drain_pending() == 0
+
+        source.set_listening(listening=True)
+        created[0].feed(b"\x04\x00")
+        chunk = await task
+        assert chunk.pcm == b"\x04\x00"
+        await gen.aclose()
+
+
 class TestMicAudioSourceCaptureSeconds:
     async def test_captures_exactly_the_requested_chunk_count(self) -> None:
         created: list[FakeInputStream] = []
