@@ -5,7 +5,7 @@
     "avg_params": 0.0,
     "max_complexity": 0.0,
     "avg_complexity": 0.0,
-    "module_size": 35.0,
+    "module_size": 37.0,
     "classes_per_module": 0.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
@@ -1144,17 +1144,17 @@
     "public_attr_violations": 0.0
   },
   "src/punt_vox/paths.py": {
-    "avg_complexity": 1.38,
-    "avg_params": 0.12,
-    "class_to_func_ratio": 0.0,
-    "classes_per_module": 0.0,
-    "encapsulation_ratio": 1.0,
-    "future_annotations": 1.0,
-    "init_violations": 0.0,
-    "max_complexity": 3.0,
     "method_ratio": 0.0,
-    "module_size": 93.0,
-    "public_attr_violations": 0.0
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.12,
+    "max_complexity": 3.0,
+    "avg_complexity": 1.25,
+    "module_size": 84.0,
+    "classes_per_module": 0.0,
+    "class_to_func_ratio": 0.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
   },
   "src/punt_vox/playback.py": {
     "avg_complexity": 3.5,

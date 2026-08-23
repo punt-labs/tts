@@ -10,6 +10,7 @@ from punt_vox.client_errors import (
     VoxError,
 )
 from punt_vox.client_sync import VoxClientSync
+from punt_vox.paths import installed_version
 from punt_vox.types_programs import (
     CommandOutcome,
     HealthStatus,
@@ -36,4 +37,5 @@ __all__ = [
     "__version__",
 ]
 
-__version__ = "5.0.0"
+# Read from installed metadata; a literal here is what went stale in v5.0.1.
+__version__ = installed_version()
