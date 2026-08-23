@@ -74,12 +74,12 @@ class CallSession:
 
     __slots__ = (
         "_actor",
-        "_last_signal",
         "_pending_chunks",
         "_session_attach",
         "_speak",
         "_stt_provider",
         "_turn_detector",
+        "_turn_in_progress",
         "_turn_timer",
     )
     _actor: CallActor
@@ -89,11 +89,20 @@ class CallSession:
     _speak: SpeakFn
     _pending_chunks: list[AudioChunk]
     _turn_timer: TurnTimer
-    _last_signal: TurnSignal
-    """The previous chunk's :class:`TurnSignal`, tracked only to detect the
-    rising edge into ``SPEECH_CONTINUING`` for the timer's
-    ``speech_first_detected`` mark -- the detector itself reports every
-    above-threshold chunk as ``SPEECH_CONTINUING``, not just the first."""
+    _turn_in_progress: bool
+    """Whether ``speech_first_detected`` has already fired for the run
+    currently accumulating in :attr:`_pending_chunks`. Turn-scoped, not
+    previous-chunk-scoped: :class:`TurnDetector` tolerates brief
+    within-word amplitude dips shorter than its silence-gap threshold (see
+    that class's own docstring), so one real turn can produce
+    ``SPEECH_CONTINUING -> SILENCE -> SPEECH_CONTINUING`` transitions
+    *within itself*. Comparing only to the immediately-previous chunk's
+    signal would re-fire the mark on every such dip, resetting
+    :class:`~.turn_timer.TurnTimer`'s turn-start clock mid-turn -- exactly
+    the number this whole feature exists to report. Set on the first
+    ``SPEECH_CONTINUING`` chunk of a run, cleared when the run closes
+    (``TURN_ENDED``), regardless of whether that turn is ultimately acted
+    on or asks the human to repeat (FR-19)."""
 
     def __new__(
         cls,
@@ -117,7 +126,7 @@ class CallSession:
         self._speak = speak
         self._pending_chunks = []
         self._turn_timer = turn_timer if turn_timer is not None else LoggingTurnTimer()
-        self._last_signal = TurnSignal.SILENCE
+        self._turn_in_progress = False
         return self
 
     @property
@@ -173,16 +182,18 @@ class CallSession:
         """
         if self._actor.current_detector is not Detector.TURN:
             return
-        # The rising edge into SPEECH_CONTINUING, not every above-threshold
-        # chunk (the detector reports SPEECH_CONTINUING for each one) -- see
-        # _last_signal's docstring.
+        # The first SPEECH_CONTINUING chunk of this run, not every
+        # above-threshold chunk and not merely the one after a SILENCE
+        # chunk -- see _turn_in_progress's docstring for why a
+        # previous-chunk comparison is wrong here.
         signal = self._turn_detector.process(chunk)
-        if signal is TurnSignal.SPEECH_CONTINUING and self._last_signal is not signal:
+        if signal is TurnSignal.SPEECH_CONTINUING and not self._turn_in_progress:
             self._turn_timer.mark("speech_first_detected")
-        self._last_signal = signal
+            self._turn_in_progress = True
         self._pending_chunks.append(chunk)
         if signal is TurnSignal.TURN_ENDED:
             self._turn_timer.mark("turn_ended")
+            self._turn_in_progress = False
             chunks, self._pending_chunks = self._pending_chunks, []
             await self._handle_turn_ended(chunks)
 

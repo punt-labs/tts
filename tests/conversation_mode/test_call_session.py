@@ -321,6 +321,48 @@ class TestTurnTimerMarks:
         detected = [s for s, _d in timer.marks if s == "speech_first_detected"]
         assert len(detected) == 1
 
+    async def test_speech_first_detected_marks_once_across_a_mid_turn_dip(
+        self,
+    ) -> None:
+        """Regression: TurnDetector tolerates a within-word amplitude dip
+        shorter than its silence-gap threshold (0.2s / 10 chunks at 20ms
+        each) -- a real utterance can produce SPEECH_CONTINUING -> SILENCE
+        -> SPEECH_CONTINUING *within one turn*. A previous-chunk comparison
+        would re-fire speech_first_detected on the dip, resetting the
+        timer's turn-start clock mid-turn -- exactly the number this
+        feature exists to report.
+        """
+        timer = _SpyTurnTimer()
+        session_attach = FakeSessionAttach(
+            (ScriptedChunk(ReplyChunk(text="reply", is_final=True)),)
+        )
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=FakeSTTProvider(
+                [TranscriptEvent(text="hi there", confidence=0.95, is_final=True)]
+            ),
+            session_attach=session_attach,
+            speak=_Recorder(),
+            turn_timer=timer,
+        )
+        await session.start()
+
+        for _ in range(10):
+            await session.process_chunk(_speech_chunk())
+        # A brief dip -- 3 silence chunks (60ms), well under the 10-chunk
+        # (200ms) silence-gap threshold that would actually end the turn.
+        for _ in range(3):
+            await session.process_chunk(_silence_chunk())
+        for _ in range(10):
+            await session.process_chunk(_speech_chunk())
+        # The real silence gap that closes the turn.
+        for _ in range(10):
+            await session.process_chunk(_silence_chunk())
+
+        assert session_attach.turns() == ["hi there"]
+        detected = [s for s, _d in timer.marks if s == "speech_first_detected"]
+        assert len(detected) == 1
+
     async def test_stt_response_received_carries_the_confidence_detail(self) -> None:
         timer = _SpyTurnTimer()
         session = CallSession(
