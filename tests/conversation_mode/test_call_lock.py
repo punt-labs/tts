@@ -108,3 +108,36 @@ def test_read_treats_a_missing_pid_field_as_no_active_call(tmp_path: Path) -> No
 
     lock = CallLock(path)
     assert lock.read() is None
+
+
+def test_is_live_true_for_a_genuinely_live_process(tmp_path: Path) -> None:
+    lock = CallLock(tmp_path / "call.lock")
+    lock.acquire("call active")  # this test process is genuinely alive
+    assert lock.is_live() is True
+
+
+def test_is_live_false_when_no_lock_file_exists(tmp_path: Path) -> None:
+    lock = CallLock(tmp_path / "call.lock")
+    assert lock.is_live() is False
+
+
+def test_is_live_false_for_a_stale_lock_with_a_dead_pid(tmp_path: Path) -> None:
+    """Regression: a killed `vox call start` leaves a lock file behind with
+    a now-dead pid -- `is_live()` must treat that identically to "no call is
+    active", not report a genuinely-dead call as live because the file
+    still exists.
+    """
+    lock = CallLock(tmp_path / "call.lock")
+    lock.acquire("stale call")
+
+    with patch("os.kill", side_effect=ProcessLookupError):
+        assert lock.is_live() is False
+
+
+def test_is_live_true_for_a_pid_owned_by_another_user(tmp_path: Path) -> None:
+    """A PermissionError still proves the process exists (mirrors acquire())."""
+    lock = CallLock(tmp_path / "call.lock")
+    lock.acquire("owned by someone else")
+
+    with patch("os.kill", side_effect=PermissionError):
+        assert lock.is_live() is True

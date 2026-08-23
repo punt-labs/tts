@@ -148,8 +148,13 @@ class CallCli:
         CallControl(self._lock_dir() / "call.control").request_transfer(session)
 
     def _require_live_call(self) -> None:
-        state = CallLock(self._lock_dir() / "call.lock").read()
-        if state is None:
+        # is_live(), not read() is not None: a lock file can outlive the
+        # process that wrote it (a killed/crashed vox call start leaves the
+        # file behind with a now-dead pid). A stop/transfer against that
+        # stale file must refuse the same as "no call is active" -- writing
+        # one anyway lands in a mailbox nobody will ever read, since the
+        # process it thinks it is stopping is long gone.
+        if not CallLock(self._lock_dir() / "call.lock").is_live():
             msg = "no call is active"
             raise typer.BadParameter(msg)
 

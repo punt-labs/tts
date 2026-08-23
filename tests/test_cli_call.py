@@ -125,6 +125,37 @@ def test_transfer_refuses_when_no_call_is_active(tmp_path: Path) -> None:
     assert CallControl(tmp_path / "call.control").consume() is None
 
 
+def test_stop_refuses_against_a_stale_lock_with_a_dead_pid(tmp_path: Path) -> None:
+    """Regression: a killed `vox call start` leaves a lock file behind with a
+    now-dead pid. `vox call stop` against that stale lock must refuse the
+    same as "no call is active" -- not succeed and write a stop request
+    into a mailbox nobody will ever read, since the process it thinks it is
+    stopping is long gone.
+    """
+    CallLock(tmp_path / "call.lock").acquire("stale call")
+    with (
+        patch("os.kill", side_effect=ProcessLookupError),
+        patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path),
+    ):
+        result = runner.invoke(build_call_app(), ["stop"])
+    assert result.exit_code != 0
+    assert "no call is active" in result.output
+    assert CallControl(tmp_path / "call.control").consume() is None
+
+
+def test_transfer_refuses_against_a_stale_lock_with_a_dead_pid(tmp_path: Path) -> None:
+    """Same stale-lock refusal as the ``stop`` test above."""
+    CallLock(tmp_path / "call.lock").acquire("stale call")
+    with (
+        patch("os.kill", side_effect=ProcessLookupError),
+        patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path),
+    ):
+        result = runner.invoke(build_call_app(), ["transfer", "--session", "session-b"])
+    assert result.exit_code != 0
+    assert "no call is active" in result.output
+    assert CallControl(tmp_path / "call.control").consume() is None
+
+
 def test_start_no_longer_requires_the_script_option() -> None:
     """``--script`` is the dev/test opt-in now, not a required flag."""
     result = runner.invoke(build_call_app(), ["start", "--help"])

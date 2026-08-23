@@ -123,6 +123,11 @@ class CallLock:
         the same as a missing one -- logged and reported as "no active
         call" -- rather than raising and taking down whatever boundary
         happens to be calling :meth:`acquire`.
+
+        Does not check pid liveness -- a lock file can outlive the process
+        that wrote it (``SIGKILL``, a killed foreground process). Callers
+        that need to know whether a call is genuinely live, not merely
+        "a lock file exists", must use :meth:`is_live` instead.
         """
         raw = AtomicFile(self._path).read()
         if not raw:
@@ -133,6 +138,21 @@ class CallLock:
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
             logger.warning("call.lock is unreadable, treating as stale: %s", exc)
             return None
+
+    def is_live(self) -> bool:
+        """Return whether a call is genuinely live -- a lock file recording a pid
+        that :meth:`_process_is_alive` still confirms, not merely a lock file
+        that exists.
+
+        A stale lock (the recorded pid is dead -- crashed, killed, or a
+        process that exited without reaching :meth:`release`) must be
+        treated identically to "no call is active": :meth:`acquire` already
+        makes this distinction to decide whether to refuse or silently
+        overwrite; callers that only ask "is a call running" (``vox call
+        stop``/``transfer``) need the same answer, not just file existence.
+        """
+        state = self.read()
+        return state is not None and self._process_is_alive(state.pid)
 
     @staticmethod
     def _process_is_alive(pid: int) -> bool:
