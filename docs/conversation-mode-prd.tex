@@ -301,7 +301,24 @@ exists to satisfy and carries the same \pone{}/\ptwo{} phase tag.
     Claude Code agent session for the lifetime of that call, and that
     session shall be the user's active session --- carrying whatever task
     context it already had --- not a newly started, context-free session.
-    (\uc{1})
+    \textbf{Revised (2026-08-23).} The mechanism ratified for \fr{4}
+    (Decision 1, \S\ref{sec:design-session-attach}) has changed twice
+    since this requirement was written, and the second change narrows
+    what ``the user's active session'' can literally mean. The per-turn
+    \texttt{claude -p --resume} mechanism (superseded, DES-065) did
+    literally resume the same session object; its replacement (DES-066, a
+    persistent call agent held alive for the call, spiked and confirmed
+    working this session) does not --- it starts a fresh process and is
+    handed a \emph{context snapshot} (current task, relevant files,
+    recent conversation gist) as its opening message, deliberately
+    disconnected from the primary session's own live state so a call
+    cannot hang on a primary session that is mid-turn. This still
+    satisfies \fr{4}'s underlying intent (the call carries real task
+    context, not a blank start) but not its literal wording (the
+    \emph{same} session object). \textbf{Operator ratification of this
+    reading is required before implementation dispatches} --- see
+    \S\ref{sec:design-session-attach}'s updated resolution and
+    \nameref{sec:decisions-required} item 1. (\uc{1})
 \end{description}
 
 \subsection{Hearing the human}
@@ -681,7 +698,54 @@ from Decision 1 as ratified and needs its own design pass and operator
 ratification before implementation, per this project's own workflow
 discipline --- it is named here, not designed here.
 
+\paragraph{Further resolution (2026-08-23, same day).} vox-hobl's
+architecture investigation ran three narrow spikes, each aimed at killing
+the approach quickly if it could not work rather than discovering that a
+day into implementation --- \texttt{DESIGN.md} DES-066 has the full
+evidence trail; summarized here:
+
+\begin{enumerate}
+  \item \textbf{Persistence works.} \texttt{pi --mode rpc --no-session}
+    held one process alive across two sequential turns, replying
+    correctly to both, with the second turn's own usage report showing it
+    reused the first turn's warm context (\texttt{cacheRead}) rather than
+    re-establishing it from nothing. The first attempt reproduced a real
+    hang (a bundled \texttt{biff-bridge} extension interfering with the
+    RPC stdout stream); \texttt{--no-extensions} resolved it outright ---
+    root-caused, not routed around.
+  \item \textbf{Real tool use holds the latency win.} Re-run with actual
+    file-read questions against this repo instead of canned replies: a
+    cold turn including a real tool call reached first spoken text at
+    6.8\,s and completed at 7.0\,s; a warm follow-up turn completed 4.3\,s
+    later. Both an order of magnitude under the 13--25\,s per-turn-spawn
+    median DES-065 measured, and that number did zero tool use.
+  \item \textbf{Read-only enforcement resolved at the proportionate
+    level.} The operator's own scoping narrowed this from ``rock solid''
+    to ``the call agent must not collide with repo files a human might be
+    editing concurrently through the primary session'' --- it does not
+    need to guard against anything touching the primary session's own
+    state, since the two are already disconnected by design.
+    \texttt{pi}'s native \texttt{--tools read,grep,find,ls} CLI allowlist
+    (confirmed against \texttt{pi}'s own documentation, not guessed)
+    satisfies this: verified live by prompting the agent to write a probe
+    file with only that allowlist set --- no write tool was invoked, and
+    the file never appeared on disk.
+\end{enumerate}
+
+The mechanism is confirmed workable. What remains before an
+implementation mission dispatches is the operator ratification \fr{4}'s
+revised wording above calls for, plus the two smaller pieces DES-066
+still lists open (the context-snapshot's own content, and the post-call
+summary handoff to the primary session) and the process-supervision
+choice (a direct \texttt{subprocess.Popen} held by \texttt{voxd} itself,
+recommended over \texttt{tmux}/\texttt{pi-tools}' \texttt{keep} extension
+to avoid a new runtime dependency for a headless daemon use case
+\texttt{keep} was not built for) --- see DES-066 and
+\texttt{docs/conversation-mode-call-agent.tex}'s Z model for the process
+lifecycle those pieces attach to.
+
 \section{Decisions required before implementation}
+\label{sec:decisions-required}
 
 Three forks in this chapter are explicitly reserved for the operator, per
 this project's own workflow rules (design review must surface substantive
@@ -691,17 +755,26 @@ missed by being one bullet among many elsewhere in this chapter:
 
 \begin{enumerate}
   \item \textbf{Session attachment} (\S\ref{sec:design-session-attach}).
-    \textbf{Ratified and superseded.} Ratified 2026-08-22 as the
+    \textbf{Superseded mechanism spike-confirmed; pending operator
+    ratification of \fr{4}'s revised wording.} Ratified 2026-08-22 as the
     session-attach ADR's Option D (a headless \texttt{claude -p --resume}
-    subprocess per human turn); implemented and shipped in Slice 1b
-    (vox-gs9u.2). Real measurement on 2026-08-23 found the per-turn
-    version of this design costs 13--25\,s median per turn and is
-    unworkable for a conversational experience --- see
-    \S\ref{sec:design-session-attach}'s resolution note. The decision
-    recorded here is not reversed (a headless \texttt{claude -p} process
-    is still the mechanism), but the \emph{per-turn} respawn cadence is
-    superseded by a follow-on design investigation (vox-hobl: keep one
-    call agent alive for the whole call instead of one process per turn).
+    subprocess per human turn); implemented, shipped in Slice 1b
+    (vox-gs9u.2), and confirmed unworkable by real measurement
+    (13--25\,s median per turn) on 2026-08-23 --- see
+    \S\ref{sec:design-session-attach}'s resolution note. The follow-on
+    investigation (vox-hobl: one persistent \texttt{pi --mode rpc} call
+    agent held alive for the whole call, not respawned per turn) has now
+    been spiked and confirmed working across the three dimensions that
+    could have killed it (process persistence, real latency under actual
+    tool use, read-only enforcement) --- see the further resolution note
+    above and \texttt{DESIGN.md} DES-066. \textbf{What is still open, and
+    is an operator decision, not an implementation detail:} this
+    mechanism starts the call agent as a fresh process with a context
+    \emph{snapshot}, not a literal resume of the primary session, which
+    satisfies \fr{4}'s intent but not its original literal wording ---
+    \fr{4} above has been revised to name this explicitly and needs
+    explicit operator ratification before an implementation mission
+    dispatches.
   \item \textbf{Continuous-stream playback ownership}
     (\S\ref{sec:design-termination}): built into production
     \texttt{PlaybackQueue} directly, or as a new sibling component that
@@ -1029,10 +1102,16 @@ gaps in this chapter, not minor additions.
     latency. Per-turn spawn is confirmed off the table; see
     \S\ref{sec:design-session-attach}'s resolution note and \nfr{2} for
     the full data and the two-track response (vox-36xc near-term,
-    vox-hobl for the persistent-agent redesign). The original unresolved
-    question this bullet asked --- undesigned, untested by any spike ---
-    is answered; a new one (how to keep a call agent alive across turns
-    without per-turn respawn cost) has replaced it.
+    vox-hobl for the persistent-agent redesign). \textbf{Further resolved
+    2026-08-23, same day:} vox-hobl's persistent-agent replacement has
+    itself now been spiked and confirmed working (persistence, real
+    tool-use latency, read-only enforcement --- see
+    \S\ref{sec:design-session-attach}'s further-resolution paragraph and
+    \texttt{DESIGN.md} DES-066). What remains open is no longer whether
+    the mechanism works but the operator ratification \fr{4}'s revised
+    wording calls for (the call agent gets a context snapshot, not a
+    literal resume of the primary session), plus the context-snapshot's
+    own content and the post-call summary handoff, both still undesigned.
   \item \textbf{Provider-agnostic interfaces (\fr{21}, P1) have no design
     content anywhere in this chapter.} Every spike hardcoded ElevenLabs
     directly --- Spike 1 reused \texttt{providers/elevenlabs.py}
