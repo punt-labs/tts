@@ -31,13 +31,17 @@ jobs:
       # locally does not silently drop them from CI coverage.
       - run: uv run pytest -m "slow or subprocess"
 
-  # Tier 5: drive the INSTALLED wheel -- the `vox` binary as a subprocess and
-  # the `vox mcp` server over stdio. This tier catches packaging faults (an
-  # entry point that does not resolve, a module missing from the wheel, an MCP
-  # server that fails to start over stdio) which the in-process pytest above
-  # cannot see. Kept in its own job so a packaging break does not mask a
-  # unit-test failure and vice versa.
-  e2e:
+  # Packaging e2e: drive the INSTALLED wheel -- the `vox` binary as a
+  # subprocess and the `vox mcp` server over stdio. This job catches packaging
+  # faults (an entry point that does not resolve, a module missing from the
+  # wheel, an MCP server that fails to start over stdio) which the in-process
+  # pytest above cannot see. Kept in its own job so a packaging break does not
+  # mask a unit-test failure and vice versa.
+  #
+  # NOTE: distinct from the "Tier 5" designation in
+  # tests/conversation_mode/coverage-matrix.md, which names live-audio /
+  # human-judged testing. This is installed-wheel packaging smoke.
+  packaging-e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -51,10 +55,12 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg espeak-ng
       - run: uv sync --frozen --all-extras
       # `make install` builds the wheel and does `uv tool install --force
-      # dist/*.whl`; uv drops the console script in ${XDG_DATA_HOME:-~/.local}/
-      # bin, which is NOT on PATH in non-interactive Actions shells until we
-      # publish it. Adding it before the tests run means shutil.which("vox")
-      # in the e2e suite resolves the just-installed artifact, not a stale one.
+      # dist/*.whl`; uv drops the console script in `$HOME/.local/bin` by
+      # default. That directory is NOT on PATH in non-interactive Actions
+      # shells until we publish it, and the e2e tests resolve the binary at
+      # that path explicitly (see tests/e2e/test_installed_cli._vox) so a
+      # `uv run pytest` invocation cannot mask the wheel with the editable
+      # `.venv/bin/vox` shim.
       - run: make install
       - run: echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: vox version

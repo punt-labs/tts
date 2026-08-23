@@ -6,7 +6,7 @@ help: ## Show available targets
 test: ## Run tests
 	uv run pytest
 
-test-e2e: ## Tier 5 -- drive the INSTALLED `vox` binary and `vox mcp` server (run `make install` first)
+test-e2e: ## Packaging e2e -- drive the INSTALLED `vox` binary and `vox mcp` server (run `make install` first)
 	uv run pytest tests/e2e -v -m e2e
 
 lint: ## Lint and format check (Python + shell)

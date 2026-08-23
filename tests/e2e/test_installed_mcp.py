@@ -10,11 +10,12 @@ contains the core ``mic:*`` tools clients depend on.
 from __future__ import annotations
 
 import json
+import os
 import queue
-import shutil
 import subprocess
 import threading
 import time
+from pathlib import Path
 from typing import IO, Any, NoReturn, Self, final
 
 import pytest
@@ -146,7 +147,13 @@ class StdioClient:
             text = line.strip()
             if not text:
                 continue
-            message = json.loads(text)
+            try:
+                message = json.loads(text)
+            except json.JSONDecodeError as exc:
+                self._fail(
+                    f"non-JSON on server stdout while awaiting id={request_id}: "
+                    f"{exc.msg} at col {exc.colno}; offending line: {text!r}"
+                )
             if message.get("id") != request_id:
                 continue
             if "error" in message:
@@ -163,11 +170,22 @@ class StdioClient:
 
 
 def _spawn() -> subprocess.Popen[str]:
-    binary = shutil.which("vox")
-    if binary is None:
-        pytest.skip("vox is not installed -- run `make install` first")
+    """Spawn ``vox mcp`` from the INSTALLED wheel, never the editable venv.
+
+    Path resolution matches ``test_installed_cli._vox``: ``uv run`` prepends
+    ``.venv/bin`` to ``PATH`` and ``shutil.which("vox")`` would return the
+    working-tree shim. Explicit ``$HOME/.local/bin/vox`` (overridable via
+    ``VOX_E2E_BINARY``) forces the packaged artifact.
+    """
+    override = os.environ.get("VOX_E2E_BINARY")
+    binary = Path(override) if override else Path.home() / ".local" / "bin" / "vox"
+    if not binary.is_file():
+        pytest.skip(
+            f"installed vox not found at {binary}; run `make install` "
+            "(or set VOX_E2E_BINARY to the uv tool bin path)"
+        )
     return subprocess.Popen(
-        [binary, "mcp"],
+        [str(binary), "mcp"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
