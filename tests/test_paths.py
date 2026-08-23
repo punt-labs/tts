@@ -124,12 +124,14 @@ def test_installed_version_returns_string() -> None:
 
 
 def test_installed_version_raises_on_missing_metadata() -> None:
-    """No package metadata means no fallback -- fail fast, don't guess.
+    """No package metadata means no fallback -- fail fast, with an actionable hint.
 
     An uninstalled source tree has no distribution to report a version
     for. Per the org's version-reporting standard, that is a broken
-    environment: raise ``PackageNotFoundError`` rather than falling
-    back to a literal that could silently drift from ``pyproject.toml``.
+    environment. Raises ``RuntimeError``, not ``PackageNotFoundError``:
+    that type's ``__str__`` treats its argument as a package *name*
+    ("No package metadata was found for {name}"), which would mangle an
+    actionable sentence rather than deliver it.
     """
     with (
         patch.object(
@@ -137,7 +139,7 @@ def test_installed_version_raises_on_missing_metadata() -> None:
             "version",
             side_effect=importlib.metadata.PackageNotFoundError("punt-vox"),
         ),
-        pytest.raises(importlib.metadata.PackageNotFoundError),
+        pytest.raises(RuntimeError, match="uv tool install punt-vox"),
     ):
         installed_version()
 

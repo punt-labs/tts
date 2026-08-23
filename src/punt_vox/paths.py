@@ -112,5 +112,9 @@ def installed_version() -> str:
     try:
         return importlib.metadata.version("punt-vox")
     except importlib.metadata.PackageNotFoundError as exc:
+        # PackageNotFoundError.__str__ hardcodes "No package metadata was
+        # found for {args[0]}" -- args[0] is a package NAME, not free text,
+        # so raising it with a sentence mangles the message. RuntimeError
+        # has no such contract; the hint reaches vox doctor / voxd startup verbatim.
         msg = "punt-vox not installed as a package -- run 'uv tool install punt-vox'"
-        raise importlib.metadata.PackageNotFoundError(msg) from exc
+        raise RuntimeError(msg) from exc
