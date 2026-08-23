@@ -42,6 +42,7 @@ dependencies = [
     # register-fresh. 0.28.0 retires LuxRestClient/LuxHubClient from the public
     # surface in favour of the noun-grouped LuxClient facade with async accessors.
     "punt-lux>=0.28.0",
+    "sounddevice>=0.5.6",
 ]
 
 [project.urls]
@@ -141,6 +142,7 @@ ignore = [
 "src/punt_vox/voices.py" = ["S311"]
 "src/punt_vox/providers/__init__.py" = ["PLC0415", "S603", "S607"]
 "src/punt_vox/providers/elevenlabs.py" = ["PLC0415"]
+"src/punt_vox/providers/elevenlabs_stt.py" = ["PLC0415"]
 "src/punt_vox/providers/elevenlabs_music.py" = ["PLC0415"]
 "src/punt_vox/providers/openai.py" = ["PLC0415"]
 "src/punt_vox/providers/polly.py" = ["PLC0415"]
