@@ -59,8 +59,8 @@ from punt_vox.commands.call_live_driver import LiveCallDriver
 from punt_vox.commands.call_options import (
     ScriptOpt as _ScriptOpt,
     SessionOpt as _SessionOpt,
+    TraceTurnsOpt as _TraceTurnsOpt,
     TransferSessionOpt as _TransferSessionOpt,
-    VerboseOpt as _VerboseOpt,
 )
 from punt_vox.commands.call_scripted import ScriptedSTTProvider, ScriptedTurn
 from punt_vox.commands.call_spec import resolve_call_spec
@@ -79,6 +79,17 @@ if TYPE_CHECKING:
 __all__ = ["build_call_app"]
 
 logger = logging.getLogger(__name__)
+
+# VoxClient.synthesize's own default (client.py's _TIMEOUT_SYNTHESIS, 30s)
+# bounds the wait for voxd's "playing" ack, which the daemon does not send
+# until synthesis itself has actually finished -- a long reply's real
+# ElevenLabs synthesis time can exceed 30s outright (a 1133-char reply
+# measured ~43s), killing the call mid-reply with VoxdProtocolError. A call
+# is exactly the case that needs a longer bound: a human is waiting live on
+# the reply, and a longer wait is a far better experience than a killed
+# call, since this timeout exists to bound a genuine hang, not to cap
+# legitimate long-running synthesis.
+_SPEAK_TIMEOUT_S = 120.0
 
 
 @final
@@ -100,14 +111,15 @@ class CallCli:
         self,
         script: _ScriptOpt = None,
         session: _SessionOpt = None,
-        verbose: _VerboseOpt = False,  # noqa: FBT002 -- typer CLI requires bool default
+        trace_turns: _TraceTurnsOpt = False,  # noqa: FBT002 -- typer CLI requires bool default
     ) -> None:
         """Start a call: listen, detect turns, forward them, speak the reply."""
-        # Always on, regardless of *verbose*: the turn-timer's own logger is
-        # forced to DEBUG on vox.log for every call, not only ones run with
-        # --verbose -- see configure_turn_timer_logging's docstring. verbose
-        # only decides whether those same lines also echo to this terminal.
-        configure_turn_timer_logging(echo_to_console=verbose)
+        # Always on, regardless of *trace_turns*: the turn-timer's own
+        # logger is forced to DEBUG on vox.log for every call, not only
+        # ones run with --trace-turns -- see configure_turn_timer_logging's
+        # docstring. trace_turns only decides whether those same lines also
+        # echo to this terminal.
+        configure_turn_timer_logging(echo_to_console=trace_turns)
         asyncio.run(self._run(script, session))
 
     def stop(self) -> None:
@@ -207,8 +219,14 @@ class CallCli:
             # stall audio capture and control-request handling for as long as
             # synthesis takes. Discards SynthesizeResult -- SpeakFn's contract is
             # "spoken", not "the daemon's synthesis metadata", and a call
-            # orchestrator has no use for it.
-            await asyncio.to_thread(client.synthesize, text, spec)
+            # orchestrator has no use for it. timeout=_SPEAK_TIMEOUT_S, not the
+            # client's own 30s default: a long reply's real synthesis time can
+            # exceed 30s (a 1133-char reply measured ~43s), and the daemon does
+            # not ack "playing" until synthesis itself has finished -- the
+            # default was killing the call mid-reply.
+            await asyncio.to_thread(
+                client.synthesize, text, spec, timeout=_SPEAK_TIMEOUT_S
+            )
 
         lock = CallLock(self._lock_dir() / "call.lock")
         control = CallControl(self._lock_dir() / "call.control")

@@ -175,15 +175,28 @@ def _close_coro(coro: Coroutine[object, object, object]) -> None:
     coro.close()
 
 
-def test_start_help_shows_the_verbose_flag() -> None:
+def test_start_help_shows_the_trace_turns_flag() -> None:
     result = runner.invoke(build_call_app(), ["start", "--help"])
     assert result.exit_code == 0
-    assert "--verbose" in result.stdout
-    assert "-v" in result.stdout
+    assert "--trace-turns" in result.stdout
 
 
-def test_start_with_verbose_echoes_the_turn_timer_to_console() -> None:
-    """Regression: --verbose must reach configure_turn_timer_logging as
+def test_start_help_does_not_collide_with_the_global_verbose_flag() -> None:
+    """Regression: a second, same-named --verbose scoped to `call start`
+    silently did something completely different from the pre-existing
+    global --verbose (raise the client log level) depending on flag
+    position -- vox's own OutputFlags convention says position must never
+    change meaning. `call start --help` must not offer a bare `-v`/
+    `--verbose` at all; only the distinctly-named --trace-turns.
+    """
+    result = runner.invoke(build_call_app(), ["start", "--help"])
+    assert result.exit_code == 0
+    assert "--verbose" not in result.stdout
+    assert "-v," not in result.stdout
+
+
+def test_start_with_trace_turns_echoes_the_turn_timer_to_console() -> None:
+    """Regression: --trace-turns must reach configure_turn_timer_logging as
     echo_to_console=True -- the flag that decides whether the turn-latency
     trace also prints live, never whether it reaches vox.log (that's
     unconditional).
@@ -194,11 +207,11 @@ def test_start_with_verbose_echoes_the_turn_timer_to_console() -> None:
         patch.object(call_module, "configure_turn_timer_logging") as mock_configure,
         patch("asyncio.run", side_effect=_close_coro),
     ):
-        call_module.CallCli().start(verbose=True)
+        call_module.CallCli().start(trace_turns=True)
     mock_configure.assert_called_once_with(echo_to_console=True)
 
 
-def test_start_without_verbose_does_not_echo_the_turn_timer_to_console() -> None:
+def test_start_without_trace_turns_does_not_echo_the_turn_timer_to_console() -> None:
     from punt_vox.commands import call as call_module
 
     with (
@@ -226,7 +239,14 @@ async def test_run_call_passes_a_resolved_spec_with_a_provider_to_synthesize(
     received: list[SynthesisSpec | None] = []
 
     class _FakeClient:
-        def synthesize(self, text: str, spec: SynthesisSpec | None = None) -> None:
+        def synthesize(
+            self,
+            text: str,
+            spec: SynthesisSpec | None = None,
+            *,
+            timeout: float | None = None,
+        ) -> None:
+            del timeout
             del text
             received.append(spec)
 
@@ -252,7 +272,14 @@ async def test_run_call_speaks_the_reply_and_holds_the_lock_only_while_active(
     spoken: list[str] = []
 
     class _FakeClient:
-        def synthesize(self, text: str, spec: SynthesisSpec | None = None) -> None:
+        def synthesize(
+            self,
+            text: str,
+            spec: SynthesisSpec | None = None,
+            *,
+            timeout: float | None = None,
+        ) -> None:
+            del timeout
             del spec
             spoken.append(text)
 
@@ -336,7 +363,14 @@ async def test_run_call_live_path_captures_from_mic_and_transcribes(
     spoken: list[str] = []
 
     class _FakeClient:
-        def synthesize(self, text: str, spec: SynthesisSpec | None = None) -> None:
+        def synthesize(
+            self,
+            text: str,
+            spec: SynthesisSpec | None = None,
+            *,
+            timeout: float | None = None,
+        ) -> None:
+            del timeout
             del spec
             spoken.append(text)
 
@@ -390,7 +424,14 @@ async def test_run_call_live_path_times_out_after_inactivity(tmp_path: Path) -> 
     spoken: list[str] = []
 
     class _FakeClient:
-        def synthesize(self, text: str, spec: SynthesisSpec | None = None) -> None:
+        def synthesize(
+            self,
+            text: str,
+            spec: SynthesisSpec | None = None,
+            *,
+            timeout: float | None = None,
+        ) -> None:
+            del timeout
             del spec
             spoken.append(text)
 
