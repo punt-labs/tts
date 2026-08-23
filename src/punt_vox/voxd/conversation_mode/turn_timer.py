@@ -43,6 +43,7 @@ type TurnStage = Literal[
     "turn_ended",
     "stt_request_sent",
     "stt_response_received",
+    "ack_spoken",
     "claude_spawned",
     "first_reply_frame",
     "reply_complete",
