@@ -307,7 +307,8 @@ A `Vox` entry in the Lux menu, launched for the life of your Claude Code session
 ```bash
 vox call start                                 # Real call: microphone + ElevenLabs speech-to-text
 vox call start --session <id>                  # Attach to a specific session (required if more than one is active)
-vox call start --script turns.jsonl             # Dev/test path: scripted turns, no microphone, no ElevenLabs
+vox call start --script turns.jsonl             # Dev/test path: scripted turns, no microphone, no ElevenLabs credentials
+vox call start --trace-turns                    # Also print a live turn-by-turn latency trace (always logged to vox.log regardless)
 vox call transfer                               # Re-attach the running call to a different active session
 vox call transfer --session <id>                # ...to a specific one
 vox call stop                                   # Hang up
@@ -322,7 +323,7 @@ uv sync --extra call            # if you cloned the repo
 pip install "punt-vox[call]"    # if you installed from PyPI
 ```
 
-`sounddevice` binds PortAudio, a system-level (non-Python) library `pip`/`uv` cannot install for you: on macOS, `brew install portaudio`; on most Linux distributions, install `libportaudio2` (e.g. `apt install libportaudio2`) through your package manager. Every other `vox` command works without either the extra or PortAudio -- only `vox call start`'s live (default) path needs them; `--script` needs neither.
+`sounddevice` binds PortAudio, a system-level (non-Python) library `pip`/`uv` cannot install for you: on macOS, `brew install portaudio`; on most Linux distributions, install `libportaudio2` (e.g. `apt install libportaudio2`) through your package manager. Every other `vox` command works without either the extra or PortAudio -- only `vox call start`'s live (default) path needs them; `--script` bypasses the microphone and ElevenLabs speech-to-text, but a daemon-side TTS provider is still required either way to speak the reply, resolved the same way before the call starts.
 
 While a call is active, your own interactive prompts are paused (a `UserPromptSubmit` hook blocks them) until you run `/call stop` or `/call transfer` -- both remain available even while paused.
 
