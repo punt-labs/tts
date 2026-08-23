@@ -106,6 +106,15 @@ class ClaudeSessionAttach:
             "--output-format",
             "stream-json",
             "--include-partial-messages",
+            # claude now refuses to start at all without this combined with
+            # -p/--output-format=stream-json ("requires --verbose"), exiting
+            # 1 before a single reply frame is written. Verified against a
+            # real `claude -p --verbose --output-format stream-json` run
+            # that --verbose only adds `type: "system"` frames (hook
+            # lifecycle, session init) -- none carry a top-level "message"
+            # field shaped like an assistant delta, so _extract_text_delta's
+            # existing narrowing already treats them as carrying no text.
+            "--verbose",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

@@ -95,6 +95,56 @@ async def test_malformed_stream_json_line_raises_session_attach_error() -> None:
     process.wait.assert_awaited()
 
 
+async def test_spawn_argv_includes_verbose() -> None:
+    """Regression: claude now refuses to start at all -- exit 1 before a
+    single reply frame -- when -p/--output-format=stream-json is combined
+    without --verbose ("requires --verbose").
+    """
+    process = _fake_process([])
+    with patch("asyncio.create_subprocess_exec", return_value=process) as mock_exec:
+        attach = ClaudeSessionAttach(session_id="session-a")
+        async for _ in attach.send_turn(TranscribedTurn(text="hello")):
+            pass
+    argv = mock_exec.call_args.args
+    assert "--verbose" in argv
+
+
+async def test_verbose_system_frames_are_not_treated_as_reply_text() -> None:
+    """Regression: --verbose adds type="system" frames (hook lifecycle,
+    session init) alongside the existing assistant/result frames -- none
+    of them carry a top-level "message" field shaped like an assistant
+    delta, so they must not leak into the collected reply text.
+    """
+
+    def _system_frame(subtype: str) -> bytes:
+        payload = json.dumps(
+            {"type": "system", "subtype": subtype, "session_id": "session-a"}
+        )
+        return payload.encode() + b"\n"
+
+    def _assistant_frame(text: str) -> bytes:
+        payload = json.dumps(
+            {"type": "assistant", "message": {"content": [{"text": text}]}}
+        )
+        return payload.encode() + b"\n"
+
+    lines = [
+        _system_frame("hook_started"),
+        _system_frame("hook_response"),
+        _system_frame("init"),
+        _assistant_frame("The answer is 4."),
+        b'{"type":"result"}\n',
+    ]
+    process = _fake_process(lines)
+    with patch("asyncio.create_subprocess_exec", return_value=process):
+        attach = ClaudeSessionAttach(session_id="session-a")
+        chunks = [
+            chunk async for chunk in attach.send_turn(TranscribedTurn(text="hello"))
+        ]
+    (chunk,) = chunks
+    assert chunk.text == "The answer is 4."
+
+
 async def test_writes_the_turn_as_a_user_message_to_stdin() -> None:
     process = _fake_process([])
     written: list[bytes] = []
