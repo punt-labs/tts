@@ -36,7 +36,7 @@ gaps.
 | FR-6 | Do not end a turn on a thinking pause, cough, or incidental noise | 1 | `tests/conversation_mode/test_turn_detector.py` (`test_brief_within_word_dip_does_not_reset_the_run`, `test_a_cough_shorter_than_min_speech_does_not_end_a_turn`) |
 | FR-7 | Do not treat steady background noise as speech | 1 | `tests/conversation_mode/test_turn_detector.py` (`test_steady_room_noise_never_signals_speech`) |
 | FR-7a | Without headphones, do not treat the agent's own voice as human speech | | P2, not in scope for this slice |
-| FR-8 | Let the human interrupt the agent; stop speech promptly on interruption | | Barge-in detection is Slice 2a+ territory; `CallSession.barge_in`/`BargeIn` command exist and are exercised in `test_call_actor.py`'s state-transition tests, but no detector drives them yet |
+| FR-8 | Let the human interrupt the agent; stop speech promptly on interruption | 1 | `CallSession.barge_in`/`BargeIn` command exist and are exercised in `test_call_actor.py`'s state-transition tests. Slice 2a adds the playback-side ordering discipline this depends on: `tests/conversation_mode/test_playback_sink_actor.py` (all four tests), `tests/conversation_mode/test_sink_commands.py` -- no detector drives either side yet (Slice 2b) |
 | FR-9 | Do not discard what the human said while interrupting | | Same as FR-8; the `CaptureDuringWait`/pending-addendum mechanics are covered by `test_call_state.py`, not yet wired to a live detector |
 | FR-10 | Without headphones, distinguish genuine interruption from acoustic echo | | P2, not in scope for this slice |
 | FR-11 | Begin speaking on the reply's first complete portion | | This slice speaks the reply as one non-streamed block (per mission scope); `ClaudeSessionAttach` streams stream-json internally but `CallSession` does not yet act per-chunk |
@@ -56,7 +56,7 @@ gaps.
 
 | ID | Description (short) | Tier | Test path |
 |----|----------------------|------|-----------|
-| NFR-1 | Interruption latency: detection + termination, additive | | Barge-in is Slice 2a+ territory |
+| NFR-1 | Interruption latency: detection + termination, additive | | Latency itself is unmeasured this slice; the termination-latency design's ordering discipline (no reentrant sink access under a natural-completion/barge-in race) is proven in `tests/conversation_mode/test_playback_sink_actor.py` |
 | NFR-2 | Time to first spoken word, flat regardless of reply length | | Not measured this slice; the reply is spoken as one non-streamed block |
 | NFR-3 | Platform and provider breadth (Phase 2 scope) | | P2, not in scope for this slice |
 | NFR-4 | No audio or transcript leaves the machine in a fully local configuration | | P2, not in scope for this slice |
