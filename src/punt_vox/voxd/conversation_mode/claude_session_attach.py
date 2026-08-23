@@ -3,25 +3,46 @@
 Implements option D of ``docs/conversation-mode-session-attach-adr.md``,
 ratified by the operator: for each human turn, spawn ``claude -p --resume
 <id> --input-format stream-json --output-format stream-json
---include-partial-messages``, write one JSON user-message object to its
-stdin, and read the stream of JSON assistant-message-delta objects from
+--include-partial-messages --bare``, write one JSON user-message object to
+its stdin, and read the stream of JSON assistant-message-delta objects from
 stdout. The reply is spoken as one block rather than one utterance per
 delta -- FR-11's first-complete-portion requirement is satisfied by the
 underlying subprocess still streaming; sentence-streamed synthesis (acting on
 each delta as it arrives) is a distinct, larger change to this class's
 contract with :class:`~.call_session.CallSession`, not attempted here.
+
+**Auth model: ``--bare`` requires an API key, not OAuth (vox-36xc).**
+``--bare`` eliminates the ``SessionStart`` hook cascade every non-bare
+``claude -p --resume`` pays on each spawn (measured empirically: 0 hooks
+fire in bare mode versus 9-28 in normal mode), which is most of the 13-25s
+median per-turn latency this call site exists to hide behind an ack quip
+and a wait chime (see :mod:`~.wait_cue`). The cost: ``claude --help`` is
+explicit that bare mode's auth is "strictly ``ANTHROPIC_API_KEY`` or
+``apiKeyHelper`` via ``--settings``" -- no OAuth support at all. This is the
+opposite requirement from every other ``claude``-spawn site in this
+package: :class:`~.claude_subprocess_env.ClaudeSubprocessEnv` normally
+*strips* ``ANTHROPIC_API_KEY`` so a resumed session uses the human's own
+claude.ai login instead of a possibly-stale env-var key. This class alone
+passes ``keep_api_key=True`` to keep it, and refuses to spawn at all
+(:class:`~.session_attach.BareAuthMissingError`) when the key is absent --
+a call placed against an OAuth-only setup (no ``ANTHROPIC_API_KEY``
+configured) does not work with ``vox call start``.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Self, cast, final
 
 from punt_vox.voxd.conversation_mode.claude_subprocess_env import claude_subprocess_env
 from punt_vox.voxd.conversation_mode.reply import ReplyChunk
-from punt_vox.voxd.conversation_mode.session_attach import SessionAttachError
+from punt_vox.voxd.conversation_mode.session_attach import (
+    BareAuthMissingError,
+    SessionAttachError,
+)
 
 if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
@@ -105,8 +126,11 @@ class ClaudeSessionAttach:
         likely real case: ``claude`` can exit immediately on an invalid
         session id). ``create_subprocess_exec`` succeeding only means the
         process started, not that it is usable; a failure here must not
-        leak it.
+        leak it. Checks :meth:`_require_bare_auth` before that, so a missing
+        ``ANTHROPIC_API_KEY`` never reaches a spawn attempt at all -- see
+        this module's own docstring for why ``--bare`` requires it.
         """
+        self._require_bare_auth()
         process = await asyncio.create_subprocess_exec(
             self._claude_bin,
             "-p",
@@ -126,6 +150,13 @@ class ClaudeSessionAttach:
             # field shaped like an assistant delta, so _extract_text_delta's
             # existing narrowing already treats them as carrying no text.
             "--verbose",
+            # Eliminates the SessionStart hook cascade every non-bare spawn
+            # pays (measured: 0 hooks fire in bare mode versus 9-28 in
+            # normal mode) -- most of the 13-25s median per-turn latency
+            # this call site exists to hide behind an ack quip and wait
+            # chime. See this module's own docstring for the auth-model
+            # trade this requires.
+            "--bare",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -163,14 +194,28 @@ class ClaudeSessionAttach:
     def _subprocess_env() -> dict[str, str]:
         """Return the relay subprocess's environment, minus its auth traps.
 
-        See :class:`~.claude_subprocess_env.ClaudeSubprocessEnv` for why:
-        forwarding the parent environment wholesale (the prior
-        ``{**os.environ, ...}``) let a
-        stale ``ANTHROPIC_API_KEY`` silently outrank the resumed session's
-        own claude.ai login, failing every turn's auth instead of resuming
-        the identity ``claude -p --resume`` is meant to resume.
+        ``keep_api_key=True`` -- this call site's requirement is the
+        opposite of :class:`~.claude_subprocess_env.ClaudeSubprocessEnv`'s
+        default for every other ``claude``-spawn site
+        (:class:`~.session_discovery.SessionDiscovery` still wants the
+        strip; it doesn't pass ``--bare`` and still relies on OAuth). See
+        this module's own docstring for the full auth-model rationale.
         """
-        return claude_subprocess_env(extra={_RELAY_ENV_VAR: "1"})
+        return claude_subprocess_env(extra={_RELAY_ENV_VAR: "1"}, keep_api_key=True)
+
+    @staticmethod
+    def _require_bare_auth() -> None:
+        """Fail fast, before any subprocess is spawned, if ``--bare`` has no key.
+
+        ``claude --bare`` has no OAuth fallback at all -- an absent
+        ``ANTHROPIC_API_KEY`` is a certain failure, not a transient one, so
+        this raises immediately rather than letting a doomed spawn run into
+        :data:`_REPLY_TIMEOUT_S` and surface as an opaque "did not reply
+        within 120s". :meth:`BareAuthMissingError.for_missing_key` owns the
+        actionable message.
+        """
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            raise BareAuthMissingError.for_missing_key()
 
     async def _exchange(
         self, stdout: asyncio.StreamReader, stderr: asyncio.StreamReader
