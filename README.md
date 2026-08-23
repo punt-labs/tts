@@ -300,12 +300,41 @@ voxd talks to the lux Hub through its public client library, registers the menu,
 
 A `Vox` entry in the Lux menu, launched for the life of your Claude Code session, gives you a settings panel for mic mode (chimes vs. voice), the notification level (off/normal/continuous), and your voice --- with a preview button --- without a slash command. It's a session-scoped Lux applet, the same shape as lux's own `lux-beads`: launched by a `plugin/hooks/session-start.sh` block when the repo has vox enabled, not hosted inside `voxd`. Every change goes through the same `notify`/`speak`/`voice` settings the CLI and MCP tool already write, so the panel and the slash commands always agree; if a change can't be saved or `voxd` is unreachable, the panel says so in a status line rather than reverting silently.
 
+## Conversation Mode
+
+`vox call start` places a live voice call with your active Claude Code session: it listens through the microphone, transcribes each turn with ElevenLabs, forwards it to Claude, and speaks the reply.
+
+```bash
+vox call start                                 # Real call: microphone + ElevenLabs speech-to-text
+vox call start --session <id>                  # Attach to a specific session (required if more than one is active)
+vox call start --script turns.jsonl             # Dev/test path: scripted turns, no microphone, no ElevenLabs
+vox call transfer                               # Re-attach the running call to a different active session
+vox call transfer --session <id>                # ...to a specific one
+vox call stop                                   # Hang up
+```
+
+Or from within Claude Code: `/call start`, `/call transfer [--session <id>]`, `/call stop`.
+
+Live capture needs `sounddevice`, which ships behind the `call` optional extra rather than as a hard dependency of `vox`:
+
+```bash
+uv sync --extra call            # if you cloned the repo
+pip install "punt-vox[call]"    # if you installed from PyPI
+```
+
+`sounddevice` binds PortAudio, a system-level (non-Python) library `pip`/`uv` cannot install for you: on macOS, `brew install portaudio`; on most Linux distributions, install `libportaudio2` (e.g. `apt install libportaudio2`) through your package manager. Every other `vox` command works without either the extra or PortAudio -- only `vox call start`'s live (default) path needs them; `--script` needs neither.
+
+While a call is active, your own interactive prompts are paused (a `UserPromptSubmit` hook blocks them) until you run `/call stop` or `/call transfer` -- both remain available even while paused.
+
 ## Commands
 
 | Command | Purpose |
 |---------|---------|
 | `/enable` | Turn vox on for this repo |
 | `/disable` | Turn vox off for this repo |
+| `/call start [--script <path>] [--session <id>]` | Start a live voice call (real mic + ElevenLabs by default) |
+| `/call transfer [--session <id>]` | Re-attach the running call to a different session |
+| `/call stop` | Hang up |
 | `/vox:model [<name>]` | Switch TTS model (no arg opens a picker) |
 | `/vox:provider [<name>]` | Switch TTS provider (no arg opens a picker) |
 | `/vox:voice [<name>]` | Set session voice (no arg opens a picker) |
@@ -500,6 +529,10 @@ vox music get 7f3a91                           # Materialize an album into the C
 vox music get 7f3a91 --dest ~/Music             # ...or into a directory you name
 vox music remove 7f3a91                        # Delete an album from the catalog
 vox music stop                                 # Stop background music
+vox call start                                 # Real voice call: microphone + ElevenLabs speech-to-text
+vox call start --script turns.jsonl            # Dev/test: scripted turns, no microphone, no ElevenLabs
+vox call transfer                              # Re-attach the running call to a different session
+vox call stop                                  # Hang up
 vox status                                     # Current state
 vox version                                    # Print version
 vox doctor                                     # Check setup

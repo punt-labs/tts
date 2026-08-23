@@ -1,8 +1,9 @@
 """Turn detection: accumulated audible-run duration, not a consecutive-chunk streak.
 
-Implements the model ``docs/conversation-mode-prd.tex`` (S:design-turn)
-settled on after two failed Spike 5 attempts: a run of audible chunks
-accumulates duration across brief within-word amplitude dips, and only a
+Implements the model ``docs/conversation-mode-prd.tex`` (S:design-turn):
+a naive "N consecutive audible chunks" streak breaks on any brief
+within-word amplitude dip, closing a run mid-sentence; a run of audible
+chunks instead accumulates duration *across* those dips, and only a
 genuine silence gap (default 200ms) closes it. A closed run signals
 ``TURN_ENDED`` only if it accumulated at least ``min_speech_s`` -- a cough or
 a click that never reaches that floor is silently absorbed (FR-6), and
