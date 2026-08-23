@@ -59,15 +59,24 @@ class SessionDiscovery:
         across multiple candidates unsafe, so returning the full set and
         requiring the caller to choose is the contract, not an oversight.
         """
-        process = await asyncio.create_subprocess_exec(
-            self._claude_bin,
-            "agents",
-            "--json",
-            "--cwd",
-            str(cwd),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        try:
+            process = await asyncio.create_subprocess_exec(
+                self._claude_bin,
+                "agents",
+                "--json",
+                "--cwd",
+                str(cwd),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except FileNotFoundError as exc:
+            # Every other failure mode in this class raises
+            # SessionDiscoveryError; a missing binary is just as much a
+            # "cannot run claude agents --json" condition as a nonzero exit
+            # and should not be the one path that surfaces a raw OSError
+            # instead.
+            msg = f"{self._claude_bin} not found on PATH"
+            raise SessionDiscoveryError(msg) from exc
         stdout, stderr = await process.communicate()
         if process.returncode != 0:
             msg = (

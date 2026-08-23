@@ -72,3 +72,12 @@ async def test_entry_missing_id_raises_session_discovery_error() -> None:
         discovery = SessionDiscovery()
         with pytest.raises(SessionDiscoveryError, match="missing an id or cwd"):
             await discovery.discover(Path("/repo"))
+
+
+async def test_missing_binary_raises_session_discovery_error() -> None:
+    """Regression: every other failure mode here raises SessionDiscoveryError;
+    a missing ``claude`` binary used to leak a raw FileNotFoundError instead."""
+    with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError):
+        discovery = SessionDiscovery()
+        with pytest.raises(SessionDiscoveryError, match="not found on PATH"):
+            await discovery.discover(Path("/repo"))
