@@ -250,3 +250,130 @@ class TestProcessChunkGatedOnMode:
         await _feed_one_turn(session)
 
         assert session_attach.turns() == ["hello"]
+
+
+class _SpyTurnTimer:
+    """Records every ``mark()`` call, for asserting on stage order/content
+    without touching real logging."""
+
+    def __init__(self) -> None:
+        self.marks: list[tuple[str, str | None]] = []
+
+    def mark(self, stage: str, *, detail: str | None = None) -> None:
+        self.marks.append((stage, detail))
+
+
+class TestTurnTimerMarks:
+    """``vox call``'s turn-latency trace: CallSession must call ``mark()`` at
+    each documented stage, in order, exactly once per turn.
+    """
+
+    async def test_full_round_trip_marks_every_stage_in_order(self) -> None:
+        timer = _SpyTurnTimer()
+        speak = _Recorder()
+        stt = FakeSTTProvider(
+            [TranscriptEvent(text="what does this do", confidence=0.95, is_final=True)]
+        )
+        session_attach = FakeSessionAttach(
+            (ScriptedChunk(ReplyChunk(text="It returns the sum.", is_final=True)),)
+        )
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=stt,
+            session_attach=session_attach,
+            speak=speak,
+            turn_timer=timer,
+        )
+        await session.start()
+        await _feed_one_turn(session)
+
+        stages = [stage for stage, _detail in timer.marks]
+        assert stages == [
+            "speech_first_detected",
+            "turn_ended",
+            "stt_request_sent",
+            "stt_response_received",
+            "claude_spawned",
+            "first_reply_frame",
+            "reply_complete",
+            "tts_request_sent",
+            "playback_started",
+        ]
+
+    async def test_speech_first_detected_marks_once_not_per_chunk(self) -> None:
+        """The detector reports SPEECH_CONTINUING for every above-threshold
+        chunk, not just the first -- the rising edge, not every chunk."""
+        timer = _SpyTurnTimer()
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=FakeSTTProvider(
+                [TranscriptEvent(text="hi", confidence=0.95, is_final=True)]
+            ),
+            session_attach=FakeSessionAttach(
+                (ScriptedChunk(ReplyChunk(text="reply", is_final=True)),)
+            ),
+            speak=_Recorder(),
+            turn_timer=timer,
+        )
+        await session.start()
+        await _feed_one_turn(session)
+
+        detected = [s for s, _d in timer.marks if s == "speech_first_detected"]
+        assert len(detected) == 1
+
+    async def test_stt_response_received_carries_the_confidence_detail(self) -> None:
+        timer = _SpyTurnTimer()
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=FakeSTTProvider(
+                [TranscriptEvent(text="hi", confidence=0.87, is_final=True)]
+            ),
+            session_attach=FakeSessionAttach(
+                (ScriptedChunk(ReplyChunk(text="reply", is_final=True)),)
+            ),
+            speak=_Recorder(),
+            turn_timer=timer,
+        )
+        await session.start()
+        await _feed_one_turn(session)
+
+        details = dict(timer.marks)
+        assert details["stt_response_received"] == "confidence=0.87"
+
+    async def test_stt_response_received_reports_no_transcript_when_ambiguous(
+        self,
+    ) -> None:
+        """FR-19's ambiguous-capture path (no events at all) still marks the
+        stage, with a detail that says why there's no confidence to report."""
+        timer = _SpyTurnTimer()
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=FakeSTTProvider([]),  # yields nothing
+            session_attach=FakeSessionAttach(),
+            speak=_Recorder(),
+            turn_timer=timer,
+        )
+        await session.start()
+        await _feed_one_turn(session)
+
+        details = dict(timer.marks)
+        assert details["stt_response_received"] == "no transcript"
+        # The turn never reached session-attach -- no claude_spawned mark.
+        assert "claude_spawned" not in details
+
+    async def test_no_turn_timer_passed_defaults_to_a_real_logging_timer(self) -> None:
+        """Every existing call site that never passes turn_timer must keep
+        working -- construction alone must not raise, and marks must not
+        error even though nothing asserts on where they land here."""
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=FakeSTTProvider(
+                [TranscriptEvent(text="hi", confidence=0.95, is_final=True)]
+            ),
+            session_attach=FakeSessionAttach(
+                (ScriptedChunk(ReplyChunk(text="reply", is_final=True)),)
+            ),
+            speak=_Recorder(),
+        )
+        await session.start()
+        await _feed_one_turn(session)  # must not raise

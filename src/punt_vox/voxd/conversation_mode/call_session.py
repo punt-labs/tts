@@ -31,12 +31,14 @@ from punt_vox.voxd.conversation_mode.timeout_call import TimeoutCall
 from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
 from punt_vox.voxd.conversation_mode.turn_detected import TurnDetected
 from punt_vox.voxd.conversation_mode.turn_signal import TurnSignal
+from punt_vox.voxd.conversation_mode.turn_timer import LoggingTurnTimer
 
 if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
     from punt_vox.voxd.conversation_mode.session_attach import SessionAttach
     from punt_vox.voxd.conversation_mode.stt_provider import STTProvider
     from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
+    from punt_vox.voxd.conversation_mode.turn_timer import TurnTimer
 
 __all__ = ["CallSession", "SpeakFn"]
 
@@ -72,11 +74,13 @@ class CallSession:
 
     __slots__ = (
         "_actor",
+        "_last_signal",
         "_pending_chunks",
         "_session_attach",
         "_speak",
         "_stt_provider",
         "_turn_detector",
+        "_turn_timer",
     )
     _actor: CallActor
     _turn_detector: TurnDetector
@@ -84,6 +88,12 @@ class CallSession:
     _session_attach: SessionAttach
     _speak: SpeakFn
     _pending_chunks: list[AudioChunk]
+    _turn_timer: TurnTimer
+    _last_signal: TurnSignal
+    """The previous chunk's :class:`TurnSignal`, tracked only to detect the
+    rising edge into ``SPEECH_CONTINUING`` for the timer's
+    ``speech_first_detected`` mark -- the detector itself reports every
+    above-threshold chunk as ``SPEECH_CONTINUING``, not just the first."""
 
     def __new__(
         cls,
@@ -92,6 +102,12 @@ class CallSession:
         stt_provider: STTProvider,
         session_attach: SessionAttach,
         speak: SpeakFn,
+        # Absence means the caller doesn't need a substitute for tests --
+        # every real call site gets a real LoggingTurnTimer(), which is
+        # always safe and cheap to construct (see that class: it always
+        # calls logger.debug(); whether that record goes anywhere is a
+        # logging-config decision made elsewhere, not this constructor's).
+        turn_timer: TurnTimer | None = None,
     ) -> Self:
         self = super().__new__(cls)
         self._actor = CallActor()
@@ -100,6 +116,8 @@ class CallSession:
         self._session_attach = session_attach
         self._speak = speak
         self._pending_chunks = []
+        self._turn_timer = turn_timer if turn_timer is not None else LoggingTurnTimer()
+        self._last_signal = TurnSignal.SILENCE
         return self
 
     @property
@@ -155,16 +173,30 @@ class CallSession:
         """
         if self._actor.current_detector is not Detector.TURN:
             return
-        self._pending_chunks.append(chunk)
+        # The rising edge into SPEECH_CONTINUING, not every above-threshold
+        # chunk (the detector reports SPEECH_CONTINUING for each one) -- see
+        # _last_signal's docstring.
         signal = self._turn_detector.process(chunk)
+        if signal is TurnSignal.SPEECH_CONTINUING and self._last_signal is not signal:
+            self._turn_timer.mark("speech_first_detected")
+        self._last_signal = signal
+        self._pending_chunks.append(chunk)
         if signal is TurnSignal.TURN_ENDED:
+            self._turn_timer.mark("turn_ended")
             chunks, self._pending_chunks = self._pending_chunks, []
             await self._handle_turn_ended(chunks)
 
     async def _handle_turn_ended(self, chunks: list[AudioChunk]) -> None:
+        self._turn_timer.mark("stt_request_sent")
         final_event = None
         async for event in self._stt_provider.transcribe(_as_async_iter(chunks)):
             final_event = event
+        confidence_detail = (
+            "no transcript"
+            if final_event is None
+            else f"confidence={final_event.confidence:.2f}"
+        )
+        self._turn_timer.mark("stt_response_received", detail=confidence_detail)
 
         if final_event is None or final_event.confidence < CONFIDENCE_FLOOR:
             # FR-19: never fabricate on ambiguous or failed capture -- an
@@ -180,9 +212,34 @@ class CallSession:
         await self._speak_reply(turn)
 
     async def _speak_reply(self, turn: TranscribedTurn) -> None:
-        pieces = [chunk.text async for chunk in self._session_attach.send_turn(turn)]
+        # "claude_spawned"/"first_reply_frame" approximate a subprocess this
+        # class has no visibility into: SessionAttach is a Protocol, and the
+        # production ClaudeSessionAttach spawns claude -p --resume as the
+        # very first thing send_turn does, before its first yield -- so
+        # marking just before iterating starts, and again on the first
+        # chunk received, is accurate for that implementation even though
+        # this class cannot see inside it.
+        self._turn_timer.mark("claude_spawned")
+        pieces: list[str] = []
+        first_frame_seen = False
+        async for chunk in self._session_attach.send_turn(turn):
+            if not first_frame_seen:
+                self._turn_timer.mark("first_reply_frame")
+                first_frame_seen = True
+            pieces.append(chunk.text)
+        self._turn_timer.mark("reply_complete")
         self._actor.apply(ReplyBegins())
+        self._turn_timer.mark("tts_request_sent")
         await self._speak("".join(pieces))
+        # "playback_started" is the best available proxy, not a real signal:
+        # SpeakFn's own contract (see that Protocol's docstring) is "returns
+        # once playback has started OR completed" -- this class cannot tell
+        # which, and a caller wrapping speak() in its own timing-sensitive
+        # logic (the live path's mic-echo gate) can push this mark later
+        # still, past when audio actually started.
+        self._turn_timer.mark(
+            "playback_started", detail="approximate -- see SpeakFn's contract"
+        )
         self._actor.apply(ReplyEnds())
         await self._speak("Ready.")
 
