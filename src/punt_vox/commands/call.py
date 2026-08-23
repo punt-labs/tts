@@ -55,6 +55,7 @@ from typing import TYPE_CHECKING, Self, final
 import typer
 
 from punt_vox.client_sync import VoxClientSync
+from punt_vox.commands.call_cues import DaemonCues
 from punt_vox.commands.call_live_driver import LiveCallDriver
 from punt_vox.commands.call_options import (
     ScriptOpt as _ScriptOpt,
@@ -75,21 +76,11 @@ from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
 
 if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.session_attach import SessionAttach
+    from punt_vox.voxd.conversation_mode.wait_cue import ChimeFn
 
 __all__ = ["build_call_app"]
 
 logger = logging.getLogger(__name__)
-
-# VoxClient.synthesize's own default (client.py's _TIMEOUT_SYNTHESIS, 30s)
-# bounds the wait for voxd's "playing" ack, which the daemon does not send
-# until synthesis itself has actually finished -- a long reply's real
-# ElevenLabs synthesis time can exceed 30s outright (a 1133-char reply
-# measured ~43s), killing the call mid-reply with VoxdProtocolError. A call
-# is exactly the case that needs a longer bound: a human is waiting live on
-# the reply, and a longer wait is a far better experience than a killed
-# call, since this timeout exists to bound a genuine hang, not to cap
-# legitimate long-running synthesis.
-_SPEAK_TIMEOUT_S = 120.0
 
 
 @final
@@ -210,23 +201,9 @@ class CallCli:
         # call_spec.py's module docstring for why: a call that cannot
         # speak must refuse to start, not begin and then have every
         # speak() call fail silently on the wire.
-        spec = resolve_call_spec()
-
-        async def speak(text: str) -> None:
-            # asyncio.to_thread, not a bare call: VoxClientSync.synthesize blocks
-            # its calling thread for the full round trip to the daemon, and this
-            # runs on the call's single event loop -- a blocking call here would
-            # stall audio capture and control-request handling for as long as
-            # synthesis takes. Discards SynthesizeResult -- SpeakFn's contract is
-            # "spoken", not "the daemon's synthesis metadata", and a call
-            # orchestrator has no use for it. timeout=_SPEAK_TIMEOUT_S, not the
-            # client's own 30s default: a long reply's real synthesis time can
-            # exceed 30s (a 1133-char reply measured ~43s), and the daemon does
-            # not ack "playing" until synthesis itself has finished -- the
-            # default was killing the call mid-reply.
-            await asyncio.to_thread(
-                client.synthesize, text, spec, timeout=_SPEAK_TIMEOUT_S
-            )
+        cues = DaemonCues(client, resolve_call_spec())
+        speak = cues.speak
+        chime = cues.chime
 
         lock = CallLock(self._lock_dir() / "call.lock")
         control = CallControl(self._lock_dir() / "call.control")
@@ -239,11 +216,12 @@ class CallCli:
 
         try:
             if script is not None:
-                await self._run_scripted(script, session_attach, speak, control)
+                await self._run_scripted(script, session_attach, speak, chime, control)
             else:
                 driver = await LiveCallDriver.create(
                     session_attach=session_attach,
                     speak=speak,
+                    chime=chime,
                     control=control,
                     apply_control=self._apply_control,
                 )
@@ -269,6 +247,7 @@ class CallCli:
         script: Path,
         session_attach: SessionAttach,
         speak: SpeakFn,
+        chime: ChimeFn,
         control: CallControl,
     ) -> None:
         """Drive one call from a JSON Lines script -- no microphone, no ElevenLabs."""
@@ -278,6 +257,7 @@ class CallCli:
             stt_provider=ScriptedSTTProvider(turns),
             session_attach=session_attach,
             speak=speak,
+            chime=chime,
         )
         await session.start()
         for turn in turns:

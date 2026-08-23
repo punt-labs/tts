@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.call_control import CallControl
     from punt_vox.voxd.conversation_mode.call_session import SpeakFn
     from punt_vox.voxd.conversation_mode.session_attach import SessionAttach
+    from punt_vox.voxd.conversation_mode.wait_cue import ChimeFn
 
 __all__ = ["LiveCallDriver"]
 
@@ -67,6 +68,13 @@ _MIC_GATE_MAX_HOLD_S = 20.0
 # elsewhere); a documented fixed default instead.
 _INACTIVITY_TIMEOUT_S = 120.0
 
+# vox-36xc's wait cue is a short, fixed-length bundled asset, not synthesized
+# speech -- there is no text to run through estimate_speech_duration_s, so a
+# small fixed hold (long enough for the chime's own bundled clip to finish
+# playing before the mic reopens) stands in for _MIC_GATE_SAFETY_MARGIN_S's
+# role in _speak_and_gate below.
+_CHIME_GATE_HOLD_S = 1.5
+
 
 @final
 class LiveCallDriver:
@@ -80,6 +88,7 @@ class LiveCallDriver:
 
     __slots__ = (
         "_apply_control",
+        "_chime",
         "_control",
         "_last_activity_at",
         "_mic_source",
@@ -89,6 +98,7 @@ class LiveCallDriver:
     _mic_source: MicAudioSource
     _session: CallSession
     _speak: SpeakFn
+    _chime: ChimeFn
     _control: CallControl
     _apply_control: ApplyControlFn
     _last_activity_at: float
@@ -98,6 +108,7 @@ class LiveCallDriver:
         *,
         session_attach: SessionAttach,
         speak: SpeakFn,
+        chime: ChimeFn,
         control: CallControl,
         apply_control: ApplyControlFn,
         detector: TurnDetector,
@@ -106,6 +117,7 @@ class LiveCallDriver:
         self = super().__new__(cls)
         self._mic_source = mic_source
         self._speak = speak
+        self._chime = chime
         self._control = control
         self._apply_control = apply_control
         self._session = CallSession(
@@ -113,6 +125,7 @@ class LiveCallDriver:
             stt_provider=ElevenLabsSTTProvider(),
             session_attach=session_attach,
             speak=self._speak_and_gate,
+            chime=self._chime_and_gate,
         )
         self._last_activity_at = time.monotonic()
         self._session.actor.on_transition(self._mark_activity)
@@ -124,6 +137,7 @@ class LiveCallDriver:
         *,
         session_attach: SessionAttach,
         speak: SpeakFn,
+        chime: ChimeFn,
         control: CallControl,
         apply_control: ApplyControlFn,
     ) -> Self:
@@ -134,6 +148,7 @@ class LiveCallDriver:
         return cls(
             session_attach=session_attach,
             speak=speak,
+            chime=chime,
             control=control,
             apply_control=apply_control,
             detector=detector,
@@ -193,6 +208,30 @@ class LiveCallDriver:
                 _MIC_GATE_MAX_HOLD_S,
             )
             await asyncio.sleep(hold_s)
+        finally:
+            self._mic_source.drain_pending()
+            self._mic_source.set_listening(listening=True)
+
+    async def _chime_and_gate(self) -> None:
+        """Play the wait cue, gating mic capture the same way :meth:`_speak_and_gate`.
+
+        See that method's own docstring for the shared "no true playback-
+        completion signal" rationale.
+
+        The wait cue fires while the call sits in ``waiting`` (see
+        :meth:`~.call_session.CallSession.process_chunk`'s docstring: the
+        turn detector stays active in that mode, same as ``listening``), so
+        the chime is exactly as much a mic-echo risk as any spoken cue --
+        without this gate the microphone would pick its own chime back up
+        and could fabricate a "turn" from it. A short fixed hold
+        (:data:`_CHIME_GATE_HOLD_S`) stands in for the estimated-speech-
+        duration hold :meth:`_speak_and_gate` uses -- the chime is a fixed
+        bundled clip with no text to estimate a duration from.
+        """
+        self._mic_source.set_listening(listening=False)
+        try:
+            await self._chime()
+            await asyncio.sleep(_CHIME_GATE_HOLD_S)
         finally:
             self._mic_source.drain_pending()
             self._mic_source.set_listening(listening=True)
