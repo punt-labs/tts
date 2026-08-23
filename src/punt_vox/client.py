@@ -605,12 +605,26 @@ class VoxClient:
         spec: SynthesisSpec | None = None,
         *,
         once: int | None = None,
+        # Absence means the default _TIMEOUT_SYNTHESIS (30s) -- every existing
+        # caller (mic:unmute, vox say, the Stop-hook speech helper) keeps its
+        # current behavior unchanged. A caller that knows its own text can run
+        # long (vox call's speak(), where a human is waiting live on a reply)
+        # passes an explicit, longer bound instead: send_and_drain's timeout
+        # covers the FULL wait for early_terminal='playing', and voxd only
+        # sends 'playing' once synthesis itself has finished (the daemon
+        # enqueues audio for playback, it doesn't ack before it has the
+        # bytes) -- so this one call's deadline is really "how long may this
+        # text's real synthesis take", not a fixed protocol round-trip.
+        timeout: float | None = None,
     ) -> SynthesizeResult:
         """Send synthesize request. Audio plays on server.
 
         *spec* bundles the voice/provider/rate parameters; *once* is the dedup
-        TTL window (seconds). Returns a ``SynthesizeResult`` carrying the request
-        id, ``cached`` (cache-hit signal), and any dedup status.
+        TTL window (seconds). *timeout* overrides how long to wait for voxd's
+        'playing' ack -- see the parameter's own comment for why a caller
+        would need longer than the default. Returns a ``SynthesizeResult``
+        carrying the request id, ``cached`` (cache-hit signal), and any dedup
+        status.
         """
         request_id = uuid.uuid4().hex[:12]
         msg: dict[str, object] = {
@@ -624,7 +638,7 @@ class VoxClient:
 
         responses = await self._transport.send_and_drain(
             msg,
-            timeout=_TIMEOUT_SYNTHESIS,
+            timeout=timeout if timeout is not None else _TIMEOUT_SYNTHESIS,
             terminal_type="done",
             early_terminal="playing",
         )
