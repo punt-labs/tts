@@ -82,11 +82,17 @@ async def test_nonzero_exit_raises_session_attach_error() -> None:
 
 async def test_malformed_stream_json_line_raises_session_attach_error() -> None:
     process = _fake_process([b"not json\n"])
+    process.kill = MagicMock()
     with patch("asyncio.create_subprocess_exec", return_value=process):
         attach = ClaudeSessionAttach(session_id="session-a")
         with pytest.raises(SessionAttachError, match="malformed stream-json"):
             async for _ in attach.send_turn(TranscribedTurn(text="hello")):
                 pass
+    # Regression: a non-timeout failure mid-exchange must still kill and
+    # reap the subprocess -- without this, every malformed-frame occurrence
+    # leaked a `claude -p --resume` zombie.
+    process.kill.assert_called_once()
+    process.wait.assert_awaited()
 
 
 async def test_writes_the_turn_as_a_user_message_to_stdin() -> None:

@@ -59,6 +59,22 @@ class ClaudeSessionAttach:
         return self
 
     async def send_turn(self, turn: TranscribedTurn) -> AsyncIterator[ReplyChunk]:
+        process = await self._spawn(turn)
+        if process.stdout is None or process.stderr is None:
+            msg = f"{self._claude_bin} subprocess has no stdout/stderr pipe"
+            raise SessionAttachError(msg)
+        text, stderr = await self._exchange(process, process.stdout, process.stderr)
+        await process.wait()
+        if process.returncode != 0:
+            msg = (
+                f"{self._claude_bin} -p --resume {self._session_id} exited "
+                f"{process.returncode}: {stderr.decode(errors='replace').strip()}"
+            )
+            raise SessionAttachError(msg)
+        yield ReplyChunk(text=text, is_final=True)
+
+    async def _spawn(self, turn: TranscribedTurn) -> asyncio.subprocess.Process:
+        """Start the relay subprocess and write *turn* to its stdin."""
         process = await asyncio.create_subprocess_exec(
             self._claude_bin,
             "-p",
@@ -74,8 +90,8 @@ class ClaudeSessionAttach:
             stderr=asyncio.subprocess.PIPE,
             env={**os.environ, _RELAY_ENV_VAR: "1"},
         )
-        if process.stdin is None or process.stdout is None or process.stderr is None:
-            msg = f"{self._claude_bin} subprocess has no stdin/stdout/stderr pipe"
+        if process.stdin is None:
+            msg = f"{self._claude_bin} subprocess has no stdin pipe"
             raise SessionAttachError(msg)
 
         user_message = {
@@ -85,41 +101,50 @@ class ClaudeSessionAttach:
         process.stdin.write(json.dumps(user_message).encode() + b"\n")
         await process.stdin.drain()
         process.stdin.close()
+        return process
 
-        # stdout and stderr are read concurrently, not stdout-to-EOF then
-        # stderr: ``claude -p`` is not quiet on stderr, and reading stdout to
-        # completion first risks the classic pipe deadlock -- if the child
-        # writes more than the OS pipe buffer to stderr before it finishes
-        # stdout, the child blocks on that write, stdout stalls waiting for
-        # the child, and this coroutine waits on stdout forever with the
-        # call's ``UserPromptSubmit`` lock still held. A bounded timeout
-        # guards the whole exchange: a stalled subprocess (a hung tool call,
-        # a network wedge) otherwise leaves the call waiting with no signal
-        # anything is wrong.
+    async def _exchange(
+        self,
+        process: asyncio.subprocess.Process,
+        stdout: asyncio.StreamReader,
+        stderr: asyncio.StreamReader,
+    ) -> tuple[str, bytes]:
+        """Read the reply and stderr concurrently, killing *process* on any failure.
+
+        stdout and stderr are read concurrently, not stdout-to-EOF then
+        stderr: ``claude -p`` is not quiet on stderr, and reading stdout to
+        completion first risks the classic pipe deadlock -- if the child
+        writes more than the OS pipe buffer to stderr before it finishes
+        stdout, the child blocks on that write, stdout stalls waiting for
+        the child, and this coroutine waits on stdout forever with the
+        call's ``UserPromptSubmit`` lock still held. A bounded timeout
+        guards the whole exchange: a stalled subprocess (a hung tool call,
+        a network wedge) otherwise leaves the call waiting with no signal
+        anything is wrong.
+
+        ANY failure mid-exchange -- not just the timeout -- must not leak
+        the subprocess. A malformed stream-json line raises
+        :class:`SessionAttachError` from :meth:`_collect_reply`, for
+        instance, and ``asyncio.gather`` without ``return_exceptions=True``
+        doesn't cancel the sibling ``stderr.read()`` task either; left
+        unkilled, every such occurrence accumulates one
+        ``claude -p --resume`` zombie.
+        """
         try:
-            text, stderr = await asyncio.wait_for(
-                asyncio.gather(
-                    self._collect_reply(process.stdout), process.stderr.read()
-                ),
+            return await asyncio.wait_for(
+                asyncio.gather(self._collect_reply(stdout), stderr.read()),
                 timeout=_REPLY_TIMEOUT_S,
             )
-        except TimeoutError:
+        except Exception as exc:
             process.kill()
             await process.wait()
-            msg = (
-                f"{self._claude_bin} -p --resume {self._session_id} did not "
-                f"reply within {_REPLY_TIMEOUT_S:.0f}s"
-            )
-            raise SessionAttachError(msg) from None
-
-        await process.wait()
-        if process.returncode != 0:
-            msg = (
-                f"{self._claude_bin} -p --resume {self._session_id} exited "
-                f"{process.returncode}: {stderr.decode(errors='replace').strip()}"
-            )
-            raise SessionAttachError(msg)
-        yield ReplyChunk(text=text, is_final=True)
+            if isinstance(exc, TimeoutError):
+                msg = (
+                    f"{self._claude_bin} -p --resume {self._session_id} did not "
+                    f"reply within {_REPLY_TIMEOUT_S:.0f}s"
+                )
+                raise SessionAttachError(msg) from None
+            raise
 
     async def _collect_reply(self, stdout: asyncio.StreamReader) -> str:
         """Read stream-json lines from *stdout*, concatenating assistant text deltas.
