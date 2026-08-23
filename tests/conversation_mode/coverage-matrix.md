@@ -28,8 +28,8 @@ gaps.
 
 | ID | Description (short) | Tier | Test path |
 |----|----------------------|------|-----------|
-| FR-1 | Start a call with one action; tell the user what's needed if unconfigured | 2 | `tests/test_cli_call.py` (`test_start_requires_the_script_option`, `test_run_call_speaks_the_reply_and_holds_the_lock_only_while_active`) |
-| FR-2 | End a call explicitly, or automatically after a bounded timeout | 1 | `tests/conversation_mode/test_call_state.py`, `tests/conversation_mode/test_call_session.py` (`test_hangup_returns_to_idle`, `test_timeout_from_listening_returns_to_idle`) |
+| FR-1 | Start a call with one action; tell the user what's needed if unconfigured | 2 | `tests/test_cli_call.py` (`test_start_no_longer_requires_the_script_option`, `test_run_call_speaks_the_reply_and_holds_the_lock_only_while_active`) |
+| FR-2 | End a call explicitly, or automatically after a bounded timeout | 1/2 | `tests/conversation_mode/test_call_state.py`, `tests/conversation_mode/test_call_session.py` (`test_hangup_returns_to_idle`, `test_timeout_from_listening_returns_to_idle`); wired into the live drive loop in `src/punt_vox/commands/call_live_driver.py` (`tests/test_cli_call.py::test_run_call_live_path_times_out_after_inactivity`); explicit end via `/call stop` in `tests/conversation_mode/test_call_control.py` and `tests/test_cli_call.py` (`test_stop_writes_a_stop_request`, `test_stop_refuses_when_no_call_is_active`) |
 | FR-3 | Every call-state transition is communicated audibly | 1 | `tests/conversation_mode/test_call_session.py` (`test_start_speaks_the_listening_cue`, `test_full_round_trip_speaks_the_agent_s_reply`) -- listening/reply-ready cues only this slice; barge-in's cue is Slice 2a+ |
 | FR-4 | One human, one active agent session, for the call's lifetime | 2 | `tests/conversation_mode/test_session_discovery.py` (never auto-picks among multiple candidates) |
 | FR-5 | Detect when the human has finished a turn | 1 | `tests/conversation_mode/test_turn_detector.py` (`test_continuous_speech_then_gap_ends_turn`) |
@@ -41,8 +41,8 @@ gaps.
 | FR-10 | Without headphones, distinguish genuine interruption from acoustic echo | | P2, not in scope for this slice |
 | FR-11 | Begin speaking on the reply's first complete portion | | This slice speaks the reply as one non-streamed block (per mission scope); `ClaudeSessionAttach` streams stream-json internally but `CallSession` does not yet act per-chunk |
 | FR-12 | Play a presence signal while the agent is working | | Slice 2a/4 territory |
-| FR-13 | The microphone remains available throughout the agent's turn | | Real capture is deferred alongside the real STT provider (see `src/punt_vox/commands/call.py`'s module docstring) |
-| FR-14 | Support ElevenLabs for STT and TTS on macOS | | Real STT provider deferred (`src/punt_vox/providers/` locked by another open mission); TTS already ships via existing `mic:unmute`/`vox say` |
+| FR-13 | The microphone remains available throughout the agent's turn | 1/2 | `src/punt_vox/voxd/conversation_mode/mic_audio_source.py`'s `set_listening()` gates capture at the PortAudio callback itself around each spoken reply (`tests/conversation_mode/test_mic_audio_source.py`, `TestMicAudioSourceSetListening`); the hold duration is estimated, not signal-based -- see `src/punt_vox/commands/call.py`'s module docstring's "Known limitation" |
+| FR-14 | Support ElevenLabs for STT and TTS on macOS | 2 | `src/punt_vox/providers/elevenlabs_stt.py`'s `ElevenLabsSTTProvider` is the live path's STT provider (`tests/test_elevenlabs_stt_provider.py`); TTS ships via existing `mic:unmute`/`vox say` |
 | FR-14a | Support at least one fully local provider on macOS and Linux | | P2, not in scope for this slice |
 | FR-15 | Let a user configure the Conversation Mode provider | | Provider selection for Conversation Mode is not built this slice (no real STT provider to select) |
 | FR-16 | No cloud account/network required for a complete call on a local provider | | P2, not in scope for this slice |
@@ -62,3 +62,12 @@ gaps.
 | NFR-4 | No audio or transcript leaves the machine in a fully local configuration | | P2, not in scope for this slice |
 | NFR-5 | No regression to vox's behavior outside an active call | 1/2 | Full existing suite (unrelated to Conversation Mode) passes unchanged alongside this slice's additions |
 | NFR-6 | Every call-state cue is audible; no cue depends on a visual/text channel | 1 | `tests/conversation_mode/test_call_session.py` (`test_start_speaks_the_listening_cue`) -- listening/reply-ready cues speak through the injected `SpeakFn`, matching `mic:unmute`'s call shape |
+
+## Module Coverage
+
+Beyond the requirement rows above, three modules that ship the live call
+path each have a dedicated test file: `src/punt_vox/commands/call_live_driver.py`
+(`tests/test_call_live_driver.py`, plus end-to-end coverage through
+`tests/test_cli_call.py`'s live-path tests), `src/punt_vox/voxd/conversation_mode/mic_audio_source.py`
+(`tests/conversation_mode/test_mic_audio_source.py`), and
+`src/punt_vox/providers/elevenlabs_stt.py` (`tests/test_elevenlabs_stt_provider.py`).
