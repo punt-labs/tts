@@ -11,7 +11,7 @@ touches a real microphone or the ElevenLabs API.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Coroutine
 from contextlib import AbstractContextManager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -162,6 +162,51 @@ def test_start_no_longer_requires_the_script_option() -> None:
     assert result.exit_code == 0
     assert "--script" in result.stdout
     assert "not required" not in result.stdout  # sanity: help text renders
+
+
+def _close_coro(coro: Coroutine[object, object, object]) -> None:
+    """A no-op ``asyncio.run`` stand-in: closes *coro* without running it.
+
+    Used where a test only asserts on state set up before ``asyncio.run`` is
+    called -- a bare ``patch("asyncio.run")`` leaves the coroutine
+    ``start()`` built unclosed, which emits a spurious "coroutine was never
+    awaited" RuntimeWarning.
+    """
+    coro.close()
+
+
+def test_start_help_shows_the_verbose_flag() -> None:
+    result = runner.invoke(build_call_app(), ["start", "--help"])
+    assert result.exit_code == 0
+    assert "--verbose" in result.stdout
+    assert "-v" in result.stdout
+
+
+def test_start_with_verbose_echoes_the_turn_timer_to_console() -> None:
+    """Regression: --verbose must reach configure_turn_timer_logging as
+    echo_to_console=True -- the flag that decides whether the turn-latency
+    trace also prints live, never whether it reaches vox.log (that's
+    unconditional).
+    """
+    from punt_vox.commands import call as call_module
+
+    with (
+        patch.object(call_module, "configure_turn_timer_logging") as mock_configure,
+        patch("asyncio.run", side_effect=_close_coro),
+    ):
+        call_module.CallCli().start(verbose=True)
+    mock_configure.assert_called_once_with(echo_to_console=True)
+
+
+def test_start_without_verbose_does_not_echo_the_turn_timer_to_console() -> None:
+    from punt_vox.commands import call as call_module
+
+    with (
+        patch.object(call_module, "configure_turn_timer_logging") as mock_configure,
+        patch("asyncio.run", side_effect=_close_coro),
+    ):
+        call_module.CallCli().start()
+    mock_configure.assert_called_once_with(echo_to_console=False)
 
 
 async def test_run_call_passes_a_resolved_spec_with_a_provider_to_synthesize(

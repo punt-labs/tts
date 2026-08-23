@@ -50,15 +50,22 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Self, final
+from typing import TYPE_CHECKING, Self, final
 
 import typer
 
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.commands.call_live_driver import LiveCallDriver
+from punt_vox.commands.call_options import (
+    ScriptOpt as _ScriptOpt,
+    SessionOpt as _SessionOpt,
+    TransferSessionOpt as _TransferSessionOpt,
+    VerboseOpt as _VerboseOpt,
+)
 from punt_vox.commands.call_scripted import ScriptedSTTProvider, ScriptedTurn
 from punt_vox.commands.call_spec import resolve_call_spec
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_repo_root
+from punt_vox.logging_config import configure_turn_timer_logging
 from punt_vox.voxd.conversation_mode.call_control import CallControl
 from punt_vox.voxd.conversation_mode.call_lock import CallLock, CallLockActiveError
 from punt_vox.voxd.conversation_mode.call_session import CallSession, SpeakFn
@@ -72,33 +79,6 @@ if TYPE_CHECKING:
 __all__ = ["build_call_app"]
 
 logger = logging.getLogger(__name__)
-
-
-_ScriptOpt = Annotated[
-    Path | None,
-    typer.Option(
-        "--script",
-        help=(
-            "Dev/test path: a JSON Lines file of scripted turns "
-            '({"text": ..., "confidence": ...} per line), fed through '
-            "synthetic audio instead of the microphone -- no hardware, no "
-            "ElevenLabs credentials, no network. Omit for a real call: real "
-            "microphone capture, transcribed by ElevenLabs."
-        ),
-    ),
-]
-_SessionOpt = Annotated[
-    str | None,
-    typer.Option(
-        "--session", help="Attach to this session id instead of discovering one."
-    ),
-]
-_TransferSessionOpt = Annotated[
-    str | None,
-    typer.Option(
-        "--session", help="Re-attach to this session id, or re-discover if omitted."
-    ),
-]
 
 
 @final
@@ -116,8 +96,18 @@ class CallCli:
     def __new__(cls) -> Self:
         return super().__new__(cls)
 
-    def start(self, script: _ScriptOpt = None, session: _SessionOpt = None) -> None:
+    def start(
+        self,
+        script: _ScriptOpt = None,
+        session: _SessionOpt = None,
+        verbose: _VerboseOpt = False,  # noqa: FBT002 -- typer CLI requires bool default
+    ) -> None:
         """Start a call: listen, detect turns, forward them, speak the reply."""
+        # Always on, regardless of *verbose*: the turn-timer's own logger is
+        # forced to DEBUG on vox.log for every call, not only ones run with
+        # --verbose -- see configure_turn_timer_logging's docstring. verbose
+        # only decides whether those same lines also echo to this terminal.
+        configure_turn_timer_logging(echo_to_console=verbose)
         asyncio.run(self._run(script, session))
 
     def stop(self) -> None:
