@@ -39,7 +39,10 @@ the echo window; it does not eliminate it. A real fix needs
 either ``client.py`` to expose a genuine "wait for playback done" option, or
 routing playback through :class:`~.playback_sink_actor.PlaybackSinkActor`
 (built in an earlier slice but not yet wired to any caller) -- both are
-follow-up work, not attempted here.
+follow-up work, not attempted here. The estimate also assumes playback
+starts immediately once ``synthesize()`` returns; if the daemon queues the
+utterance behind music or a chime, the gate can reopen while the reply is
+still actually playing.
 """
 
 from __future__ import annotations
@@ -119,17 +122,27 @@ class CallCli:
     def stop(self) -> None:
         """Ask the running call to hang up (FR-2's explicit end).
 
-        Refuses to write a request when no call is currently live: a stop
-        (or transfer) written against a dead lock would sit in the mailbox
-        until the *next* ``vox call start`` consumed it on its first chunk
-        and silently ended immediately, with no explanation to whoever
-        started that later call.
+        Reduces, but does not eliminate, the stale-mailbox race: refuses to
+        write a request when :meth:`_require_live_call` finds no call
+        currently live, so a stop (or transfer) written against an
+        already-dead lock no longer sits in the mailbox for the *next* call
+        to silently consume on its first chunk. The check and the write are
+        two separate filesystem operations in this process, uncoordinated
+        with the live call's own ``lock.release()`` in a different process
+        -- if the live call ends in the narrow window between them, the
+        request still gets written and still lands in the next call's
+        mailbox. A full fix needs the request tagged (pid/timestamp) and
+        validated again on :meth:`~.call_control.CallControl.consume`.
         """
         self._require_live_call()
         CallControl(self._lock_dir() / "call.control").request_stop()
 
     def transfer(self, session: _TransferSessionOpt = None) -> None:
-        """Ask the running call to re-attach to a different active session."""
+        """Ask the running call to re-attach to a different active session.
+
+        Same reduces-but-does-not-eliminate stale-mailbox race as
+        :meth:`stop` -- see that docstring.
+        """
         self._require_live_call()
         CallControl(self._lock_dir() / "call.control").request_transfer(session)
 
