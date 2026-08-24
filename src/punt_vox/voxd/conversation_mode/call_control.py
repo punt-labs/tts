@@ -103,10 +103,21 @@ class CallControl:
                 if kind not in ("stop", "transfer"):
                     msg = f"unrecognized control kind {kind!r}"
                     raise ValueError(msg)
-                return ControlRequest(
-                    kind=kind,
-                    target_session_id=payload.get("target_session_id"),
-                )
+                target_session_id = payload.get("target_session_id")
+                # Same discipline as "kind" above: a wrong-typed value here
+                # (an int, say, from a hand-edited or partially-overwritten
+                # file) would otherwise flow straight into
+                # ClaudeSessionAttach's constructor and crash with an
+                # uncaught TypeError from create_subprocess_exec, ending the
+                # whole call over a malformed transfer request -- exactly
+                # the outcome the "kind" validation above already exists to
+                # prevent.
+                if target_session_id is not None and not isinstance(
+                    target_session_id, str
+                ):
+                    msg = f"wrong-typed target_session_id {target_session_id!r}"
+                    raise TypeError(msg)
+                return ControlRequest(kind=kind, target_session_id=target_session_id)
             except (ValueError, KeyError, TypeError) as exc:
                 logger.warning(
                     "call.control request is unreadable, discarding: %s", exc

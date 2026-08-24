@@ -134,6 +134,23 @@ def test_consume_treats_an_unrecognized_kind_as_no_request(tmp_path: Path) -> No
     assert not path.exists()
 
 
+def test_consume_treats_a_wrong_typed_target_session_id_as_no_request(
+    tmp_path: Path,
+) -> None:
+    """A malformed ``target_session_id`` (an int, from a hand-edited or
+    partially-overwritten file) must be discarded-and-logged, same as an
+    unrecognized ``kind`` -- never constructed into a ``ControlRequest`` that
+    would crash ``ClaudeSessionAttach``'s constructor downstream.
+    """
+    path = tmp_path / "call.control"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"kind": "transfer", "target_session_id": 1234}')
+
+    control = CallControl(path)
+    assert control.consume() is None
+    assert not path.exists()
+
+
 def test_a_request_written_after_consume_is_not_lost(tmp_path: Path) -> None:
     """The rename-based claim must not leave the mailbox permanently stuck."""
     control = CallControl(tmp_path / "call.control")
