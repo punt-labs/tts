@@ -241,27 +241,21 @@ class ClaudeSessionAttach:
     ) -> tuple[str, bytes]:
         """Read the reply and stderr concurrently, under a bounded timeout.
 
-        stdout and stderr are read concurrently, not stdout-to-EOF then
-        stderr: ``claude -p`` is not quiet on stderr, and reading stdout to
-        completion first risks the classic pipe deadlock -- if the child
-        writes more than the OS pipe buffer to stderr before it finishes
-        stdout, the child blocks on that write, stdout stalls waiting for
-        the child, and this coroutine waits on stdout forever with the
-        call's ``UserPromptSubmit`` lock still held. A bounded timeout
-        guards the whole exchange: a stalled subprocess (a hung tool call,
-        a network wedge) otherwise leaves the call waiting with no signal
-        anything is wrong.
-
-        Translates a timeout into :class:`SessionAttachError`; any other
-        failure (a malformed stream-json line raising
-        :class:`SessionAttachError` from :meth:`_collect_reply`, for
-        instance) propagates unchanged. Killing and reaping the subprocess
-        on failure is :meth:`send_turn`'s job, not this method's -- it owns
-        the process object, this method only owns the two streams.
+        Concurrently, not stdout-to-EOF then stderr: draining stdout first
+        risks the classic pipe deadlock, leaving this coroutine waiting
+        forever with the call's ``UserPromptSubmit`` lock still held. A
+        timeout becomes :class:`SessionAttachError`; any other failure (a
+        malformed line from :meth:`_collect_reply`) propagates unchanged --
+        killing/reaping the subprocess is :meth:`send_turn`'s job. Explicit
+        :class:`asyncio.Task` objects, not bare coroutines, so the
+        ``finally`` below can cancel whichever one ``gather``'s
+        ``return_exceptions=False`` left running when its sibling raised.
         """
+        reply_task = asyncio.ensure_future(self._collect_reply(stdout))
+        stderr_task = asyncio.ensure_future(stderr.read())
         try:
             return await asyncio.wait_for(
-                asyncio.gather(self._collect_reply(stdout), stderr.read()),
+                asyncio.gather(reply_task, stderr_task),
                 timeout=_REPLY_TIMEOUT_S,
             )
         except TimeoutError:
@@ -270,6 +264,11 @@ class ClaudeSessionAttach:
                 f"reply within {_REPLY_TIMEOUT_S:.0f}s"
             )
             raise SessionAttachError(msg) from None
+        finally:
+            for task in (reply_task, stderr_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(reply_task, stderr_task, return_exceptions=True)
 
     async def _collect_reply(self, stdout: asyncio.StreamReader) -> str:
         """Read stream-json lines from *stdout*, concatenating assistant text deltas.

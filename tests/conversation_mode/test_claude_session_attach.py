@@ -137,6 +137,47 @@ async def test_malformed_stream_json_line_raises_session_attach_error() -> None:
     process.wait.assert_awaited()
 
 
+class _SlowStderrReader:
+    """A ``stderr.read()`` stand-in that stays pending until cancelled.
+
+    Simulates a still-running sibling task at the moment
+    :meth:`ClaudeSessionAttach._collect_reply` raises -- proves the
+    still-outstanding read is reaped rather than left running as a leaked
+    background task (Python's "Task was destroyed but it is pending!").
+    """
+
+    def __init__(self) -> None:
+        self.cancelled = False
+
+    async def __call__(self) -> bytes:
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        return b""  # pragma: no cover -- cancelled well before this
+
+
+async def test_a_raise_from_collect_reply_cancels_the_still_running_stderr_read() -> (
+    None
+):
+    """``gather``'s default ``return_exceptions=False`` resolves as soon as
+    one child raises, without touching a still-pending sibling -- ``_exchange``
+    must reach in and cancel it itself, or the read keeps running in the
+    background as a leaked task.
+    """
+    process = _fake_process([b"not json\n"])
+    process.kill = MagicMock()
+    slow_stderr = _SlowStderrReader()
+    process.stderr.read = slow_stderr
+    with patch("asyncio.create_subprocess_exec", return_value=process):
+        attach = ClaudeSessionAttach(session_id="session-a")
+        with pytest.raises(SessionAttachError, match="malformed stream-json"):
+            async for _ in attach.send_turn(TranscribedTurn(text="hello")):
+                pass
+    assert slow_stderr.cancelled is True
+
+
 async def test_spawn_argv_includes_verbose() -> None:
     """Regression: claude now refuses to start at all -- exit 1 before a
     single reply frame -- when -p/--output-format=stream-json is combined
