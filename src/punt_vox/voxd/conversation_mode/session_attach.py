@@ -4,10 +4,9 @@
 calls to forward a transcribed human turn and receive the agent's reply as it
 streams in -- FR-4's requirement that a call use the user's already-running
 session, not a fresh one, and FR-11's requirement that speech begin on the
-reply's first complete portion. Production backs it with the mechanism
-recommended in ``docs/conversation-mode-session-attach-adr.md`` (a headless
-``claude --resume`` subprocess speaking ``stream-json``), pending operator
-ratification (DES-064); tests inject
+reply's first complete portion. Production backs it with a headless
+``claude --resume`` subprocess speaking ``stream-json``
+(:class:`~.claude_session_attach.ClaudeSessionAttach`); tests inject
 :class:`~tests.conversation_mode._session_attach_fakes.FakeSessionAttach`. No
 method takes a session identifier -- one :class:`SessionAttach` instance is
 already bound to one call's session for its lifetime, the same reasoning

@@ -68,8 +68,8 @@ _MIC_GATE_MAX_HOLD_S = 20.0
 
 # FR-2's bounded-inactivity timeout: how long the call may sit in listening
 # with no completed turn before it ends itself. No live-tunable config
-# surface in this slice (the PRD's stated preference for barge-in timing
-# elsewhere); a documented fixed default instead.
+# surface (the PRD's stated preference for barge-in timing elsewhere); a
+# documented fixed default instead.
 _INACTIVITY_TIMEOUT_S = 120.0
 
 # The control mailbox used to be polled once per audio chunk (every

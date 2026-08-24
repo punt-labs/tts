@@ -68,10 +68,14 @@ class ReplyRecovery:
         """
         self._actor.apply(ReplyBegins())
         if isinstance(exc, BareAuthMissingError):
-            logger.exception("session-attach failed: missing ANTHROPIC_API_KEY")
+            # exc_info=exc, not logger.exception(): correct regardless of
+            # whether the caller is inside the except block handling *exc*.
+            logger.error(
+                "session-attach failed: missing ANTHROPIC_API_KEY", exc_info=exc
+            )
             await self._speak(_BARE_AUTH_MISSING)
             self._actor.apply(EndCall())
             return
-        logger.exception("session-attach failed mid-turn")
+        logger.error("session-attach failed mid-turn", exc_info=exc)
         await self._speak(_SESSION_ATTACH_FAILED)
         self._actor.apply(ReplyEnds())

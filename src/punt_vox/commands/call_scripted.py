@@ -21,14 +21,24 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Self, final
 
+import typer
+
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
+from punt_vox.voxd.conversation_mode.call_session import CallSession
+from punt_vox.voxd.conversation_mode.mode import Mode
+from punt_vox.voxd.conversation_mode.session_attach import BareAuthMissingError
 from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
 from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
 
 if TYPE_CHECKING:
+    from punt_vox.commands.call_live_driver import ApplyControlFn
     from punt_vox.types import HealthCheck
+    from punt_vox.voxd.conversation_mode.call_control import CallControl
+    from punt_vox.voxd.conversation_mode.call_session import SpeakFn
+    from punt_vox.voxd.conversation_mode.session_attach import SessionAttach
+    from punt_vox.voxd.conversation_mode.wait_cue import ChimeFn
 
-__all__ = ["ScriptedSTTProvider", "ScriptedTurn"]
+__all__ = ["ScriptedCallDriver", "ScriptedSTTProvider", "ScriptedTurn"]
 
 _CHUNK_S = 0.02
 _SPEECH_CHUNKS = 20  # 400ms of synthetic "speech" per scripted utterance
@@ -147,3 +157,104 @@ class ScriptedSTTProvider:
 
     def check_health(self) -> list[HealthCheck]:
         return []
+
+
+@final
+class ScriptedCallDriver:
+    """Drives one scripted (``--script``) call: no microphone, no ElevenLabs.
+
+    The scripted counterpart to
+    :class:`~punt_vox.commands.call_live_driver.LiveCallDriver` -- owns the
+    :class:`CallSession` built from :class:`ScriptedTurn`/
+    :class:`ScriptedSTTProvider` and the loop that feeds each turn's
+    synthetic chunks through it, so :mod:`punt_vox.commands.call` dispatches
+    to one driver or the other without knowing either one's internals.
+    """
+
+    __slots__ = ("_apply_control", "_control", "_session", "_speak", "_turns")
+    _session: CallSession
+    _turns: list[ScriptedTurn]
+    _control: CallControl
+    _speak: SpeakFn
+    _apply_control: ApplyControlFn
+
+    def __new__(
+        cls,
+        *,
+        session: CallSession,
+        turns: list[ScriptedTurn],
+        control: CallControl,
+        speak: SpeakFn,
+        apply_control: ApplyControlFn,
+    ) -> Self:
+        self = super().__new__(cls)
+        self._session = session
+        self._turns = turns
+        self._control = control
+        self._speak = speak
+        self._apply_control = apply_control
+        return self
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        script: Path,
+        session_attach: SessionAttach,
+        speak: SpeakFn,
+        chime: ChimeFn,
+        control: CallControl,
+        apply_control: ApplyControlFn,
+    ) -> Self:
+        """Build a driver from *script*, after the same pre-flight check the
+        live path already runs in
+        :meth:`~punt_vox.commands.call_live_driver.LiveCallDriver.create`.
+
+        Without this, a scripted call with no ``ANTHROPIC_API_KEY`` survives
+        the "Listening." cue and dies one turn in, inside
+        :class:`~punt_vox.voxd.conversation_mode.reply_recovery.ReplyRecovery`'s
+        own handling -- failing here instead gives the same actionable
+        message at startup, before any turn is spoken.
+        """
+        try:
+            BareAuthMissingError.check()
+        except BareAuthMissingError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        turns = ScriptedTurn.read_script(script)
+        session = CallSession(
+            turn_detector=ScriptedTurn.calibrated_detector(),
+            stt_provider=ScriptedSTTProvider(turns),
+            session_attach=session_attach,
+            speak=speak,
+            chime=chime,
+        )
+        return cls(
+            session=session,
+            turns=turns,
+            control=control,
+            speak=speak,
+            apply_control=apply_control,
+        )
+
+    async def run(self) -> None:
+        """Drive every scripted turn to completion, then hang up if still active.
+
+        A missing ``ANTHROPIC_API_KEY`` discovered mid-call already ends the
+        call itself
+        (:meth:`~punt_vox.voxd.conversation_mode.reply_recovery.ReplyRecovery.recover`'s
+        ``BareAuthMissingError`` branch applies ``EndCall``, landing on
+        ``Mode.IDLE``) and speaks its own goodbye -- an unconditional
+        ``hangup()`` here would then raise ``IllegalTransitionError``
+        (``EndCall`` requires an active mode) and the outer boundary handler
+        would speak a second, contradictory message. Mirrors
+        :meth:`~punt_vox.commands.call_live_driver.LiveCallDriver.run`'s same
+        guard.
+        """
+        await self._session.start()
+        for turn in self._turns:
+            if await self._apply_control(self._control, self._session, self._speak):
+                break
+            for chunk in turn.synthetic_chunks():
+                await self._session.process_chunk(chunk)
+        if self._session.actor.mode is not Mode.IDLE:
+            await self._session.hangup()

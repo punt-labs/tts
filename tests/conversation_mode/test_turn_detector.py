@@ -1,7 +1,7 @@
 """Unit tests for :class:`TurnDetector`'s accumulated-run model.
 
 All chunk timing is synthetic and caller-supplied -- no wall clock, no
-audio-capture library -- per this slice's binding testability requirement.
+audio-capture library -- per the binding testability requirement.
 """
 
 from __future__ import annotations

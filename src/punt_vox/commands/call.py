@@ -30,8 +30,8 @@ signal-based.** ``VoxClientSync.synthesize`` (via ``client.py``'s
 ``send_and_drain(..., early_terminal="playing")``) returns as soon as voxd
 reports audio *enqueued*, not when it finishes playing -- ``client.py``
 does not expose a true playback-completion signal, and extending it to do
-so is out of this slice's write-set (it is locked by a separate, still-open
-mission). :class:`~.call_live_driver.LiveCallDriver` closes the microphone
+so needs its own change.
+:class:`~.call_live_driver.LiveCallDriver` closes the microphone
 gate before speaking and holds it shut for an *estimated* speech duration
 plus a safety margin, not the real one -- see
 :func:`~punt_vox.providers.convert.estimate_speech_duration_s`. This bounds
@@ -64,7 +64,7 @@ from punt_vox.commands.call_options import (
     TraceTurnsOpt as _TraceTurnsOpt,
     TransferSessionOpt as _TransferSessionOpt,
 )
-from punt_vox.commands.call_scripted import ScriptedSTTProvider, ScriptedTurn
+from punt_vox.commands.call_scripted import ScriptedCallDriver
 from punt_vox.commands.call_spec import resolve_call_spec
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_repo_root
 from punt_vox.logging_config import configure_turn_timer_logging
@@ -76,7 +76,6 @@ from punt_vox.voxd.conversation_mode.session_discovery import SessionDiscovery
 
 if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.session_attach import SessionAttach
-    from punt_vox.voxd.conversation_mode.wait_cue import ChimeFn
 
 __all__ = ["build_call_app"]
 
@@ -201,7 +200,15 @@ class CallCli:
 
         try:
             if script is not None:
-                await self._run_scripted(script, session_attach, speak, chime, control)
+                scripted_driver = ScriptedCallDriver.create(
+                    script=script,
+                    session_attach=session_attach,
+                    speak=speak,
+                    chime=chime,
+                    control=control,
+                    apply_control=self._apply_control,
+                )
+                await scripted_driver.run()
             else:
                 driver = await LiveCallDriver.create(
                     session_attach=session_attach,
@@ -245,31 +252,6 @@ class CallCli:
             raise
         finally:
             lock.release()
-
-    async def _run_scripted(
-        self,
-        script: Path,
-        session_attach: SessionAttach,
-        speak: SpeakFn,
-        chime: ChimeFn,
-        control: CallControl,
-    ) -> None:
-        """Drive one call from a JSON Lines script -- no microphone, no ElevenLabs."""
-        turns = ScriptedTurn.read_script(script)
-        session = CallSession(
-            turn_detector=ScriptedTurn.calibrated_detector(),
-            stt_provider=ScriptedSTTProvider(turns),
-            session_attach=session_attach,
-            speak=speak,
-            chime=chime,
-        )
-        await session.start()
-        for turn in turns:
-            if await self._apply_control(control, session, speak):
-                break
-            for chunk in turn.synthetic_chunks():
-                await session.process_chunk(chunk)
-        await session.hangup()
 
     async def _apply_control(
         self, control: CallControl, session: CallSession, speak: SpeakFn

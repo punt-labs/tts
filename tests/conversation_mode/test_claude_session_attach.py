@@ -65,12 +65,32 @@ class _AsyncLineIterator:
 
 
 def test_empty_session_id_raises_before_any_spawn() -> None:
-    """Item 6: an empty session_id must fail fast at construction, not surface
-    120 seconds later as an opaque "did not reply within 120s" once a doomed
+    """An empty session_id must fail fast at construction, not surface 120
+    seconds later as an opaque "did not reply within 120s" once a doomed
     `claude -p --resume ""` spawn hangs on a reply that never comes.
     """
     with pytest.raises(ValueError, match="non-empty session_id"):
         ClaudeSessionAttach(session_id="")
+
+
+async def test_missing_claude_binary_raises_session_attach_error() -> None:
+    """Regression: a ``FileNotFoundError`` from the exec call itself must not
+    escape as a raw ``OSError`` -- it happens BEFORE ``send_turn``'s own
+    ``try`` block is reached, so an unconverted ``FileNotFoundError`` is not
+    a ``SessionAttachError`` and bypasses ``CallSession``'s
+    ``except SessionAttachError`` recovery entirely, falling through to the
+    generic "call ended unexpectedly" boundary handler instead of this
+    actionable message. Mirrors ``SessionDiscovery``'s own conversion of the
+    same failure.
+    """
+    with patch(
+        "asyncio.create_subprocess_exec",
+        side_effect=FileNotFoundError("no such file: not-claude"),
+    ):
+        attach = ClaudeSessionAttach(session_id="session-a", claude_bin="not-claude")
+        with pytest.raises(SessionAttachError, match="not-claude not found on PATH"):
+            async for _ in attach.send_turn(TranscribedTurn(text="hello")):
+                pass
 
 
 async def test_send_turn_collects_text_deltas_into_one_final_chunk() -> None:
@@ -134,7 +154,7 @@ async def test_spawn_argv_includes_verbose() -> None:
 async def test_spawn_keeps_anthropic_api_key_in_the_subprocess_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """vox-36xc: --bare has no OAuth support at all -- the opposite of the
+    """``--bare`` has no OAuth support at all -- the opposite of the
     prior non-bare behavior, where a stale ANTHROPIC_API_KEY was stripped
     so the resumed session used its own claude.ai login instead. Bare mode
     *requires* the key explicitly (`claude --help`: "Anthropic auth is

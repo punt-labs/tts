@@ -13,6 +13,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.types_provider_errors import ProviderAuthError
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
@@ -63,6 +65,18 @@ class TurnTranscriber:
         try:
             async for event in self._provider.transcribe(chunks):
                 final_event = event
+        except ProviderAuthError:
+            # A revoked/expired STT credential is certain and permanent --
+            # every subsequent turn would hit exactly the same rejection,
+            # the same asymmetry :class:`~.session_attach.BareAuthMissingError`
+            # already draws against a transient session-attach fault. Folding
+            # this into the broad ``except Exception`` below would launder
+            # it into "ask the human to repeat", which repeats identically
+            # forever and never tells the human their STT credentials are
+            # broken. Re-raised, not swallowed -- the caller (CallSession)
+            # ends the call with an actionable message instead.
+            self._turn_timer.mark("stt_response_received", detail="STT auth failed")
+            raise
         except Exception:
             logger.exception("STT transcribe failed mid-turn")
             self._turn_timer.mark("stt_response_received", detail="transcribe failed")

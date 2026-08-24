@@ -144,7 +144,44 @@ class ClaudeSessionAttach:
         the last line of defense for any other caller.
         """
         BareAuthMissingError.check()
-        process = await asyncio.create_subprocess_exec(
+        try:
+            process = await self._exec()
+        except FileNotFoundError as exc:
+            # Mirrors session_discovery.py's own conversion of the same
+            # failure: without this, a missing ``claude`` binary raises
+            # BEFORE send_turn's own try block is even reached, so it is
+            # never a SessionAttachError and bypasses CallSession's
+            # ``except SessionAttachError`` recovery entirely -- falling
+            # through to the generic "call ended unexpectedly" boundary
+            # handler instead of this actionable message.
+            msg = f"{self._claude_bin} not found on PATH"
+            raise SessionAttachError(msg) from exc
+        try:
+            if process.stdin is None:
+                msg = f"{self._claude_bin} subprocess has no stdin pipe"
+                raise SessionAttachError(msg)
+
+            user_message = {
+                "type": "user",
+                "message": {"role": "user", "content": turn.text},
+            }
+            process.stdin.write(json.dumps(user_message).encode() + b"\n")
+            await process.stdin.drain()
+            process.stdin.close()
+        except BaseException:
+            process.kill()
+            await process.wait()
+            raise
+        return process
+
+    async def _exec(self) -> asyncio.subprocess.Process:
+        """Spawn the relay subprocess, letting a missing binary raise verbatim.
+
+        Split out of :meth:`_spawn` so the ``FileNotFoundError`` conversion
+        wraps only the exec call itself, not the stdin-write step below it
+        (which raises its own, already-typed errors).
+        """
+        return await asyncio.create_subprocess_exec(
             self._claude_bin,
             "-p",
             "--resume",
@@ -185,23 +222,6 @@ class ClaudeSessionAttach:
             # can actually hit it.
             limit=_STDOUT_LINE_LIMIT,
         )
-        try:
-            if process.stdin is None:
-                msg = f"{self._claude_bin} subprocess has no stdin pipe"
-                raise SessionAttachError(msg)
-
-            user_message = {
-                "type": "user",
-                "message": {"role": "user", "content": turn.text},
-            }
-            process.stdin.write(json.dumps(user_message).encode() + b"\n")
-            await process.stdin.drain()
-            process.stdin.close()
-        except BaseException:
-            process.kill()
-            await process.wait()
-            raise
-        return process
 
     @staticmethod
     def _subprocess_env() -> dict[str, str]:

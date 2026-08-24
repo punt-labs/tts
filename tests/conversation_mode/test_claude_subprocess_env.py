@@ -46,7 +46,7 @@ def test_no_extra_still_returns_a_dict(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_keep_api_key_forwards_it_instead_of_stripping(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """vox-36xc: --bare's opposite auth requirement -- the one call site
+    """``--bare``'s opposite auth requirement -- the one call site
     that needs the key present passes keep_api_key=True."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-a-real-key")
     env = claude_subprocess_env(keep_api_key=True)

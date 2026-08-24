@@ -6,8 +6,20 @@ import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from punt_vox.commands.call_scripted import ScriptedSTTProvider, ScriptedTurn
+import pytest
+import typer
+
+from punt_vox.commands.call_scripted import (
+    ScriptedCallDriver,
+    ScriptedSTTProvider,
+    ScriptedTurn,
+)
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
+from punt_vox.voxd.conversation_mode.call_control import CallControl
+from punt_vox.voxd.conversation_mode.call_session import CallSession
+from punt_vox.voxd.conversation_mode.mode import Mode
+from punt_vox.voxd.conversation_mode.reply import ReplyChunk
+from punt_vox.voxd.conversation_mode.session_attach import BareAuthMissingError
 
 
 def _script_file(tmp_path: Path, lines: list[dict[str, object]]) -> Path:
@@ -72,3 +84,117 @@ class TestScriptedSTTProvider:
 
     def test_check_health_reports_no_checks(self) -> None:
         assert ScriptedSTTProvider([]).check_health() == []
+
+
+def _control(tmp_path: Path) -> CallControl:
+    return CallControl(tmp_path / "call.control")
+
+
+async def _never_stop(
+    control: CallControl, session: CallSession, speak: object
+) -> bool:
+    del control, session, speak
+    return False
+
+
+class _RecordingSpeak:
+    """A ``SpeakFn`` that records every phrase it was asked to speak."""
+
+    def __init__(self) -> None:
+        self.said: list[str] = []
+
+    async def __call__(self, text: str) -> None:
+        self.said.append(text)
+
+
+class _BareAuthSessionAttach:
+    """A ``SessionAttach`` that always raises ``BareAuthMissingError``.
+
+    Stands in for ``ClaudeSessionAttach`` discovering the key is gone at
+    spawn time (its own last-line-of-defense check), bypassing
+    :meth:`ScriptedCallDriver.create`'s pre-flight so this test proves the
+    *loop's own hangup guard*, not just the pre-flight.
+    """
+
+    def __init__(self) -> None:
+        # An instance attribute, not a literal, so mypy cannot narrow the
+        # branch below to "always true" and flag the trailing ``yield`` as
+        # unreachable -- genuinely unreachable at runtime, but the method
+        # still has to be shaped as an async generator to satisfy
+        # SessionAttach.send_turn's return type.
+        self._always_fails = True
+
+    async def send_turn(self, turn: object) -> AsyncIterator[ReplyChunk]:
+        del turn
+        if self._always_fails:
+            raise BareAuthMissingError.for_missing_key()
+        yield ReplyChunk(  # pragma: no cover -- unreachable
+            text="", is_final=True
+        )
+
+
+class TestScriptedCallDriverCreate:
+    def test_create_refuses_to_start_when_anthropic_api_key_is_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The same startup pre-flight ``LiveCallDriver.create`` already runs
+        -- a missing key fails before "Listening." is ever spoken, not one
+        turn into the call.
+        """
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        script = tmp_path / "script.jsonl"
+        script.write_text(json.dumps({"text": "hi", "confidence": 0.9}))
+        speak = _RecordingSpeak()
+
+        async def chime() -> None:
+            return None
+
+        with pytest.raises(typer.BadParameter, match="ANTHROPIC_API_KEY"):
+            ScriptedCallDriver.create(
+                script=script,
+                session_attach=_BareAuthSessionAttach(),
+                speak=speak,
+                chime=chime,
+                control=_control(tmp_path),
+                apply_control=_never_stop,
+            )
+        assert speak.said == []  # never reached "Listening."
+
+
+class TestScriptedCallDriverRun:
+    async def test_run_ends_cleanly_with_one_message_when_bare_auth_fails_mid_call(
+        self, tmp_path: Path
+    ) -> None:
+        """Regression: a scripted call whose session-attach discovers a
+        missing ``ANTHROPIC_API_KEY`` mid-turn must end with exactly one
+        spoken message (ReplyRecovery's own goodbye) -- not crash with
+        ``IllegalTransitionError`` from an unconditional ``hangup()`` after
+        the loop, which would also trigger a second, contradictory message
+        from call.py's outer boundary handler.
+        """
+        speak = _RecordingSpeak()
+
+        async def chime() -> None:
+            return None
+
+        turns = [ScriptedTurn(text="hello", confidence=0.9)]
+        session = CallSession(
+            turn_detector=ScriptedTurn.calibrated_detector(),
+            stt_provider=ScriptedSTTProvider(turns),
+            session_attach=_BareAuthSessionAttach(),
+            speak=speak,
+            chime=chime,
+        )
+        driver = ScriptedCallDriver(
+            session=session,
+            turns=turns,
+            control=_control(tmp_path),
+            speak=speak,
+            apply_control=_never_stop,
+        )
+
+        await driver.run()  # must not raise IllegalTransitionError
+
+        assert session.actor.mode is Mode.IDLE
+        goodbyes = [phrase for phrase in speak.said if "Ending the call now" in phrase]
+        assert len(goodbyes) == 1

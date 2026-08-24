@@ -15,6 +15,7 @@ from collections.abc import AsyncIterator
 from conversation_mode._session_attach_fakes import FakeSessionAttach, ScriptedChunk
 from conversation_mode._stt_fakes import FakeSTTProvider
 from punt_vox.types import HealthCheck
+from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.call_session import CallSession
 from punt_vox.voxd.conversation_mode.mode import Mode
@@ -418,6 +419,61 @@ class TestSTTTranscribeFailureRecovery:
         assert session_attach.turns() == ["hello"]
 
 
+class _AuthFailingSTTProvider:
+    """An ``STTProvider`` whose ``transcribe`` always raises ``ProviderAuthError``."""
+
+    def __init__(self) -> None:
+        # An instance attribute, not a literal, so mypy cannot narrow the
+        # branch below to "always true" and flag the trailing ``yield`` as
+        # unreachable.
+        self._always_fails = True
+
+    @property
+    def name(self) -> str:
+        return "auth-failing-fake"
+
+    async def transcribe(
+        self, chunks: AsyncIterator[AudioChunk]
+    ) -> AsyncIterator[TranscriptEvent]:
+        async for _ in chunks:
+            pass
+        if self._always_fails:
+            raise ProviderAuthError("elevenlabs", 401)
+        yield TranscriptEvent(  # pragma: no cover -- unreachable
+            text="", confidence=0.0, is_final=True
+        )
+
+    def check_health(self) -> list[HealthCheck]:
+        return []
+
+
+class TestSTTProviderAuthFailure:
+    """A revoked/expired STT credential is certain and permanent, unlike a
+    transient fault -- the call must end with an actionable message instead
+    of repeating "didn't catch that" forever against a key that will never
+    work again.
+    """
+
+    async def test_ends_the_call_with_exactly_one_actionable_message(self) -> None:
+        speak = _Recorder()
+        session_attach = FakeSessionAttach()
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=_AuthFailingSTTProvider(),
+            session_attach=session_attach,
+            speak=speak,
+        )
+        await session.start()
+
+        await _feed_one_turn(session)  # must not raise
+
+        assert session.actor.mode is Mode.IDLE
+        assert session_attach.turns() == []
+        rejections = [phrase for phrase in speak.said if "credentials" in phrase]
+        assert len(rejections) == 1
+        assert "repeat" not in rejections[0].lower()
+
+
 class TestCaptureDuringWait:
     """A second closed turn detected while the call is already
     ``waiting`` on the first turn's reply must be held as a pending addendum
@@ -668,6 +724,53 @@ class TestTurnTimerMarks:
         assert details["stt_response_received"] == "no transcript"
         # The turn never reached session-attach -- no claude_spawned mark.
         assert "claude_spawned" not in details
+
+    async def test_capture_during_wait_then_reply_begins_clears_pending_capture(
+        self,
+    ) -> None:
+        """Regression: a run the human never finished before the reply came
+        back (no ``TURN_ENDED`` to close it) must not survive into the next
+        turn -- stale ``PendingCapture`` state would fold old PCM into the
+        next transcript and suppress the next turn's own
+        ``speech_first_detected`` mark, anchoring :class:`TurnTimer` to the
+        wrong turn's speech onset.
+        """
+        timer = _SpyTurnTimer()
+        session_attach = FakeSessionAttach(
+            (ScriptedChunk(ReplyChunk(text="reply", is_final=True)),)
+        )
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=FakeSTTProvider(
+                [TranscriptEvent(text="next turn", confidence=0.95, is_final=True)]
+            ),
+            session_attach=session_attach,
+            speak=_Recorder(),
+            turn_timer=timer,
+        )
+        await session.start()
+        session.actor.apply(TurnDetected())  # -> WAITING, as if a reply is in flight
+
+        # The human starts talking again, but the reply arrives before this
+        # run closes -- no TURN_ENDED for it, so process_chunk's own
+        # TURN_ENDED-triggered clearing never fires.
+        for _ in range(5):
+            await session.process_chunk(_speech_chunk())
+        in_progress_before_reply: bool = session._capture.in_progress
+        assert in_progress_before_reply is True
+
+        session.actor.apply(ReplyBegins())  # the reply comes back mid-utterance
+
+        in_progress_after_reply: bool = session._capture.in_progress
+        assert in_progress_after_reply is False
+
+        session.actor.apply(ReplyEnds())
+        timer.marks.clear()
+        await _feed_one_turn(session)  # the next real turn
+
+        assert session_attach.turns() == ["next turn"]
+        detected = [s for s, _d in timer.marks if s == "speech_first_detected"]
+        assert len(detected) == 1
 
     async def test_no_turn_timer_passed_defaults_to_a_real_logging_timer(self) -> None:
         """Every existing call site that never passes turn_timer must keep

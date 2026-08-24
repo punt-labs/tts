@@ -22,12 +22,14 @@ import random
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.quips import CALL_ACK_PHRASES
+from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.barge_in import BargeIn
 from punt_vox.voxd.conversation_mode.call_actor import CallActor
 from punt_vox.voxd.conversation_mode.capture_during_wait import CaptureDuringWait
 from punt_vox.voxd.conversation_mode.end_call import EndCall
 from punt_vox.voxd.conversation_mode.mode import Detector, Mode
+from punt_vox.voxd.conversation_mode.pending_capture import PendingCapture
 from punt_vox.voxd.conversation_mode.reply_begins import ReplyBegins
 from punt_vox.voxd.conversation_mode.reply_ends import ReplyEnds
 from punt_vox.voxd.conversation_mode.reply_recovery import ReplyRecovery
@@ -55,6 +57,14 @@ logger = logging.getLogger(__name__)
 
 _ASK_TO_REPEAT = "Sorry, I didn't catch that -- could you repeat it?"
 
+# Unlike _ASK_TO_REPEAT, a rejected STT credential is certain and permanent,
+# so this ends the call instead of looping forever -- mirrors
+# reply_recovery.py's own _BARE_AUTH_MISSING sentence.
+_STT_AUTH_FAILED = (
+    "Sorry, this call can't continue -- the speech-recognition credentials "
+    "were rejected. Ending the call now."
+)
+
 
 @final
 class CallSession:
@@ -62,14 +72,13 @@ class CallSession:
 
     __slots__ = (
         "_actor",
+        "_capture",
         "_pending_addendum",
-        "_pending_chunks",
         "_reply_recovery",
         "_session_attach",
         "_speak",
         "_transcriber",
         "_turn_detector",
-        "_turn_in_progress",
         "_turn_timer",
         "_wait_cue",
     )
@@ -84,7 +93,9 @@ class CallSession:
     and every existing test that doesn't pass one -- see that constructor
     argument's own docstring for why absence is a legitimate default, not a
     deferred decision."""
-    _pending_chunks: list[AudioChunk]
+    _capture: PendingCapture
+    """The run currently accumulating -- see :class:`PendingCapture` for the
+    close/discard split this class relies on."""
     _pending_addendum: TranscribedTurn | None
     """FR-4/``docs/conversation-mode-call-state.tex`` section 5's pending
     addendum: speech the turn detector closed while the call was already
@@ -97,20 +108,6 @@ class CallSession:
     machine's, and the text has to still be here when that next turn
     arrives."""
     _turn_timer: TurnTimer
-    _turn_in_progress: bool
-    """Whether ``speech_first_detected`` has already fired for the run
-    currently accumulating in :attr:`_pending_chunks`. Turn-scoped, not
-    previous-chunk-scoped: :class:`TurnDetector` tolerates brief
-    within-word amplitude dips shorter than its silence-gap threshold (see
-    that class's own docstring), so one real turn can produce
-    ``SPEECH_CONTINUING -> SILENCE -> SPEECH_CONTINUING`` transitions
-    *within itself*. Comparing only to the immediately-previous chunk's
-    signal would re-fire the mark on every such dip, resetting
-    :class:`~.turn_timer.TurnTimer`'s turn-start clock mid-turn -- exactly
-    the number this whole feature exists to report. Set on the first
-    ``SPEECH_CONTINUING`` chunk of a run, cleared when the run closes
-    (``TURN_ENDED``), regardless of whether that turn is ultimately acted
-    on or asks the human to repeat (FR-19)."""
 
     def __new__(
         cls,
@@ -136,11 +133,11 @@ class CallSession:
         self._speak = speak
         self._reply_recovery = ReplyRecovery(self._actor, speak)
         self._wait_cue = WaitCue(chime)
-        self._pending_chunks = []
+        self._capture = PendingCapture()
         self._pending_addendum = None
         self._turn_timer = turn_timer if turn_timer is not None else LoggingTurnTimer()
         self._transcriber = TurnTranscriber(stt_provider, self._turn_timer)
-        self._turn_in_progress = False
+        self._actor.on_transition(self._discard_pending_capture)
         return self
 
     @property
@@ -160,6 +157,24 @@ class CallSession:
     async def timeout(self) -> None:
         """FR-2's bounded-inactivity end: listening -> idle."""
         self._actor.apply(TimeoutCall())
+
+    def _discard_pending_capture(self, before: Mode, after: Mode) -> None:
+        """Discard a :attr:`_capture` run left open past its owning mode.
+
+        A run the human never finished (no ``TURN_ENDED``) before the mode
+        moved away from listening/waiting has nothing left to close it --
+        uncleared, it corrupts the next turn (see :class:`PendingCapture`'s
+        own docstring). Registered as a transition observer, not inlined at
+        each call site, so :class:`~.reply_recovery.ReplyRecovery`'s own
+        ``apply()`` calls on this actor get the same discharge for free.
+        Mirrors the transitions :class:`CallState` discharges
+        ``has_pending_addendum`` on, plus ``reply_begins`` -- the
+        audio-buffer staleness window opens earlier than the addendum-text
+        one does.
+        """
+        del before
+        if after in (Mode.SPEAKING, Mode.IDLE):  # ReplyBegins / EndCall / TimeoutCall
+            self._capture.discard()
 
     def replace_session_attach(self, session_attach: SessionAttach) -> None:
         """Re-attach this call to a different session (``/call transfer``).
@@ -181,13 +196,8 @@ class CallSession:
         ``activeDetector`` axiom, the same mapping :attr:`CallActor.mode`
         already carries). Without this gate, audio captured while the
         agent's own reply plays -- the microphone picking its own speech
-        back up -- would accumulate in :attr:`_pending_chunks` and the
-        detector's own run-in-progress state, and could close as a
-        fabricated "turn" the moment ``speaking`` ends. Never accumulating
-        it in the first place means there is nothing to discard on that
-        transition, unlike the mic's own capture queue (drained separately
-        by the caller via :meth:`~.mic_audio_source.MicAudioSource.drain_pending`,
-        which this class has no reach into).
+        back up -- would accumulate in :attr:`_capture` and could close as a
+        fabricated "turn" the moment ``speaking`` ends.
 
         Otherwise: the turn detector is the sole judge of when a run of
         speech becomes a turn (FR-5/6/7); this method's only remaining job
@@ -198,24 +208,31 @@ class CallSession:
             return
         # The first SPEECH_CONTINUING chunk of this run, not every
         # above-threshold chunk and not merely the one after a SILENCE
-        # chunk -- see _turn_in_progress's docstring for why a
+        # chunk -- see PendingCapture.note_speech's own docstring for why a
         # previous-chunk comparison is wrong here.
         signal = self._turn_detector.process(chunk)
-        if signal is TurnSignal.SPEECH_CONTINUING and not self._turn_in_progress:
+        if signal is TurnSignal.SPEECH_CONTINUING and self._capture.note_speech():
             self._turn_timer.mark("speech_first_detected")
-            self._turn_in_progress = True
-        self._pending_chunks.append(chunk)
+        self._capture.append(chunk)
         if signal is TurnSignal.TURN_ENDED:
             self._turn_timer.mark("turn_ended")
-            self._turn_in_progress = False
-            chunks, self._pending_chunks = self._pending_chunks, []
-            await self._handle_turn_ended(chunks)
+            await self._handle_turn_ended(self._capture.close())
 
     async def _handle_turn_ended(self, chunks: list[AudioChunk]) -> None:
         self._turn_timer.mark("stt_request_sent")
-        final_event = await self._transcriber.transcribe(
-            AudioChunk.as_async_iter(chunks)
-        )
+        try:
+            final_event = await self._transcriber.transcribe(
+                AudioChunk.as_async_iter(chunks)
+            )
+        except ProviderAuthError:
+            # Certain and permanent, unlike a transient transcribe failure
+            # -- see TurnTranscriber's own re-raise. Mode is still LISTENING
+            # here, so EndCall's "any active mode" precondition already
+            # holds without routing through speaking first.
+            logger.exception("STT provider auth failed -- ending the call")
+            await self._speak(_STT_AUTH_FAILED)
+            self._actor.apply(EndCall())
+            return
         if final_event is None:
             # FR-19: never fabricate on ambiguous or failed capture -- no
             # transcript, a low-confidence transcript, and a transient STT
