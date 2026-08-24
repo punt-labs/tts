@@ -10,9 +10,11 @@ the reply is spoken through the injected ``speak`` callable.
 from __future__ import annotations
 
 import struct
+from collections.abc import AsyncIterator
 
 from conversation_mode._session_attach_fakes import FakeSessionAttach, ScriptedChunk
 from conversation_mode._stt_fakes import FakeSTTProvider
+from punt_vox.types import HealthCheck
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.call_session import CallSession
 from punt_vox.voxd.conversation_mode.mode import Mode
@@ -20,7 +22,6 @@ from punt_vox.voxd.conversation_mode.reply import ReplyChunk
 from punt_vox.voxd.conversation_mode.reply_begins import ReplyBegins
 from punt_vox.voxd.conversation_mode.reply_ends import ReplyEnds
 from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
-from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
 from punt_vox.voxd.conversation_mode.turn_detected import TurnDetected
 from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
 
@@ -220,7 +221,7 @@ class TestProcessChunkGatedOnMode:
             speak=speak,
         )
         await session.start()
-        session.actor.apply(TurnDetected(turn=TranscribedTurn(text="prior turn")))
+        session.actor.apply(TurnDetected())
         session.actor.apply(ReplyBegins())
         assert session.actor.mode is Mode.SPEAKING
 
@@ -241,7 +242,7 @@ class TestProcessChunkGatedOnMode:
             speak=speak,
         )
         await session.start()
-        session.actor.apply(TurnDetected(turn=TranscribedTurn(text="prior turn")))
+        session.actor.apply(TurnDetected())
         session.actor.apply(ReplyBegins())
         await _feed_one_turn(session)  # ignored: mode is speaking
         session.actor.apply(ReplyEnds())
@@ -250,6 +251,100 @@ class TestProcessChunkGatedOnMode:
         await _feed_one_turn(session)
 
         assert session_attach.turns() == ["hello"]
+
+
+class _SequencedSTTProvider:
+    """Yields one fixed-confidence transcript per ``transcribe`` call, in order.
+
+    Unlike :class:`FakeSTTProvider` (which replays the same script every
+    call), this lets a test give two successive turns distinct texts -- the
+    shape needed to prove the second turn's text, not the first's, is what
+    gets folded into the next real turn.
+    """
+
+    def __init__(self, texts: list[str]) -> None:
+        self._texts = list(texts)
+
+    @property
+    def name(self) -> str:
+        return "sequenced-fake"
+
+    async def transcribe(
+        self, chunks: AsyncIterator[AudioChunk]
+    ) -> AsyncIterator[TranscriptEvent]:
+        async for _ in chunks:
+            pass
+        text = self._texts.pop(0)
+        yield TranscriptEvent(text=text, confidence=0.95, is_final=True)
+
+    def check_health(self) -> list[HealthCheck]:
+        return [HealthCheck(passed=True, message="sequenced fake always healthy")]
+
+
+class TestCaptureDuringWait:
+    """Item 7: a second closed turn detected while the call is already
+    ``waiting`` on the first turn's reply must be held as a pending addendum
+    (docs/conversation-mode-call-state.tex section 5), never forwarded as a
+    concurrent turn (which would violate CallState's ``turn_detected``
+    precondition and crash the call) and never silently dropped.
+    """
+
+    async def test_a_second_turn_detected_while_waiting_is_captured_not_crashed(
+        self,
+    ) -> None:
+        speak = _Recorder()
+        stt = _SequencedSTTProvider(["first question", "second question"])
+        session_attach = FakeSessionAttach()
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=stt,
+            session_attach=session_attach,
+            speak=speak,
+        )
+        await session.start()
+        # Force the call into waiting without going through the real
+        # (blocking-on-reply) round trip -- CallState's turn_detected
+        # requires mode=listening, so this alone puts the machine exactly
+        # where a genuinely slow claude reply would leave it.
+        session.actor.apply(TurnDetected())
+        assert session.actor.mode is Mode.WAITING
+
+        await _feed_one_turn(session)  # the second turn, closing mid-wait
+
+        # CaptureDuringWait: waiting -> waiting.
+        assert session.actor.mode is Mode.WAITING
+        assert session.actor.has_pending_addendum is True
+        assert session_attach.turns() == []  # never forwarded as a second turn
+
+    async def test_the_pending_addendum_is_folded_into_the_next_real_turn(self) -> None:
+        speak = _Recorder()
+        stt = _SequencedSTTProvider(["addendum text", "the real next turn"])
+        session_attach = FakeSessionAttach(
+            (ScriptedChunk(ReplyChunk(text="reply", is_final=True)),)
+        )
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=stt,
+            session_attach=session_attach,
+            speak=speak,
+        )
+        await session.start()
+        session.actor.apply(TurnDetected())
+        await _feed_one_turn(session)  # captured as the pending addendum
+        assert session.actor.has_pending_addendum is True
+
+        # Return to listening the same way a completed reply does --
+        # discharges CallState's flag, per its own invariant, but this
+        # class's own stored addendum text survives that discharge.
+        session.actor.apply(ReplyBegins())
+        session.actor.apply(ReplyEnds())
+        actor = session.actor
+        assert actor.mode is Mode.LISTENING
+        assert actor.has_pending_addendum is False
+
+        await _feed_one_turn(session)  # the next real turn
+
+        assert session_attach.turns() == ["addendum text the real next turn"]
 
 
 class _SpyTurnTimer:

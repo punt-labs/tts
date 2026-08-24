@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, final
 
 if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.call_state import CallState
-    from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
 
 __all__ = ["TurnDetected"]
 
@@ -15,14 +14,14 @@ __all__ = ["TurnDetected"]
 @final
 @dataclass(frozen=True, slots=True)
 class TurnDetected:
-    """FR-5: the turn detector fired end-of-turn; ``turn`` is what to forward.
+    """FR-5: the turn detector fired end-of-turn; listening -> waiting.
 
-    Carries the already-transcribed turn so the orchestrator can read it back
-    off the command after :meth:`apply` runs, rather than needing a second
-    channel to learn what was just detected.
+    Carries no payload, the same shape as its zero-field siblings
+    (:class:`~.end_call.EndCall`, :class:`~.timeout_call.TimeoutCall`) --
+    the transcribed turn it announces is forwarded by the caller
+    (:class:`~.call_session.CallSession`, which already holds it in a local
+    variable) directly to session-attach, never read back off this command.
     """
-
-    turn: TranscribedTurn
 
     def apply(self, state: CallState) -> None:
         state.turn_detected()
