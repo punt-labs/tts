@@ -239,22 +239,22 @@ class ScriptedCallDriver:
     async def run(self) -> None:
         """Drive every scripted turn to completion, then hang up if still active.
 
-        A missing ``ANTHROPIC_API_KEY`` discovered mid-call already ends the
-        call itself
-        (:meth:`~punt_vox.voxd.conversation_mode.reply_recovery.ReplyRecovery.recover`'s
-        ``BareAuthMissingError`` branch applies ``EndCall``, landing on
-        ``Mode.IDLE``) and speaks its own goodbye -- an unconditional
-        ``hangup()`` here would then raise ``IllegalTransitionError``
-        (``EndCall`` requires an active mode) and the outer boundary handler
-        would speak a second, contradictory message. Mirrors
-        :meth:`~punt_vox.commands.call_live_driver.LiveCallDriver.run`'s same
-        guard.
+        ``try``/``finally`` (mirroring
+        :meth:`~punt_vox.commands.call_live_driver.LiveCallDriver.run`) means
+        an exception out of ``process_chunk`` still reaches ``hangup()``
+        rather than leaving :class:`~.call_actor.CallActor`'s mode stale. The
+        ``mode is not Mode.IDLE`` guard covers a mid-call
+        ``BareAuthMissingError``, which already ends the call itself and
+        speaks its own goodbye -- an unconditional ``hangup()`` would then
+        raise ``IllegalTransitionError``.
         """
         await self._session.start()
-        for turn in self._turns:
-            if await self._apply_control(self._control, self._session, self._speak):
-                break
-            for chunk in turn.synthetic_chunks():
-                await self._session.process_chunk(chunk)
-        if self._session.actor.mode is not Mode.IDLE:
-            await self._session.hangup()
+        try:
+            for turn in self._turns:
+                if await self._apply_control(self._control, self._session, self._speak):
+                    break
+                for chunk in turn.synthetic_chunks():
+                    await self._session.process_chunk(chunk)
+        finally:
+            if self._session.actor.mode is not Mode.IDLE:
+                await self._session.hangup()

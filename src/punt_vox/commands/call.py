@@ -218,6 +218,13 @@ class CallCli:
                     apply_control=self._apply_control,
                 )
                 await driver.run()
+        except typer.BadParameter:
+            # An expected usage error (missing ANTHROPIC_API_KEY, unhealthy
+            # STT provider) must reach typer's clean CLI handling untouched,
+            # not the crash boundary below -- BadParameter is an Exception
+            # subclass and would otherwise be logged as a scary, unrelated
+            # "call ended unexpectedly".
+            raise
         except Exception:
             # System boundary (PY-EH-6): the CLI entry point for a live call.
             # Without this, a provider fault, a subprocess failure, or a mic

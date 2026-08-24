@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import cast
 
 import pytest
 import typer
@@ -20,6 +21,7 @@ from punt_vox.voxd.conversation_mode.call_session import CallSession
 from punt_vox.voxd.conversation_mode.mode import Mode
 from punt_vox.voxd.conversation_mode.reply import ReplyChunk
 from punt_vox.voxd.conversation_mode.session_attach import BareAuthMissingError
+from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
 
 
 def _script_file(tmp_path: Path, lines: list[dict[str, object]]) -> Path:
@@ -198,3 +200,50 @@ class TestScriptedCallDriverRun:
         assert session.actor.mode is Mode.IDLE
         goodbyes = [phrase for phrase in speak.said if "Ending the call now" in phrase]
         assert len(goodbyes) == 1
+
+
+class _RaisingTurnDetector:
+    """A ``TurnDetector`` stand-in whose ``process`` always raises."""
+
+    def process(self, _chunk: AudioChunk) -> None:
+        msg = "STT provider crashed"
+        raise RuntimeError(msg)
+
+    def calibrate(self, _chunks: list[AudioChunk]) -> None:
+        return None
+
+
+class TestScriptedCallDriverAbnormalExit:
+    """An exception out of ``process_chunk`` must not skip ``hangup()`` --
+    otherwise :class:`~.call_actor.CallActor`'s mode is left stale (never
+    transitioned back to idle) on the way out.
+    """
+
+    async def test_hangup_fires_even_when_process_chunk_raises(
+        self, tmp_path: Path
+    ) -> None:
+        speak = _RecordingSpeak()
+
+        async def chime() -> None:
+            return None
+
+        turns = [ScriptedTurn(text="hello", confidence=0.9)]
+        session = CallSession(
+            turn_detector=cast("TurnDetector", _RaisingTurnDetector()),
+            stt_provider=ScriptedSTTProvider(turns),
+            session_attach=_BareAuthSessionAttach(),
+            speak=speak,
+            chime=chime,
+        )
+        driver = ScriptedCallDriver(
+            session=session,
+            turns=turns,
+            control=_control(tmp_path),
+            speak=speak,
+            apply_control=_never_stop,
+        )
+
+        with pytest.raises(RuntimeError, match="STT provider crashed"):
+            await driver.run()
+
+        assert session.actor.mode is Mode.IDLE

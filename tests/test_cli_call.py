@@ -595,5 +595,50 @@ async def test_outer_boundary_survives_a_failing_speak_and_reraises_the_original
     assert CallLock(tmp_path / "call.lock").read() is None  # still released
 
 
+async def test_a_missing_api_key_surfaces_as_a_clean_usage_error_not_a_crash(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """``typer.BadParameter`` raised by ``ScriptedCallDriver.create`` for a
+    missing ``ANTHROPIC_API_KEY`` is an expected, actionable usage error --
+    it must propagate to typer's own clean CLI handling, not get logged as
+    "call ended unexpectedly" and buried under a scary spoken summary.
+    """
+    from punt_vox.commands import call as call_module
+
+    script = _script_file(tmp_path, [{"text": "hi", "confidence": 0.9}])
+    spoken: list[str] = []
+
+    class _FakeClient:
+        def synthesize(
+            self,
+            text: str,
+            spec: SynthesisSpec | None = None,
+            *,
+            timeout: float | None = None,
+        ) -> None:
+            del timeout, spec
+            spoken.append(text)
+
+    with (
+        patch.object(call_module, "VoxClientSync", return_value=_FakeClient()),
+        _resolved_session_spec(),
+        patch.dict("os.environ", {}, clear=False),
+        patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path),
+        caplog.at_level("ERROR", logger="punt_vox.commands.call"),
+    ):
+        import os
+
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        with pytest.raises(typer.BadParameter, match="ANTHROPIC_API_KEY"):
+            await call_module.CallCli()._run(script, "session-a")
+
+    # Never routed through the generic crash boundary: no "unexpectedly"
+    # log line, no scary spoken summary.
+    assert not any(
+        "call ended unexpectedly" in record.message for record in caplog.records
+    )
+    assert not any("unexpectedly" in phrase for phrase in spoken)
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
