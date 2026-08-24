@@ -50,6 +50,28 @@ def test_scripted_turn_skips_blank_lines(tmp_path: Path) -> None:
     assert len(turns) == 1
 
 
+def test_read_script_raises_bad_parameter_for_a_missing_file(tmp_path: Path) -> None:
+    missing = tmp_path / "does-not-exist.jsonl"
+    with pytest.raises(typer.BadParameter, match="cannot read script file"):
+        ScriptedTurn.read_script(missing)
+
+
+def test_read_script_raises_bad_parameter_for_malformed_json_naming_the_line(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "script.jsonl"
+    path.write_text('{"text": "ok", "confidence": 0.9}\nnot json at all\n')
+    with pytest.raises(typer.BadParameter, match=r"line 2"):
+        ScriptedTurn.read_script(path)
+
+
+def test_read_script_raises_bad_parameter_for_a_missing_key(tmp_path: Path) -> None:
+    path = tmp_path / "script.jsonl"
+    path.write_text('{"text": "missing confidence key"}\n')
+    with pytest.raises(typer.BadParameter, match=r"line 1"):
+        ScriptedTurn.read_script(path)
+
+
 def test_synthetic_chunks_are_speech_then_silence() -> None:
     turn = ScriptedTurn(text="hi", confidence=0.9)
     chunks = turn.synthetic_chunks()

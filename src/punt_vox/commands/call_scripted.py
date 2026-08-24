@@ -94,14 +94,34 @@ class ScriptedTurn:
 
     @classmethod
     def read_script(cls, path: Path) -> list[ScriptedTurn]:
-        """Parse a JSON Lines file of ``{"text": ..., "confidence": ...}`` entries."""
+        """Parse a JSON Lines file of ``{"text": ..., "confidence": ...}`` entries.
+
+        A malformed ``--script`` file (missing, bad JSON, missing keys) is
+        an expected usage error, the same class as a missing
+        ``ANTHROPIC_API_KEY`` a few lines up in :meth:`ScriptedCallDriver.create`
+        -- ``typer.BadParameter``, naming the file and the offending line,
+        not a raw ``FileNotFoundError``/``JSONDecodeError``/``KeyError``
+        that would otherwise land in :mod:`punt_vox.commands.call`'s generic
+        crash boundary and get logged as a scary "call ended unexpectedly".
+        """
+        try:
+            lines = path.read_text().splitlines()
+        except OSError as exc:
+            msg = f"cannot read script file {path}: {exc}"
+            raise typer.BadParameter(msg) from exc
         turns: list[ScriptedTurn] = []
-        for line in path.read_text().splitlines():
+        for line_number, line in enumerate(lines, start=1):
             stripped = line.strip()
             if not stripped:
                 continue
-            payload = json.loads(stripped)
-            turns.append(cls(text=payload["text"], confidence=payload["confidence"]))
+            try:
+                payload = json.loads(stripped)
+                turns.append(
+                    cls(text=payload["text"], confidence=payload["confidence"])
+                )
+            except (json.JSONDecodeError, KeyError) as exc:
+                msg = f"{path} line {line_number}: {exc}"
+                raise typer.BadParameter(msg) from exc
         return turns
 
     def synthetic_chunks(self) -> list[AudioChunk]:
