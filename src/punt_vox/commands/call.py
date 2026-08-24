@@ -35,11 +35,12 @@ mission). :class:`~.call_live_driver.LiveCallDriver` closes the microphone
 gate before speaking and holds it shut for an *estimated* speech duration
 plus a safety margin, not the real one -- see
 :func:`~punt_vox.providers.convert.estimate_speech_duration_s`. This bounds
-the echo window; it does not eliminate it. A real fix needs
-either ``client.py`` to expose a genuine "wait for playback done" option, or
-routing playback through :class:`~.playback_sink_actor.PlaybackSinkActor`
-(built in an earlier slice but not yet wired to any caller) -- both are
-follow-up work, not attempted here. The estimate also assumes playback
+the echo window; it does not eliminate it. A real fix needs either
+``client.py`` to expose a genuine "wait for playback done" option, or the
+continuous-stream playback ownership ratified for Slice 2a (extending
+production ``PlaybackQueue`` directly, per ``docs/conversation-mode-prd.tex``
+Chapter 2 and bead vox-gs9u.3) -- follow-up work, not attempted here. The
+estimate also assumes playback
 starts immediately once ``synthesize()`` returns; if the daemon queues the
 utterance behind music or a chime, the gate can reopen while the reply is
 still actually playing.
@@ -226,7 +227,7 @@ class CallCli:
                     apply_control=self._apply_control,
                 )
                 await driver.run()
-        except Exception as exc:
+        except Exception:
             # System boundary (PY-EH-6): the CLI entry point for a live call.
             # Without this, a provider fault, a subprocess failure, or a mic
             # device-open error dies as a bare traceback with total silence to
@@ -236,9 +237,16 @@ class CallCli:
             # exits non-zero and the traceback remains available.
             logger.exception("call ended unexpectedly")
             try:
+                # A fixed sentence, never {exc} itself: a SessionAttachError
+                # from a nonzero claude exit embeds decoded subprocess
+                # stderr verbatim, which can carry secrets or run to
+                # multiple minutes of speech -- exactly the voice-disclosure
+                # hazard DESIGN.md's spike already confirmed for a different
+                # code path. The full exception is already captured, safely,
+                # in the log line above; nothing past "unexpectedly" is
+                # spoken aloud.
                 await speak(
-                    f"The call ended unexpectedly: {exc}. "
-                    "Check the terminal for details."
+                    "The call ended unexpectedly. Check the terminal for details."
                 )
             except Exception:
                 # speak() is itself a daemon RPC that can fail for the same

@@ -510,10 +510,14 @@ async def test_outer_boundary_speaks_and_reraises_on_a_mid_call_crash(
         await call_module.CallCli()._run(script, "session-a")
 
     assert any("call ended unexpectedly" in record.message for record in caplog.records)
-    assert any(
-        phrase.startswith("The call ended unexpectedly: mic device busy")
-        for phrase in client.spoken
+    # The spoken summary is a fixed sentence -- never the raw exception text,
+    # which for a SessionAttachError can embed decoded subprocess stderr
+    # verbatim (a voice-disclosure hazard). The exception detail lives only
+    # in the log line asserted above.
+    assert (
+        "The call ended unexpectedly. Check the terminal for details." in client.spoken
     )
+    assert not any("mic device busy" in phrase for phrase in client.spoken)
     assert CallLock(tmp_path / "call.lock").read() is None  # released in finally
 
 
