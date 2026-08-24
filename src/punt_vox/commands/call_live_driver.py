@@ -213,6 +213,8 @@ class LiveCallDriver:
                     await self._session.timeout()
                     break
                 await self._session.process_chunk(chunk)
+                if self._session_ended_itself():
+                    break
         finally:
             await chunks.aclose()
             # timeout() already returned the call to idle; hangup() on an
@@ -239,6 +241,22 @@ class LiveCallDriver:
             return False
         self._last_control_check_at = now
         return True
+
+    def _session_ended_itself(self) -> bool:
+        """Return whether :attr:`_session` already applied ``EndCall()`` on its own.
+
+        A rejected STT credential (``ProviderAuthError``, in
+        :meth:`~.call_session.CallSession._handle_turn_ended`) or a missing
+        ``ANTHROPIC_API_KEY`` (``BareAuthMissingError``, in
+        :class:`~.reply_recovery.ReplyRecovery`) both apply ``EndCall()``
+        from inside :meth:`~.call_session.CallSession.process_chunk`, with
+        no way for :meth:`run` to learn about it except polling mode after
+        every chunk -- without this check, the loop keeps consuming mic
+        chunks forever: mode is already ``Mode.IDLE``, so
+        :meth:`_is_inactive`'s own ``Mode.LISTENING`` guard never fires and
+        nothing else here notices the call already ended.
+        """
+        return self._session.actor.mode is Mode.IDLE
 
     def _is_inactive(self) -> bool:
         return (

@@ -24,17 +24,21 @@ from punt_vox.commands import call_live_driver as driver_module
 from punt_vox.commands.call_live_driver import LiveCallDriver
 from punt_vox.commands.call_scripted import ScriptedTurn
 from punt_vox.types import HealthCheck
+from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.call_control import CallControl
+from punt_vox.voxd.conversation_mode.mode import Mode
 from punt_vox.voxd.conversation_mode.reply import ReplyChunk
+from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
 from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
+from punt_vox.voxd.conversation_mode.turn_signal import TurnSignal
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator as _AsyncIterator
 
     from punt_vox.voxd.conversation_mode.call_session import CallSession, SpeakFn
     from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
-    from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
+    from punt_vox.voxd.conversation_mode.stt_provider import STTProvider
     from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
 
 
@@ -77,6 +81,7 @@ class _FakeMicSource:
         self.drain_calls = 0
         self.listening_calls: list[bool] = []
         self.calibration_durations: list[float] = []
+        self.chunks_yielded = 0
 
     async def capture_seconds(self, duration_s: float) -> list[AudioChunk]:
         self.calibration_durations.append(duration_s)
@@ -84,6 +89,7 @@ class _FakeMicSource:
 
     async def chunks(self) -> AsyncIterator[AudioChunk]:
         for chunk in self._live:
+            self.chunks_yielded += 1
             yield chunk
 
     def drain_pending(self) -> int:
@@ -435,8 +441,6 @@ class TestLiveCallDriverAbnormalExit:
     async def test_hangup_fires_even_when_process_chunk_raises(
         self, tmp_path: Path
     ) -> None:
-        from punt_vox.voxd.conversation_mode.mode import Mode
-
         mic_source = _FakeMicSource([AudioChunk(pcm=b"\x00\x00", duration_s=0.02)])
         spoken: list[str] = []
 
@@ -458,3 +462,86 @@ class TestLiveCallDriverAbnormalExit:
             await driver.run()
 
         assert driver._session.actor.mode is Mode.IDLE
+
+
+class _AlwaysTurnEndedDetector:
+    """A ``TurnDetector`` stand-in that closes a turn on the very first chunk."""
+
+    def process(self, _chunk: AudioChunk) -> TurnSignal:
+        return TurnSignal.TURN_ENDED
+
+    def calibrate(self, _chunks: list[AudioChunk]) -> None:
+        return None
+
+
+class _AuthFailingSTTProvider:
+    """An :class:`STTProvider` stand-in whose ``transcribe`` always rejects."""
+
+    def __init__(self) -> None:
+        # An instance attribute, not a literal, so mypy cannot narrow the
+        # branch below to "always true" and flag the trailing ``yield`` as
+        # unreachable -- mirrors test_call_session.py's own
+        # ``_AuthFailingSTTProvider``.
+        self._always_fails = True
+
+    @property
+    def name(self) -> str:
+        return "fake-stt"
+
+    async def transcribe(
+        self, chunks: _AsyncIterator[AudioChunk]
+    ) -> _AsyncIterator[TranscriptEvent]:
+        async for _ in chunks:
+            pass
+        if self._always_fails:
+            raise ProviderAuthError("elevenlabs", 401)
+        yield TranscriptEvent(  # pragma: no cover -- unreachable
+            text="", confidence=0.0, is_final=True
+        )
+
+    def check_health(self) -> list[HealthCheck]:
+        return [HealthCheck(passed=True, message="fake stt: healthy")]
+
+
+class TestLiveCallDriverSessionEndedMidLoop:
+    """CallSession can apply ``EndCall()`` on its own, from inside
+    ``process_chunk`` -- a rejected STT credential (this test) or a missing
+    ``ANTHROPIC_API_KEY`` (``reply_recovery.py``'s ``BareAuthMissingError``
+    handling) both do. ``run()`` must notice and return, not keep consuming
+    mic chunks forever against a call that has already ended.
+    """
+
+    async def test_run_returns_when_the_session_ends_itself_mid_loop(
+        self, tmp_path: Path
+    ) -> None:
+        # Many chunks: if run() fails to notice the session already ended,
+        # it keeps looping through all of them instead of returning early.
+        chunks = [AudioChunk(pcm=b"\x00\x00", duration_s=0.02)] * 50
+        mic_source = _FakeMicSource(chunks)
+        spoken: list[str] = []
+
+        async def speak(text: str) -> None:
+            spoken.append(text)
+
+        driver = LiveCallDriver(
+            session_attach=_FakeSessionAttach("unreachable"),
+            speak=speak,
+            chime=_no_op_chime,
+            control=_control(tmp_path),
+            apply_control=_never_stop,
+            detector=cast("TurnDetector", _AlwaysTurnEndedDetector()),
+            mic_source=cast("MicAudioSource", mic_source),
+            stt_provider=cast("STTProvider", _AuthFailingSTTProvider()),
+        )
+
+        await driver.run()
+
+        assert driver._session.actor.mode is Mode.IDLE
+        # Without the mid-loop IDLE check, run() has no reason to stop and
+        # would consume every one of the 50 queued chunks instead of
+        # returning right after the first one ends the call.
+        assert mic_source.chunks_yielded == 1
+        # hangup() must not have fired a second time on top of the
+        # already-applied EndCall() -- the finally-block guard covers this;
+        # a second EndCall() would raise IllegalTransitionError and this
+        # test would fail with that instead of completing.
