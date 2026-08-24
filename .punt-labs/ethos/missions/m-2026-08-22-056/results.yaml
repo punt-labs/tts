@@ -1,0 +1,183 @@
+results:
+    - mission: m-2026-08-22-056
+      round: 1
+      created_at: "2026-08-22T21:41:44Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.85
+      files_changed:
+        - path: plugin/commands/call.md
+          added: 43
+          removed: 0
+        - path: plugin/hooks/call-lock.sh
+          added: 36
+          removed: 0
+        - path: plugin/hooks/hooks.json
+          added: 4
+          removed: 0
+        - path: plugin/hooks/session-start.sh
+          added: 1
+          removed: 1
+        - path: src/punt_vox/__main__.py
+          added: 8
+          removed: 0
+        - path: src/punt_vox/commands/call.py
+          added: 287
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/__init__.py
+          added: 37
+          removed: 6
+        - path: src/punt_vox/voxd/conversation_mode/audio_chunk.py
+          added: 21
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/barge_in.py
+          added: 26
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/call_actor.py
+          added: 118
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/call_command.py
+          added: 26
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/call_control.py
+          added: 69
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/call_lock.py
+          added: 75
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/call_session.py
+          added: 177
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/call_state.py
+          added: 118
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/capture_during_wait.py
+          added: 26
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/claude_session_attach.py
+          added: 147
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/end_call.py
+          added: 20
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/mode.py
+          added: 49
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/reply_begins.py
+          added: 20
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/reply_ends.py
+          added: 20
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/session_discovery.py
+          added: 128
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/start_call.py
+          added: 20
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/stt_provider.py
+          added: 80
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/timeout_call.py
+          added: 20
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/turn_detected.py
+          added: 28
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/turn_detector.py
+          added: 138
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/turn_signal.py
+          added: 20
+          removed: 0
+        - path: tests/conversation_mode/_stt_fakes.py
+          added: 66
+          removed: 0
+        - path: tests/conversation_mode/coverage-matrix.md
+          added: 29
+          removed: 29
+        - path: tests/conversation_mode/test_call_actor.py
+          added: 53
+          removed: 0
+        - path: tests/conversation_mode/test_call_lock.py
+          added: 40
+          removed: 0
+        - path: tests/conversation_mode/test_call_session.py
+          added: 142
+          removed: 0
+        - path: tests/conversation_mode/test_call_state.py
+          added: 118
+          removed: 0
+        - path: tests/conversation_mode/test_claude_session_attach.py
+          added: 100
+          removed: 0
+        - path: tests/conversation_mode/test_session_discovery.py
+          added: 74
+          removed: 0
+        - path: tests/conversation_mode/test_stt_provider.py
+          added: 81
+          removed: 0
+        - path: tests/conversation_mode/test_turn_detector.py
+          added: 97
+          removed: 0
+        - path: tests/test_cli_call.py
+          added: 143
+          removed: 0
+      evidence:
+        - name: uv run pytest -q (full suite)
+          status: pass
+        - name: uv run pytest tests/conversation_mode/ tests/test_cli_call.py -q (58 + 7 tests)
+          status: pass
+        - name: make check (lint, format, shellcheck, mypy, pyright, tests, OO ratchet, coupling, suppressions)
+          status: pass
+        - name: uv run mypy src/ tests/ --strict-equivalent config
+          status: pass
+        - name: uv run pyright src/ tests/
+          status: pass
+      open_questions:
+        - 'FR-2''s automatic bounded-inactivity timeout: CallSession.timeout() exists and is unit-tested (test_call_session.py::test_timeout_from_listening_returns_to_idle), but vox call start''s script-driven loop has no live wall-clock inactivity timer wired in -- the current loop processes a finite scripted list rather than waiting on real capture, so there is no genuine ''waiting'' period to time out from yet. Wiring a real inactivity timeout is straightforward once real capture lands; flagging so it isn''t mistaken for done.'
+        - Barge-in (FR-8/FR-9/FR-22) is explicitly out of scope for this slice per the mission context (Slice 2a+ territory). BargeIn command and CallState.barge_in() exist and are tested at the state-machine level; no detector drives them yet.
+        - Reply is spoken as one non-streamed block this slice (explicit mission scope) -- ClaudeSessionAttach's underlying subprocess is stream-json in both directions, but CallSession collects the full reply before speaking. Sentence-streamed synthesis (FR-11's true first-complete-portion behavior) is Slice 2a+ territory.
+      prose: |
+        Built the call state machine (Mode/CallState/CallActor, one CallCommand
+        class per Z-spec operation mirroring voxd/programs/switch_signal.py's
+        shape), the accumulated-run TurnDetector (FR-5/6/7), the STTProvider
+        Protocol + FakeSTTProvider with an FR-19 confidence-floor test, real
+        SessionDiscovery (claude agents --json, never auto-picking among multiple
+        candidates) and ClaudeSessionAttach (option D from the session-attach
+        ADR: claude -p --resume, stream-json both ways), CallLock/CallControl for
+        the UserPromptSubmit lock and cross-process stop/transfer signals, and
+        CallSession tying all of it into one tested E2E pipeline. Wired vox call
+        start|transfer|stop (CLI) and /call (slash command), plus
+        plugin/hooks/call-lock.sh with the VOX_CALL_RELAY=1 bypass on
+        ClaudeSessionAttach's own relay subprocess.
+
+        Test infrastructure was built and passing before the code that depends on
+        it, per the binding sequencing rule: TurnDetector + its tests landed in
+        the first commit; STTProvider + FakeSTTProvider + the FR-19 test landed
+        before CallSession was written. One real bug the test-first discipline
+        caught: CallActor's queue-based enqueue()/run() has nothing draining the
+        queue for a caller like CallSession with no separate producer task --
+        test_call_session.py's assertions on actor.mode caught this immediately,
+        and the fix (CallActor.apply(), a direct synchronous entry point for a
+        caller that is already the sole serialized dispatch point) is documented
+        inline as a distinct path from enqueue()/run(), which remains for a
+        future concurrent producer (a real barge-in detector).
+
+        Did not touch src/punt_vox/server.py or src/punt_vox/providers/, per the
+        write-set lock from m-2026-08-15-003. The real ElevenLabs STTProvider and
+        the mic:call MCP tool are the explicit fast-follow once that unblocks.
+        Real microphone capture is deferred alongside the real STT provider for
+        the same reason: a fake STT provider has nothing genuine to transcribe
+        from real audio, so vox call start reads a JSON Lines script of turns
+        instead, and builds synthetic speech/silence AudioChunk values sized to
+        close a turn through the real TurnDetector's own logic -- every other
+        component in the pipeline (detector, state machine, session discovery,
+        ClaudeSessionAttach, audible cues) is the real implementation, not a
+        demo stand-in.
+
+        coverage-matrix.md rows filled in for every FR/NFR this slice covers,
+        including honest blanks (not silently omitted rows) for FR-8/9/10/11/12/
+        13/14/14a/15/16/17/22 and NFR-1/2/3/4, each with a one-line reason
+        (P2 scope, Slice 2a+ territory, or deferred alongside the real STT
+        provider).
