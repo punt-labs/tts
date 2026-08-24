@@ -281,6 +281,61 @@ class _SequencedSTTProvider:
         return [HealthCheck(passed=True, message="sequenced fake always healthy")]
 
 
+class TestSessionAttachFailureRecovery:
+    """CRITICAL finding: a ``SessionAttachError`` mid-turn must not end the
+    call -- the human should hear an apology and keep talking, the same
+    recovery shape the low-confidence STT path already gets.
+    """
+
+    async def test_session_attach_error_speaks_an_apology_and_keeps_the_call_alive(
+        self,
+    ) -> None:
+        speak = _Recorder()
+        stt = FakeSTTProvider(
+            [TranscriptEvent(text="what does this do", confidence=0.95, is_final=True)]
+        )
+        session_attach = FakeSessionAttach(attach_error="claude exited 1")
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=stt,
+            session_attach=session_attach,
+            speak=speak,
+        )
+        await session.start()
+
+        await _feed_one_turn(session)  # must not raise
+
+        assert session.actor.mode is Mode.LISTENING
+        assert any("wrong" in phrase.lower() for phrase in speak.said)
+
+    async def test_a_turn_after_a_session_attach_failure_is_forwarded_normally(
+        self,
+    ) -> None:
+        """Recovery must leave the call in a state that accepts the next turn."""
+        speak = _Recorder()
+        stt = _SequencedSTTProvider(["first question", "second question"])
+        session_attach = FakeSessionAttach(attach_error="claude exited 1")
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=stt,
+            session_attach=session_attach,
+            speak=speak,
+        )
+        await session.start()
+        await _feed_one_turn(session)
+        assert session.actor.mode is Mode.LISTENING
+
+        # A second, healthy session-attach receives the next turn cleanly.
+        healthy_attach = FakeSessionAttach(
+            (ScriptedChunk(ReplyChunk(text="reply", is_final=True)),)
+        )
+        session.replace_session_attach(healthy_attach)
+        await _feed_one_turn(session)
+
+        assert healthy_attach.turns() == ["second question"]
+        assert session.actor.mode is Mode.LISTENING
+
+
 class TestCaptureDuringWait:
     """Item 7: a second closed turn detected while the call is already
     ``waiting`` on the first turn's reply must be held as a pending addendum

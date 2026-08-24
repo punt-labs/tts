@@ -17,11 +17,12 @@ scripted fakes' production counterparts for demos, tests, and CI.
 
 from __future__ import annotations
 
+import logging
 import random
-from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Protocol, Self, final, runtime_checkable
+from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.quips import CALL_ACK_PHRASES
+from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.barge_in import BargeIn
 from punt_vox.voxd.conversation_mode.call_actor import CallActor
 from punt_vox.voxd.conversation_mode.capture_during_wait import CaptureDuringWait
@@ -29,6 +30,8 @@ from punt_vox.voxd.conversation_mode.end_call import EndCall
 from punt_vox.voxd.conversation_mode.mode import Detector, Mode
 from punt_vox.voxd.conversation_mode.reply_begins import ReplyBegins
 from punt_vox.voxd.conversation_mode.reply_ends import ReplyEnds
+from punt_vox.voxd.conversation_mode.session_attach import SessionAttachError
+from punt_vox.voxd.conversation_mode.speak_fn import SpeakFn
 from punt_vox.voxd.conversation_mode.start_call import StartCall
 from punt_vox.voxd.conversation_mode.timeout_call import TimeoutCall
 from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
@@ -38,7 +41,6 @@ from punt_vox.voxd.conversation_mode.turn_timer import LoggingTurnTimer
 from punt_vox.voxd.conversation_mode.wait_cue import WaitCue
 
 if TYPE_CHECKING:
-    from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
     from punt_vox.voxd.conversation_mode.session_attach import SessionAttach
     from punt_vox.voxd.conversation_mode.stt_provider import STTProvider
     from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
@@ -46,6 +48,8 @@ if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.wait_cue import ChimeFn
 
 __all__ = ["CallSession", "SpeakFn"]
+
+logger = logging.getLogger(__name__)
 
 # FR-19: a transcript below this confidence is a signal to ask the human to
 # repeat, never to act on. Mirrors the floor the fake-provider tests use
@@ -55,22 +59,12 @@ CONFIDENCE_FLOOR = 0.6
 
 _ASK_TO_REPEAT = "Sorry, I didn't catch that -- could you repeat it?"
 
-
-@runtime_checkable
-class SpeakFn(Protocol):
-    """Speak *text* aloud and return once playback has started or completed.
-
-    Async, not sync: ``VoxClientSync.synthesize`` blocks its calling thread
-    for the full round trip to the daemon, and this call happens inline
-    inside :class:`CallSession`'s async methods, which run on the call's
-    single event loop -- a synchronous ``SpeakFn`` would stall that loop for
-    the duration of every utterance, during which the microphone's capture
-    queue keeps filling and a pending ``/call stop`` goes unnoticed. A
-    caller backed by a blocking client wraps it in ``asyncio.to_thread``
-    (see :mod:`punt_vox.commands.call`).
-    """
-
-    async def __call__(self, text: str) -> None: ...
+# FR-19's low-confidence path never leaves listening for the turn it can't
+# act on; a SessionAttachError happens after TurnDetected already moved the
+# call to waiting (see CallState.turn_detected's precondition), so recovery
+# has to speak its way back through speaking -> listening rather than
+# staying put -- the apology IS the reply this turn gets.
+_SESSION_ATTACH_FAILED = "Sorry, something went wrong -- go ahead and try again."
 
 
 @final
@@ -226,7 +220,8 @@ class CallSession:
     async def _handle_turn_ended(self, chunks: list[AudioChunk]) -> None:
         self._turn_timer.mark("stt_request_sent")
         final_event = None
-        async for event in self._stt_provider.transcribe(_as_async_iter(chunks)):
+        stt_events = self._stt_provider.transcribe(AudioChunk.as_async_iter(chunks))
+        async for event in stt_events:
             final_event = event
         confidence_detail = (
             "no transcript"
@@ -288,12 +283,27 @@ class CallSession:
         self._turn_timer.mark("claude_spawned")
         pieces: list[str] = []
         first_frame_seen = False
-        async with self._wait_cue.active():
-            async for chunk in self._session_attach.send_turn(turn):
-                if not first_frame_seen:
-                    self._turn_timer.mark("first_reply_frame")
-                    first_frame_seen = True
-                pieces.append(chunk.text)
+        try:
+            async with self._wait_cue.active():
+                async for chunk in self._session_attach.send_turn(turn):
+                    if not first_frame_seen:
+                        self._turn_timer.mark("first_reply_frame")
+                        first_frame_seen = True
+                    pieces.append(chunk.text)
+        except SessionAttachError:
+            # A subprocess failure here (nonzero exit, malformed
+            # stream-json, the 120s reply timeout) is exactly as
+            # unactionable as the low-confidence STT path above -- the
+            # human still has a live call and can just try again. Recover
+            # to listening rather than letting the exception end the call:
+            # waiting has no direct path back to listening (CallState has
+            # no such transition), so the apology travels through
+            # speaking, same as a real reply would.
+            logger.exception("session-attach failed mid-turn")
+            self._actor.apply(ReplyBegins())
+            await self._speak(_SESSION_ATTACH_FAILED)
+            self._actor.apply(ReplyEnds())
+            return
         self._turn_timer.mark("reply_complete")
         self._actor.apply(ReplyBegins())
         self._turn_timer.mark("tts_request_sent")
@@ -318,15 +328,3 @@ class CallSession:
         rather than through a live detector.
         """
         self._actor.apply(BargeIn())
-
-
-async def _as_async_iter(chunks: list[AudioChunk]) -> AsyncIterator[AudioChunk]:
-    """Return an async iterator over *chunks* for :class:`STTProvider.transcribe`.
-
-    A tiny local helper rather than requiring every caller to build one --
-    ``STTProvider.transcribe`` is typed to accept ``AsyncIterator[AudioChunk]``;
-    this produces exactly that from the list :meth:`CallSession.process_chunk`
-    already accumulated.
-    """
-    for chunk in chunks:
-        yield chunk
