@@ -18,19 +18,52 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import typer
 
 from punt_vox.commands import call_live_driver as driver_module
 from punt_vox.commands.call_live_driver import LiveCallDriver
 from punt_vox.commands.call_scripted import ScriptedTurn
+from punt_vox.types import HealthCheck
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.call_control import CallControl
 from punt_vox.voxd.conversation_mode.reply import ReplyChunk
 from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator as _AsyncIterator
+
     from punt_vox.voxd.conversation_mode.call_session import CallSession, SpeakFn
     from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
+    from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
     from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
+
+
+class _FakeSTTProvider:
+    """A healthy :class:`STTProvider` stand-in -- never actually transcribes
+    in these gate/inactivity/create tests, only satisfies construction and
+    :func:`~punt_vox.commands.call_live_driver._require_healthy`.
+    """
+
+    def __init__(self, *, healthy: bool = True) -> None:
+        self._healthy = healthy
+
+    @property
+    def name(self) -> str:
+        return "fake-stt"
+
+    async def transcribe(
+        self, chunks: _AsyncIterator[AudioChunk]
+    ) -> _AsyncIterator[TranscriptEvent]:
+        async for _ in chunks:
+            pass
+        events: tuple[TranscriptEvent, ...] = ()
+        for event in events:  # never actually transcribes in these tests
+            yield event
+
+    def check_health(self) -> list[HealthCheck]:
+        if self._healthy:
+            return [HealthCheck(passed=True, message="fake stt: healthy")]
+        return [HealthCheck(passed=False, message="fake stt: no API key")]
 
 
 class _FakeMicSource:
@@ -113,6 +146,7 @@ def _driver(
         # the cast documents the substitution rather than hiding a real
         # mismatch.
         mic_source=cast("MicAudioSource", mic_source),
+        stt_provider=_FakeSTTProvider(),
     )
     return driver, mic_source, spoken
 
@@ -202,7 +236,12 @@ class TestLiveCallDriverCreate:
         async def speak(text: str) -> None:
             del text
 
-        with patch.object(driver_module, "MicAudioSource", return_value=mic_source):
+        with (
+            patch.object(driver_module, "MicAudioSource", return_value=mic_source),
+            patch.object(
+                driver_module, "ElevenLabsSTTProvider", return_value=_FakeSTTProvider()
+            ),
+        ):
             driver = await LiveCallDriver.create(
                 session_attach=_FakeSessionAttach("reply"),
                 speak=speak,
@@ -212,6 +251,36 @@ class TestLiveCallDriverCreate:
             )
         assert mic_source.calibration_durations == [driver_module._CALIBRATION_S]
         assert isinstance(driver, LiveCallDriver)
+
+    async def test_create_refuses_to_start_when_the_stt_key_is_missing(
+        self, tmp_path: Path
+    ) -> None:
+        """CRITICAL finding: an unhealthy STT provider must fail before
+        calibration even begins -- not after 2s of mic calibration and the
+        spoken "Listening." cue, on the very first turn.
+        """
+        mic_source = _FakeMicSource([], calibration=ScriptedTurn.silence_chunks(10))
+
+        async def speak(text: str) -> None:
+            del text
+
+        with (
+            patch.object(driver_module, "MicAudioSource", return_value=mic_source),
+            patch.object(
+                driver_module,
+                "ElevenLabsSTTProvider",
+                return_value=_FakeSTTProvider(healthy=False),
+            ),
+            pytest.raises(typer.BadParameter, match="no API key"),
+        ):
+            await LiveCallDriver.create(
+                session_attach=_FakeSessionAttach("reply"),
+                speak=speak,
+                chime=_no_op_chime,
+                control=_control(tmp_path),
+                apply_control=_never_stop,
+            )
+        assert mic_source.calibration_durations == []
 
 
 class TestLiveCallDriverApplyControl:
@@ -230,6 +299,76 @@ class TestLiveCallDriverApplyControl:
         # process_chunk -- only the opening "Listening." cue was spoken.
         assert spoken == ["Listening."]
         calls.assert_awaited()
+
+
+class TestLiveCallDriverControlPollInterval:
+    """IMPORTANT finding: the mailbox used to be checked -- one filesystem
+    rename plus a raised-and-caught ``FileNotFoundError`` in the steady
+    case -- on every captured chunk (every 20ms). It is now gated on
+    :data:`driver_module._CONTROL_POLL_INTERVAL_S`, a monotonic-time
+    interval, not a per-chunk check.
+
+    ``_due_for_control_check`` is exercised directly against real
+    ``time.monotonic()`` reads rather than by patching the ``time`` module
+    globally -- patching ``time.monotonic`` process-wide also starves
+    ``asyncio``'s own internal scheduling (timers, ``Queue.get()``), which
+    hangs the event loop rather than the test failing cleanly.
+    """
+
+    def test_first_check_is_due_immediately(self, tmp_path: Path) -> None:
+        driver, _mic_source, _spoken = _driver(tmp_path, live_chunks=[])
+        assert driver._due_for_control_check() is True
+
+    def test_a_second_check_inside_the_interval_is_not_due(
+        self, tmp_path: Path
+    ) -> None:
+        driver, _mic_source, _spoken = _driver(tmp_path, live_chunks=[])
+        assert driver._due_for_control_check() is True
+        assert driver._due_for_control_check() is False
+
+    def test_a_check_past_the_interval_is_due_again(self, tmp_path: Path) -> None:
+        driver, _mic_source, _spoken = _driver(tmp_path, live_chunks=[])
+        assert driver._due_for_control_check() is True
+        # Simulate the interval having elapsed, without touching the real
+        # clock -- moves only this driver's own bookkeeping backward.
+        driver._last_control_check_at -= driver_module._CONTROL_POLL_INTERVAL_S + 0.01
+        assert driver._due_for_control_check() is True
+
+    async def test_apply_control_is_not_called_for_every_chunk_in_a_burst(
+        self, tmp_path: Path
+    ) -> None:
+        """A burst of chunks with no real elapsed time between them (the
+        fakes yield instantly, unlike PortAudio's 20ms cadence) must still
+        collapse to one control check, not one per chunk.
+        """
+        chunks = [AudioChunk(pcm=b"\x00\x00", duration_s=0.02)] * 20
+        driver, _mic_source, _spoken = _driver(tmp_path, live_chunks=chunks)
+        calls = AsyncMock(return_value=False)
+        driver._apply_control = calls
+
+        await driver.run()
+
+        assert calls.await_count == 1
+
+    async def test_a_stop_request_past_the_interval_is_still_picked_up(
+        self, tmp_path: Path
+    ) -> None:
+        """Proves the gate does not starve a real stop/transfer request --
+        once due again, the very next chunk still reaches ``_apply_control``.
+        """
+        chunks = [AudioChunk(pcm=b"\x00\x00", duration_s=0.02)] * 2
+        driver, _mic_source, spoken = _driver(tmp_path, live_chunks=chunks)
+        calls = AsyncMock(return_value=True)
+        driver._apply_control = calls
+        # Force the very first chunk to already be past the interval --
+        # matches the natural post-construction state (_last_control_check_at
+        # starts at 0.0), so this only documents the invariant explicitly.
+        driver._last_control_check_at = 0.0
+
+        await driver.run()
+
+        calls.assert_awaited_once()
+        assert spoken == ["Listening."]  # stopped before any turn processed
 
 
 class _RaisingTurnDetector:
@@ -274,6 +413,7 @@ class TestLiveCallDriverAbnormalExit:
             apply_control=_never_stop,
             detector=cast("TurnDetector", _RaisingTurnDetector()),
             mic_source=cast("MicAudioSource", mic_source),
+            stt_provider=_FakeSTTProvider(),
         )
 
         with pytest.raises(RuntimeError, match="STT provider crashed"):

@@ -14,6 +14,8 @@ import asyncio
 import time
 from typing import TYPE_CHECKING, Self, final
 
+import typer
+
 from punt_vox.providers.convert import estimate_speech_duration_s
 from punt_vox.providers.elevenlabs_stt import ElevenLabsSTTProvider
 from punt_vox.voxd.conversation_mode.call_session import CallSession
@@ -27,6 +29,7 @@ if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.call_control import CallControl
     from punt_vox.voxd.conversation_mode.call_session import SpeakFn
     from punt_vox.voxd.conversation_mode.session_attach import SessionAttach
+    from punt_vox.voxd.conversation_mode.stt_provider import STTProvider
     from punt_vox.voxd.conversation_mode.wait_cue import ChimeFn
 
 __all__ = ["LiveCallDriver"]
@@ -68,6 +71,13 @@ _MIC_GATE_MAX_HOLD_S = 20.0
 # elsewhere); a documented fixed default instead.
 _INACTIVITY_TIMEOUT_S = 120.0
 
+# IMPORTANT finding: the control mailbox used to be polled once per audio
+# chunk (every _CHUNK_S=20ms in mic_audio_source.py -- 50 renames plus 50
+# raised-and-caught FileNotFoundErrors per second, in steady state, on the
+# same event loop that has to keep up with audio capture). 250ms is still
+# well inside "responsive to /call stop" while cutting that cost ~200x.
+_CONTROL_POLL_INTERVAL_S = 0.25
+
 # vox-36xc's wait cue is a short, fixed-length bundled asset, not synthesized
 # speech -- there is no text to run through estimate_speech_duration_s, so a
 # small fixed hold (long enough for the chime's own bundled clip to finish
@@ -91,6 +101,7 @@ class LiveCallDriver:
         "_chime",
         "_control",
         "_last_activity_at",
+        "_last_control_check_at",
         "_mic_source",
         "_session",
         "_speak",
@@ -102,6 +113,10 @@ class LiveCallDriver:
     _control: CallControl
     _apply_control: ApplyControlFn
     _last_activity_at: float
+    # See _CONTROL_POLL_INTERVAL_S: gates how often :meth:`run` actually
+    # calls :attr:`_apply_control`, rather than doing it on every captured
+    # chunk (every _CHUNK_S=20ms).
+    _last_control_check_at: float
 
     def __new__(
         cls,
@@ -113,6 +128,7 @@ class LiveCallDriver:
         apply_control: ApplyControlFn,
         detector: TurnDetector,
         mic_source: MicAudioSource,
+        stt_provider: STTProvider,
     ) -> Self:
         self = super().__new__(cls)
         self._mic_source = mic_source
@@ -122,12 +138,16 @@ class LiveCallDriver:
         self._apply_control = apply_control
         self._session = CallSession(
             turn_detector=detector,
-            stt_provider=ElevenLabsSTTProvider(),
+            stt_provider=stt_provider,
             session_attach=session_attach,
             speak=self._speak_and_gate,
             chime=self._chime_and_gate,
         )
         self._last_activity_at = time.monotonic()
+        # 0.0, not time.monotonic(): the first chunk of the call should
+        # still see a due check (see _due_for_control_check), the same as
+        # every _CONTROL_POLL_INTERVAL_S thereafter.
+        self._last_control_check_at = 0.0
         self._session.actor.on_transition(self._mark_activity)
         return self
 
@@ -141,7 +161,19 @@ class LiveCallDriver:
         control: CallControl,
         apply_control: ApplyControlFn,
     ) -> Self:
-        """Build a driver with a real :class:`MicAudioSource`, calibrated first."""
+        """Build a driver with a real :class:`MicAudioSource`, calibrated first.
+
+        Checks the STT provider's credentials before calibration even
+        starts (matching the pre-flight checks :func:`~.call_spec.resolve_call_spec`
+        already runs for the TTS provider and
+        :meth:`~.claude_session_attach.ClaudeSessionAttach._require_bare_auth`
+        already runs for ``ANTHROPIC_API_KEY``) -- without it, a missing or
+        bad ElevenLabs key survives 2s of mic calibration and the spoken
+        "Listening." cue, and only surfaces once the first turn's transcribe
+        call fails.
+        """
+        stt_provider = ElevenLabsSTTProvider()
+        _require_healthy(stt_provider)
         mic_source = MicAudioSource()
         detector = TurnDetector()
         detector.calibrate(await mic_source.capture_seconds(_CALIBRATION_S))
@@ -153,6 +185,7 @@ class LiveCallDriver:
             apply_control=apply_control,
             detector=detector,
             mic_source=mic_source,
+            stt_provider=stt_provider,
         )
 
     async def run(self) -> None:
@@ -168,7 +201,7 @@ class LiveCallDriver:
         chunks = self._mic_source.chunks()
         try:
             async for chunk in chunks:
-                if await self._apply_control(
+                if self._due_for_control_check() and await self._apply_control(
                     self._control, self._session, self._speak_and_gate
                 ):
                     break
@@ -184,6 +217,24 @@ class LiveCallDriver:
             # -- including an abnormal exit via an uncaught exception.
             if self._session.actor.mode is not Mode.IDLE:
                 await self._session.hangup()
+
+    def _due_for_control_check(self) -> bool:
+        """Return whether enough time has passed to check the mailbox again.
+
+        IMPORTANT finding: without this gate, :meth:`run` called
+        :attr:`_apply_control` -- one filesystem rename plus a
+        raised-and-caught ``FileNotFoundError`` in the steady (no pending
+        request) case -- on every captured chunk, 50 times a second on the
+        same event loop that has to keep up with audio capture. Advances
+        the clock as a side effect, matching the ``chunk-count`` gate this
+        replaces: a caller checks once per due interval, not once per call
+        to this method.
+        """
+        now = time.monotonic()
+        if now - self._last_control_check_at < _CONTROL_POLL_INTERVAL_S:
+            return False
+        self._last_control_check_at = now
+        return True
 
     def _is_inactive(self) -> bool:
         return (
@@ -246,3 +297,20 @@ class LiveCallDriver:
 
     def _mark_activity(self, _before: Mode, _after: Mode) -> None:
         self._last_activity_at = time.monotonic()
+
+
+def _require_healthy(stt_provider: STTProvider) -> None:
+    """Raise ``typer.BadParameter`` if *stt_provider* fails its own health check.
+
+    Mirrors :func:`~.call_spec.resolve_call_spec`'s and
+    :meth:`~.claude_session_attach.ClaudeSessionAttach._require_bare_auth`'s
+    fail-fast-before-the-call-starts pattern for the third and last
+    credential a call needs -- module-level rather than a method because it
+    takes an arbitrary :class:`STTProvider`, not :class:`LiveCallDriver`'s
+    own state.
+    """
+    failures = [
+        check.message for check in stt_provider.check_health() if not check.passed
+    ]
+    if failures:
+        raise typer.BadParameter("; ".join(failures))
