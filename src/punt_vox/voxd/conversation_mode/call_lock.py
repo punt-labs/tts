@@ -134,7 +134,18 @@ class CallLock:
             return None
         try:
             payload = json.loads(raw)
-            return CallLockState(reason=payload["reason"], pid=payload["pid"])
+            reason = payload["reason"]
+            pid = payload["pid"]
+            # Wrong-typed fields (a hand-edited pid as a string, say) must
+            # land on the same stale-and-discard path as a missing key --
+            # otherwise a bad-shaped payload passes construction silently
+            # and only crashes later, deep inside _process_is_alive's
+            # os.kill(pid, 0) call, on a boundary this method exists to
+            # spare that from.
+            if not isinstance(reason, str) or not isinstance(pid, int):
+                msg = f"call.lock has wrong-typed fields: {payload!r}"
+                raise TypeError(msg)
+            return CallLockState(reason=reason, pid=pid)
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
             logger.warning("call.lock is unreadable, treating as stale: %s", exc)
             return None

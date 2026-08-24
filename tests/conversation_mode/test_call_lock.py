@@ -110,6 +110,20 @@ def test_read_treats_a_missing_pid_field_as_no_active_call(tmp_path: Path) -> No
     assert lock.read() is None
 
 
+def test_read_treats_a_wrong_typed_pid_as_no_active_call(tmp_path: Path) -> None:
+    """A hand-edited lock file with ``pid`` as a string (valid JSON, wrong
+    shape) must be treated as stale, not constructed into a
+    :class:`CallLockState` that later crashes with an uncaught ``TypeError``
+    from ``os.kill(pid, 0)``.
+    """
+    path = tmp_path / "call.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"reason": "call active", "pid": "1234"}')
+
+    lock = CallLock(path)
+    assert lock.read() is None
+
+
 def test_is_live_true_for_a_genuinely_live_process(tmp_path: Path) -> None:
     lock = CallLock(tmp_path / "call.lock")
     lock.acquire("call active")  # this test process is genuinely alive
