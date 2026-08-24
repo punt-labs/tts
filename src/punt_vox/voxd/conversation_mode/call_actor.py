@@ -8,7 +8,7 @@ barge-in detector task yet; see that class's own ``barge_in`` docstring), so
 path. ``docs/conversation-mode-call-state.tex`` section 8 anticipates a
 future where turn detection, barge-in detection, and sentence-streamed
 synthesis are three independent, genuinely concurrent producers that could
-all want to change :class:`CallState` at once -- at that point (Slice 2b's
+all want to change :class:`CallState` at once -- at that point (a future
 barge-in detector is the first candidate) this class gets a real
 queue-backed serialization point, wired to every producer that then exists.
 Building that queue now, with nothing enqueuing into it, would be exactly

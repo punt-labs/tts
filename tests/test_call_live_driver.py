@@ -340,7 +340,7 @@ class TestLiveCallDriverApplyControl:
 
 
 class TestLiveCallDriverControlPollInterval:
-    """IMPORTANT finding: the mailbox used to be checked -- one filesystem
+    """The mailbox used to be checked -- one filesystem
     rename plus a raised-and-caught ``FileNotFoundError`` in the steady
     case -- on every captured chunk (every 20ms). It is now gated on
     :data:`driver_module._CONTROL_POLL_INTERVAL_S`, a monotonic-time

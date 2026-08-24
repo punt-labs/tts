@@ -313,7 +313,7 @@ class _FailThenSucceedSTTProvider:
 
 
 class TestSessionAttachFailureRecovery:
-    """CRITICAL finding: a ``SessionAttachError`` mid-turn must not end the
+    """A ``SessionAttachError`` mid-turn must not end the
     call -- the human should hear an apology and keep talking, the same
     recovery shape the low-confidence STT path already gets.
     """
@@ -419,7 +419,7 @@ class TestSTTTranscribeFailureRecovery:
 
 
 class TestCaptureDuringWait:
-    """Item 7: a second closed turn detected while the call is already
+    """A second closed turn detected while the call is already
     ``waiting`` on the first turn's reply must be held as a pending addendum
     (docs/conversation-mode-call-state.tex section 5), never forwarded as a
     concurrent turn (which would violate CallState's ``turn_detected``

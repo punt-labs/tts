@@ -36,11 +36,11 @@ gate before speaking and holds it shut for an *estimated* speech duration
 plus a safety margin, not the real one -- see
 :func:`~punt_vox.providers.convert.estimate_speech_duration_s`. This bounds
 the echo window; it does not eliminate it. A real fix needs either
-``client.py`` to expose a genuine "wait for playback done" option, or the
-continuous-stream playback ownership ratified for Slice 2a (extending
-production ``PlaybackQueue`` directly, per ``docs/conversation-mode-prd.tex``
-Chapter 2 and bead vox-gs9u.3) -- follow-up work, not attempted here. The
-estimate also assumes playback
+``client.py`` to expose a genuine "wait for playback done" option, or
+continuous-stream playback ownership (extending production
+``PlaybackQueue`` directly, per ``docs/conversation-mode-prd.tex``
+Chapter 2) -- follow-up work, not attempted here. The estimate also assumes
+playback
 starts immediately once ``synthesize()`` returns; if the daemon queues the
 utterance behind music or a chime, the gate can reopen while the reply is
 still actually playing.

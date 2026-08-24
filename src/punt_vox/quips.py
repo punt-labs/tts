@@ -114,10 +114,10 @@ SUBAGENT_STOP_PHRASES: tuple[str, ...] = (
 
 # ---------------------------------------------------------------------------
 # vox call — instant turn acknowledgment, spoken the moment a human turn
-# closes and before the claude round trip starts (vox-36xc's latency
-# mitigation: per-turn subprocess spawn measured 13-25s median, so the human
-# gets an immediate "I heard you" instead of dead silence for the whole
-# wait). Deliberately its own pool, not a reuse of ACKNOWLEDGE_PHRASES above
+# closes and before the claude round trip starts (a latency mitigation:
+# per-turn subprocess spawn measured 13-25s median, so the human gets an
+# immediate "I heard you" instead of dead silence for the whole wait).
+# Deliberately its own pool, not a reuse of ACKNOWLEDGE_PHRASES above
 # -- that pool's register reads as acknowledging a *coding task* ("I'm on
 # the case.", "Already on it.", "Let me dig into that."), which is subtly
 # wrong for acknowledging what someone just said in a live conversation.

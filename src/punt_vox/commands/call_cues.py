@@ -64,7 +64,7 @@ class DaemonCues:
     async def chime(self) -> None:
         """Play the background wait cue -- :class:`~.wait_cue.ChimeFn`'s contract.
 
-        vox-36xc: the daemon's existing "acknowledge" chime asset
+        Uses the daemon's existing "acknowledge" chime asset
         (:mod:`punt_vox.voxd.chimes`'s ``_CHIME_MAP``), not a new synthesis
         -- see :mod:`~.wait_cue`'s module docstring for why.
         """

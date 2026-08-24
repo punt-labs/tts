@@ -11,7 +11,7 @@ underlying subprocess still streaming; sentence-streamed synthesis (acting on
 each delta as it arrives) is a distinct, larger change to this class's
 contract with :class:`~.call_session.CallSession`, not attempted here.
 
-**Auth model: ``--bare`` requires an API key, not OAuth (vox-36xc).**
+**Auth model: ``--bare`` requires an API key, not OAuth.**
 ``--bare`` eliminates the ``SessionStart`` hook cascade every non-bare
 ``claude -p --resume`` pays on each spawn (measured empirically: 0 hooks
 fire in bare mode versus 9-28 in normal mode), which is most of the 13-25s

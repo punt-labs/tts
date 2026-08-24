@@ -1,7 +1,7 @@
 """Background wait cue: repeats a bundled chime while a call's reply is pending.
 
-vox-36xc's latency mitigation: the per-turn ``claude`` subprocess spawn
-measured 13-25s median. No existing audio-playback primitive in this
+A latency mitigation: the per-turn ``claude`` subprocess spawn measured
+13-25s median. No existing audio-playback primitive in this
 codebase fits a genuine ambient loop -- the daemon's two bundled chime assets
 (``voxd/chimes.py``'s ``_CHIME_MAP``) are short one-shot notification sounds,
 and the full music-Program subsystem (``src/punt_vox/voxd/music_player/``)

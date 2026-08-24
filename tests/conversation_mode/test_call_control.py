@@ -117,7 +117,7 @@ def test_consume_treats_invalid_utf8_bytes_as_no_request(tmp_path: Path) -> None
 
 
 def test_consume_treats_an_unrecognized_kind_as_no_request(tmp_path: Path) -> None:
-    """IMPORTANT finding: an invalid ``kind`` (e.g. a typo'd hand-edit) must
+    """An invalid ``kind`` (e.g. a typo'd hand-edit) must
     be discarded-and-logged, the same as any other malformed entry -- never
     constructed into a ``ControlRequest`` that ``call.py``'s
     ``_apply_control`` would then silently fall through both its branches
