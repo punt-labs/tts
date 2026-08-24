@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from punt_vox.providers.convert import estimate_speech_duration_s
 
 
@@ -45,8 +47,24 @@ class TestEstimateSpeechDurationS:
         expected_word_based = word_count / (175 / 60.0)
         assert estimate == expected_word_based
 
-    def test_negative_or_zero_wpm_not_exercised_default_only(self) -> None:
-        # Boundary: a single word at the default rate is a small positive
-        # duration, never zero or negative.
+    def test_a_word_at_the_default_rate_is_a_small_positive_duration(self) -> None:
         estimate = estimate_speech_duration_s("hello")
         assert estimate > 0.0
+
+    def test_zero_wpm_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="wpm must be positive"):
+            estimate_speech_duration_s("hello", wpm=0)
+
+    def test_negative_wpm_raises_value_error(self) -> None:
+        with pytest.raises(ValueError, match="wpm must be positive"):
+            estimate_speech_duration_s("hello", wpm=-50)
+
+    def test_the_character_floor_scales_with_a_non_default_wpm(self) -> None:
+        # A long single token's duration is dominated by the character-count
+        # floor (see test_single_very_long_token_is_not_treated_as_one_short_word
+        # above). At double the default wpm, that floor must roughly halve --
+        # not stay pinned to the default pace regardless of what was asked.
+        long_token = "a" * 400
+        default_pace = estimate_speech_duration_s(long_token)
+        double_pace = estimate_speech_duration_s(long_token, wpm=350)
+        assert double_pace == pytest.approx(default_pace / 2, rel=0.01)

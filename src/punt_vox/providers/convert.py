@@ -60,15 +60,25 @@ def estimate_speech_duration_s(text: str, *, wpm: int = _DEFAULT_WPM) -> float:
     one long unbroken token -- a URL, a file path, an identifier -- because
     ``text.split()`` counts it as a single "word" regardless of its length.
     The return value is the larger of the word-count estimate and a
-    character-count floor (:data:`_CHARS_PER_SECOND`), so a long single
-    token still gets a duration proportional to how long it actually takes
-    to read aloud.
+    character-count floor, so a long single token still gets a duration
+    proportional to how long it actually takes to read aloud. The floor is
+    scaled by *wpm* -- :data:`_CHARS_PER_SECOND` is derived from the default
+    pace only, and a floor that ignored a non-default *wpm* would silently
+    return the default-pace duration regardless of what pace was requested.
+
+    Raises :class:`ValueError` for ``wpm <= 0`` -- a caller-supplied pace of
+    zero divides by zero, and a negative one is not a speaking pace at all;
+    both are validated here rather than producing zero or silently wrong
+    output (PY-EH-1).
     """
+    if wpm <= 0:
+        msg = f"wpm must be positive, got {wpm}"
+        raise ValueError(msg)
     stripped = text.strip()
     if not stripped:
         return 0.0
     word_count = len(stripped.split())
     words_per_second = wpm / 60.0
     by_words = word_count / words_per_second
-    by_chars = len(stripped) / _CHARS_PER_SECOND
+    by_chars = len(stripped) / (_CHARS_PER_SECOND * wpm / _DEFAULT_WPM)
     return max(by_words, by_chars)
