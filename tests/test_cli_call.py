@@ -17,6 +17,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import typer
 from typer.testing import CliRunner
 
 from punt_vox.commands.call import build_call_app
@@ -123,6 +124,42 @@ def test_transfer_refuses_when_no_call_is_active(tmp_path: Path) -> None:
         result = runner.invoke(build_call_app(), ["transfer"])
     assert result.exit_code != 0
     assert CallControl(tmp_path / "call.control").consume() is None
+
+
+async def test_apply_control_speaks_a_fixed_sentence_not_the_raw_exception(
+    tmp_path: Path,
+) -> None:
+    """A failed transfer resolution must never be spoken verbatim -- when
+    session discovery finds multiple candidates, ``typer.BadParameter``'s
+    text is a newline-separated list of session UUIDs and filesystem paths,
+    which would otherwise be read aloud character-by-character.
+    """
+    from punt_vox.commands import call as call_module
+
+    control = CallControl(tmp_path / "call.control")
+    control.request_transfer(None)
+    spoken: list[str] = []
+
+    async def speak(text: str) -> None:
+        spoken.append(text)
+
+    leaky_message = (
+        "multiple active Claude Code sessions found; pass --session "
+        "<id> to choose one:\n  11111111-1111-1111-1111-111111111111  "
+        "(/Users/jane/repo)\n  22222222-2222-2222-2222-222222222222  "
+        "(/Users/jane/other)"
+    )
+    cli = call_module.CallCli()
+    with patch.object(
+        call_module.CallCli,
+        "_resolve_session_attach",
+        side_effect=typer.BadParameter(leaky_message),
+    ):
+        should_stop = await cli._apply_control(control, MagicMock(), speak)
+
+    assert should_stop is False
+    assert spoken == ["Couldn't transfer the call -- check the terminal"]
+    assert leaky_message not in spoken
 
 
 def test_stop_refuses_against_a_stale_lock_with_a_dead_pid(tmp_path: Path) -> None:

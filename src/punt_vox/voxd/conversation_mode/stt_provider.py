@@ -1,4 +1,4 @@
-"""The seam between captured audio and a transcribed turn.
+"""The Protocol that turns captured audio into a transcript.
 
 :class:`STTProvider` mirrors :class:`~punt_vox.types.TTSProvider`'s shape --
 a ``name``, a ``check_health`` method matching the same
@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, final, runtime_checkable
 
 if TYPE_CHECKING:
     from punt_vox.types import HealthCheck
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 __all__ = ["STTProvider", "TranscriptEvent"]
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class TranscriptEvent:
     """One incremental speech-recognition result.

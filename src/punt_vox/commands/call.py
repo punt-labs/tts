@@ -73,7 +73,6 @@ from punt_vox.voxd.conversation_mode.call_lock import CallLock, CallLockActiveEr
 from punt_vox.voxd.conversation_mode.call_session import CallSession, SpeakFn
 from punt_vox.voxd.conversation_mode.claude_session_attach import ClaudeSessionAttach
 from punt_vox.voxd.conversation_mode.session_discovery import SessionDiscovery
-from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
 
 if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.session_attach import SessionAttach
@@ -180,21 +179,6 @@ class CallCli:
         )
         raise typer.BadParameter(msg)
 
-    @staticmethod
-    def _calibrated_detector() -> TurnDetector:
-        """Return a :class:`TurnDetector` calibrated against a synthetic silent floor.
-
-        Used only by the scripted path: the synthetic floor is silence
-        (amplitude 0), matching :meth:`ScriptedTurn.synthetic_chunks`'s own
-        silence chunks, so the real detector's thresholds are meaningful
-        against the synthetic audio that path feeds it. The live path
-        calibrates against real ambient audio instead -- see
-        :meth:`_run_live`.
-        """
-        detector = TurnDetector()
-        detector.calibrate(ScriptedTurn.silence_chunks(10))
-        return detector
-
     async def _run(self, script: Path | None, session_id: str | None) -> None:
         """Dispatch to the scripted or live path, per whether *script* is set."""
         client = VoxClientSync()
@@ -273,7 +257,7 @@ class CallCli:
         """Drive one call from a JSON Lines script -- no microphone, no ElevenLabs."""
         turns = ScriptedTurn.read_script(script)
         session = CallSession(
-            turn_detector=self._calibrated_detector(),
+            turn_detector=ScriptedTurn.calibrated_detector(),
             stt_provider=ScriptedSTTProvider(turns),
             session_attach=session_attach,
             speak=speak,
@@ -315,8 +299,16 @@ class CallCli:
                 new_attach = await self._resolve_session_attach(
                     Path.cwd(), request.target_session_id
                 )
-            except typer.BadParameter as exc:
-                await speak(f"Couldn't transfer the call: {exc}")
+            except typer.BadParameter:
+                # A fixed sentence, never {exc} itself: when session
+                # discovery finds multiple candidates, the exception's text
+                # is a newline-separated list of session UUIDs and
+                # filesystem paths -- read aloud character-by-character,
+                # the same voice-disclosure hazard the outer boundary
+                # handler in _run already guards against for a different
+                # exception. The detail goes to the log instead.
+                logger.exception("transfer request failed to resolve a session")
+                await speak("Couldn't transfer the call -- check the terminal")
                 return False
             session.replace_session_attach(new_attach)
         return False

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, final
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
@@ -23,6 +23,7 @@ __all__ = ["SAMPLE_RATE_HZ", "AudioChunk"]
 SAMPLE_RATE_HZ = 16_000
 
 
+@final
 @dataclass(frozen=True, slots=True)
 class AudioChunk:
     """16-bit signed mono PCM plus how long it spans, as the caller measured it.

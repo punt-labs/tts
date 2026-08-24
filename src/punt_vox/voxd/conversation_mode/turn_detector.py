@@ -128,12 +128,13 @@ class TurnDetector:
 
         Interprets *pcm* as 16-bit signed little-endian mono samples --
         vox's capture format throughout Conversation Mode. Empty input (a
-        zero-length chunk) has no signal to measure, so it reports 0.0
-        rather than dividing by zero.
+        zero-length chunk, or an odd-length one -- a single trailing byte
+        with no partner to pair into a sample) has no signal to measure, so
+        it reports 0.0 rather than dividing by zero.
         """
-        if not pcm:
-            return 0.0
         sample_count = len(pcm) // 2
+        if sample_count == 0:
+            return 0.0
         samples = struct.unpack(f"<{sample_count}h", pcm[: sample_count * 2])
         mean_square = sum(s * s for s in samples) / sample_count
         return float(mean_square**0.5) / 32768.0

@@ -1,4 +1,4 @@
-"""The seam between a live call and the human's already-running agent session.
+"""The Protocol a live call uses to forward a turn to the human's running agent session.
 
 :class:`SessionAttach` is the interface :mod:`~punt_vox.voxd.conversation_mode`
 calls to forward a transcribed human turn and receive the agent's reply as it

@@ -95,3 +95,13 @@ def test_empty_pcm_chunk_is_silence_not_a_crash() -> None:
     assert detector.process(AudioChunk(pcm=b"", duration_s=_CHUNK_S)) == (
         TurnSignal.SILENCE
     )
+
+
+def test_odd_length_pcm_chunk_is_silence_not_a_crash() -> None:
+    """A single trailing byte has no partner to pair into a 16-bit sample --
+    ``_rms`` must guard this the same as the zero-length case, not divide by
+    a sample count of zero."""
+    detector = _detector()
+    assert detector.process(AudioChunk(pcm=b"\x00", duration_s=_CHUNK_S)) == (
+        TurnSignal.SILENCE
+    )

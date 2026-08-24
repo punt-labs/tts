@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
+from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
 
 if TYPE_CHECKING:
     from punt_vox.types import HealthCheck
@@ -64,6 +65,22 @@ class ScriptedTurn:
     def silence_chunks(cls, count: int) -> list[AudioChunk]:
         """Return ``count`` chunks of pure silence, for calibration floors."""
         return [AudioChunk(pcm=cls._pcm(0), duration_s=_CHUNK_S) for _ in range(count)]
+
+    @classmethod
+    def calibrated_detector(cls) -> TurnDetector:
+        """Return a :class:`TurnDetector` calibrated against a synthetic silent floor.
+
+        The scripted (``--script``) path's counterpart to the live path's
+        real-ambient-audio calibration
+        (:meth:`~punt_vox.commands.call_live_driver.LiveCallDriver.create`):
+        the synthetic floor is silence (amplitude 0), matching
+        :meth:`synthetic_chunks`'s own silence chunks, so the real
+        detector's thresholds are meaningful against the synthetic audio
+        the scripted path feeds it.
+        """
+        detector = TurnDetector()
+        detector.calibrate(cls.silence_chunks(10))
+        return detector
 
     @classmethod
     def read_script(cls, path: Path) -> list[ScriptedTurn]:
