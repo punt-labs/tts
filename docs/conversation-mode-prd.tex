@@ -734,14 +734,27 @@ evidence trail; summarized here:
     the file never appeared on disk.
 \end{enumerate}
 
-The mechanism is confirmed workable. What remains before an
-implementation mission dispatches is the operator ratification \fr{4}'s
-revised wording above calls for, plus the two smaller pieces DES-066
-still lists open (the context-snapshot's own content, and the post-call
-summary handoff to the primary session) and the process-supervision
-choice (a direct \texttt{subprocess.Popen} held by \texttt{voxd} itself,
-recommended over \texttt{tmux}/\texttt{pi-tools}' \texttt{keep} extension
-to avoid a new runtime dependency for a headless daemon use case
+The mechanism is confirmed workable. \textbf{Further resolved
+2026-08-24 (DES-067):} the two smaller pieces this paragraph originally
+left open are now decided. The context snapshot is authored by the
+\emph{primary} session itself at \texttt{/vox:call start <topic>} --- the
+session already holds the task context; handing it off does not need a
+retrieval mechanism. Quarry and context7 lookups are folded into the
+snapshot the same way, run by the primary session before the call agent
+spawns (an initial MCP-in-\texttt{pi} approach was spiked and explicitly
+rejected by the operator --- ``do not bloat pi''). The post-call summary
+is a structured document (modeled on \texttt{../prfaq/}'s meeting-summary
+format: Decisions Made, Action Items, Context Gathered, Beads Touched,
+Notes), authored by the call agent itself and read directly by the
+still-present primary session when the call ends --- no hook needed.
+See DES-067 for the full decision record and rejected alternatives.
+
+What remains before an implementation mission dispatches is the operator
+ratification \fr{4}'s revised wording above calls for, plus the
+process-supervision choice (a direct \texttt{subprocess.Popen} held by
+\texttt{voxd} itself, recommended over \texttt{tmux}/\texttt{pi-tools}'
+\texttt{keep} extension to avoid a new runtime dependency for a headless
+daemon use case
 \texttt{keep} was not built for) --- see DES-066 and
 \texttt{docs/conversation-mode-call-agent.tex}'s Z model for the process
 lifecycle those pieces attach to.
@@ -1109,11 +1122,14 @@ gaps in this chapter, not minor additions.
     itself now been spiked and confirmed working (persistence, real
     tool-use latency, read-only enforcement --- see
     \S\ref{sec:design-session-attach}'s further-resolution paragraph and
-    \texttt{DESIGN.md} DES-066). What remains open is no longer whether
-    the mechanism works but the operator ratification \fr{4}'s revised
-    wording calls for (the call agent gets a context snapshot, not a
-    literal resume of the primary session), plus the context-snapshot's
-    own content and the post-call summary handoff, both still undesigned.
+    \texttt{DESIGN.md} DES-066). \textbf{Further resolved 2026-08-24
+    (DES-067):} the context-snapshot content and the post-call summary
+    handoff, both named as still undesigned as recently as the previous
+    sentence, are now decided --- see
+    \S\ref{sec:design-session-attach}'s DES-067 pointer above. What
+    remains open is no longer any open design question but the operator
+    ratification \fr{4}'s revised wording calls for (the call agent gets
+    a context snapshot, not a literal resume of the primary session).
   \item \textbf{Provider-agnostic interfaces (\fr{21}, P1) have no design
     content anywhere in this chapter.} Every spike hardcoded ElevenLabs
     directly --- Spike 1 reused \texttt{providers/elevenlabs.py}
