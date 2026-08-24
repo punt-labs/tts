@@ -51,8 +51,8 @@ async def test_active_repeats_the_chime_on_the_configured_interval(
 
 
 class TestWaitCueChimeFailure:
-    """Item 3: a failing chime must not propagate out of the repeat loop and
-    must not mask the real turn's own exception racing it in ``active()``'s
+    """A failing chime must not propagate out of the repeat loop and must
+    not mask the real turn's own exception racing it in ``active()``'s
     ``finally: await task`` cleanup.
     """
 
@@ -93,9 +93,9 @@ class TestWaitCueChimeFailure:
 
 
 class TestWaitCueActiveCleanup:
-    """Item 11: ``active()``'s cancel-on-exit guarantee -- the background
-    chime task must actually be cancelled and awaited whenever the
-    ``async with`` body exits, on both the happy and the raising path.
+    """``active()``'s cancel-on-exit guarantee -- the background chime task
+    must actually be cancelled and awaited whenever the ``async with`` body
+    exits, on both the happy and the raising path.
     """
 
     async def test_the_background_task_is_cancelled_on_normal_exit(

@@ -434,16 +434,16 @@ async def test_run_call_live_path_captures_from_mic_and_transcribes(
 
     # Regression: draining must happen after every utterance, not only on
     # the speaking -> listening mode transition -- "Listening.", the
-    # vox-36xc instant ack quip, the reply itself, and "Ready." (spoken
-    # *after* that transition already fired) are four separate speak()
-    # calls, and each must drain the mic's self-captured backlog on its own.
+    # instant ack quip, the reply itself, and "Ready." (spoken *after* that
+    # transition already fired) are four separate speak() calls, and each
+    # must drain the mic's self-captured backlog on its own.
     assert mic_source.drain_calls == len(spoken) == 4
 
     # The mic-echo mitigation (mic_audio_source.py's set_listening, gated at
     # the PortAudio callback itself, not just drained after the fact): the
     # gate closes before every speak() call and reopens after, one
-    # False/True pair per utterance -- four now that the vox-36xc ack quip
-    # is a fourth gated utterance.
+    # False/True pair per utterance -- four now that the ack quip is a
+    # fourth gated utterance.
     assert mic_source.listening_calls == [False, True] * 4
 
 

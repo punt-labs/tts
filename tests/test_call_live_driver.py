@@ -427,9 +427,9 @@ class _RaisingTurnDetector:
 
 
 class TestLiveCallDriverAbnormalExit:
-    """Item 4 regression: an exception out of ``process_chunk`` must not skip
-    ``hangup()`` -- otherwise :class:`~.call_actor.CallActor`'s mode is left
-    stale (never transitioned back to idle) on the way out.
+    """An exception out of ``process_chunk`` must not skip ``hangup()`` --
+    otherwise :class:`~.call_actor.CallActor`'s mode is left stale (never
+    transitioned back to idle) on the way out.
     """
 
     async def test_hangup_fires_even_when_process_chunk_raises(

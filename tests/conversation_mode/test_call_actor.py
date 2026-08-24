@@ -45,7 +45,7 @@ def test_current_detector_reflects_the_actor_s_mode() -> None:
 
 
 class TestCommandApplyProtocolConformance:
-    """Item 8: exercise ``BargeIn``, ``CaptureDuringWait``, and ``TimeoutCall``
+    """Exercise ``BargeIn``, ``CaptureDuringWait``, and ``TimeoutCall``
     through :meth:`CallActor.apply` against a real :class:`CallState` --
     every other :class:`~.call_command.CallCommand` implementation
     (``StartCall``, ``EndCall``, ``TurnDetected``, ``ReplyBegins``,

@@ -245,7 +245,7 @@ class TestMicAudioSourceSetListening:
     async def test_overlapping_closers_keep_the_mic_gated_until_both_reopen(
         self,
     ) -> None:
-        """Item 6 finding: two independent wrappers around ``set_listening``
+        """Two independent wrappers around ``set_listening``
         (``_speak_and_gate`` and ``_chime_and_gate`` in
         ``commands/call_live_driver.py``) don't currently overlap in
         production, but only by an unenforced ordering accident -- nothing
@@ -339,8 +339,8 @@ class TestMicAudioSourceCaptureSeconds:
 
 
 class TestMicAudioSourceDeviceOpenFailure:
-    """Item 9: the single most likely real-world failure on a fresh machine
-    -- no microphone present, permission denied, or the device already in
+    """The single most likely real-world failure on a fresh machine -- no
+    microphone present, permission denied, or the device already in
     use by another process. ``sounddevice.RawInputStream`` (or any factory
     substituting for it) raises when it cannot open the device; that
     exception must propagate out of :meth:`MicAudioSource.chunks` with a
