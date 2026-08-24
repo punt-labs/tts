@@ -6,7 +6,7 @@ before the first real assistant frame), and a long reply's real ElevenLabs
 synthesis time can exceed the daemon client's own timeout. Neither is fixed
 here -- this module exists only to make where time goes *visible*, either by
 grepping ``vox.log`` after the fact or watching a call live with
-``--verbose``. See :func:`punt_vox.logging_config.configure_turn_timer_logging`
+``--trace-turns``. See :func:`punt_vox.logging_config.configure_turn_timer_logging`
 for how the two are wired: every mark below is an unconditional
 ``logger.debug`` call, and that function decides where those records land.
 

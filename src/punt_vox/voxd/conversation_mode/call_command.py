@@ -3,8 +3,8 @@
 Mirrors ``voxd/programs/control_signal.py``'s shape: each transition the Z
 specification names is a typed command that knows how to apply itself
 (Command pattern, PY-DP-11), rather than a bare tag a dispatcher switches on.
-:class:`~.call_actor.CallActor` calls :meth:`CallCommand.apply` on whatever
-command it dequeues next; it never inspects a command's type.
+:class:`~.call_actor.CallActor` calls :meth:`CallCommand.apply` directly on
+whatever command its caller passes it; it never inspects a command's type.
 """
 
 from __future__ import annotations

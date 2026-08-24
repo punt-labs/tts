@@ -116,10 +116,10 @@ def configure_turn_timer_logging(*, echo_to_console: bool) -> None:
     off -- so this logger's DEBUG records reach the file unconditionally
     without also forcing every *other* module's DEBUG noise durable for the
     call's duration (which raising the shared handler's level would do).
-    ``echo_to_console`` (``vox call start --verbose``) additionally attaches
-    a stream handler at the same level and format, so the identical records
-    also print live to the terminal -- the file is never affected by this
-    flag either way.
+    ``echo_to_console`` (``vox call start --trace-turns``) additionally
+    attaches a stream handler at the same level and format, so the
+    identical records also print live to the terminal -- the file is never
+    affected by this flag either way.
     """
     logger_ = logging.getLogger(_TURN_TIMER_LOGGER_NAME)
     logger_.setLevel(logging.DEBUG)

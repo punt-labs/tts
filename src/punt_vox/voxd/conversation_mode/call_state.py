@@ -11,7 +11,8 @@ listening unaccounted for.
 
 This class is deliberately *not* thread- or task-safe on its own -- per the
 Z spec's "single serialized dispatch point" section, it is safe to call only
-from the one task draining :class:`~.call_actor.CallActor`'s command queue.
+from a single already-serialized caller (see :class:`~.call_actor.CallActor`'s
+own module docstring for who that is today).
 """
 
 from __future__ import annotations

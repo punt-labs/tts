@@ -77,11 +77,11 @@ class CallActor:
     def apply(self, command: CallCommand) -> None:
         """Apply *command* to the state immediately and notify observers.
 
-        Bypasses the queue -- correct only when the caller is already the
-        single serialized dispatch point (see :meth:`enqueue`'s docstring
-        for the distinction). :meth:`run` calls this for each command it
-        dequeues; it is also the direct entry point for a sequential caller
-        with no concurrent producer to guard against.
+        Correct only when the caller is already the single serialized
+        dispatch point -- see this class's own module docstring for why
+        that is true today (:class:`~.call_session.CallSession` is the sole
+        caller, processing chunks through one sequential loop) and what
+        would need to change if a second concurrent producer arrived.
 
         One observer's exception must not stop the others from running, nor
         propagate into the caller's control flow (a caller applying a
