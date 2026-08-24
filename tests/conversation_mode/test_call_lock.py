@@ -124,6 +124,22 @@ def test_read_treats_a_wrong_typed_pid_as_no_active_call(tmp_path: Path) -> None
     assert lock.read() is None
 
 
+def test_read_treats_a_boolean_pid_as_no_active_call(tmp_path: Path) -> None:
+    """``bool`` is an ``int`` subclass in Python, so a hand-edited
+    ``"pid": true`` would pass a bare ``isinstance(pid, int)`` check and
+    coerce to PID 1 in ``os.kill`` -- a real process that always exists,
+    owned by another user, producing a permanently stuck "call is active"
+    false positive. Must be treated as stale, same as any other
+    wrong-typed field.
+    """
+    path = tmp_path / "call.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"reason": "call active", "pid": true}')
+
+    lock = CallLock(path)
+    assert lock.read() is None
+
+
 def test_is_live_true_for_a_genuinely_live_process(tmp_path: Path) -> None:
     lock = CallLock(tmp_path / "call.lock")
     lock.acquire("call active")  # this test process is genuinely alive

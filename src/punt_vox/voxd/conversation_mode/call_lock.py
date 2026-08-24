@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Self, final
 
 from punt_vox.atomic_file import AtomicFile
+from punt_vox.types_programs.wire import JsonObject
 
 logger = logging.getLogger(__name__)
 
@@ -133,20 +134,16 @@ class CallLock:
         if not raw:
             return None
         try:
-            payload = json.loads(raw)
-            reason = payload["reason"]
-            pid = payload["pid"]
-            # Wrong-typed fields (a hand-edited pid as a string, say) must
-            # land on the same stale-and-discard path as a missing key --
-            # otherwise a bad-shaped payload passes construction silently
-            # and only crashes later, deep inside _process_is_alive's
-            # os.kill(pid, 0) call, on a boundary this method exists to
-            # spare that from.
-            if not isinstance(reason, str) or not isinstance(pid, int):
-                msg = f"call.lock has wrong-typed fields: {payload!r}"
-                raise TypeError(msg)
-            return CallLockState(reason=reason, pid=pid)
-        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            # JsonObject.require_int already excludes bool (an int
+            # subclass) -- without that, a hand-edited ``"pid": true``
+            # would coerce to PID 1 in os.kill, a real, foreign process
+            # that always exists, producing a permanently stuck "call is
+            # active" false positive with no diagnostic.
+            obj = JsonObject.parse(raw, "call.lock")
+            return CallLockState(
+                reason=obj.require_str("reason"), pid=obj.require_int("pid")
+            )
+        except (json.JSONDecodeError, ValueError) as exc:
             logger.warning("call.lock is unreadable, treating as stale: %s", exc)
             return None
 
