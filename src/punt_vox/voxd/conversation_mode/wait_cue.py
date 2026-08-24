@@ -19,8 +19,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from collections.abc import AsyncGenerator
 from typing import Protocol, Self, final, runtime_checkable
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["ChimeFn", "WaitCue"]
 
@@ -86,8 +89,17 @@ class WaitCue:
     async def _repeat(chime: ChimeFn) -> None:
         """Call *chime* every :data:`_WAIT_CHIME_INTERVAL_S`, forever.
 
-        The caller cancels once the wait ends.
+        The caller cancels once the wait ends. A failing *chime* is logged
+        and swallowed, never left to propagate out of this loop: this task
+        races the real turn's own ``send_turn`` inside :meth:`active`'s
+        ``finally: await task`` cleanup, and an uncaught chime failure
+        arriving around the same time as a genuine turn failure could win
+        that race and mask the turn's own exception -- the one the caller
+        actually needs to see.
         """
         while True:
             await asyncio.sleep(_WAIT_CHIME_INTERVAL_S)
-            await chime()
+            try:
+                await chime()
+            except Exception:
+                logger.exception("wait cue chime failed")
