@@ -235,9 +235,21 @@ class CallCli:
             # speaks a short summary, then re-raises so the process still
             # exits non-zero and the traceback remains available.
             logger.exception("call ended unexpectedly")
-            await speak(
-                f"The call ended unexpectedly: {exc}. Check the terminal for details."
-            )
+            try:
+                await speak(
+                    f"The call ended unexpectedly: {exc}. "
+                    "Check the terminal for details."
+                )
+            except Exception:
+                # speak() is itself a daemon RPC that can fail for the same
+                # root cause the call just died from -- Python's implicit
+                # exception chaining would otherwise let THIS failure
+                # replace *exc* as what propagates from this handler, and
+                # the finally block below would release the lock against
+                # the wrong exception context. Logged as a secondary
+                # failure, never re-raised: the original *exc* is what the
+                # human's terminal and this process's exit code must show.
+                logger.exception("also failed to speak the call-ended summary")
             raise
         finally:
             lock.release()

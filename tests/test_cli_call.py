@@ -457,5 +457,102 @@ async def test_run_call_live_path_times_out_after_inactivity(tmp_path: Path) -> 
     assert CallLock(tmp_path / "call.lock").read() is None  # released after timeout
 
 
+class _ClientFailingOnErrorSummary:
+    """Speaks normally except when asked to speak the outer boundary's
+    "call ended unexpectedly" summary -- lets a test drive the outer
+    ``except`` handler's own ``speak()`` call into failure without
+    disturbing every earlier cue in the call.
+    """
+
+    def __init__(self) -> None:
+        self.spoken: list[str] = []
+
+    def synthesize(
+        self,
+        text: str,
+        spec: SynthesisSpec | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> None:
+        del spec, timeout
+        self.spoken.append(text)
+        if text.startswith("The call ended unexpectedly"):
+            raise RuntimeError("daemon also unreachable")
+
+
+async def test_outer_boundary_speaks_and_reraises_on_a_mid_call_crash(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The one mechanism that turns a mid-call crash into audible feedback:
+    ``commands/call.py``'s outer ``except Exception`` handler must speak a
+    human-facing summary, log via ``logger.exception``, release the lock in
+    ``finally``, and still re-raise so the process exits non-zero.
+    """
+    from punt_vox.commands import call as call_module
+
+    script = _script_file(tmp_path, [{"text": "what does this do", "confidence": 0.95}])
+    client = _ClientFailingOnErrorSummary()
+    # A failing collaborator mid-call: the STT->claude relay subprocess
+    # itself never spawns -- the same shape a real mic device-open failure
+    # or STT auth failure takes, once it reaches this outer boundary.
+    with (
+        patch.object(call_module, "VoxClientSync", return_value=client),
+        _resolved_session_spec(),
+        patch(
+            "punt_vox.voxd.conversation_mode.claude_session_attach."
+            "asyncio.create_subprocess_exec",
+            side_effect=OSError("mic device busy"),
+        ),
+        patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path),
+        caplog.at_level("ERROR", logger="punt_vox.commands.call"),
+        pytest.raises(OSError, match="mic device busy"),
+    ):
+        await call_module.CallCli()._run(script, "session-a")
+
+    assert any("call ended unexpectedly" in record.message for record in caplog.records)
+    assert any(
+        phrase.startswith("The call ended unexpectedly: mic device busy")
+        for phrase in client.spoken
+    )
+    assert CallLock(tmp_path / "call.lock").read() is None  # released in finally
+
+
+async def test_outer_boundary_survives_a_failing_speak_and_reraises_the_original(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A ``speak()`` failure inside the outer boundary's own fallback call
+    must not replace the original exception -- the root cause, not a
+    secondary daemon-RPC failure, is what the human's terminal and the
+    process's exit code must show.
+    """
+    from punt_vox.commands import call as call_module
+
+    script = _script_file(tmp_path, [{"text": "what does this do", "confidence": 0.95}])
+    client = _ClientFailingOnErrorSummary()
+
+    with (
+        patch.object(call_module, "VoxClientSync", return_value=client),
+        _resolved_session_spec(),
+        patch(
+            "punt_vox.voxd.conversation_mode.claude_session_attach."
+            "asyncio.create_subprocess_exec",
+            side_effect=OSError("mic device busy"),
+        ),
+        patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path),
+        caplog.at_level("ERROR", logger="punt_vox.commands.call"),
+        # The original OSError, not the RuntimeError the fallback speak()
+        # call raises, must be what actually propagates.
+        pytest.raises(OSError, match="mic device busy"),
+    ):
+        await call_module.CallCli()._run(script, "session-a")
+
+    assert any("call ended unexpectedly" in record.message for record in caplog.records)
+    assert any(
+        "also failed to speak the call-ended summary" in record.message
+        for record in caplog.records
+    )
+    assert CallLock(tmp_path / "call.lock").read() is None  # still released
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
