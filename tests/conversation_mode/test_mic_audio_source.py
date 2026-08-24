@@ -277,3 +277,52 @@ class TestMicAudioSourceCaptureSeconds:
         created[0].feed(b"\x00\x00")
         collected = await task
         assert len(collected) == 1
+
+
+class TestMicAudioSourceDeviceOpenFailure:
+    """Item 9: the single most likely real-world failure on a fresh machine
+    -- no microphone present, permission denied, or the device already in
+    use by another process. ``sounddevice.RawInputStream`` (or any factory
+    substituting for it) raises when it cannot open the device; that
+    exception must propagate out of :meth:`MicAudioSource.chunks` with a
+    readable message, not get swallowed or corrupted into an opaque
+    traceback -- ``commands/call.py``'s outer boundary handler speaks
+    ``str(exc)`` verbatim to the human on the other end of the call.
+    """
+
+    def _raising_factory(self, message: str) -> object:
+        def factory(**_kwargs: object) -> FakeInputStream:
+            raise OSError(message)
+
+        return factory
+
+    async def test_a_device_open_failure_propagates_out_of_chunks(self) -> None:
+        source = MicAudioSource(
+            input_stream_factory=self._raising_factory(  # type: ignore[arg-type]
+                "no default input device available"
+            )
+        )
+        gen = source.chunks()
+        with pytest.raises(OSError, match="no default input device available"):
+            await gen.__anext__()
+
+    async def test_the_propagated_error_message_is_human_readable(self) -> None:
+        """The exact scenario ``commands/call.py``'s outer boundary handler
+        turns into a spoken summary: ``str(exc)`` must be a plain sentence,
+        not a repr or an empty string a human on the call would hear as
+        "The call ended unexpectedly: . Check the terminal for details."
+        """
+        source = MicAudioSource(
+            input_stream_factory=self._raising_factory(  # type: ignore[arg-type]
+                "device or resource busy"
+            )
+        )
+        gen = source.chunks()
+        try:
+            await gen.__anext__()
+        except OSError as exc:
+            message = str(exc)
+        else:
+            pytest.fail("expected the device-open failure to raise")
+        assert message
+        assert "device or resource busy" in message
