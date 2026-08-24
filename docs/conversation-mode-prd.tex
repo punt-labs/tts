@@ -317,9 +317,10 @@ exists to satisfy and carries the same \pone{}/\ptwo{} phase tag.
     cannot hang on a primary session that is mid-turn. This still
     satisfies \fr{4}'s underlying intent (the call carries real task
     context, not a blank start) but not its literal wording (the
-    \emph{same} session object). \textbf{Operator ratification of this
-    reading is required before implementation dispatches} --- see
-    \S\ref{sec:design-session-attach}'s updated resolution and
+    \emph{same} session object). \textbf{RATIFIED 2026-08-24}, operator:
+    ``yes, I sign off on context snapshot not literal session resume.''
+    \fr{4} is satisfied by the context-snapshot reading going forward ---
+    see \S\ref{sec:design-session-attach}'s updated resolution and
     \nameref{sec:decisions-required} item 1. (\uc{1})
 \end{description}
 
@@ -749,13 +750,14 @@ Notes), authored by the call agent itself and read directly by the
 still-present primary session when the call ends --- no hook needed.
 See DES-067 for the full decision record and rejected alternatives.
 
-What remains before an implementation mission dispatches is the operator
-ratification \fr{4}'s revised wording above calls for, plus the
-process-supervision choice (a direct \texttt{subprocess.Popen} held by
-\texttt{voxd} itself, recommended over \texttt{tmux}/\texttt{pi-tools}'
-\texttt{keep} extension to avoid a new runtime dependency for a headless
-daemon use case
-\texttt{keep} was not built for) --- see DES-066 and
+\textbf{RATIFIED 2026-08-24}: the operator has signed off on \fr{4}'s
+revised wording (``yes, I sign off on context snapshot not literal
+session resume''). Nothing remains before the implementation mission
+(\texttt{vox-hobl.2}) dispatches except the process-supervision choice
+already recommended (a direct \texttt{subprocess.Popen} held by
+\texttt{voxd} itself, over \texttt{tmux}/\texttt{pi-tools}' \texttt{keep}
+extension, to avoid a new runtime dependency for a headless daemon use
+case \texttt{keep} was not built for) --- see DES-066 and
 \texttt{docs/conversation-mode-call-agent.tex}'s Z model for the process
 lifecycle those pieces attach to.
 
@@ -770,26 +772,25 @@ missed by being one bullet among many elsewhere in this chapter:
 
 \begin{enumerate}
   \item \textbf{Session attachment} (\S\ref{sec:design-session-attach}).
-    \textbf{Superseded mechanism spike-confirmed; pending operator
-    ratification of \fr{4}'s revised wording.} Ratified 2026-08-22 as the
+    \textbf{RATIFIED 2026-08-24 --- CLOSED.} Ratified 2026-08-22 as the
     session-attach ADR's Option D (a headless \texttt{claude -p --resume}
     subprocess per human turn); implemented, shipped in Slice 1b
     (vox-gs9u.2), and confirmed unworkable by real measurement
     (13--25\,s median per turn) on 2026-08-23 --- see
     \S\ref{sec:design-session-attach}'s resolution note. The follow-on
     investigation (vox-hobl: one persistent \texttt{pi --mode rpc} call
-    agent held alive for the whole call, not respawned per turn) has now
-    been spiked and confirmed working across the three dimensions that
-    could have killed it (process persistence, real latency under actual
-    tool use, read-only enforcement) --- see the further resolution note
-    above and \texttt{DESIGN.md} DES-066. \textbf{What is still open, and
-    is an operator decision, not an implementation detail:} this
-    mechanism starts the call agent as a fresh process with a context
-    \emph{snapshot}, not a literal resume of the primary session, which
-    satisfies \fr{4}'s intent but not its original literal wording ---
-    \fr{4} above has been revised to name this explicitly and needs
-    explicit operator ratification before an implementation mission
-    dispatches.
+    agent held alive for the whole call, not respawned per turn) was
+    spiked and confirmed working across the three dimensions that could
+    have killed it (process persistence, real latency under actual tool
+    use, read-only enforcement) --- see the further resolution note above
+    and \texttt{DESIGN.md} DES-066. The one remaining operator decision
+    this mechanism raised --- that it starts the call agent as a fresh
+    process with a context \emph{snapshot}, not a literal resume of the
+    primary session, satisfying \fr{4}'s intent but not its original
+    literal wording --- is now ratified: ``yes, I sign off on context
+    snapshot not literal session resume'' (operator, 2026-08-24). Nothing
+    further is reserved for the operator on this fork; \texttt{vox-hobl.2}
+    (the implementation mission) is unblocked.
   \item \textbf{Continuous-stream playback ownership}
     (\S\ref{sec:design-termination}): built into production
     \texttt{PlaybackQueue} directly, or as a new sibling component that
@@ -1126,10 +1127,11 @@ gaps in this chapter, not minor additions.
     (DES-067):} the context-snapshot content and the post-call summary
     handoff, both named as still undesigned as recently as the previous
     sentence, are now decided --- see
-    \S\ref{sec:design-session-attach}'s DES-067 pointer above. What
-    remains open is no longer any open design question but the operator
-    ratification \fr{4}'s revised wording calls for (the call agent gets
-    a context snapshot, not a literal resume of the primary session).
+    \S\ref{sec:design-session-attach}'s DES-067 pointer above.
+    \textbf{RATIFIED 2026-08-24:} the operator has signed off on \fr{4}'s
+    revised wording. This bullet, opened at the start of this chapter's
+    design work, is now fully closed --- design, spikes, and ratification
+    all done; \texttt{vox-hobl.2} is the implementation mission.
   \item \textbf{Provider-agnostic interfaces (\fr{21}, P1) have no design
     content anywhere in this chapter.} Every spike hardcoded ElevenLabs
     directly --- Spike 1 reused \texttt{providers/elevenlabs.py}

@@ -3011,13 +3011,16 @@ receive another patch — see DES-066.
 
 ---
 
-## DES-066: Persistent Call Agent via `pi --mode rpc` — Mechanism Spiked and Confirmed, Lifecycle Not Yet Designed
+## DES-066: Persistent Call Agent via `pi --mode rpc` — Mechanism Spiked, Confirmed, and Ratified
 
-**Status:** core mechanism confirmed live (2026-08-23 spike, below); still
-not a ratified decision — the process-supervision layer (`tmux`/`keep` vs.
-a direct `subprocess.Popen`), the read-only enforcement mechanism, and the
-context-handoff design are all still open. Not yet a design an
-implementation mission can be dispatched against.
+**Status:** RATIFIED 2026-08-24 (`vox-m2ss`, operator: "yes, I sign off on
+context snapshot not literal session resume"). Core mechanism confirmed
+live (2026-08-23 spike, below); read-only enforcement confirmed live
+(`--tools read,grep,find,ls`, below); context-handoff and summary-handoff
+design completed in DES-067. The one remaining open item is the
+process-supervision layer (`tmux`/`keep` vs. a direct `subprocess.Popen`)
+— recommended, not blocking, per the PRD's own framing. `vox-hobl.2` is
+the implementation mission this design now dispatches against.
 
 ### Context
 
