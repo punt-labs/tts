@@ -24,8 +24,9 @@ from typing import TYPE_CHECKING, Protocol, Self, final, runtime_checkable
 from punt_vox.quips import CALL_ACK_PHRASES
 from punt_vox.voxd.conversation_mode.barge_in import BargeIn
 from punt_vox.voxd.conversation_mode.call_actor import CallActor
+from punt_vox.voxd.conversation_mode.capture_during_wait import CaptureDuringWait
 from punt_vox.voxd.conversation_mode.end_call import EndCall
-from punt_vox.voxd.conversation_mode.mode import Detector
+from punt_vox.voxd.conversation_mode.mode import Detector, Mode
 from punt_vox.voxd.conversation_mode.reply_begins import ReplyBegins
 from punt_vox.voxd.conversation_mode.reply_ends import ReplyEnds
 from punt_vox.voxd.conversation_mode.start_call import StartCall
@@ -78,6 +79,7 @@ class CallSession:
 
     __slots__ = (
         "_actor",
+        "_pending_addendum",
         "_pending_chunks",
         "_session_attach",
         "_speak",
@@ -98,6 +100,15 @@ class CallSession:
     argument's own docstring for why absence is a legitimate default, not a
     deferred decision."""
     _pending_chunks: list[AudioChunk]
+    _pending_addendum: TranscribedTurn | None
+    """FR-4/``docs/conversation-mode-call-state.tex`` section 5's pending
+    addendum: speech the turn detector closed while the call was already
+    ``waiting`` on the prior turn's reply. ``None`` when there is none --
+    :attr:`CallActor.has_pending_addendum` mirrors this as a bool for
+    ``CallState``'s own invariant, but only this class holds the actual
+    transcribed text, since the Z model itself treats what happens to the
+    content as out of its scope (folding it into the next turn, per FR-9,
+    is this class's job, not the state machine's)."""
     _turn_timer: TurnTimer
     _turn_in_progress: bool
     """Whether ``speech_first_detected`` has already fired for the run
@@ -139,6 +150,7 @@ class CallSession:
         self._speak = speak
         self._wait_cue = WaitCue(chime)
         self._pending_chunks = []
+        self._pending_addendum = None
         self._turn_timer = turn_timer if turn_timer is not None else LoggingTurnTimer()
         self._turn_in_progress = False
         return self
@@ -233,7 +245,27 @@ class CallSession:
             return
 
         turn = TranscribedTurn(text=final_event.text)
-        self._actor.apply(TurnDetected(turn=turn))
+        if self._actor.mode is Mode.WAITING:
+            # docs/conversation-mode-call-state.tex section 5's
+            # CaptureDuringWait: the turn detector (still active while
+            # waiting, per :meth:`process_chunk`'s own docstring) fired
+            # again before the prior turn's reply came back. FR-4 rules out
+            # dispatching a second, concurrent turn to the same session, so
+            # this is held as a pending addendum rather than forwarded --
+            # applying TurnDetected here instead would violate CallState's
+            # own precondition (it requires mode=listening) and crash the
+            # call. Folded into the next real turn's text once the call
+            # returns to listening, per FR-9's same principle for barge-in
+            # speech (the Z model pins only the discharge moment, not what
+            # the implementation does with the content).
+            self._actor.apply(CaptureDuringWait())
+            self._pending_addendum = turn
+            return
+
+        if self._pending_addendum is not None:
+            turn = TranscribedTurn(text=f"{self._pending_addendum.text} {turn.text}")
+            self._pending_addendum = None
+        self._actor.apply(TurnDetected())
         await self._speak_reply(turn)
 
     async def _speak_reply(self, turn: TranscribedTurn) -> None:
