@@ -78,6 +78,69 @@ async def test_entry_missing_id_raises_session_discovery_error() -> None:
             await discovery.discover(Path("/repo"))
 
 
+async def test_entry_with_an_empty_id_raises_session_discovery_error() -> None:
+    """Regression: an empty ``id`` used to pass ``_first_str`` as a "found"
+    value and only fail 120s later as an opaque timeout, once
+    :class:`~.claude_session_attach.ClaudeSessionAttach` refused it -- with
+    no view of the malformed ``claude agents --json`` entry that caused it.
+    Rejecting it here surfaces the failure at discovery time instead, naming
+    the entry.
+    """
+    with patch(
+        "asyncio.create_subprocess_exec",
+        return_value=_fake_process(b'[{"id": "", "cwd": "/repo"}]'),
+    ):
+        discovery = SessionDiscovery()
+        with pytest.raises(SessionDiscoveryError, match="missing an id or cwd"):
+            await discovery.discover(Path("/repo"))
+
+
+async def test_payload_that_is_not_a_list_raises_session_discovery_error() -> None:
+    """The parse-error branch for a well-formed JSON value of the wrong shape
+    (an object, not an array) -- distinct from ``test_malformed_json_raises_
+    session_discovery_error``, which covers JSON that fails to parse at all.
+    """
+    with patch(
+        "asyncio.create_subprocess_exec",
+        return_value=_fake_process(b'{"id": "session-a", "cwd": "/repo"}'),
+    ):
+        discovery = SessionDiscovery()
+        with pytest.raises(SessionDiscoveryError, match="a dict, not a list"):
+            await discovery.discover(Path("/repo"))
+
+
+async def test_entry_that_is_not_an_object_raises_session_discovery_error() -> None:
+    """Each list entry must itself be an object -- a bare string or number in
+    the array is exactly as malformed as the top level being the wrong shape.
+    """
+    with patch(
+        "asyncio.create_subprocess_exec",
+        return_value=_fake_process(b'["not-an-object"]'),
+    ):
+        discovery = SessionDiscovery()
+        with pytest.raises(SessionDiscoveryError, match="a str, not an object"):
+            await discovery.discover(Path("/repo"))
+
+
+async def test_key_aliases_are_tried_in_order() -> None:
+    """``_first_str`` must accept ``sessionId``/``session_id`` and
+    ``workingDirectory``/``working_directory`` as aliases for ``id``/``cwd``
+    -- ``claude agents --json``'s exact field naming is not contractually
+    fixed.
+    """
+    payload = (
+        b'[{"sessionId": "session-camel", "workingDirectory": "/camel"},'
+        b' {"session_id": "session-snake", "working_directory": "/snake"}]'
+    )
+    with patch("asyncio.create_subprocess_exec", return_value=_fake_process(payload)):
+        discovery = SessionDiscovery()
+        candidates = await discovery.discover(Path("/repo"))
+    assert candidates == (
+        SessionCandidate(session_id="session-camel", cwd="/camel"),
+        SessionCandidate(session_id="session-snake", cwd="/snake"),
+    )
+
+
 async def test_missing_binary_raises_session_discovery_error() -> None:
     """Regression: every other failure mode here raises SessionDiscoveryError;
     a missing ``claude`` binary used to leak a raw FileNotFoundError instead."""

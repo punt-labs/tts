@@ -64,6 +64,15 @@ class _AsyncLineIterator:
         return self._lines.pop(0)
 
 
+def test_empty_session_id_raises_before_any_spawn() -> None:
+    """Item 6: an empty session_id must fail fast at construction, not surface
+    120 seconds later as an opaque "did not reply within 120s" once a doomed
+    `claude -p --resume ""` spawn hangs on a reply that never comes.
+    """
+    with pytest.raises(ValueError, match="non-empty session_id"):
+        ClaudeSessionAttach(session_id="")
+
+
 async def test_send_turn_collects_text_deltas_into_one_final_chunk() -> None:
     def _frame(text: str) -> bytes:
         payload = json.dumps(

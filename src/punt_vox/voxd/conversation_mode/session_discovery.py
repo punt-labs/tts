@@ -155,15 +155,21 @@ class SessionDiscovery:
 
     @staticmethod
     def _first_str(entry: dict[str, object], keys: tuple[str, ...]) -> str | None:
-        """Return the first of *keys* present in *entry* as a string, or ``None``.
+        """Return the first of *keys* present in *entry* as a non-empty string.
 
         ``claude agents --json``'s exact field naming is not contractually
         fixed (the ADR's own investigation notes this), so this tries the
         plausible aliases rather than committing to one and failing on a
-        rename upstream.
+        rename upstream. An empty string is treated the same as absent --
+        :class:`~.claude_session_attach.ClaudeSessionAttach` refuses an
+        empty ``session_id`` outright, so accepting one here would only
+        move that same failure downstream, past this class's own
+        ``entry!r``-carrying error, to wherever the candidate is later
+        attached with no view of the malformed ``claude agents --json``
+        entry that produced it.
         """
         for key in keys:
             value = entry.get(key)
-            if isinstance(value, str):
+            if isinstance(value, str) and value:
                 return value
         return None

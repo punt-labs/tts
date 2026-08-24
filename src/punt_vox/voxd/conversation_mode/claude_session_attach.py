@@ -85,6 +85,17 @@ class ClaudeSessionAttach:
     _claude_bin: str
 
     def __new__(cls, session_id: str, *, claude_bin: str = "claude") -> Self:
+        # Fail fast, before any subprocess is spawned, the same PY-CC-5
+        # discipline this class already applies to a missing
+        # ANTHROPIC_API_KEY (see :meth:`_require_bare_auth`): an empty
+        # session_id would otherwise pass through silently and only
+        # surface 120 seconds later as an opaque "did not reply within
+        # 120s" -- send_turn spawning `claude -p --resume ""` and hanging
+        # on a reply that never comes, rather than the actionable error a
+        # bad session id deserves right here.
+        if not session_id:
+            msg = "ClaudeSessionAttach requires a non-empty session_id"
+            raise ValueError(msg)
         self = super().__new__(cls)
         self._session_id = session_id
         self._claude_bin = claude_bin
