@@ -1,8 +1,6 @@
-"""Tests for :class:`CallActor`'s serialized dispatch loop."""
+"""Tests for :class:`CallActor`."""
 
 from __future__ import annotations
-
-import asyncio
 
 from punt_vox.voxd.conversation_mode.barge_in import BargeIn
 from punt_vox.voxd.conversation_mode.call_actor import CallActor
@@ -16,41 +14,32 @@ from punt_vox.voxd.conversation_mode.timeout_call import TimeoutCall
 from punt_vox.voxd.conversation_mode.turn_detected import TurnDetected
 
 
-async def test_run_applies_commands_in_order_then_stops() -> None:
+def test_apply_applies_commands_in_order() -> None:
     actor = CallActor()
-    runner = asyncio.create_task(actor.run())
 
-    await actor.enqueue(StartCall())
-    await actor.enqueue(TurnDetected())
-    await actor.enqueue(ReplyBegins())
-    await actor.enqueue(ReplyEnds())
-    await actor.stop()
-    await runner
+    actor.apply(StartCall())
+    actor.apply(TurnDetected())
+    actor.apply(ReplyBegins())
+    actor.apply(ReplyEnds())
 
     assert actor.mode is Mode.LISTENING
 
 
-async def test_observers_see_each_transition_in_order() -> None:
+def test_observers_see_each_transition_in_order() -> None:
     actor = CallActor()
     seen: list[tuple[Mode, Mode]] = []
     actor.on_transition(lambda before, after: seen.append((before, after)))
-    runner = asyncio.create_task(actor.run())
 
-    await actor.enqueue(StartCall())
-    await actor.enqueue(EndCall())
-    await actor.stop()
-    await runner
+    actor.apply(StartCall())
+    actor.apply(EndCall())
 
     assert seen == [(Mode.IDLE, Mode.LISTENING), (Mode.LISTENING, Mode.IDLE)]
 
 
-async def test_current_detector_reflects_the_actor_s_mode() -> None:
+def test_current_detector_reflects_the_actor_s_mode() -> None:
     actor = CallActor()
-    runner = asyncio.create_task(actor.run())
 
-    await actor.enqueue(StartCall())
-    await actor.stop()
-    await runner
+    actor.apply(StartCall())
 
     assert actor.current_detector == Mode.LISTENING.active_detector
 

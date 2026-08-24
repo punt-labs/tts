@@ -1,21 +1,24 @@
-"""The single serialized dispatch point the Z specification requires.
+"""Owns one :class:`~.call_state.CallState` and applies commands to it.
 
-``docs/conversation-mode-call-state.tex`` section 8: turn detection,
-barge-in detection, and sentence-streamed synthesis are three independent,
-continuous producers that may all want to change :class:`CallState`
-concurrently. :class:`CallActor` is the resolution -- an actor with an
-internal, single-consumer :class:`asyncio.Queue` of commands, not a lock.
-Every producer holds a reference to the actor and calls :meth:`enqueue`;
-none ever calls a :class:`CallState` method directly, and exactly one task
-(:meth:`run`) drains the queue, applying one command at a time with nothing
-awaited mid-operation -- the queue analogue of
-``voxd/programs/program.py``'s documented single-writer assumption, made
-structurally impossible to violate rather than merely stated.
+Today, :class:`~.call_session.CallSession` is the sole driver of state
+transitions -- it processes captured chunks through one sequential
+``async for`` loop with no concurrent detector task racing it (there is no
+barge-in detector task yet; see that class's own ``barge_in`` docstring), so
+:meth:`CallActor.apply` is always called from that single already-serialized
+path. ``docs/conversation-mode-call-state.tex`` section 8 anticipates a
+future where turn detection, barge-in detection, and sentence-streamed
+synthesis are three independent, genuinely concurrent producers that could
+all want to change :class:`CallState` at once -- at that point (Slice 2b's
+barge-in detector is the first candidate) this class gets a real
+queue-backed serialization point, wired to every producer that then exists.
+Building that queue now, with nothing enqueuing into it, would be exactly
+the "create now, wire later" dead code this project's own refactoring
+protocol forbids (PY-RF-2) -- it is added when the second concurrent
+producer actually exists to prove the ordering it protects.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Self, final
@@ -40,17 +43,15 @@ type TransitionObserver = Callable[[Mode, Mode], None]
 
 @final
 class CallActor:
-    """Owns one :class:`CallState`, draining commands one at a time."""
+    """Owns one :class:`CallState`, applying commands from its sole caller."""
 
-    __slots__ = ("_observers", "_queue", "_state")
+    __slots__ = ("_observers", "_state")
     _state: CallState
-    _queue: asyncio.Queue[CallCommand | None]
     _observers: list[TransitionObserver]
 
     def __new__(cls) -> Self:
         self = super().__new__(cls)
         self._state = CallState()
-        self._queue = asyncio.Queue()
         self._observers = []
         return self
 
@@ -72,38 +73,6 @@ class CallActor:
     def on_transition(self, observer: TransitionObserver) -> None:
         """Register *observer* to be called after every applied transition."""
         self._observers.append(observer)
-
-    async def enqueue(self, command: CallCommand) -> None:
-        """Queue *command* for the dispatch loop; returns once it is queued.
-
-        For callers with a genuinely concurrent producer relative to the
-        rest of the call (a future barge-in detector task, a turn-detection
-        task) -- they enqueue and return immediately, never applying a
-        transition themselves. A caller that is *itself* already the sole
-        serialized driver (no concurrent producer to guard against, e.g.
-        :class:`~.call_session.CallSession`, which drives chunks through a
-        single sequential loop with no detector tasks of its own) should
-        call :meth:`apply` directly instead; routing through the queue with
-        nothing draining it would simply never take effect.
-        """
-        await self._queue.put(command)
-
-    async def run(self) -> None:
-        """Drain the command queue until :meth:`stop` is called.
-
-        Applies exactly one command per iteration with nothing awaited
-        mid-operation, so no other command can interleave inside a single
-        transition.
-        """
-        while True:
-            command = await self._queue.get()
-            if command is None:
-                return
-            self.apply(command)
-
-    async def stop(self) -> None:
-        """Signal :meth:`run` to return once it has drained pending commands."""
-        await self._queue.put(None)
 
     def apply(self, command: CallCommand) -> None:
         """Apply *command* to the state immediately and notify observers.
