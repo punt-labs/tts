@@ -92,8 +92,8 @@ class MicAudioSource:
     __slots__ = (
         "_channels",
         "_chunk_s",
+        "_gate_depth",
         "_input_stream_factory",
-        "_listening",
         "_queue",
         "_sample_rate_hz",
     )
@@ -106,9 +106,10 @@ class MicAudioSource:
     # :meth:`chunks`) solely so :meth:`drain_pending` can reach it from
     # outside the generator.
     _queue: asyncio.Queue[bytes] | None
+    # Nesting-depth counter, not a bare bool -- see :meth:`set_listening`.
     # Checked inside the PortAudio callback itself, before a chunk is ever
-    # queued -- see :meth:`set_listening`.
-    _listening: bool
+    # queued.
+    _gate_depth: int
 
     def __new__(
         cls,
@@ -125,7 +126,7 @@ class MicAudioSource:
             input_stream_factory or _default_input_stream_factory
         )
         self._queue = None
-        self._listening = True
+        self._gate_depth = 0
         return self
 
     def set_listening(self, *, listening: bool) -> None:
@@ -133,17 +134,33 @@ class MicAudioSource:
         does not want captured audio queued at all (most importantly, while
         the call's own reply is likely still playing through the speakers).
 
+        Backed by a nesting-depth counter, not a bare bool: two independent
+        concurrent wrappers around this call (``LiveCallDriver``'s
+        ``_speak_and_gate`` and ``_chime_and_gate``, the latter driven by
+        ``WaitCue``'s background task) each close and reopen the gate around
+        their own scope, and they are not guaranteed never to overlap --
+        today they happen not to, but only because of an unenforced
+        ordering elsewhere, not an invariant this class itself establishes.
+        A bare bool would let the first wrapper's ``listening=True`` reopen
+        the mic while the second wrapper's own scope is still active. The
+        gate is closed (open only once the depth returns to zero) as long
+        as any caller has an outstanding ``listening=False`` -- one
+        ``listening=True`` decrements, never forces the gate open outright.
+
         Checked inside the PortAudio callback itself, before a chunk is ever
         handed to :meth:`asyncio.Queue.put_nowait` -- a post-hoc
         :meth:`drain_pending` can only clear what already made it into the
         queue; it cannot un-fire a callback invocation that already queued a
         chunk. Gating at the source means there is nothing to retroactively
-        clean up for whatever this flag was ``False`` for. Thread-safe to
-        set: it is a single ``bool`` attribute read by the callback thread
-        and written by the event-loop thread, and CPython attribute
-        assignment is atomic under the GIL.
+        clean up for whatever this flag was closed for. Thread-safe to call:
+        CPython's ``int`` increment/decrement here happens entirely on the
+        event-loop thread (the callback only reads :attr:`_gate_depth`,
+        never writes it), and attribute assignment is atomic under the GIL.
         """
-        self._listening = listening
+        if listening:
+            self._gate_depth = max(0, self._gate_depth - 1)
+        else:
+            self._gate_depth += 1
 
     async def chunks(self) -> AsyncGenerator[AudioChunk]:
         """Capture indefinitely, yielding one :class:`AudioChunk` per block.
@@ -167,7 +184,7 @@ class MicAudioSource:
         ) -> None:
             if status.input_overflow:
                 logger.warning("mic capture: input overflow (callback ran late)")
-            if not self._listening:
+            if self._gate_depth > 0:
                 # Dropped here, not queued and drained later: a chunk that
                 # already reached the queue cannot be un-queued, but one
                 # that never reaches it needs no cleanup at all.

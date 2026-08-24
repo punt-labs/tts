@@ -242,6 +242,65 @@ class TestMicAudioSourceSetListening:
         assert chunk.pcm == b"\x04\x00"
         await gen.aclose()
 
+    async def test_overlapping_closers_keep_the_mic_gated_until_both_reopen(
+        self,
+    ) -> None:
+        """Item 6 finding: two independent wrappers around ``set_listening``
+        (``_speak_and_gate`` and ``_chime_and_gate`` in
+        ``commands/call_live_driver.py``) don't currently overlap in
+        production, but only by an unenforced ordering accident -- nothing
+        here should assume they never will. Simulates the overlap directly:
+        wrapper A closes, wrapper B closes, wrapper B reopens (its own
+        scope ends first) -- the mic must stay gated because A's own scope
+        is still open, not because of any incidental call ordering.
+        """
+        created: list[FakeInputStream] = []
+        source = MicAudioSource(input_stream_factory=fake_input_stream_factory(created))
+        gen = source.chunks()
+        task = asyncio.ensure_future(gen.__anext__())
+        await _advance_to_first_await()
+
+        source.set_listening(listening=False)  # wrapper A closes
+        source.set_listening(listening=False)  # wrapper B closes, while A is open
+        created[0].feed(b"\x01\x00")
+        await _advance_to_first_await()
+        assert source.drain_pending() == 0
+
+        source.set_listening(listening=True)  # wrapper B reopens; A is still open
+        created[0].feed(b"\x02\x00")
+        await _advance_to_first_await()
+        # Still gated: a bare bool would have reopened the mic here, on B's
+        # own listening=True, even though A's own scope never closed.
+        assert source.drain_pending() == 0
+
+        source.set_listening(listening=True)  # wrapper A reopens
+        created[0].feed(b"\x03\x00")
+        chunk = await task
+        assert chunk.pcm == b"\x03\x00"
+        await gen.aclose()
+
+    async def test_listening_true_past_zero_does_not_go_negative(self) -> None:
+        """An extra ``listening=True`` beyond the outstanding closes must not
+        push the depth counter negative and require two closes to re-gate."""
+        created: list[FakeInputStream] = []
+        source = MicAudioSource(input_stream_factory=fake_input_stream_factory(created))
+        gen = source.chunks()
+        task = asyncio.ensure_future(gen.__anext__())
+        await _advance_to_first_await()
+
+        source.set_listening(listening=True)  # spurious reopen, already open
+
+        source.set_listening(listening=False)
+        created[0].feed(b"\x01\x00")
+        await _advance_to_first_await()
+        assert source.drain_pending() == 0
+
+        source.set_listening(listening=True)
+        created[0].feed(b"\x02\x00")
+        chunk = await task
+        assert chunk.pcm == b"\x02\x00"
+        await gen.aclose()
+
 
 class TestMicAudioSourceCaptureSeconds:
     async def test_captures_exactly_the_requested_chunk_count(self) -> None:
