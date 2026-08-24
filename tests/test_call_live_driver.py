@@ -230,3 +230,53 @@ class TestLiveCallDriverApplyControl:
         # process_chunk -- only the opening "Listening." cue was spoken.
         assert spoken == ["Listening."]
         calls.assert_awaited()
+
+
+class _RaisingTurnDetector:
+    """A ``TurnDetector`` stand-in whose ``process`` always raises.
+
+    ``CallSession.process_chunk`` is the real thing ``run()`` calls on every
+    chunk; a class method can't be monkeypatched on a ``__slots__`` instance,
+    so the failure is injected one layer down, at the detector this class
+    already takes as a real collaborator.
+    """
+
+    def process(self, _chunk: AudioChunk) -> None:
+        msg = "STT provider crashed"
+        raise RuntimeError(msg)
+
+    def calibrate(self, _chunks: list[AudioChunk]) -> None:
+        return None
+
+
+class TestLiveCallDriverAbnormalExit:
+    """Item 4 regression: an exception out of ``process_chunk`` must not skip
+    ``hangup()`` -- otherwise :class:`~.call_actor.CallActor`'s mode is left
+    stale (never transitioned back to idle) on the way out.
+    """
+
+    async def test_hangup_fires_even_when_process_chunk_raises(
+        self, tmp_path: Path
+    ) -> None:
+        from punt_vox.voxd.conversation_mode.mode import Mode
+
+        mic_source = _FakeMicSource([AudioChunk(pcm=b"\x00\x00", duration_s=0.02)])
+        spoken: list[str] = []
+
+        async def speak(text: str) -> None:
+            spoken.append(text)
+
+        driver = LiveCallDriver(
+            session_attach=_FakeSessionAttach("a reply"),
+            speak=speak,
+            chime=_no_op_chime,
+            control=_control(tmp_path),
+            apply_control=_never_stop,
+            detector=cast("TurnDetector", _RaisingTurnDetector()),
+            mic_source=cast("MicAudioSource", mic_source),
+        )
+
+        with pytest.raises(RuntimeError, match="STT provider crashed"):
+            await driver.run()
+
+        assert driver._session.actor.mode is Mode.IDLE

@@ -156,7 +156,14 @@ class LiveCallDriver:
         )
 
     async def run(self) -> None:
-        """Drive the call to completion: listen, detect turns, forward, speak."""
+        """Drive the call to completion: listen, detect turns, forward, speak.
+
+        Wraps the whole drive loop in ``try``/``finally`` so ``hangup()``
+        runs on every exit path, not only a clean one -- an exception out of
+        ``process_chunk`` (a provider fault, a subprocess crash) must not
+        skip it, or :class:`~.call_actor.CallActor`'s mode is left stale
+        (never transitioned back to idle) on the way out.
+        """
         await self._session.start()
         chunks = self._mic_source.chunks()
         try:
@@ -171,11 +178,12 @@ class LiveCallDriver:
                 await self._session.process_chunk(chunk)
         finally:
             await chunks.aclose()
-        # timeout() already returned the call to idle; hangup() on an idle
-        # call would raise (EndCall requires an active mode), so only call
-        # it when the loop above didn't already end the call itself.
-        if self._session.actor.mode is not Mode.IDLE:
-            await self._session.hangup()
+            # timeout() already returned the call to idle; hangup() on an
+            # idle call would raise (EndCall requires an active mode), so
+            # only call it when nothing above already ended the call itself
+            # -- including an abnormal exit via an uncaught exception.
+            if self._session.actor.mode is not Mode.IDLE:
+                await self._session.hangup()
 
     def _is_inactive(self) -> bool:
         return (
