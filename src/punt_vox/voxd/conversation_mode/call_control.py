@@ -92,8 +92,19 @@ class CallControl:
                 if not raw:
                     return None
                 payload = json.loads(raw)
+                kind = payload["kind"]
+                # Validated, not trusted: a malformed mailbox file (a
+                # racing partial write, a hand-edited entry) with an
+                # unrecognized "kind" must land on the same discard-and-log
+                # path as every other unusable entry -- constructing a
+                # ControlRequest with an invalid kind would fall through
+                # both branches of call.py's _apply_control silently,
+                # dropping a "/call stop" with no log, no error, nothing.
+                if kind not in ("stop", "transfer"):
+                    msg = f"unrecognized control kind {kind!r}"
+                    raise ValueError(msg)
                 return ControlRequest(
-                    kind=payload["kind"],
+                    kind=kind,
                     target_session_id=payload.get("target_session_id"),
                 )
             except (ValueError, KeyError, TypeError) as exc:

@@ -116,6 +116,24 @@ def test_consume_treats_invalid_utf8_bytes_as_no_request(tmp_path: Path) -> None
     assert not path.exists()
 
 
+def test_consume_treats_an_unrecognized_kind_as_no_request(tmp_path: Path) -> None:
+    """IMPORTANT finding: an invalid ``kind`` (e.g. a typo'd hand-edit) must
+    be discarded-and-logged, the same as any other malformed entry -- never
+    constructed into a ``ControlRequest`` that ``call.py``'s
+    ``_apply_control`` would then silently fall through both its branches
+    for, dropping a ``/call stop`` with no log and no error.
+    """
+    path = tmp_path / "call.control"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"kind": "stpo", "target_session_id": null}')
+
+    control = CallControl(path)
+    assert control.consume() is None
+    # Cleared, not re-read and re-failed forever -- same discipline as
+    # every other discard-and-log path in this method.
+    assert not path.exists()
+
+
 def test_a_request_written_after_consume_is_not_lost(tmp_path: Path) -> None:
     """The rename-based claim must not leave the mailbox permanently stuck."""
     control = CallControl(tmp_path / "call.control")
