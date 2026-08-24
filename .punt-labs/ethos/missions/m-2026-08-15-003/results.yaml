@@ -1,0 +1,146 @@
+results:
+    - mission: m-2026-08-15-003
+      round: 1
+      created_at: "2026-08-15T03:25:09Z"
+      author: gvr
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/types_provider.py
+          added: 238
+          removed: 0
+        - path: src/punt_vox/voxd/provider_status_handler.py
+          added: 128
+          removed: 0
+        - path: src/punt_vox/voxd/handler_registry.py
+          added: 2
+          removed: 0
+        - path: src/punt_vox/providers/credentials.py
+          added: 1
+          removed: 21
+        - path: src/punt_vox/client.py
+          added: 33
+          removed: 0
+        - path: src/punt_vox/client_sync.py
+          added: 13
+          removed: 0
+        - path: src/punt_vox/server.py
+          added: 75
+          removed: 8
+        - path: src/punt_vox/doctor.py
+          added: 83
+          removed: 0
+        - path: src/punt_vox/enablement.py
+          added: 224
+          removed: 17
+        - path: tests/test_types_provider.py
+          added: 150
+          removed: 0
+        - path: tests/test_voxd_provider_status_handler.py
+          added: 163
+          removed: 0
+        - path: tests/test_credentials.py
+          added: 76
+          removed: 1
+        - path: tests/test_doctor.py
+          added: 82
+          removed: 0
+        - path: tests/test_enablement.py
+          added: 186
+          removed: 1
+        - path: tests/test_server.py
+          added: 125
+          removed: 1
+        - path: CHANGELOG.md
+          added: 4
+          removed: 0
+        - path: README.md
+          added: 2
+          removed: 2
+        - path: .oo-baseline.json
+          added: 25
+          removed: 25
+        - path: .oo-audit.jsonl
+          added: 10
+          removed: 0
+        - path: .oo-coupling-baseline.json
+          added: 14
+          removed: 14
+        - path: .oo-coupling-audit.jsonl
+          added: 7
+          removed: 0
+      evidence:
+        - name: make check (lint + format + mypy + pyright + pytest + check-oo + check-coupling + check-suppressions)
+          status: pass
+        - name: pytest full suite
+          status: pass
+        - name: check-suppressions (count 201, unchanged from main baseline)
+          status: pass
+        - name: require-and-report-share-one-map property test (32-combination exhaustive walk)
+          status: pass
+        - name: D1 regression test - enable does not read its own environment
+          status: pass
+        - name: mic:status unconfigured path takes zero daemon round-trips
+          status: pass
+        - name: enable writes nothing when voxd unreachable; marker/guide/settings still land
+          status: pass
+      prose: |
+        PR 3 of 3 for bead vox-w3f8.  Six commits on feat/vox-w3f8-observability
+        off 33c0868; not pushed, no PR, no bd close (per contract).
+
+        WHAT IT COVERS
+        --------------
+        Section 3.6 delivered: types_provider.ProviderReadiness is the wire shape
+        both sides need, with a closed reason Literal AND a mirroring runtime
+        frozenset AND a __post_init__ that refuses membership violations and
+        the ready/reason biconditional.  The enumeration comment lives ABOVE
+        the Literal, naming which ONE code path produces each of the five
+        values.  A new reason must land in four places at once (Literal,
+        frozenset, producer, render branches) or the runtime guard raises.
+
+        Section 3.4 property proven DIRECTLY (not by inspection): a 32-
+        combination exhaustive sweep asserts require rejects iff report reports
+        not-ready, per provider, in both directions; detail matches str(exc)
+        verbatim.
+
+        D1 as amended: enable proposes THROUGH the daemon via provider_status,
+        never by probing the enabling process environment.  Regression test
+        sets ELEVENLABS_API_KEY + TTS_PROVIDER=openai in the client and has
+        the fake daemon propose polly -- enable must write polly.  preferred
+        is None writes nothing (no_ready_provider), voxd unreachable writes
+        nothing (voxd_unavailable), already-declared provider is preserved
+        (already_set).  Marker/guide/settings still land in every branch.
+
+        mic:status: state-declared provider readiness fetched fresh (unconfigured
+        case skips the daemon call; voxd_unavailable mirrors MusicStateView.
+        unavailable).  model field lands for parity with what voxd will run
+        with.  Doctor: F2 pointer target answers with per-provider daemon
+        readiness; caller-env probe not reintroduced.
+
+        ProviderReadiness moved from providers/credentials.py to types_provider
+        (single source of truth, PY-RF-6 forward integration).  Credentials.py
+        module_size and classes_per_module IMPROVED as a result.
+
+        WHAT IT DOES NOT COVER
+        ----------------------
+        No live provider audio demo was run; contract forbade make install and
+        vox daemon restart.  The one property that would fail behind the mock
+        but pass in real life is a wire schema drift between the daemon
+        ProviderStatusHandler frame and ProviderStatusPayload.from_wire; the
+        round-trip is asserted at the type level (tests/test_types_provider.py)
+        but not against the daemon actually shipping it.  Leader audio-demo
+        gate closes that gap.
+
+        check-coupling relaxations classified as Class B (real growth for the
+        new wire paths); I did not audit the base blob to confirm none of the
+        affected files was at the vox-orvz sentinel.  Every relaxation carries
+        a per-file justification either way.
+
+        cli_enablement.py and server_enablement.py were outside the contract
+        write_set but are genuine consequences: EnableOutcome from enable()
+        has to surface at both surfaces, which is the design's whole point of
+        the D1 amendment.  Listed in files_changed above.
+
+        Zero unauthorized suppressions added.  Suppression count 201 unchanged.
+        4235 tests pass.  Six commits, one logical concern each; explicit paths
+        staged, never git commit -a; vox.md not touched.
