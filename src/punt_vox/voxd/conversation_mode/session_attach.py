@@ -18,6 +18,7 @@ the session *is* the whole point of the object rather than an omitted axis.
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
 
@@ -63,6 +64,21 @@ class BareAuthMissingError(SessionAttachError):
             "set ANTHROPIC_API_KEY before running `vox call start`"
         )
         return cls(msg)
+
+    @classmethod
+    def check(cls) -> None:
+        """Raise :class:`BareAuthMissingError` if ``ANTHROPIC_API_KEY`` is absent.
+
+        The one precondition every ``--bare`` ``claude`` invocation shares,
+        called from two places: as the actual pre-spawn guard inside
+        :class:`~.claude_session_attach.ClaudeSessionAttach`, and as a
+        call's startup pre-flight check in
+        :meth:`~.call_live_driver.LiveCallDriver.create` -- so a missing key
+        fails before the call even opens, not only on the first turn's
+        subprocess spawn.
+        """
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            raise cls.for_missing_key()
 
 
 @runtime_checkable

@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Self, cast, final
 
@@ -87,7 +86,7 @@ class ClaudeSessionAttach:
     def __new__(cls, session_id: str, *, claude_bin: str = "claude") -> Self:
         # Fail fast, before any subprocess is spawned, the same PY-CC-5
         # discipline this class already applies to a missing
-        # ANTHROPIC_API_KEY (see :meth:`_require_bare_auth`): an empty
+        # ANTHROPIC_API_KEY (see :meth:`BareAuthMissingError.check`): an empty
         # session_id would otherwise pass through silently and only
         # surface 120 seconds later as an opaque "did not reply within
         # 120s" -- send_turn spawning `claude -p --resume ""` and hanging
@@ -137,11 +136,14 @@ class ClaudeSessionAttach:
         likely real case: ``claude`` can exit immediately on an invalid
         session id). ``create_subprocess_exec`` succeeding only means the
         process started, not that it is usable; a failure here must not
-        leak it. Checks :meth:`_require_bare_auth` before that, so a missing
-        ``ANTHROPIC_API_KEY`` never reaches a spawn attempt at all -- see
-        this module's own docstring for why ``--bare`` requires it.
+        leak it. Checks :meth:`BareAuthMissingError.check` before that, so a
+        missing ``ANTHROPIC_API_KEY`` never reaches a spawn attempt at all
+        -- see this module's own docstring for why ``--bare`` requires it.
+        Also checked as an actual startup pre-flight in
+        :meth:`~.call_live_driver.LiveCallDriver.create`; kept here too as
+        the last line of defense for any other caller.
         """
-        self._require_bare_auth()
+        BareAuthMissingError.check()
         process = await asyncio.create_subprocess_exec(
             self._claude_bin,
             "-p",
@@ -213,20 +215,6 @@ class ClaudeSessionAttach:
         this module's own docstring for the full auth-model rationale.
         """
         return claude_subprocess_env(extra={_RELAY_ENV_VAR: "1"}, keep_api_key=True)
-
-    @staticmethod
-    def _require_bare_auth() -> None:
-        """Fail fast, before any subprocess is spawned, if ``--bare`` has no key.
-
-        ``claude --bare`` has no OAuth fallback at all -- an absent
-        ``ANTHROPIC_API_KEY`` is a certain failure, not a transient one, so
-        this raises immediately rather than letting a doomed spawn run into
-        :data:`_REPLY_TIMEOUT_S` and surface as an opaque "did not reply
-        within 120s". :meth:`BareAuthMissingError.for_missing_key` owns the
-        actionable message.
-        """
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            raise BareAuthMissingError.for_missing_key()
 
     async def _exchange(
         self, stdout: asyncio.StreamReader, stderr: asyncio.StreamReader

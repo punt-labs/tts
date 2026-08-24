@@ -281,6 +281,37 @@ class _SequencedSTTProvider:
         return [HealthCheck(passed=True, message="sequenced fake always healthy")]
 
 
+class _FailThenSucceedSTTProvider:
+    """Raises on its first ``transcribe`` call, yields *text* on every call after.
+
+    Proves a session recovers from a transient STT failure and accepts the
+    very next turn cleanly -- a single-script fake can't distinguish "the
+    first call" from later ones the way this test needs.
+    """
+
+    def __init__(self, *, text: str) -> None:
+        self._text = text
+        self._calls = 0
+
+    @property
+    def name(self) -> str:
+        return "fail-then-succeed-fake"
+
+    async def transcribe(
+        self, chunks: AsyncIterator[AudioChunk]
+    ) -> AsyncIterator[TranscriptEvent]:
+        async for _ in chunks:
+            pass
+        self._calls += 1
+        if self._calls == 1:
+            msg = "rate limited"
+            raise RuntimeError(msg)
+        yield TranscriptEvent(text=self._text, confidence=0.95, is_final=True)
+
+    def check_health(self) -> list[HealthCheck]:
+        return [HealthCheck(passed=True, message="fake always healthy")]
+
+
 class TestSessionAttachFailureRecovery:
     """CRITICAL finding: a ``SessionAttachError`` mid-turn must not end the
     call -- the human should hear an apology and keep talking, the same
@@ -334,6 +365,57 @@ class TestSessionAttachFailureRecovery:
 
         assert healthy_attach.turns() == ["second question"]
         assert session.actor.mode is Mode.LISTENING
+
+
+class TestSTTTranscribeFailureRecovery:
+    """A transient STT provider fault (rate limit, 5xx, network blip) during
+    :meth:`~.stt_provider.STTProvider.transcribe` must not end the call --
+    the human should hear the same "didn't catch that" recovery a
+    low-confidence or empty result already gets.
+    """
+
+    async def test_transcribe_failure_asks_the_human_to_repeat_and_keeps_the_call_alive(
+        self,
+    ) -> None:
+        speak = _Recorder()
+        stt = FakeSTTProvider([], transcribe_error="rate limited")
+        session_attach = FakeSessionAttach()
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=stt,
+            session_attach=session_attach,
+            speak=speak,
+        )
+        await session.start()
+
+        await _feed_one_turn(session)  # must not raise
+
+        assert session.actor.mode is Mode.LISTENING
+        assert session_attach.turns() == []
+        assert any("repeat" in phrase.lower() for phrase in speak.said)
+
+    async def test_a_turn_after_a_transcribe_failure_is_forwarded_normally(
+        self,
+    ) -> None:
+        """Recovery must leave the call in a state that accepts the next turn."""
+        speak = _Recorder()
+        stt = _FailThenSucceedSTTProvider(text="hello")
+        session_attach = FakeSessionAttach(
+            (ScriptedChunk(ReplyChunk(text="reply", is_final=True)),)
+        )
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=stt,
+            session_attach=session_attach,
+            speak=speak,
+        )
+        await session.start()
+
+        await _feed_one_turn(session)  # fails, asks to repeat
+        assert session.actor.mode is Mode.LISTENING
+        await _feed_one_turn(session)  # succeeds
+
+        assert session_attach.turns() == ["hello"]
 
 
 class TestCaptureDuringWait:
@@ -400,6 +482,39 @@ class TestCaptureDuringWait:
         await _feed_one_turn(session)  # the next real turn
 
         assert session_attach.turns() == ["addendum text the real next turn"]
+
+    async def test_a_second_capture_during_wait_folds_onto_the_first_not_overwrites(
+        self,
+    ) -> None:
+        """FR-9: the human speaking twice while still waiting must not lose
+        the first utterance -- both must survive into the eventual turn."""
+        speak = _Recorder()
+        stt = _SequencedSTTProvider(
+            ["first addendum", "second addendum", "the real next turn"]
+        )
+        session_attach = FakeSessionAttach(
+            (ScriptedChunk(ReplyChunk(text="reply", is_final=True)),)
+        )
+        session = CallSession(
+            turn_detector=_detector(),
+            stt_provider=stt,
+            session_attach=session_attach,
+            speak=speak,
+        )
+        await session.start()
+        session.actor.apply(TurnDetected())
+        await _feed_one_turn(session)  # first CaptureDuringWait
+        await _feed_one_turn(session)  # second CaptureDuringWait
+        assert session.actor.mode is Mode.WAITING
+        assert session.actor.has_pending_addendum is True
+
+        session.actor.apply(ReplyBegins())
+        session.actor.apply(ReplyEnds())
+        await _feed_one_turn(session)  # the next real turn
+
+        assert session_attach.turns() == [
+            "first addendum second addendum the real next turn"
+        ]
 
 
 class _SpyTurnTimer:

@@ -30,6 +30,7 @@ from punt_vox.voxd.conversation_mode.end_call import EndCall
 from punt_vox.voxd.conversation_mode.mode import Detector, Mode
 from punt_vox.voxd.conversation_mode.reply_begins import ReplyBegins
 from punt_vox.voxd.conversation_mode.reply_ends import ReplyEnds
+from punt_vox.voxd.conversation_mode.reply_recovery import ReplyRecovery
 from punt_vox.voxd.conversation_mode.session_attach import SessionAttachError
 from punt_vox.voxd.conversation_mode.speak_fn import SpeakFn
 from punt_vox.voxd.conversation_mode.start_call import StartCall
@@ -38,6 +39,7 @@ from punt_vox.voxd.conversation_mode.turn import TranscribedTurn
 from punt_vox.voxd.conversation_mode.turn_detected import TurnDetected
 from punt_vox.voxd.conversation_mode.turn_signal import TurnSignal
 from punt_vox.voxd.conversation_mode.turn_timer import LoggingTurnTimer
+from punt_vox.voxd.conversation_mode.turn_transcriber import TurnTranscriber
 from punt_vox.voxd.conversation_mode.wait_cue import WaitCue
 
 if TYPE_CHECKING:
@@ -51,20 +53,7 @@ __all__ = ["CallSession", "SpeakFn"]
 
 logger = logging.getLogger(__name__)
 
-# FR-19: a transcript below this confidence is a signal to ask the human to
-# repeat, never to act on. Mirrors the floor the fake-provider tests use
-# (tests/conversation_mode/test_stt_provider.py), stated once here as the
-# production gate.
-CONFIDENCE_FLOOR = 0.6
-
 _ASK_TO_REPEAT = "Sorry, I didn't catch that -- could you repeat it?"
-
-# FR-19's low-confidence path never leaves listening for the turn it can't
-# act on; a SessionAttachError happens after TurnDetected already moved the
-# call to waiting (see CallState.turn_detected's precondition), so recovery
-# has to speak its way back through speaking -> listening rather than
-# staying put -- the apology IS the reply this turn gets.
-_SESSION_ATTACH_FAILED = "Sorry, something went wrong -- go ahead and try again."
 
 
 @final
@@ -75,9 +64,10 @@ class CallSession:
         "_actor",
         "_pending_addendum",
         "_pending_chunks",
+        "_reply_recovery",
         "_session_attach",
         "_speak",
-        "_stt_provider",
+        "_transcriber",
         "_turn_detector",
         "_turn_in_progress",
         "_turn_timer",
@@ -85,7 +75,8 @@ class CallSession:
     )
     _actor: CallActor
     _turn_detector: TurnDetector
-    _stt_provider: STTProvider
+    _transcriber: TurnTranscriber
+    _reply_recovery: ReplyRecovery
     _session_attach: SessionAttach
     _speak: SpeakFn
     _wait_cue: WaitCue
@@ -97,12 +88,14 @@ class CallSession:
     _pending_addendum: TranscribedTurn | None
     """FR-4/``docs/conversation-mode-call-state.tex`` section 5's pending
     addendum: speech the turn detector closed while the call was already
-    ``waiting`` on the prior turn's reply. ``None`` when there is none --
-    :attr:`CallActor.has_pending_addendum` mirrors this as a bool for
-    ``CallState``'s own invariant, but only this class holds the actual
-    transcribed text, since the Z model itself treats what happens to the
-    content as out of its scope (folding it into the next turn, per FR-9,
-    is this class's job, not the state machine's)."""
+    ``waiting`` on the prior turn's reply. ``None`` when there is none.
+    :attr:`CallActor.has_pending_addendum` tracks the same *fact* only up to
+    the return to ``listening`` -- ``CallState.reply_ends``/``barge_in``
+    discharge that flag as part of the transition's own invariant, but this
+    attribute deliberately survives past it, since folding the addendum's
+    text into the next turn (FR-9) is this class's job, not the state
+    machine's, and the text has to still be here when that next turn
+    arrives."""
     _turn_timer: TurnTimer
     _turn_in_progress: bool
     """Whether ``speech_first_detected`` has already fired for the run
@@ -139,13 +132,14 @@ class CallSession:
         self = super().__new__(cls)
         self._actor = CallActor()
         self._turn_detector = turn_detector
-        self._stt_provider = stt_provider
         self._session_attach = session_attach
         self._speak = speak
+        self._reply_recovery = ReplyRecovery(self._actor, speak)
         self._wait_cue = WaitCue(chime)
         self._pending_chunks = []
         self._pending_addendum = None
         self._turn_timer = turn_timer if turn_timer is not None else LoggingTurnTimer()
+        self._transcriber = TurnTranscriber(stt_provider, self._turn_timer)
         self._turn_in_progress = False
         return self
 
@@ -219,23 +213,16 @@ class CallSession:
 
     async def _handle_turn_ended(self, chunks: list[AudioChunk]) -> None:
         self._turn_timer.mark("stt_request_sent")
-        final_event = None
-        stt_events = self._stt_provider.transcribe(AudioChunk.as_async_iter(chunks))
-        async for event in stt_events:
-            final_event = event
-        confidence_detail = (
-            "no transcript"
-            if final_event is None
-            else f"confidence={final_event.confidence:.2f}"
+        final_event = await self._transcriber.transcribe(
+            AudioChunk.as_async_iter(chunks)
         )
-        self._turn_timer.mark("stt_response_received", detail=confidence_detail)
-
-        if final_event is None or final_event.confidence < CONFIDENCE_FLOOR:
-            # FR-19: never fabricate on ambiguous or failed capture -- an
-            # STTProvider that raised nothing to transcribe is exactly as
-            # ambiguous as one that transcribed with low confidence; both
-            # ask the human to repeat rather than silently drop the turn.
-            # The call stays in listening; no TurnDetected is enqueued.
+        if final_event is None:
+            # FR-19: never fabricate on ambiguous or failed capture -- no
+            # transcript, a low-confidence transcript, and a transient STT
+            # provider fault are all exactly this ambiguous (see
+            # :class:`TurnTranscriber`'s own docstring for why they collapse
+            # to the same ``None``). The call stays in listening; no
+            # TurnDetected is enqueued.
             await self._speak(_ASK_TO_REPEAT)
             return
 
@@ -254,6 +241,14 @@ class CallSession:
             # speech (the Z model pins only the discharge moment, not what
             # the implementation does with the content).
             self._actor.apply(CaptureDuringWait())
+            if self._pending_addendum is not None:
+                # A third+ utterance while still waiting: fold onto what is
+                # already pending rather than overwrite it -- a second
+                # CaptureDuringWait must not silently discard the first
+                # addendum's text.
+                turn = TranscribedTurn(
+                    text=f"{self._pending_addendum.text} {turn.text}"
+                )
             self._pending_addendum = turn
             return
 
@@ -264,12 +259,12 @@ class CallSession:
         await self._speak_reply(turn)
 
     async def _speak_reply(self, turn: TranscribedTurn) -> None:
-        # vox-36xc: the per-turn claude subprocess spawn measured 13-25s
-        # median -- an instant acknowledgment covers the human's first few
-        # seconds of otherwise-dead silence, before the STT->claude->TTS
-        # round trip even starts. Goes through self._speak, the same
-        # mic-gated channel every other cue in this flow uses, so it is
-        # never captured as if the human said it.
+        # The per-turn claude subprocess spawn measured 13-25s median -- an
+        # instant acknowledgment covers the human's first few seconds of
+        # otherwise-dead silence, before the STT->claude->TTS round trip
+        # even starts. Goes through self._speak, the same mic-gated channel
+        # every other cue in this flow uses, so it is never captured as if
+        # the human said it.
         await self._speak(random.choice(CALL_ACK_PHRASES))
         self._turn_timer.mark("ack_spoken")
 
@@ -290,19 +285,8 @@ class CallSession:
                         self._turn_timer.mark("first_reply_frame")
                         first_frame_seen = True
                     pieces.append(chunk.text)
-        except SessionAttachError:
-            # A subprocess failure here (nonzero exit, malformed
-            # stream-json, the 120s reply timeout) is exactly as
-            # unactionable as the low-confidence STT path above -- the
-            # human still has a live call and can just try again. Recover
-            # to listening rather than letting the exception end the call:
-            # waiting has no direct path back to listening (CallState has
-            # no such transition), so the apology travels through
-            # speaking, same as a real reply would.
-            logger.exception("session-attach failed mid-turn")
-            self._actor.apply(ReplyBegins())
-            await self._speak(_SESSION_ATTACH_FAILED)
-            self._actor.apply(ReplyEnds())
+        except SessionAttachError as exc:
+            await self._reply_recovery.recover(exc)
             return
         self._turn_timer.mark("reply_complete")
         self._actor.apply(ReplyBegins())

@@ -32,16 +32,28 @@ class _Call:
 class FakeSTTProvider:
     """Replays a fixed script of :class:`TranscriptEvent` for every call."""
 
-    __slots__ = ("_calls", "_name", "_script")
+    __slots__ = ("_calls", "_name", "_script", "_transcribe_error")
     _name: str
     _script: tuple[TranscriptEvent, ...]
     _calls: list[_Call]
+    # When set, ``transcribe`` raises this as a transient provider fault --
+    # a rate limit, a 5xx, a network blip -- after consuming the chunks it
+    # was handed, mirroring how a real provider's own request/response cycle
+    # fails only once it has something to fail on.
+    _transcribe_error: str | None
 
-    def __new__(cls, script: Sequence[TranscriptEvent], *, name: str = "fake") -> Self:
+    def __new__(
+        cls,
+        script: Sequence[TranscriptEvent],
+        *,
+        name: str = "fake",
+        transcribe_error: str | None = None,
+    ) -> Self:
         self = super().__new__(cls)
         self._name = name
         self._script = tuple(script)
         self._calls = []
+        self._transcribe_error = transcribe_error
         return self
 
     @property
@@ -55,6 +67,8 @@ class FakeSTTProvider:
         async for _ in chunks:
             chunk_count += 1
         self._calls.append(_Call(chunk_count=chunk_count))
+        if self._transcribe_error is not None:
+            raise RuntimeError(self._transcribe_error)
         for event in self._script:
             yield event
 
