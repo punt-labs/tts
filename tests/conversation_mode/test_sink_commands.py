@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from conversation_mode._playback_sink_fakes import FakeSink
+from punt_vox.voxd.conversation_mode.playback_sink import SinkStatus
 from punt_vox.voxd.conversation_mode.sink_clear import SinkClear
 from punt_vox.voxd.conversation_mode.sink_close import SinkClose
-from punt_vox.voxd.conversation_mode.sink_status import SinkStatus
 from punt_vox.voxd.conversation_mode.sink_write import SinkWrite
 
 

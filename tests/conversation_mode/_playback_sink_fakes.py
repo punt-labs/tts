@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 from typing import Self, final
 
-from punt_vox.voxd.conversation_mode.sink_status import SinkStatus
+from punt_vox.voxd.conversation_mode.playback_sink import SinkStatus
 
 __all__ = ["FakeSink", "SinkReentrancyError"]
 

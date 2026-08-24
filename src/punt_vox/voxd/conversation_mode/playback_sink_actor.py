@@ -22,7 +22,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.voxd.conversation_mode.sink_status import SinkStatus
+from punt_vox.voxd.conversation_mode.playback_sink import SinkStatus
 
 if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.playback_sink import PlaybackSink

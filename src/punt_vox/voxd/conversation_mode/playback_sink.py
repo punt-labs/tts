@@ -25,11 +25,26 @@ discipline every caller must go through instead of calling these directly.
 
 from __future__ import annotations
 
+from enum import Enum, auto
 from typing import Protocol, runtime_checkable
 
-from punt_vox.voxd.conversation_mode.sink_status import SinkStatus
+__all__ = ["PlaybackSink", "SinkStatus"]
 
-__all__ = ["PlaybackSink"]
+
+class SinkStatus(Enum):
+    """Where a :class:`PlaybackSink` is in its write/clear/close lifecycle.
+
+    ``CLOSED`` is terminal: per ``docs/conversation-mode-call-state.tex``
+    section 9, a closed sink accepts no further :meth:`PlaybackSink.write`
+    or :meth:`PlaybackSink.clear` calls. Defined in this module, not its own
+    -- it describes no state but ``PlaybackSink``'s, unlike the
+    ``SinkCommand`` family (``sink_write.py``, ``sink_clear.py``,
+    ``sink_close.py``), which are commands, not the enum this type is.
+    """
+
+    IDLE = auto()
+    WRITING = auto()
+    CLOSED = auto()
 
 
 @runtime_checkable
@@ -50,7 +65,7 @@ class PlaybackSink(Protocol):
     async def write(self, chunk: bytes) -> None:
         """Append *chunk* to the stream's output buffer.
 
-        Raises if :attr:`status` is :attr:`~.sink_status.SinkStatus.CLOSED`.
+        Raises if :attr:`status` is :attr:`SinkStatus.CLOSED`.
         """
         ...
 
@@ -58,8 +73,8 @@ class PlaybackSink(Protocol):
         """Silence whatever is currently buffered; the stream stays open.
 
         Idempotent: clearing an already-idle sink is a no-op that leaves
-        :attr:`status` at :attr:`~.sink_status.SinkStatus.IDLE`. Raises if
-        :attr:`status` is :attr:`~.sink_status.SinkStatus.CLOSED`.
+        :attr:`status` at :attr:`SinkStatus.IDLE`. Raises if :attr:`status`
+        is :attr:`SinkStatus.CLOSED`.
         """
         ...
 
