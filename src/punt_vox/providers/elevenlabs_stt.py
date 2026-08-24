@@ -142,7 +142,7 @@ class ElevenLabsSTTProvider:
             return TranscriptEvent(text="", confidence=0.0, is_final=True)
 
         text = response.text
-        confidence = _confidence_from_words(response.words)
+        confidence = self._confidence_from_words(response.words)
         logger.info(
             "API call: provider=elevenlabs (stt), model=%s, chars=%d, confidence=%.3f",
             self._model,
@@ -168,35 +168,35 @@ class ElevenLabsSTTProvider:
             ]
         return [HealthCheck(passed=True, message="ElevenLabs API key: set")]
 
+    @staticmethod
+    def _confidence_from_words(
+        words: list[SpeechToTextWordResponseModel] | None,
+    ) -> float:
+        """Derive an overall ``[0.0, 1.0]`` confidence from per-word log-probabilities.
 
-def _confidence_from_words(
-    words: list[SpeechToTextWordResponseModel] | None,
-) -> float:
-    """Derive an overall ``[0.0, 1.0]`` confidence from per-word log-probabilities.
+        The SDK reports no single transcript-level confidence -- only a
+        per-``SpeechToTextWordResponseModel`` ``logprob`` (natural log of that
+        entry's probability, always ``<= 0``). The geometric mean of the
+        per-word probabilities -- ``exp(mean(logprob))`` -- is the standard way
+        to collapse a sequence of log-probabilities into one score without the
+        arithmetic mean of the logs itself (which is on the wrong,
+        unbounded-below scale for FR-19's ``[0.0, 1.0]`` gate).
 
-    The SDK reports no single transcript-level confidence -- only a
-    per-``SpeechToTextWordResponseModel`` ``logprob`` (natural log of that
-    entry's probability, always ``<= 0``). The geometric mean of the
-    per-word probabilities -- ``exp(mean(logprob))`` -- is the standard way
-    to collapse a sequence of log-probabilities into one score without the
-    arithmetic mean of the logs itself (which is on the wrong,
-    unbounded-below scale for FR-19's ``[0.0, 1.0]`` gate).
+        ``words`` interleaves ``type="word"`` entries with ``type="spacing"``
+        (and occasionally ``"audio_event"``) entries, and the SDK reports those
+        non-word entries with a near-deterministic, near-zero ``logprob`` --
+        averaging them in pulls the geometric mean toward 1.0 regardless of how
+        confident the actual words were, which is exactly the inflation FR-19
+        forbids (this class's own docstring: "never to raise it by inflating
+        one"). Only ``type="word"`` entries are averaged.
 
-    ``words`` interleaves ``type="word"`` entries with ``type="spacing"``
-    (and occasionally ``"audio_event"``) entries, and the SDK reports those
-    non-word entries with a near-deterministic, near-zero ``logprob`` --
-    averaging them in pulls the geometric mean toward 1.0 regardless of how
-    confident the actual words were, which is exactly the inflation FR-19
-    forbids (this module's own class docstring: "never to raise it by
-    inflating one"). Only ``type="word"`` entries are averaged.
-
-    No words -- an empty/fully-unintelligible utterance, or a response
-    where every entry was non-word -- reports zero: FR-19's floor treats
-    that identically to a low-confidence guess, which is correct, there is
-    nothing to act on.
-    """
-    word_entries = [w for w in words or () if w.type == "word"]
-    if not word_entries:
-        return 0.0
-    mean_logprob = sum(w.logprob for w in word_entries) / len(word_entries)
-    return min(1.0, max(0.0, math.exp(mean_logprob)))
+        No words -- an empty/fully-unintelligible utterance, or a response
+        where every entry was non-word -- reports zero: FR-19's floor treats
+        that identically to a low-confidence guess, which is correct, there is
+        nothing to act on.
+        """
+        word_entries = [w for w in words or () if w.type == "word"]
+        if not word_entries:
+            return 0.0
+        mean_logprob = sum(w.logprob for w in word_entries) / len(word_entries)
+        return min(1.0, max(0.0, math.exp(mean_logprob)))
