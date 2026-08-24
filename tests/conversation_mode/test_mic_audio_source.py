@@ -364,6 +364,10 @@ class TestMicAudioSourceDeviceOpenFailure:
         gen = source.chunks()
         with pytest.raises(OSError, match="no default input device available"):
             await gen.__anext__()
+        # drain_pending()'s contract is a no-op before capture starts or
+        # after it ends -- a factory failure never got capture started, so
+        # _queue must go back to None, not stay wedged "on" forever.
+        assert source.drain_pending() == 0
 
     async def test_the_propagated_error_message_is_human_readable(self) -> None:
         """The exact scenario ``commands/call.py``'s outer boundary handler

@@ -191,14 +191,17 @@ class MicAudioSource:
                 return
             loop.call_soon_threadsafe(queue.put_nowait, bytes(indata))
 
-        stream = self._input_stream_factory(
-            samplerate=float(self._sample_rate_hz),
-            blocksize=block_frames,
-            channels=self._channels,
-            dtype="int16",
-            callback=_callback,
-        )
         try:
+            # Inside the try: a device-open OSError raises right here, and
+            # drain_pending()'s no-op-before-or-after-capture contract needs
+            # self._queue reset to None on that path too, same as any other.
+            stream = self._input_stream_factory(
+                samplerate=float(self._sample_rate_hz),
+                blocksize=block_frames,
+                channels=self._channels,
+                dtype="int16",
+                callback=_callback,
+            )
             with stream:
                 while True:
                     pcm = await queue.get()
