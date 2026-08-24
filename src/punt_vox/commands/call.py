@@ -72,7 +72,10 @@ from punt_vox.voxd.conversation_mode.call_control import CallControl
 from punt_vox.voxd.conversation_mode.call_lock import CallLock, CallLockActiveError
 from punt_vox.voxd.conversation_mode.call_session import CallSession, SpeakFn
 from punt_vox.voxd.conversation_mode.claude_session_attach import ClaudeSessionAttach
-from punt_vox.voxd.conversation_mode.session_discovery import SessionDiscovery
+from punt_vox.voxd.conversation_mode.session_discovery import (
+    SessionDiscovery,
+    SessionDiscoveryError,
+)
 
 if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.session_attach import SessionAttach
@@ -159,10 +162,21 @@ class CallCli:
     async def _resolve_session_attach(
         cwd: Path, session_id: str | None
     ) -> SessionAttach:
-        """Resolve which session to attach, per the ADR's no-silent-auto-pick rule."""
+        """Resolve which session to attach, per the ADR's no-silent-auto-pick rule.
+
+        ``SessionDiscoveryError`` (most of discovery's own failure modes --
+        ``claude`` missing, a nonzero exit, a timeout, bad JSON) is
+        converted to ``typer.BadParameter`` right here, the same class the
+        zero/multiple-candidates branches below already raise, so both
+        callers of this method get typer's clean CLI handling instead of a
+        raw traceback.
+        """
         if session_id is not None:
             return ClaudeSessionAttach(session_id=session_id)
-        candidates = await SessionDiscovery().discover(cwd)
+        try:
+            candidates = await SessionDiscovery().discover(cwd)
+        except SessionDiscoveryError as exc:
+            raise typer.BadParameter(str(exc)) from exc
         if len(candidates) == 1:
             return ClaudeSessionAttach(session_id=candidates[0].session_id)
         if not candidates:
@@ -271,12 +285,12 @@ class CallCli:
         already-running *session* via
         :meth:`~.call_session.CallSession.replace_session_attach`, so
         ``/call transfer`` redirects the call without ending it -- including
-        when the resolution itself fails: zero or multiple discoverable
-        sessions raises ``typer.BadParameter``, and letting that escape
-        would hit the outer boundary handler and end the whole call over
-        what is only an invalid transfer request. Caught here instead, so
-        the human hears why the transfer didn't happen and the call
-        continues on its current session.
+        when the resolution itself fails: zero/multiple discoverable
+        sessions raises ``typer.BadParameter``, discovery's own failures
+        raise ``SessionDiscoveryError``, and letting either escape would hit
+        the outer boundary handler and end the whole call over what is only
+        an invalid transfer request. Caught here instead, so the human
+        hears why the transfer didn't happen and the call continues.
         """
         request = control.consume()
         if request is None:
@@ -288,7 +302,7 @@ class CallCli:
                 new_attach = await self._resolve_session_attach(
                     Path.cwd(), request.target_session_id
                 )
-            except typer.BadParameter:
+            except (typer.BadParameter, SessionDiscoveryError):
                 # A fixed sentence, never {exc} itself: when session
                 # discovery finds multiple candidates, the exception's text
                 # is a newline-separated list of session UUIDs and

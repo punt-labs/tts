@@ -162,6 +162,64 @@ async def test_apply_control_speaks_a_fixed_sentence_not_the_raw_exception(
     assert leaky_message not in spoken
 
 
+async def test_apply_control_catches_session_discovery_error_too(
+    tmp_path: Path,
+) -> None:
+    """``SessionDiscoveryError`` (the majority of discovery's own failure
+    modes: ``claude`` missing, a nonzero exit, a timeout, bad JSON) must be
+    caught right alongside ``typer.BadParameter`` -- the same
+    doesn't-end-the-call-over-an-invalid-transfer treatment, not a crash
+    that escapes to the outer boundary handler.
+    """
+    from punt_vox.commands import call as call_module
+    from punt_vox.voxd.conversation_mode.session_discovery import (
+        SessionDiscoveryError,
+    )
+
+    control = CallControl(tmp_path / "call.control")
+    control.request_transfer(None)
+    spoken: list[str] = []
+
+    async def speak(text: str) -> None:
+        spoken.append(text)
+
+    cli = call_module.CallCli()
+    with patch.object(
+        call_module.CallCli,
+        "_resolve_session_attach",
+        side_effect=SessionDiscoveryError("claude not found on PATH"),
+    ):
+        should_stop = await cli._apply_control(control, MagicMock(), speak)
+
+    assert should_stop is False
+    assert spoken == ["Couldn't transfer the call -- check the terminal"]
+
+
+async def test_resolve_session_attach_converts_discovery_error_to_bad_parameter(
+    tmp_path: Path,
+) -> None:
+    """``_run``'s initial resolution (called outside any try/except) must
+    reach typer's clean CLI error handling for an ordinary discovery
+    failure, not a raw traceback -- the conversion has to happen inside
+    ``_resolve_session_attach`` itself, the one place both call sites share.
+    """
+    from punt_vox.commands import call as call_module
+    from punt_vox.voxd.conversation_mode.session_discovery import (
+        SessionDiscovery,
+        SessionDiscoveryError,
+    )
+
+    with (
+        patch.object(
+            SessionDiscovery,
+            "discover",
+            side_effect=SessionDiscoveryError("claude agents --json exited 1"),
+        ),
+        pytest.raises(typer.BadParameter, match="claude agents --json exited 1"),
+    ):
+        await call_module.CallCli._resolve_session_attach(tmp_path, None)
+
+
 def test_stop_refuses_against_a_stale_lock_with_a_dead_pid(tmp_path: Path) -> None:
     """Regression: a killed `vox call start` leaves a lock file behind with a
     now-dead pid. `vox call stop` against that stale lock must refuse the
