@@ -3233,3 +3233,37 @@ spike-confirmed, not just reasoned:
   environment unless told otherwise. Not yet designed; add to the
   implementation mission's contract alongside the `--tools` allowlist,
   not as a follow-on fix after the fact.
+
+### Rejected: MCP tool access inside the call agent — 2026-08-24
+
+Explored giving the call agent live tool access to quarry (semantic
+search over source + conversation history) and context7 (docs) via pi's
+third-party `pi-mcp-adapter` extension, so it could look things up
+mid-call rather than being limited to `read`/`grep`/`find`/`ls` on the
+repo alone. Spiked: `pi install npm:pi-mcp-adapter`, loaded explicitly
+via `-e <path>` alongside `--no-extensions` (to avoid the `biff-bridge`
+extension DES-066 already found interferes with the RPC stream). The
+extension loaded without reintroducing the `biff-bridge` hang, but the
+`--tools` allowlist turned out to filter extension-registered tools too,
+not just built-ins — with `--tools read,grep,find,ls` set, the
+mcp-adapter's own tool was invisible to the model regardless of whether
+the extension itself was active.
+
+**Rejected outright by the operator before further debugging**: "I do
+not wish or need to use mcp with pi... do not bloat pi." The extension
+was uninstalled (`pi remove npm:pi-mcp-adapter`) and no further work
+went into fixing the allowlist interaction. Do not re-attempt an MCP
+adapter inside the spawned `pi` process for this feature — it directly
+works against the reason `pi` was chosen over `claude` in the first
+place (a minimal, extension-free process is what makes the persistence
+and latency wins in this document real).
+
+**What replaces it**: quarry and context7 access happen in the *primary*
+Claude Code session, before the call agent is even spawned, as part of
+constructing the context snapshot — `quarry --json find "<query>"` is a
+real, working CLI flag (verified live), so the primary session runs it
+against a query derived from the call's topic and folds relevant hits
+directly into the snapshot text handed to the call agent as its opening
+message. The call agent's own tool surface is unaffected: still exactly
+`--tools read,grep,find,ls`, `--no-extensions`. See `vox-hobl.1` for the
+full context-snapshot design.
