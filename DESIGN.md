@@ -3267,3 +3267,122 @@ directly into the snapshot text handed to the call agent as its opening
 message. The call agent's own tool surface is unaffected: still exactly
 `--tools read,grep,find,ls`, `--no-extensions`. See `vox-hobl.1` for the
 full context-snapshot design.
+
+---
+
+## DES-067: Context-Snapshot Construction and Post-Call Summary Handoff
+
+**Status:** decided, per operator direction (2026-08-24). Resolves
+`vox-hobl.1`, the last design work blocking the replacement `SessionAttach`
+implementation (`vox-hobl.2`) besides FR-4's own ratification (`vox-m2ss`).
+
+### Context
+
+DES-066 named two pieces explicitly undesigned: what goes into the call
+agent's opening message, and how its conversation reaches the primary
+session after the call ends. Both are resolved here.
+
+### Decision 1: the primary session constructs the context snapshot
+
+Entry point is `/vox:call start <topic>`. The **primary session** — the
+one the human is already working in, and the one that runs this command
+— authors the call agent's opening context snapshot itself, from
+`<topic>` plus whatever it already knows about the current task and
+recent conversation. It is not an automated extraction pass run by some
+third component, and it is not the call agent introspecting anything
+about the primary session on its own (it cannot — DES-066 already
+established the two processes are deliberately disconnected).
+
+This resolves the "sourced from where" question DES-066 left open by the
+simplest available answer: the primary session already holds the
+context; handing it off is the same act as any handoff between two
+collaborators, not a retrieval problem.
+
+**Quarry and context7, folded in upstream, not granted as live tools.**
+DES-066's "Rejected: MCP tool access" section (above) has the full spike
+trail — summarized: the primary session runs `quarry --json find
+"<query>"` (a real, verified-working CLI flag) against a query derived
+from `<topic>`, and folds relevant hits directly into the snapshot text
+before the call agent is spawned. The same pattern applies to context7
+if a topic clearly needs external docs. The call agent's own tool
+surface is unaffected — still exactly `--tools read,grep,find,ls`,
+`--no-extensions` per DES-066 — because all of the extra context
+gathering happens in the primary session, in Python, before `Spawn`
+(the call-agent process lifecycle's own first operation,
+`docs/conversation-mode-call-agent.tex` §Operations) ever runs.
+
+### Decision 2: the summary is a structured document, not free prose
+
+Modeled directly on `../prfaq/`'s meeting-summary format (see
+`../prfaq/meetings/meeting-summary-*.md` for the reference shape used by
+`/prfaq:meeting`) — a structured document with fixed sections, not a
+paragraph of prose a human has to parse:
+
+- **Decisions Made** — anything the call actually settled.
+- **Action Items** — what the primary session should do next. This
+  section *is* the handoff DES-066 left undesigned: it is the mechanism
+  by which the call agent's read-only findings become the primary
+  session's write actions, satisfying DES-066's own requirement that
+  only the primary session ever applies repo/codebase writes, and only
+  after the call.
+- **Context Gathered** — files the call agent read, quarry hits and
+  docs consulted (both the primary session's pre-call lookups and
+  anything the call agent itself read live via its own `read`/`grep`/
+  `find`/`ls` tools).
+- **Beads Touched** — any bead the call agent created or updated live
+  during the call, per DES-066's standing allowance for out-of-band
+  coordination state (the restriction is repo/codebase file writes
+  specifically, not every side effect).
+- **Notes / Open Questions** — anything unresolved, for the primary
+  session or the human to pick up.
+
+### Decision 3: delivery is a direct file read, not a hook
+
+The call agent authors the summary itself, as its own final turn before
+`Teardown`/`AbortTurn` (`docs/conversation-mode-call-agent.tex`), written
+to `user_state_dir() / "calls" / "<call-id>-summary.md"` — a new
+`calls_dir()` helper alongside the existing `recordings_dir()` in
+`src/punt_vox/paths.py`, following that module's established one-helper-
+per-purpose convention rather than overloading `run_dir()` (which is for
+ephemeral lock/pid state, not a durable record a human or the primary
+session may want to revisit later, the same distinction that already
+separates `recordings_dir()` from `run_dir()`).
+
+Because the call was started **from** the primary session and that
+session is still present when the call ends (`/vox:call start` is not a
+detached background invocation), the simplest delivery mechanism is that
+the primary session reads the summary file directly once the call
+signals it has ended — no `UserPromptSubmit` hook injection, no polling.
+The candidate list DES-066 originally left open (a hook the primary
+session's next prompt triggers, an injected context block) assumed a
+scenario where the primary session might not still be attached; that
+scenario does not arise given `/vox:call start`'s own invocation shape,
+so the simpler mechanism is correct, not merely convenient.
+
+The primary session may append its own notes on read (e.g., recording
+which Action Items it actually acted on) — the file is not sealed or
+append-only; it is a normal repo-external artifact under
+`user_state_dir()`, not a git-tracked one.
+
+### Rejected Alternatives
+
+- **The primary session synthesizes the summary from the raw call
+  transcript**, rather than the call agent authoring it directly.
+  Rejected: the call agent is closest to what happened and already has
+  to produce a final reply regardless; a second synthesis pass by a
+  different process would be strictly more machinery for the same
+  result, and risks losing detail across the handoff it exists to avoid.
+- **MCP tool access inside the call agent** for quarry/context7 — see
+  the dedicated section above (DES-066). Rejected by the operator
+  directly: "I do not wish or need to use mcp with pi... do not bloat
+  pi."
+- **A `UserPromptSubmit` hook picks up the summary** — rejected per
+  Decision 3 above: unnecessary machinery for a synchronous
+  primary-session-present scenario.
+
+### Still Open
+
+The `calls_dir()` retention policy (does every call leave a summary
+file forever, or is there a cleanup/rotation policy analogous to
+`recordings_dir()`'s) is not decided here — a small implementation
+detail for `vox-hobl.2`'s mission, not an architectural fork.
