@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Bare `/model` and `/provider` collided with Claude Code's own built-in
+  `/model`.** `plugin/hooks/session-start.sh` deployed every
+  `plugin/commands/*.md` to `~/.claude/commands/` unconditionally, so
+  `/vox:model`, `/vox:provider`, and `/vox:voice` — already the documented,
+  correctly-namespaced invocations — also acquired unwanted bare top-level
+  forms (`/model`, `/provider`, `/voice`) that shadowed Claude Code's own
+  slash commands. `model.md`, `provider.md`, `voice.md`, and `recap.md` (the
+  last namespaced by operator ruling for consistency, not a known collision)
+  now deploy namespaced-only, as `/vox:model`, `/vox:provider`,
+  `/vox:voice`, and `/vox:recap`. The five session-scoped verbs — `/vox`,
+  `/unmute`, `/mute`, `/vibe`, `/music` — are unaffected and still deploy
+  bare. An already-installed plugin drops the stale bare copies on its next
+  session start.
+
 ## [5.0.1] - 2026-08-23
 
 ### Fixed
