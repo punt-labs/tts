@@ -186,8 +186,15 @@ ls ~/.claude/commands/ | grep -E '^(vox|unmute|mute|vibe|music)\.md$'
 
 No audio — assert: typing `/model` in Claude Code offers only Claude Code's
 own built-in (vox does not appear), and `/vox:model` (or `/vox-dev:model-dev`
-in dev mode) invokes vox's model switch. Repeat the `/vox:recap` check the
-same way — `/recap` typed bare offers nothing from vox.
+in dev mode) invokes vox's model switch **with no permission prompt** — the
+`Skill(vox:model)` grant (§4.3 of `docs/vox-ovz3-command-namespace.md`) is
+supposed to auto-approve it the same way the five bare commands are
+auto-approved today, so a prompt appearing here is itself a finding, not
+merely an inconvenience to click through. Note explicitly which happened:
+"no prompt" (grant works) or "one prompt, then granted" (grant name needs
+revisiting — see the design doc's fallback candidates). Repeat the
+`/vox:recap` check the same way, including the no-prompt assertion —
+`/recap` typed bare offers nothing from vox.
 
 ## Post-flight
 
