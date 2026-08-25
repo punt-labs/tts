@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Literal, Self, final
 
 from punt_vox.atomic_file import AtomicFile
+from punt_vox.types_programs.wire import JsonObject
 
 logger = logging.getLogger(__name__)
 
@@ -83,16 +84,17 @@ class CallControl:
                 # UnicodeDecodeError (from AtomicFile.read's utf-8 decode, on
                 # a hand-edited or partially-overwritten file with invalid
                 # bytes) is a ValueError subclass, same family as
-                # json.JSONDecodeError -- both mean "this mailbox entry is
-                # not usable", not "the call ended". Read and parse share one
-                # try so a decode failure hits the same discard path a parse
-                # failure already does, instead of propagating to the
+                # JsonObject's own raises -- both mean "this mailbox entry
+                # is not usable", not "the call ended". Read and parse share
+                # one try so a decode failure hits the same discard path a
+                # parse failure already does, instead of propagating to the
                 # call-ending boundary handler this method exists to spare.
                 raw = AtomicFile(consuming_path).read()
                 if not raw:
                     return None
-                payload = json.loads(raw)
-                kind = payload["kind"]
+                obj = JsonObject.parse(raw, "call.control")
+                kind = obj.require_str("kind")
+                target_session_id = obj.opt_str("target_session_id")
                 # Validated, not trusted: a malformed mailbox file (a
                 # racing partial write, a hand-edited entry) with an
                 # unrecognized "kind" must land on the same discard-and-log
@@ -100,25 +102,21 @@ class CallControl:
                 # ControlRequest with an invalid kind would fall through
                 # both branches of call.py's _apply_control silently,
                 # dropping a "/call stop" with no log, no error, nothing.
-                if kind not in ("stop", "transfer"):
-                    msg = f"unrecognized control kind {kind!r}"
-                    raise ValueError(msg)
-                target_session_id = payload.get("target_session_id")
-                # Same discipline as "kind" above: a wrong-typed value here
-                # (an int, say, from a hand-edited or partially-overwritten
-                # file) would otherwise flow straight into
-                # ClaudeSessionAttach's constructor and crash with an
-                # uncaught TypeError from create_subprocess_exec, ending the
-                # whole call over a malformed transfer request -- exactly
-                # the outcome the "kind" validation above already exists to
-                # prevent.
-                if target_session_id is not None and not isinstance(
-                    target_session_id, str
-                ):
-                    msg = f"wrong-typed target_session_id {target_session_id!r}"
-                    raise TypeError(msg)
-                return ControlRequest(kind=kind, target_session_id=target_session_id)
-            except (ValueError, KeyError, TypeError) as exc:
+                # Branching on the literal values (rather than a runtime
+                # "not in" check plus a cast) is also what lets both mypy
+                # and pyright narrow ``kind`` to the ControlKind literal
+                # with no suppression needed.
+                if kind == "stop":
+                    return ControlRequest(
+                        kind="stop", target_session_id=target_session_id
+                    )
+                if kind == "transfer":
+                    return ControlRequest(
+                        kind="transfer", target_session_id=target_session_id
+                    )
+                msg = f"unrecognized control kind {kind!r}"
+                raise ValueError(msg)
+            except ValueError as exc:
                 logger.warning(
                     "call.control request is unreadable, discarding: %s", exc
                 )
