@@ -290,6 +290,25 @@ class TestGitRepoPathExistsAtRef:
         with pytest.raises(GitError):
             repo.path_exists_at_ref("bad..ref**", "pkg/a.py")
 
+    def test_non_utf8_git_output_fails_closed_as_giterror(
+        self, gfx: GitFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # `text=True` decodes git's output as UTF-8; non-UTF8 bytes (a binary
+        # path in the error message, an unusual locale) must fail closed as
+        # GitError, not crash the gate with an uncaught UnicodeDecodeError.
+        gfx.write_source("x = 1\n")
+        base = gfx.commit("base")
+        repo = GitRepo(gfx.root)
+
+        def _raise_unicode_error(*_args: object, **_kwargs: object) -> None:
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+        monkeypatch.setattr(
+            "tools.suppression.gitio.subprocess.run", _raise_unicode_error
+        )
+        with pytest.raises(GitError):
+            repo.path_exists_at_ref(base, "pkg/a.py")
+
 
 class TestGitRepoArchivePaths:
     """``archive_paths`` fails closed on a bad ref or an unwritable destination."""

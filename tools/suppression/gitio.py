@@ -58,7 +58,11 @@ class GitRepo:
             result = subprocess.run(
                 args, capture_output=True, text=True, timeout=_TIMEOUT, cwd=cwd
             )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+        # UnicodeDecodeError: `text=True` decodes as UTF-8; non-UTF8 bytes on
+        # stdout/stderr (a binary path, an unusual locale) must degrade the
+        # same as a failed spawn, not crash the caller with an uncaught
+        # exception.
+        except (FileNotFoundError, subprocess.TimeoutExpired, UnicodeDecodeError):
             return None
         if result.returncode != 0:
             return None
@@ -110,7 +114,15 @@ class GitRepo:
                 timeout=_TIMEOUT,
                 cwd=self._root,
             )
-        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        # UnicodeDecodeError: `text=True` decodes as UTF-8; non-UTF8 bytes on
+        # stderr (a binary path in the error message, an unusual locale) must
+        # fail closed as GitError, not crash the gate with an uncaught
+        # exception.
+        except (
+            FileNotFoundError,
+            subprocess.TimeoutExpired,
+            UnicodeDecodeError,
+        ) as exc:
             msg = f"git cat-file -e {spec} failed to run: {exc}"
             raise GitError(msg) from exc
         if result.returncode == 0:
