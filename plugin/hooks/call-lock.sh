@@ -46,7 +46,11 @@ if command -v jq >/dev/null 2>&1; then
 else
   _lock_pid=$(grep -oE '"pid"[[:space:]]*:[[:space:]]*[0-9]+' "$_lock_file" | head -1 | grep -oE '[0-9]+$')
 fi
-if [ -z "$_lock_pid" ] || ! kill -0 "$_lock_pid" 2>/dev/null; then
+# pid 0 (current process group) and pid 1 (init, always alive) both pass
+# `kill -0` unconditionally -- a corrupt lock recording either would
+# otherwise wedge every prompt with no self-clear, the shell-side
+# counterpart to CallLockState.pid's own bool-as-int exclusion.
+if [ -z "$_lock_pid" ] || [ "$_lock_pid" -le 1 ] || ! kill -0 "$_lock_pid" 2>/dev/null; then
   rm -f "$_lock_file"
   exit 0
 fi

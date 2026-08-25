@@ -92,6 +92,41 @@ class ReplyDelivery:
         await self._speak(secrets.choice(CALL_ACK_PHRASES))
         self._turn_timer.mark("ack_spoken")
 
+        reply_text = await self._exchange(turn)
+        if reply_text is None:
+            return  # ReplyRecovery already spoke and ended/recovered the call
+
+        self._turn_timer.mark("reply_complete")
+        self._actor.apply(ReplyBegins())
+        self._turn_timer.mark("tts_request_sent")
+        # Full text to vox.log (0600); only the redacted text is ever spoken
+        # -- see reply_redactor's own docstring for the threat this guards.
+        logger.info("call reply (unredacted, vox.log only): %s", reply_text)
+        await self._speak(reply_redactor(reply_text))
+        # "playback_started" is the best available proxy, not a real signal:
+        # SpeakFn's own contract (see that Protocol's docstring) is "returns
+        # once playback has started OR completed" -- this class cannot tell
+        # which, and a caller wrapping speak() in its own timing-sensitive
+        # logic (the live path's mic-echo gate) can push this mark later
+        # still, past when audio actually started.
+        self._turn_timer.mark(
+            "playback_started", detail="approximate -- see SpeakFn's contract"
+        )
+        # ReplyEnds() returns the call to LISTENING, and process_chunk()
+        # accepts turn-detector input in both LISTENING and WAITING -- apply
+        # it only after "Ready." finishes, or the cue itself risks being
+        # treated as human speech by a SpeakFn that doesn't gate the mic.
+        await self._speak("Ready.")
+        self._actor.apply(ReplyEnds())
+
+    async def _exchange(self, turn: TranscribedTurn) -> str | None:
+        """Run session-attach for *turn*, returning the assembled reply text.
+
+        Returns ``None`` after a ``SessionAttachError`` is already handled by
+        :class:`ReplyRecovery` (which speaks its own recovery message and, on
+        a permanent failure, ends the call itself) -- :meth:`deliver` treats
+        that as nothing left to do for this turn.
+        """
         # "claude_spawned"/"first_reply_frame" approximate a subprocess this
         # class has no visibility into: SessionAttach is a Protocol, and the
         # production ClaudeSessionAttach spawns claude -p --resume as the
@@ -111,23 +146,5 @@ class ReplyDelivery:
                     pieces.append(chunk.text)
         except SessionAttachError as exc:
             await self._reply_recovery.recover(exc)
-            return
-        self._turn_timer.mark("reply_complete")
-        self._actor.apply(ReplyBegins())
-        self._turn_timer.mark("tts_request_sent")
-        reply_text = "".join(pieces)
-        # Full text to vox.log (0600); only the redacted text is ever spoken
-        # -- see reply_redactor's own docstring for the threat this guards.
-        logger.info("call reply (unredacted, vox.log only): %s", reply_text)
-        await self._speak(reply_redactor(reply_text))
-        # "playback_started" is the best available proxy, not a real signal:
-        # SpeakFn's own contract (see that Protocol's docstring) is "returns
-        # once playback has started OR completed" -- this class cannot tell
-        # which, and a caller wrapping speak() in its own timing-sensitive
-        # logic (the live path's mic-echo gate) can push this mark later
-        # still, past when audio actually started.
-        self._turn_timer.mark(
-            "playback_started", detail="approximate -- see SpeakFn's contract"
-        )
-        self._actor.apply(ReplyEnds())
-        await self._speak("Ready.")
+            return None
+        return "".join(pieces)

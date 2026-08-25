@@ -751,3 +751,27 @@ class TestCallLockHook:
 
         assert result.returncode == 0
         assert not lock.exists(), "lock with a non-numeric pid was not self-cleared"
+
+    def test_lock_pid_one_self_clears_and_does_not_block(self, tmp_path: Path) -> None:
+        """pid 1 (init) is always alive -- `kill -0 1` always succeeds, so a
+        corrupt lock recording it would otherwise wedge every prompt with no
+        self-clear, unlike a genuinely dead pid."""
+        repo = _make_repo(tmp_path)
+        _mark_enabled(repo)
+        self._write_lock(repo, pid=1)
+
+        result = self._run(repo)
+
+        assert result.returncode == 0
+        assert not self._lock_path(repo).exists(), "pid-1 lock was not self-cleared"
+
+    def test_lock_pid_zero_self_clears_and_does_not_block(self, tmp_path: Path) -> None:
+        """pid 0 (current process group) also passes `kill -0` unconditionally."""
+        repo = _make_repo(tmp_path)
+        _mark_enabled(repo)
+        self._write_lock(repo, pid=0)
+
+        result = self._run(repo)
+
+        assert result.returncode == 0
+        assert not self._lock_path(repo).exists(), "pid-0 lock was not self-cleared"

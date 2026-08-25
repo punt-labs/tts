@@ -257,6 +257,26 @@ class TestGitRepoPathExistsAtRef:
         repo = GitRepo(gfx.root)
         assert repo.path_exists_at_ref(base, "") is True
 
+    def test_absence_message_case_does_not_matter(
+        self, gfx: GitFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Git's message casing can vary across versions/locales -- a git
+        # build that capitalizes its stderr must still be recognized as
+        # absence, not misread as an unrelated error.
+        gfx.write_source("x = 1\n")
+        base = gfx.commit("base")
+        repo = GitRepo(gfx.root)
+
+        class _UppercaseAbsence:
+            returncode = 128
+            stderr = "FATAL: PATH 'x.py' DOES NOT EXIST IN 'HEAD'\n"
+
+        def _fake_run(*_args: object, **_kwargs: object) -> _UppercaseAbsence:
+            return _UppercaseAbsence()
+
+        monkeypatch.setattr("tools.suppression.gitio.subprocess.run", _fake_run)
+        assert repo.path_exists_at_ref(base, "x.py") is False
+
     def test_malformed_ref_raises_giterror_not_false(self, gfx: GitFixture) -> None:
         # A well-formed-but-nonexistent sha and a truly malformed ref both
         # exit 128, but git's stderr distinguishes them: the former reads

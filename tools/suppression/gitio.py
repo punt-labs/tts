@@ -113,7 +113,10 @@ class GitRepo:
             raise GitError(msg) from exc
         if result.returncode == 0:
             return True
-        stderr = result.stderr.strip()
+        # Git's message casing can vary across versions/locales; comparing
+        # lowercased avoids a case mismatch alone turning a genuine absence
+        # into a raised GitError.
+        stderr = result.stderr.strip().lower()
         if result.returncode == 128 and (
             "does not exist in" in stderr or "exists on disk, but not in" in stderr
         ):
