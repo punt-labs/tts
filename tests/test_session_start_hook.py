@@ -154,7 +154,7 @@ class TestFreshInstallNamespacesTheFour:
         deployed = _deployed_names(tmp_path / "home")
         for name in _NAMESPACED_ONLY:
             assert f"{name}.md" not in deployed, (
-                f"{name}.md deployed bare — collides with a name Claude Code may claim"
+                f"{name}.md must not be deployed bare (namespaced-only)"
             )
 
     def test_bare_commands_still_deploy(self, tmp_path: Path) -> None:
