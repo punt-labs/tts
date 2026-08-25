@@ -751,6 +751,10 @@ class TestCallLockHook:
 
         assert result.returncode == 0
         assert not lock.exists(), "lock with a non-numeric pid was not self-cleared"
+        # `[ "$_lock_pid" -le 1 ]` on a non-numeric pid prints "integer
+        # expression expected" -- UserPromptSubmit surfaces stderr to the
+        # human, so a numeric guard must run before that comparison.
+        assert "integer expression expected" not in result.stderr
 
     def test_lock_pid_one_self_clears_and_does_not_block(self, tmp_path: Path) -> None:
         """pid 1 (init) is always alive -- `kill -0 1` always succeeds, so a

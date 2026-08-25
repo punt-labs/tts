@@ -49,8 +49,14 @@ fi
 # pid 0 (current process group) and pid 1 (init, always alive) both pass
 # `kill -0` unconditionally -- a corrupt lock recording either would
 # otherwise wedge every prompt with no self-clear, the shell-side
-# counterpart to CallLockState.pid's own bool-as-int exclusion.
-if [ -z "$_lock_pid" ] || [ "$_lock_pid" -le 1 ] || ! kill -0 "$_lock_pid" 2>/dev/null; then
+# counterpart to CallLockState.pid's own bool-as-int exclusion. The
+# `[[:digit:]]` guard must run before the `-le` comparison: `[ -le ]` on a
+# non-numeric pid (a hand-edited "not-a-pid") prints "integer expression
+# expected" to stderr, which UserPromptSubmit surfaces to the human.
+if [ -z "$_lock_pid" ] \
+  || ! [[ "$_lock_pid" =~ ^[[:digit:]]+$ ]] \
+  || [ "$_lock_pid" -le 1 ] \
+  || ! kill -0 "$_lock_pid" 2>/dev/null; then
   rm -f "$_lock_file"
   exit 0
 fi
