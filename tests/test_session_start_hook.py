@@ -108,8 +108,13 @@ def _additional_context(result: subprocess.CompletedProcess[str]) -> str:
     return context
 
 
+_PRE_NAMESPACING_FIXTURES = (
+    Path(__file__).resolve().parent / "fixtures" / "pre-namespacing"
+)
+
+
 def _pre_pr_content(name: str) -> str:
-    """Return ``name``'s command file content as it shipped at v5.0.1.
+    """Return ``name``'s command file content as it shipped before namespacing.
 
     A real upgrading install never has the CURRENT plugin source deployed as
     its "stale" file -- it has whatever an earlier release shipped, which for
@@ -118,17 +123,15 @@ def _pre_pr_content(name: str) -> str:
     content. Seeding a test from the current plugin source instead of a real
     past release means the seeded file always matches the live source and
     the test can never observe a genuine content mismatch -- exactly the gap
-    that hid this class of retirement bug. v5.0.1 ships all nine command
-    files, so it is a real historical snapshot for every name this test uses.
+    that hid this class of retirement bug.
+
+    Vendored as fixture files under fixtures/pre-namespacing/ rather than
+    fetched from git history at test time: a CI checkout can be shallow and
+    tag-less, and a test that depends on `git show <tag>:<path>` succeeding
+    is not hermetic -- it silently passes locally (full history) and fails
+    in exactly the environment meant to catch a regression.
     """
-    result = subprocess.run(
-        ["git", "show", f"v5.0.1:plugin/commands/{name}.md"],
-        cwd=_REPO_ROOT,
-        text=True,
-        capture_output=True,
-        check=True,
-    )
-    return result.stdout
+    return (_PRE_NAMESPACING_FIXTURES / f"{name}.md").read_text(encoding="utf-8")
 
 
 def _settings_allow(home: Path) -> list[str]:
@@ -399,8 +402,9 @@ class TestForeignFileWithGenericNameSurvives:
 
     model/provider/voice/recap are generic enough that a user could have
     hand-authored their own command under one of those names. RETIRED must
-    only remove a NAMESPACED_ONLY file when its content still matches vox's
-    own shipped copy — otherwise it is not vox's stale deployment.
+    only remove a NAMESPACED_ONLY file when it carries vox's own
+    ``mcp__plugin_vox_mic__`` fingerprint — otherwise it is not vox's stale
+    deployment.
     """
 
     def test_foreign_model_md_is_not_removed(self, tmp_path: Path) -> None:
