@@ -11,7 +11,7 @@ module budget.
 from __future__ import annotations
 
 import logging
-import random
+import secrets
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.quips import CALL_ACK_PHRASES
@@ -89,7 +89,7 @@ class ReplyDelivery:
         # even starts. Goes through self._speak, the same mic-gated channel
         # every other cue in this flow uses, so it is never captured as if
         # the human said it.
-        await self._speak(random.choice(CALL_ACK_PHRASES))
+        await self._speak(secrets.choice(CALL_ACK_PHRASES))
         self._turn_timer.mark("ack_spoken")
 
         # "claude_spawned"/"first_reply_frame" approximate a subprocess this

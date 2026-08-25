@@ -15,7 +15,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Self, final
+from typing import Self, cast, final
 
 from punt_vox.atomic_file import AtomicFile
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_repo_root
@@ -43,30 +43,23 @@ class CallLockActiveError(RuntimeError):
     clobber a genuinely active call rather than silently overwriting its
     lock file -- two processes racing to speak through the same
     :class:`~.call_lock.CallLock` would otherwise both believe they hold
-    exclusivity. ``__str__`` is the load-bearing override :mod:`.stt_provider`
-    and sibling typed errors already establish: :class:`BaseException`
-    reinitialises ``args`` with the constructor's positional arguments after
-    ``__new__`` runs, so a message stashed only there would round-trip out as
-    a tuple repr instead of the caller-facing sentence.
+    exclusivity. No custom ``__new__``: :class:`RuntimeError` already
+    accepts and stores an arbitrary positional argument via ``args``, so
+    the live holder's :class:`CallLockState` rides there directly --
+    :attr:`state` reads it back, the same shape
+    :class:`~.session_attach.BareAuthMissingError` uses for a plain string
+    payload, generalised to a structured one.
     """
-
-    __slots__ = ("_state",)
-    _state: CallLockState
-
-    def __new__(cls, state: CallLockState) -> Self:  # pyright: ignore[reportInconsistentConstructor]
-        self = super().__new__(cls, state)
-        self._state = state
-        return self
 
     @property
     def state(self) -> CallLockState:
         """Return the live holder's recorded reason and pid."""
-        return self._state
+        return cast("CallLockState", self.args[0])
 
     def __str__(self) -> str:
         return (
-            f"a call is already active, pid {self._state.pid}: "
-            f"{self._state.reason}; run `vox call stop` first"
+            f"a call is already active, pid {self.state.pid}: "
+            f"{self.state.reason}; run `vox call stop` first"
         )
 
 

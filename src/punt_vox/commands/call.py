@@ -95,7 +95,8 @@ class CallCli:
         self,
         script: _ScriptOpt = None,
         session: _SessionOpt = None,
-        trace_turns: _TraceTurnsOpt = False,  # noqa: FBT002 -- typer CLI requires bool default
+        *,
+        trace_turns: _TraceTurnsOpt = False,
     ) -> None:
         """Start a call: listen, detect turns, forward them, speak the reply."""
         # Always on, regardless of *trace_turns*: the turn-timer's own
