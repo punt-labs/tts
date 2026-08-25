@@ -1,7 +1,9 @@
 # vox-ovz3: `/model` and `/provider` Collide With Claude Code Built-Ins
 
 **Bead:** vox-ovz3
-**Status:** design, awaiting leader review
+**Status:** design, ratified by operator with one amendment (2026-08-25) —
+also namespace `/recap` (`/vox:recap`), as a preemptive consistency call
+with no known collision. See §3.
 **Author:** mdm (design mission)
 
 ## 1. The confirmed root-cause mechanism
@@ -89,14 +91,15 @@ already contradicts its own command file's header and this repo's
 documentation (`CLAUDE.md` lists `/vox:provider`, never bare `/provider`).
 Fix it in the same change as `/model` — see §3.
 
-## 3. Scope: `model`/`provider`/`voice` only, not all nine commands
+## 3. Scope: `model`/`provider`/`voice`/`recap`, not all nine commands
 
-**Recommendation: scope the fix to `model.md`, `provider.md`, `voice.md`.
-Leave `unmute.md`, `mute.md`, `vibe.md`, `music.md`, `recap.md`, `vox.md`
-bare-deployed exactly as they are.**
+**Amended by operator ruling (2026-08-25): scope the fix to `model.md`,
+`provider.md`, `voice.md`, and `recap.md`. Leave `unmute.md`, `mute.md`,
+`vibe.md`, `music.md`, `vox.md` bare-deployed exactly as they are.**
 
 This is not "only fix the two known collisions and hope." It is a
-consistency read of what the codebase already says these commands are:
+consistency read of what the codebase already says these commands are, plus
+one operator-directed exception:
 
 | Command | H1 header | Docs (`CLAUDE.md`) | Intended invocation |
 |---|---|---|---|
@@ -104,38 +107,56 @@ consistency read of what the codebase already says these commands are:
 | `mute.md` | `# /mute command` | `/mute` | bare |
 | `vibe.md` | `# /vibe command` | `/vibe <mood>\|auto\|off` | bare |
 | `music.md` | `# /music command` | `/music on\|stop\|...` | bare |
-| `recap.md` | `# /recap command` | `/recap` | bare |
 | `vox.md` | `# /vox command` | `/vox enable\|disable` | bare |
 | `model.md` | `# /vox:model command` | `/vox:model [<name>]` | **namespaced** |
 | `provider.md` | `# /vox:provider command` | `/vox:provider [<name>]` | **namespaced** |
 | `voice.md` | `# /vox:voice command` | `/vox:voice [<name>]` | **namespaced** |
+| `recap.md` | `# /recap command` (today) | `/recap` (today) | **namespaced** *(operator amendment — no known collision)* |
 
-Six commands are deliberately bare — short, mnemonic, session-scoped verbs a
-user reaches for constantly (`/mute`, `/recap`). `vox.md`'s own body text
-says as much: "The three mid-session switches — model, provider, and voice —
-each live on their own top-level slash command now (`/vox:model`,
-`/vox:provider`, `/vox:voice`)," explicitly contrasting them with `/vox`
-itself. The three switch commands are deliberately namespaced — they are
-lower-frequency, config-mutating, and (per this bead) exactly the class of
-name a host application is most likely to also want (`model` is *already*
-taken; a future Claude Code release could equally introduce a built-in
-`/voice` or `/provider`).
+Five commands are deliberately bare — short, mnemonic, session-scoped verbs a
+user reaches for constantly (`/mute`, `/unmute`, `/vibe`, `/music`, `/vox`).
+`vox.md`'s own body text says as much: "The three mid-session switches —
+model, provider, and voice — each live on their own top-level slash command
+now (`/vox:model`, `/vox:provider`, `/vox:voice`)," explicitly contrasting
+them with `/vox` itself. The three switch commands are deliberately
+namespaced — they are lower-frequency, config-mutating, and (per this bead)
+exactly the class of name a host application is most likely to also want
+(`model` is *already* taken; a future Claude Code release could equally
+introduce a built-in `/voice` or `/provider`).
 
-Forcing all nine into namespaced-only would be a real product regression:
-`/mute`, `/unmute`, `/recap`, `/vibe`, `/music`, and `/vox` are used
+**`/recap` is the one exception, and it is not a collision fix.** No
+Claude Code built-in named `/recap` is known today; nothing in this
+investigation found or expects one. The operator ruled it into the
+namespaced group anyway, as a **preemptive consistency call**: `/recap` is
+the same shape of command as `/model`/`/provider`/`/voice` — a discrete,
+config-adjacent utility verb, not a high-frequency toggle like `/mute` — and
+the operator's judgment is that the whole class should be namespaced now,
+rather than waiting for a future Claude Code release to collide with it the
+way `/model` did. Read this bead's history straight: `/recap` moves into
+`/vox:recap` **because the operator chose it, not because a bug was found.**
+A future reader of this design doc, or of `session-start.sh`'s
+`NAMESPACED_ONLY` list, should not go looking for a `/recap` collision
+report — there isn't one.
+
+Forcing all nine into namespaced-only would still be a real product
+regression: `/mute`, `/unmute`, `/vibe`, `/music`, and `/vox` are used
 constantly and the bare form is the documented, intended UX — collapsing
 `/unmute` to `/vox:unmute` fixes nothing (there is no collision) and breaks
 muscle memory for zero benefit. The correct fix is to make the deployment
-mechanism honor the distinction the command files already declare, not to
-erase the distinction.
+mechanism honor the distinction the command files declare — now including
+the operator's one deliberate reclassification of `/recap` — not to erase
+the distinction everywhere.
 
 **Future-proofing beyond this bead:** if a future Claude Code release adds a
-new built-in that collides with one of the six intentionally-bare commands,
-that is a new bug to fix then (rename or re-scope that one command), not a
-reason to preemptively namespace everything now. The org standard
-(`plugins.md`) treats bare top-level commands as a normal, supported pattern
-— removing them everywhere "just in case" would be over-engineering against
-a hypothetical, at the cost of the working UX today.
+new built-in that collides with one of the five remaining intentionally-bare
+commands, that is a new bug to fix then (rename or re-scope that one
+command), not a reason to preemptively namespace everything now. The org
+standard (`plugins.md`) treats bare top-level commands as a normal,
+supported pattern — removing them everywhere "just in case" would be
+over-engineering against a hypothetical, at the cost of the working UX
+today. `/recap` is the one place the operator chose to make that trade
+early; it is not a precedent this design applies to the other four on its
+own authority.
 
 ## 4. The fix
 
@@ -205,11 +226,11 @@ in as the first thing to test, not a competing design.
 
 ### 4.1 `plugin/hooks/session-start.sh`
 
-**Exclude `model.md`, `provider.md`, `voice.md` from the top-level deploy
-loop**, the same way `*-dev.md` is already excluded:
+**Exclude `model.md`, `provider.md`, `voice.md`, `recap.md` from the
+top-level deploy loop**, the same way `*-dev.md` is already excluded:
 
 ```bash
-NAMESPACED_ONLY=(model.md provider.md voice.md)
+NAMESPACED_ONLY=(model.md provider.md voice.md recap.md)
 for cmd_file in "$PLUGIN_ROOT/commands/"*.md; do
   name="$(basename "$cmd_file")"
   [[ "$name" == *-dev.md ]] && continue
@@ -220,7 +241,7 @@ for cmd_file in "$PLUGIN_ROOT/commands/"*.md; do
 done
 ```
 
-**Retire the three files from any install that already deployed them.** Per
+**Retire the four files from any install that already deployed them.** Per
 DES-060 precedent (`enable.md`/`disable.md` were added to the `RETIRED`
 array so an already-installed plugin drops the stale top-level command on
 its next session start) and per the org's "no migration/compat code" rule —
@@ -229,25 +250,78 @@ same way every other retired command already is:
 
 ```bash
 RETIRED=(say.md speak.md notify.md vox-on.md vox-off.md enable.md disable.md \
-  model.md provider.md voice.md)
+  model.md provider.md voice.md recap.md)
 ```
 
 Without this, every session that already ran the old `session-start.sh`
-once keeps its stale `~/.claude/commands/model.md` forever — the plugin
-update alone does not un-deploy a file it previously deployed. This is the
-step that actually fixes the bug for existing users; the deploy-loop
-exclusion alone only prevents *new* installs from acquiring the collision.
+once keeps its stale `~/.claude/commands/model.md` (and, once this design
+ships, `recap.md`) forever — the plugin update alone does not un-deploy a
+file it previously deployed. This is the step that actually fixes the bug
+for existing users; the deploy-loop exclusion alone only prevents *new*
+installs from acquiring the collision (and, for `recap.md`, only prevents
+new installs from keeping the bare form the operator wants retired).
 
-**`Skill()` grants — open question, resolve empirically (§4.3).**
+**`Skill()` grants — open question, resolve empirically (§4.3). Applies to
+all four names, including `recap`, not just the two that collide.**
 
-### 4.2 Command files: no change required
+### 4.2 Command files: `model.md`/`provider.md`/`voice.md` need no change; `recap.md` does
 
 `model.md`, `provider.md`, `voice.md` already carry the correct
-`/vox:<name>` H1 headers and usage sections. Nothing in the command file
-content needs to change — the defect is entirely in the deployment
+`/vox:<name>` H1 headers and usage sections. Nothing in their content needs
+to change — the defect for those three is entirely in the deployment
 mechanism, not in what the commands claim to be.
 
+`recap.md` is different: today it carries `# /recap command` as its H1 and
+documents `/recap` (bare) in its own "Usage" section, and both
+`punt-labs/vox/CLAUDE.md` and `.punt-labs/vox/CLAUDE.md` list it under
+"Slash commands" as bare `/recap`. Unlike model/provider/voice, whose docs
+already matched the namespaced-only intent and only the deploy mechanism
+was wrong, `recap.md`'s own content actively documents the bare form as
+correct. The implementation mission must, in the same change:
+
+A repo-wide grep for `/recap` (run during this design mission, so this list
+is concrete, not a placeholder for the implementation mission to
+rediscover) turns up every place the bare form is asserted as correct
+usage — as opposed to the many CHANGELOG/DESIGN entries that are historical
+narration of past PRs and must NOT be rewritten (rewriting history in
+`CHANGELOG.md`/`DESIGN.md` misrepresents what shipped at the time):
+
+- `plugin/commands/recap.md:6` — H1: `# /recap command` → `# /vox:recap command`.
+- `plugin/commands/recap.md:12` — Usage section: `` `/recap` `` → `` `/vox:recap` ``.
+- `src/punt_vox/assets/global-guidance.md:133` — the deployed
+  `~/.punt-labs/vox/CLAUDE.md` guide's own "Slash commands" list, currently
+  `` - `/recap` — speak a 2–3 point summary of your last response. `` This is
+  a **source asset that ships to every consuming repo** via the
+  self-registering `@`-import (see `CHANGELOG.md`'s vox-ys4z entry) — it is
+  the single highest-priority line to fix, since every project using vox
+  reads this exact file at session start.
+- `.punt-labs/vox/CLAUDE.md:133` — same line, this repo's own local copy of
+  the deployed guide (dogfooding the asset above).
+- `CLAUDE.md:90` (repo root) — the `plugin/commands/` table row listing
+  `` `/vox`, `/unmute`, `/mute`, `/recap`, `/vibe`, `/music`, `/model`,
+  `/provider`, `/voice` `` → move `/recap` next to `/model`/`/provider`/
+  `/voice` or otherwise mark it namespaced consistently with them.
+- `README.md:30` — "Drive it with `/vox enable`, `/recap`, `/vibe`, `/music`."
+- `README.md:44` — a usage-example code block: `` /recap        # spoken
+  summary of what just happened ``.
+- `README.md:198` — an example invocation: `` /recap ``.
+- `README.md:314` — the commands reference table row:
+  `` | `/recap` | Spoken summary of Claude's last response | ``.
+
+`README.md:21-23` ("Task recap", "Same recap") are unrelated — English
+prose describing audio sample clips, not the slash command — leave those
+alone. `DESIGN.md` (DES-005, the `/recap` ADR; the vox-0qi stale-command
+cleanup entry) and `CHANGELOG.md` (vox-ys4z, vox-ewh, vox-ehf entries, and
+the original `/recap` shipping entry) are historical record of what those
+PRs actually did at the time and are **not** rewritten — this is the same
+"no rewriting history" discipline already implicit in how this repo treats
+its own changelog.
+
 ### 4.3 Open question: does `Skill(model)` need to become `Skill(vox:model)`?
+
+Applies identically to `recap`: whatever grant form resolves for
+`model`/`provider`/`voice` resolves for `recap` too — it is the same
+mechanism on a fourth namespaced command, not a separate sub-question.
 
 Investigation question 1(c) asked whether the `Skill()` grant name itself
 needs to track the namespace. This is **genuinely unresolved from static
@@ -269,9 +343,10 @@ guessed. Two facts pull in different directions:
   is not a confirmed analog.
 
 **Recommendation for the implementation mission:** change the grant to
-`Skill(vox:model)`, `Skill(vox:provider)`, `Skill(vox:voice)` (dropping the
-bare `Skill(model)`/`Skill(provider)`/`Skill(voice)` entries), then verify
-empirically per §5 whether `/vox:model` still triggers a permission prompt.
+`Skill(vox:model)`, `Skill(vox:provider)`, `Skill(vox:voice)`,
+`Skill(vox:recap)` (dropping the bare `Skill(model)`/`Skill(provider)`/
+`Skill(voice)`/`Skill(recap)` entries), then verify empirically per §5
+whether `/vox:model` still triggers a permission prompt.
 If it does, the correct grant name is something else (candidates to try in
 order: the bare form again, `Skill(vox_model)`, or whatever name the
 permission prompt itself displays — Claude Code's prompt names the skill it
@@ -290,9 +365,9 @@ changes to stay meaningful rather than start firing false positives:
    accept a colon: `Skill\([a-z_:-]+\)`.
 2. The matching loop must accept either the bare command name or
    `vox:<command name>` as satisfying a given `plugin/commands/<name>.md` —
-   because `model`/`provider`/`voice` will now be satisfied only by the
-   namespaced form, while the other six commands are still satisfied only
-   by the bare form. A concrete way to encode this without a special case
+   because `model`/`provider`/`voice`/`recap` will now be satisfied only by
+   the namespaced form, while the other five commands are still satisfied
+   only by the bare form. A concrete way to encode this without a special case
    per command: read the same `NAMESPACED_ONLY` list `session-start.sh`
    introduces (§4.1) — or a `scripts/lib` shared list, if one is worth
    extracting — and require the namespaced grant for names on that list,
@@ -330,25 +405,33 @@ per the org verification standard:
    `~/.claude/commands/model.md` and `~/.claude/commands/provider.md`
    exist, and that typing `/model` in Claude Code offers vox's model-switch
    command rather than (or ambiguously alongside) Claude Code's built-in
-   model picker. Expected: bug reproduces.
+   model picker. Expected: bug reproduces. `/recap` has no collision to
+   reproduce — its check starts at step 2.
 2. **After the fix, fresh install.** Simulate a session start with no prior
    `~/.claude/commands/model.md` (a clean `$HOME/.claude/commands`, or a
    throwaway `$HOME`). Run the updated `session-start.sh` (or restart a
    session pointed at the fixed plugin). Confirm `~/.claude/commands/`
-   contains **no** `model.md`, `provider.md`, or `voice.md`. Confirm typing
-   `/model` shows only Claude Code's own built-in — vox does not appear.
-   Confirm `/vox:model` (or `/vox-dev:model-dev` in dev mode) **does**
-   invoke vox's model switch, with no permission prompt if §4.3's fix is
-   correct (or exactly one prompt, granted once, if it is not — either way,
-   confirm which).
+   contains **no** `model.md`, `provider.md`, `voice.md`, or `recap.md`.
+   Confirm typing `/model` shows only Claude Code's own built-in — vox does
+   not appear. Confirm `/vox:model` (or `/vox-dev:model-dev` in dev mode)
+   **does** invoke vox's model switch, with no permission prompt if §4.3's
+   fix is correct (or exactly one prompt, granted once, if it is not —
+   either way, confirm which). Repeat the same "does invoke, no unexpected
+   prompt" check for `/vox:recap` — there is no bare-form regression to
+   check for `/recap` specifically (nothing built-in claims that name), so
+   the assertion here is narrower: `/vox:recap` works, and `/recap` typed
+   bare no longer offers vox's command at all (Claude Code either reports
+   no matching command or falls through to whatever else, if anything,
+   claims that name).
 3. **After the fix, upgrade from a stale install.** Start from a `$HOME`
    that already has the *old* `~/.claude/commands/model.md` /
-   `provider.md` / `voice.md` present (simulating an existing user). Run
-   the updated `session-start.sh`. Confirm the `RETIRED` cleanup removes
-   all three, and the `hookSpecificOutput` message names them as cleaned
-   (mirrors the existing `enable.md`/`disable.md` retirement message).
-4. **Regression check on the six bare commands.** Confirm `/mute`,
-   `/unmute`, `/recap`, `/vibe`, `/music`, and `/vox` still deploy to
+   `provider.md` / `voice.md` / `recap.md` present (simulating an existing
+   user). Run the updated `session-start.sh`. Confirm the `RETIRED` cleanup
+   removes all four, and the `hookSpecificOutput` message names them as
+   cleaned (mirrors the existing `enable.md`/`disable.md` retirement
+   message).
+4. **Regression check on the five bare commands.** Confirm `/mute`,
+   `/unmute`, `/vibe`, `/music`, and `/vox` still deploy to
    `~/.claude/commands/` and still invoke correctly bare, unaffected by the
    `NAMESPACED_ONLY` exclusion.
 5. **`make lint`.** `scripts/check-skill-permissions.sh` passes with the
@@ -364,14 +447,22 @@ manual-but-precise playbook, not a vague "try it and see."
 
 | File | Change |
 |---|---|
-| `plugin/hooks/session-start.sh` | Add `NAMESPACED_ONLY=(model.md provider.md voice.md)` and skip them in the top-level deploy loop (§4.1); add `model.md provider.md voice.md` to `RETIRED` (§4.1); change the three `Skill()` grants per §4.3's empirical result |
+| `plugin/hooks/session-start.sh` | Add `NAMESPACED_ONLY=(model.md provider.md voice.md recap.md)` and skip them in the top-level deploy loop (§4.1); add `model.md provider.md voice.md recap.md` to `RETIRED` (§4.1); change the four `Skill()` grants per §4.3's empirical result |
+| `plugin/commands/recap.md` | H1 `# /recap command` → `# /vox:recap command`; Usage section `/recap` → `/vox:recap` (§4.2) |
+| `src/punt_vox/assets/global-guidance.md` | Line 133 slash-commands list: `/recap` → `/vox:recap` (§4.2) — highest-priority doc fix, ships to every consuming repo |
+| `.punt-labs/vox/CLAUDE.md` | Line 133, same fix, this repo's own deployed-guide copy (§4.2) |
+| `CLAUDE.md` (repo root) | Line 90, `plugin/commands/` table row — reflect `/recap` as namespaced alongside `/model`/`/provider`/`/voice` (§4.2) |
+| `README.md` | Lines 30, 44, 198, 314 — every usage/example reference to bare `/recap` → `/vox:recap` (§4.2); leave lines 21-23 alone, unrelated prose |
 | `scripts/check-skill-permissions.sh` | Only if §4.3 lands on namespaced grants — widen the regex and matching logic per §4.4 |
-| `CHANGELOG.md` | `## [Unreleased]` entry under `Fixed`, in the PR branch before merge, per this repo's documentation discipline |
-| `docs/testing/manual-tests.md` | Optional: add the `/model` / `/vox:model` non-collision check to the canonical manual flight, so this class of regression is covered on every future release, not just this bead — recommended but not required for this bead to close |
+| `CHANGELOG.md` | `## [Unreleased]` entry under `Fixed`, in the PR branch before merge, per this repo's documentation discipline — a new entry, not an edit to any historical entry |
+| `docs/testing/manual-tests.md` | Optional: add the `/model` / `/vox:model` (and `/recap` / `/vox:recap`) non-collision check to the canonical manual flight, so this class of regression is covered on every future release, not just this bead — recommended but not required for this bead to close |
 
 No changes to `model.md`, `provider.md`, `voice.md`, `unmute.md`, `mute.md`,
-`vibe.md`, `music.md`, `recap.md`, or `vox.md` — their content and headers
-are already correct.
+`vibe.md`, `music.md`, or `vox.md` — their content and headers are already
+correct. `recap.md` is the one command file that DOES change content, per
+§4.2 — it moves out of the "no changes" set with this amendment.
+`DESIGN.md` and `CHANGELOG.md`'s *existing* entries are untouched (§4.2);
+only a new `## [Unreleased]` `CHANGELOG.md` entry is added.
 
 ## 7. Constraints checked
 
@@ -379,7 +470,7 @@ are already correct.
   compat bridge — it is the existing forward-integration cleanup pattern
   (DES-060 precedent) that deletes a superseded artifact outright. Nothing
   detects an "old" vs. "new" format and branches; it unconditionally
-  removes three specific filenames the same way the seven already-retired
+  removes four specific filenames the same way the seven already-retired
   names are removed.
 - **`punt-kit/standards/cli.md`** has no namespacing guidance beyond the
   PyPI/CLI naming table (unrelated to slash-command namespacing); the
