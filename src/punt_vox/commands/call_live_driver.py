@@ -304,11 +304,10 @@ def _require_healthy(stt_provider: STTProvider) -> None:
     """Raise ``typer.BadParameter`` if *stt_provider* fails its own health check.
 
     Mirrors :func:`~.call_spec.resolve_call_spec`'s and
-    :meth:`~.claude_session_attach.ClaudeSessionAttach._require_bare_auth`'s
-    fail-fast-before-the-call-starts pattern for the third and last
-    credential a call needs -- module-level rather than a method because it
-    takes an arbitrary :class:`STTProvider`, not :class:`LiveCallDriver`'s
-    own state.
+    :meth:`~.session_attach.BareAuthMissingError.check`'s
+    fail-fast-before-the-call-starts pattern for the credentials a call
+    needs -- module-level rather than a method because it takes an
+    arbitrary :class:`STTProvider`, not :class:`LiveCallDriver`'s own state.
     """
     failures = [
         check.message for check in stt_provider.check_health() if not check.passed

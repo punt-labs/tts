@@ -70,9 +70,9 @@ class BareAuthMissingError(SessionAttachError):
 
         The one precondition every ``--bare`` ``claude`` invocation shares,
         called from two places: as the actual pre-spawn guard inside
-        :class:`~.claude_session_attach.ClaudeSessionAttach`, and as a
-        call's startup pre-flight check in
-        :meth:`~.call_live_driver.LiveCallDriver.create` -- so a missing key
+        :class:`~.claude_session_attach.ClaudeSessionAttach`, and as
+        ``vox call``'s own startup pre-flight check in
+        :meth:`~punt_vox.commands.call.CallCli._run` -- so a missing key
         fails before the call even opens, not only on the first turn's
         subprocess spawn.
         """
