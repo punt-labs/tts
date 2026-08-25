@@ -286,7 +286,7 @@ else
   # pre-approve a command that no longer deploys and never matches the actual
   # namespaced invocation.
   PLUGIN_RULES=$(jq -n --arg glob "$TOOL_GLOB" \
-    '[$glob, "Skill(unmute)", "Skill(mute)", "Skill(vibe)", "Skill(vox)", "Skill(music)", "Skill(vox:model)", "Skill(vox:provider)", "Skill(vox:voice)", "Skill(vox:recap)"]' 2>/dev/null) || {
+    '[$glob, "Skill(unmute)", "Skill(mute)", "Skill(vibe)", "Skill(vox)", "Skill(music)", "Skill(call)", "Skill(vox:model)", "Skill(vox:provider)", "Skill(vox:voice)", "Skill(vox:recap)"]' 2>/dev/null) || {
     ACTIONS+=("jq failed to build permission rules — skipping permission setup")
     PLUGIN_RULES=""
   }

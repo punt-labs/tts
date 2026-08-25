@@ -25,6 +25,7 @@ from punt_vox.cli_rec import build_rec_app
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.commands import CommandResult, Ctx
+from punt_vox.commands.call import build_call_app
 from punt_vox.config import ConfigStore
 from punt_vox.desktop_install import DesktopInstaller
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
@@ -115,10 +116,17 @@ def _fill_from_state(spec: SynthesisSpec) -> SynthesisSpec:
     exit 1 -- and an incompatible provider/model pair is the F7 refusal,
     same treatment.
     """
-    config = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
     try:
-        return SessionSpec(config).fill(spec)
-    except (ProviderNotConfiguredError, ModelNotAvailableError) as exc:
+        return SessionSpec.for_repo().fill(spec)
+    except ProviderNotConfiguredError as exc:
+        # SessionSpec._resolve_provider raises the MCP-flavored for_mcp()
+        # message by default -- the wrong verb for this CLI path (mirrors
+        # commands/model.py, commands/voice.py, and commands/call_spec.py's
+        # identical rebuild).
+        message = str(ProviderNotConfiguredError.for_cli())
+        _formatter.error(message, f"Error: {message}")
+        raise typer.Exit(code=1) from exc
+    except ModelNotAvailableError as exc:
         message = str(exc)
         _formatter.error(message, f"Error: {message}")
         raise typer.Exit(code=1) from exc
@@ -963,6 +971,13 @@ app.add_typer(MusicCli.build_app(_formatter, _flags), name="music")
 # ---------------------------------------------------------------------------
 
 app.add_typer(build_rec_app(_formatter, _flags), name="rec")
+
+
+# ---------------------------------------------------------------------------
+# call subcommand group (Conversation Mode; implementation in commands/call.py)
+# ---------------------------------------------------------------------------
+
+app.add_typer(build_call_app(), name="call")
 
 
 # ---------------------------------------------------------------------------

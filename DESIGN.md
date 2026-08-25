@@ -2920,3 +2920,472 @@ See `docs/conversation-mode-session-attach-adr.md` for the full
 investigation, the CLI evidence, and the explicit operator escalation
 (three decisions: confirm the mechanism, confirm the FR-4 reading it relies
 on, confirm the concurrent-resume spike as Slice 1b's first task).
+
+---
+
+## DES-065: DES-064's Per-Turn Subprocess Spawn — Confirmed Unworkable, Superseded
+
+**Status:** rejected, with real measurement. Supersedes DES-064's
+recommendation for the per-turn cadence specifically; does not reverse the
+underlying mechanism (a headless `claude -p`-family subprocess speaking
+stream-json is still the right shape — see DES-066). vox-gs9u.2 (Slice 1b)
+implemented DES-064 as designed and shipped it; this entry records what
+happened when it was driven by a real human, repeatedly, on 2026-08-23.
+
+### What was implemented
+
+DES-064's design exactly: `SessionDiscovery` finds a candidate session via
+`claude agents --json --cwd <path>`; `ClaudeSessionAttach._spawn` runs
+`claude -p --resume <id> --input-format stream-json --output-format
+stream-json --include-partial-messages --verbose` fresh, per human turn,
+writes one JSON user-message to its stdin, and reads streamed
+assistant-message deltas back. Real ElevenLabs STT and TTS, real
+`sounddevice`/PortAudio microphone capture, a real turn-detection state
+machine, cross-process lock files for `vox call start|stop|transfer` — all
+built and working. Five review rounds converged clean. This is not a
+report of broken code; the code does exactly what DES-064 asked for.
+
+### What broke, with numbers
+
+Live operator testing plus a 20-run repeatable benchmark
+(`.tmp/bench.sh`, not committed — script itself is throwaway, the numbers
+below are not) found:
+
+- **Per-turn wall clock: 13–25s median**, even against a session with zero
+  accumulated context. A fresh-session run's own `result` frame reported
+  `duration_api_ms: 2243` (2.24s, the real model call) against a 13.2s
+  external wall clock — the remaining ~10s is process spawn plus
+  bootstrap, external to the agent's own accounting entirely.
+- **The dominant cost is Claude Code's `SessionStart` hook cascade**,
+  re-paid on *every single turn* because a fresh subprocess is spawned per
+  turn: 9 hooks on a bare fresh session, 28+ on a session with real
+  history (`--resume` re-fires `SessionStart:resume` for every registered
+  plugin — this repo's own dev environment alone registers ~15).
+  `--bare` (Claude Code's own "skip hooks, LSP, plugin sync,
+  auto-memory..." minimal mode) eliminates the cascade entirely — verified
+  empirically, zero hook frames — but requires `ANTHROPIC_API_KEY`
+  explicitly; it does not support OAuth at all
+  (`claude --help`: "Anthropic auth is strictly ANTHROPIC_API_KEY or
+  apiKeyHelper via --settings"). Wiring it in is therefore not a free
+  win: it inverts the auth model DES-?? (the `078a841` fix, same session)
+  had just corrected the other direction, and ships as a real breaking
+  change — `vox call` stops working on an OAuth-only setup.
+- **`--resume` is itself a recurring source of fragility**, independent of
+  the hook cost: a stale `ANTHROPIC_API_KEY` in the parent shell silently
+  shadows the target session's real login and fails auth (fixed,
+  `078a841`); resuming a session that is concurrently busy (the
+  interactive terminal actively mid-turn — DES-064's own named "open
+  risk, not yet resolved") hangs until the reply timeout; a `--bare`
+  invocation against a genuinely idle session, with auth and hooks both
+  confirmed correct, still hit the full 120s timeout live with the
+  spawned process visibly alive and in I/O wait (`ps` showed 1.11s of CPU
+  time consumed across the whole wait) rather than crashed — consistent
+  with either real API-side slowness or a `--resume`-specific cold-load
+  cost on the target session's history that `--bare` does not address,
+  neither root-caused.
+- Net operator assessment, verbatim: **"It's never going to work."**
+  Spawning a fresh general-purpose CLI, with its full plugin/hook
+  ecosystem, once per conversational turn, is confirmed the wrong shape
+  for a live voice exchange — not a tuning problem.
+
+### What is retained
+
+`SessionAttach` (DES-064's own abstraction) is a `Protocol`; `CallSession`
+and everything above it depend on the interface, not on
+`ClaudeSessionAttach`'s implementation. Real mic capture, real STT, the
+turn-detection state machine, the call lock/control mechanism, the call's
+own lifecycle state machine, the Slice 2a playback-sink ordering work, and
+the turn-timer diagnostics infrastructure are all implementation-agnostic
+to what sits behind `SessionAttach` and are unaffected by this rejection —
+roughly 88% of Slice 1b's ~9,200-line diff by line count. The ~12% being
+discarded is exactly `claude_session_attach.py`, `claude_subprocess_env.py`,
+`session_discovery.py`, `session_attach.py`, and their tests — the part
+DES-064 itself flagged as swappable by naming it behind a `Protocol`.
+
+### What is not retained
+
+Do not build further on the per-turn-spawn cadence. No more timeout
+tuning, no more `--bare`/OAuth auth-model chasing, no more `--resume`
+concurrent-access workarounds. The mechanism needs to change shape, not
+receive another patch — see DES-066.
+
+---
+
+## DES-066: Persistent Call Agent via `pi --mode rpc` — Mechanism Spiked, Confirmed, and Ratified
+
+**Status:** RATIFIED 2026-08-24 (`vox-m2ss`, operator: "yes, I sign off on
+context snapshot not literal session resume"). Core mechanism confirmed
+live (2026-08-23 spike, below); read-only enforcement confirmed live
+(`--tools read,grep,find,ls`, below); context-handoff and summary-handoff
+design completed in DES-067. The one remaining open item is the
+process-supervision layer (`tmux`/`keep` vs. a direct `subprocess.Popen`)
+— recommended, not blocking, per the PRD's own framing. `vox-hobl.2` is
+the implementation mission this design now dispatches against.
+
+### Context
+
+DES-065's numbers all trace to one shape: a subprocess spawned fresh, per
+turn, that must cold-boot Claude Code's full plugin/hook ecosystem and
+(via `--resume`) load a specific existing session's history, every single
+exchange. The fix is not a faster spawn — it is not spawning per turn at
+all.
+
+### Proposed decision
+
+Spawn one agent process per *call*, not per turn, and keep it alive for
+the call's full duration via `tmux`, using the `keep` extension already
+built and shipped in `../pi-tools` (`keep_run` starts a long-running
+interactive process in a tmux session; `keep_send` writes one line to it;
+`keep_capture`/`keep_watch` read its current output, the latter with a
+wake policy; `keep_stop` tears it down) — the same mechanism `pi-tools`
+already uses to chain one `pi` instance to another. Concretely, per call:
+
+1. `keep_run` starts one `pi --mode rpc` (or `claude`, TBD by the spike
+   below) process in a dedicated tmux session at call start.
+2. Each human turn is `keep_send` (or the RPC-mode stdin protocol
+   directly, if driven from Python rather than through `pi-tools`' own
+   tool surface) — no new process, no re-paid bootstrap.
+3. The call agent does **not** resume the primary interactive session.
+   It starts fresh and receives a compact context snapshot (current
+   task, relevant files, recent conversation gist) as its opening
+   message — satisfying FR-4's actual intent ("carrying task context")
+   without inheriting `--resume`'s cold-load cost, concurrent-access
+   hazard, or auth-model coupling to the primary session's own login.
+4. The call agent operates **read-only against the codebase/project**
+   for the call's duration. It may update beads or other out-of-band
+   coordination state live (the restriction is repo/codebase file
+   writes specifically, not every side effect).
+5. At call end, the call agent's conversation is summarized and handed to
+   the primary session; the primary session is the only one that ever
+   applies repo/codebase writes, and only after the call, from that
+   summary.
+
+### Why `pi` over `claude` for the agent inside the tmux session
+
+Measured 2026-08-23: `pi --list-models` (loads config, model catalog,
+provider connections — no API call) completes in ~1.35s, versus Claude
+Code's ~10–20s of hook/plugin bootstrap for the equivalent no-op. `pi`'s
+own documented design principle is a minimal core that deliberately
+excludes MCP, sub-agents, permission popups, and background bash, pushing
+them to opt-in extensions — the inverse of Claude Code's always-on plugin
+ecosystem, which is precisely what DES-065 found costly. `pi --mode rpc
+--no-session` exposes exactly the `prompt` → `message_update` →
+`agent_end` event protocol this integration needs, natively, rather than
+repurposing a general interactive CLI's `-p` flag for it.
+
+### Spike result — 2026-08-23, mechanism confirmed
+
+Ran the exact two-turn liveness spike this entry's own "Next step" called
+for: a bare Python harness (`.tmp/pi_rpc_spike.py`, scratch, not committed)
+spawns `pi --mode rpc --no-session` once, writes one JSON `prompt` command
+per turn to its stdin, reads JSON-line events back from stdout.
+
+- **First attempt reproduced the original failure exactly**: prompt
+  accepted (`{"type":"response","command":"prompt","success":true}`),
+  `agent_start`/`turn_start`/the user `message_start`/`message_end` all
+  fired, the assistant's own `message_start` arrived with
+  `"stopReason":"pending"` — then nothing. No `message_update`, no
+  `message_end`, no `agent_end`, for 20s+. Interleaved in the stream were
+  repeated `extension_ui_request` `setStatus` events from `biff-bridge`
+  (`"biff: connected"`), pi-tools' Biff-polling extension, which loads by
+  default alongside `keep`.
+- **Root cause, isolated by bisection**: adding `--no-extensions` (no
+  other change) made the assistant stream complete normally — thinking
+  and text deltas arrived within roughly a second of wall clock, both
+  turns replied correctly (`PONG-ONE`, `PONG-TWO`), and the process exited
+  cleanly (code 0) after stdin closed. The hang is `biff-bridge`
+  interfering with the RPC stdout stream when both are active
+  simultaneously in this environment, not a defect in `pi`'s core RPC
+  mode. Not root-caused further than that (i.e., *why* the extension
+  interferes) — unnecessary to, since the call agent has no legitimate
+  reason to load `biff-bridge` in the first place: a live phone call has
+  nothing to do with team messaging.
+- **The persistence claim is now demonstrated, not assumed**: turn two's
+  usage block shows `"cacheRead":12733` tokens against turn one's prompt
+  cache, versus turn one's own `"cacheRead":0` — direct evidence the
+  second turn reused the still-warm first turn's context inside the same
+  live process, rather than re-establishing it from nothing. This is
+  exactly the cost DES-065 identified as unavoidable in the per-turn-spawn
+  design (every turn re-pays full bootstrap) and confirms the persistent-
+  process shape eliminates it.
+
+Practical takeaway for the real implementation: launch the call agent with
+`--no-extensions` (or a narrower per-extension disable if `pi-tools` grows
+one, once `keep`'s own bridge role is no longer needed inside the call
+agent's own process — the call agent doesn't need `keep` on itself, only
+the *outer* driver needs `keep` to hold the call agent's tmux pane) and
+drive it with the documented RPC command/event JSONL protocol
+(`prompt`/`steer`/`follow_up`/`abort` in; `message_update`/`agent_end` out)
+directly, rather than through `pi-tools`' own tool surface, since the
+driver here is vox's own Python daemon, not another `pi` agent.
+
+### Remaining known unknowns
+
+- **Read-only enforcement mechanism is undecided.** A permission-mode
+  flag, a sandboxed/read-only filesystem view, and tool-level restriction
+  at the harness are all candidates; none is chosen. A prompt instruction
+  alone is not a mechanism.
+- **The summarize-and-handoff mechanism is undecided.** Whether the
+  primary session picks up the summary via a file its next
+  `UserPromptSubmit` hook reads, an injected context block, or something
+  else, is not designed.
+- **Whether this design still satisfies FR-4** as originally read
+  (resuming the *literal* session) needs an explicit operator re-read,
+  since the call agent is now deliberately disconnected from the primary
+  session's live state by design, not by accident.
+- **tmux/`keep_run` supervision itself is not yet spiked** — this spike
+  drove the RPC protocol directly over `subprocess.Popen` pipes to isolate
+  the protocol question from the process-supervision question. Holding
+  the same process inside a `keep_run` tmux pane and reaching it via
+  `keep_send`/`keep_capture` from vox's own code (rather than another
+  `pi` agent's own tool calls) is a distinct integration surface — likely
+  thinner than the protocol work just proven, since `keep`'s job is just
+  keeping the pane alive and returning its output, but not yet run.
+
+### Next step
+
+Design and Z-model the call-agent lifecycle now that the core mechanism is
+proven live: process spawn/teardown per call, the context-snapshot
+handoff at start, the read-only enforcement mechanism, and the post-call
+summary handoff to the primary session — per this project's own rule that
+a 3+-state stateful subsystem gets a Z spec before implementation
+dispatches. Decide there whether `keep_run`/`tmux` or a direct
+`subprocess.Popen` (as this spike used) is the right supervision layer for
+vox's own daemon to hold the call agent's process across a call — `keep`
+was written for an interactive `pi` session managing panes a human or
+another agent inspects, not necessarily for a headless daemon; a direct
+`subprocess.Popen` held by `voxd` itself, with `--no-extensions`, may be
+the simpler and more directly analogous fit to the mic/STT/turn-detection
+layers `CallSession` already owns, without a `tmux`/`pi-tools` runtime
+dependency added to vox's own `pyproject.toml`. Decide explicitly rather
+than defaulting to the `pi-tools` mechanism because it existed first.
+
+### Two more open unknowns closed — 2026-08-23, same-session follow-up spikes
+
+The operator's own framing narrowed the read-only requirement before this
+was spiked further: the call agent does not need to avoid colliding with
+the primary interactive session's own state (they are already
+disconnected by this design, per the "Proposed decision" above) — the
+only real risk is the call agent writing to *repo files* while a human
+might be editing the same tree through the primary session. That is a
+much smaller problem than a full sandbox.
+
+- **Read-only enforcement, resolved**: `pi` has a native CLI tool
+  allowlist, confirmed via context7 (`/websites/pi_dev`), not guessed --
+  `--tools read,grep,find,ls` (the CLI form of the SDK's
+  `tools: [...]` config). Verified live: prompted the agent to write a
+  probe file with only `--tools read,grep,find,ls` set; it never invoked
+  a write tool at all (no `tool_execution_start` for one), and the file
+  never appeared on disk. No sandboxed filesystem, no permission-mode
+  plumbing — one flag, verified working.
+- **Real tool use at real latency, confirmed**: re-ran the two-turn
+  liveness spike with actual file-read questions against this repo
+  (`--no-extensions`, no other change) instead of canned "reply with
+  exactly X" prompts. Turn one (cold, includes a real file-read tool
+  call) reached first text at t+6.8s and completed at t+7.0s; turn two
+  (warm) completed 4.3s later. This is the persistence win holding under
+  real work, not just an echo test -- still an order of magnitude under
+  DES-065's 13-25s per-turn-spawn median, which did zero tool use for
+  that number.
+
+Both were run before any further design/implementation investment, per
+the standing instruction to spike first rather than build a day's worth
+of code on an unverified mechanism (the same failure mode DES-065 itself
+was the postmortem for).
+
+### Security review, 2026-08-23: two gaps the `--tools` allowlist alone does not close
+
+A read-only *tool* allowlist blocks writes; it does not address
+disclosure, and this design's own threat model (per the operator: not
+adversarial isolation, but avoiding accidental collision plus not handing
+out credentials the call agent has no legitimate use for) has one
+disclosure vector and one credential-hygiene gap. The first is now
+spike-confirmed, not just reasoned:
+
+- **Reading is a real exfiltration path here, specifically because the
+  agent's output is spoken audio, not text on a screen — verified live,
+  2026-08-24.** Dropped a fake secret (`FAKE_API_KEY=sk-spike-...`) into
+  `.tmp/fake_secret.env` and asked the same `--tools read,grep,find,ls`
+  agent to find and read it. It did, and its reply text was the exact key
+  value verbatim (`The exact contents of .tmp/fake_secret.env are: ...
+  FAKE_API_KEY=sk-spike-not-a-real-secret-12345`) — in production this
+  text is what gets synthesized to speech and played in the room, no
+  restraint applied on its own. `read`/`grep`/`find`/`ls` alone are
+  sufficient to read `.env`, a credentials file, or any other secret
+  sitting in the repo and narrate its contents aloud — worse than the
+  equivalent in a normal Claude Code session, because a spoken secret is
+  audible to anyone in the room, not just visible on a screen the human
+  controls. **Action for the implementation mission**: either an
+  explicit deny-list of sensitive paths (`.env*`, anything matching this
+  repo's own `.gitignore` secret patterns) passed to the call agent's
+  system prompt as a hard instruction, or accept the residual risk
+  explicitly and document why (e.g., if the call is scoped to a
+  repo/session the user already trusts with spoken output). Silence on
+  this in DES-066 was itself the gap — not a decision either way.
+- **`subprocess.Popen` inherits the parent environment by default, and
+  `voxd` already holds provider API keys in its own env.** This project
+  hit exactly this class of bug once already this session:
+  `ANTHROPIC_API_KEY` shadowing OAuth login in the now-superseded
+  per-turn spawn (DES-065), fixed by `ClaudeSubprocessEnv` stripping it
+  before every `claude` subprocess launch
+  (`src/punt_vox/voxd/conversation_mode/claude_subprocess_env.py`). The
+  call-agent spawn needs the same discipline applied to whatever
+  provider credentials `voxd` itself holds (ElevenLabs, OpenAI, AWS) —
+  the call agent has no legitimate use for them and should not receive
+  them by default just because `subprocess.Popen` passes the full parent
+  environment unless told otherwise. Not yet designed; add to the
+  implementation mission's contract alongside the `--tools` allowlist,
+  not as a follow-on fix after the fact.
+
+### Rejected: MCP tool access inside the call agent — 2026-08-24
+
+Explored giving the call agent live tool access to quarry (semantic
+search over source + conversation history) and context7 (docs) via pi's
+third-party `pi-mcp-adapter` extension, so it could look things up
+mid-call rather than being limited to `read`/`grep`/`find`/`ls` on the
+repo alone. Spiked: `pi install npm:pi-mcp-adapter`, loaded explicitly
+via `-e <path>` alongside `--no-extensions` (to avoid the `biff-bridge`
+extension DES-066 already found interferes with the RPC stream). The
+extension loaded without reintroducing the `biff-bridge` hang, but the
+`--tools` allowlist turned out to filter extension-registered tools too,
+not just built-ins — with `--tools read,grep,find,ls` set, the
+mcp-adapter's own tool was invisible to the model regardless of whether
+the extension itself was active.
+
+**Rejected outright by the operator before further debugging**: "I do
+not wish or need to use mcp with pi... do not bloat pi." The extension
+was uninstalled (`pi remove npm:pi-mcp-adapter`) and no further work
+went into fixing the allowlist interaction. Do not re-attempt an MCP
+adapter inside the spawned `pi` process for this feature — it directly
+works against the reason `pi` was chosen over `claude` in the first
+place (a minimal, extension-free process is what makes the persistence
+and latency wins in this document real).
+
+**What replaces it**: quarry and context7 access happen in the *primary*
+Claude Code session, before the call agent is even spawned, as part of
+constructing the context snapshot — `quarry --json find "<query>"` is a
+real, working CLI flag (verified live), so the primary session runs it
+against a query derived from the call's topic and folds relevant hits
+directly into the snapshot text handed to the call agent as its opening
+message. The call agent's own tool surface is unaffected: still exactly
+`--tools read,grep,find,ls`, `--no-extensions`. See `vox-hobl.1` for the
+full context-snapshot design.
+
+---
+
+## DES-067: Context-Snapshot Construction and Post-Call Summary Handoff
+
+**Status:** decided, per operator direction (2026-08-24). Resolves
+`vox-hobl.1`, the last design work blocking the replacement `SessionAttach`
+implementation (`vox-hobl.2`) besides FR-4's own ratification (`vox-m2ss`).
+
+### Context
+
+DES-066 named two pieces explicitly undesigned: what goes into the call
+agent's opening message, and how its conversation reaches the primary
+session after the call ends. Both are resolved here.
+
+### Decision 1: the primary session constructs the context snapshot
+
+Entry point is `/vox:call start <topic>`. The **primary session** — the
+one the human is already working in, and the one that runs this command
+— authors the call agent's opening context snapshot itself, from
+`<topic>` plus whatever it already knows about the current task and
+recent conversation. It is not an automated extraction pass run by some
+third component, and it is not the call agent introspecting anything
+about the primary session on its own (it cannot — DES-066 already
+established the two processes are deliberately disconnected).
+
+This resolves the "sourced from where" question DES-066 left open by the
+simplest available answer: the primary session already holds the
+context; handing it off is the same act as any handoff between two
+collaborators, not a retrieval problem.
+
+**Quarry and context7, folded in upstream, not granted as live tools.**
+DES-066's "Rejected: MCP tool access" section (above) has the full spike
+trail — summarized: the primary session runs `quarry --json find
+"<query>"` (a real, verified-working CLI flag) against a query derived
+from `<topic>`, and folds relevant hits directly into the snapshot text
+before the call agent is spawned. The same pattern applies to context7
+if a topic clearly needs external docs. The call agent's own tool
+surface is unaffected — still exactly `--tools read,grep,find,ls`,
+`--no-extensions` per DES-066 — because all of the extra context
+gathering happens in the primary session, in Python, before `Spawn`
+(the call-agent process lifecycle's own first operation,
+`docs/conversation-mode-call-agent.tex` §Operations) ever runs.
+
+### Decision 2: the summary is a structured document, not free prose
+
+Modeled directly on `../prfaq/`'s meeting-summary format (see
+`../prfaq/meetings/meeting-summary-*.md` for the reference shape used by
+`/prfaq:meeting`) — a structured document with fixed sections, not a
+paragraph of prose a human has to parse:
+
+- **Decisions Made** — anything the call actually settled.
+- **Action Items** — what the primary session should do next. This
+  section *is* the handoff DES-066 left undesigned: it is the mechanism
+  by which the call agent's read-only findings become the primary
+  session's write actions, satisfying DES-066's own requirement that
+  only the primary session ever applies repo/codebase writes, and only
+  after the call.
+- **Context Gathered** — files the call agent read, quarry hits and
+  docs consulted (both the primary session's pre-call lookups and
+  anything the call agent itself read live via its own `read`/`grep`/
+  `find`/`ls` tools).
+- **Beads Touched** — any bead the call agent created or updated live
+  during the call, per DES-066's standing allowance for out-of-band
+  coordination state (the restriction is repo/codebase file writes
+  specifically, not every side effect).
+- **Notes / Open Questions** — anything unresolved, for the primary
+  session or the human to pick up.
+
+### Decision 3: delivery is a direct file read, not a hook
+
+The call agent authors the summary itself, as its own final turn before
+`Teardown`/`AbortTurn` (`docs/conversation-mode-call-agent.tex`), written
+to `user_state_dir() / "calls" / "<call-id>-summary.md"` — a new
+`calls_dir()` helper alongside the existing `recordings_dir()` in
+`src/punt_vox/paths.py`, following that module's established one-helper-
+per-purpose convention rather than overloading `run_dir()` (which is for
+ephemeral lock/pid state, not a durable record a human or the primary
+session may want to revisit later, the same distinction that already
+separates `recordings_dir()` from `run_dir()`).
+
+Because the call was started **from** the primary session and that
+session is still present when the call ends (`/vox:call start` is not a
+detached background invocation), the simplest delivery mechanism is that
+the primary session reads the summary file directly once the call
+signals it has ended — no `UserPromptSubmit` hook injection, no polling.
+The candidate list DES-066 originally left open (a hook the primary
+session's next prompt triggers, an injected context block) assumed a
+scenario where the primary session might not still be attached; that
+scenario does not arise given `/vox:call start`'s own invocation shape,
+so the simpler mechanism is correct, not merely convenient.
+
+The primary session may append its own notes on read (e.g., recording
+which Action Items it actually acted on) — the file is not sealed or
+append-only; it is a normal repo-external artifact under
+`user_state_dir()`, not a git-tracked one.
+
+### Rejected Alternatives
+
+- **The primary session synthesizes the summary from the raw call
+  transcript**, rather than the call agent authoring it directly.
+  Rejected: the call agent is closest to what happened and already has
+  to produce a final reply regardless; a second synthesis pass by a
+  different process would be strictly more machinery for the same
+  result, and risks losing detail across the handoff it exists to avoid.
+- **MCP tool access inside the call agent** for quarry/context7 — see
+  the dedicated section above (DES-066). Rejected by the operator
+  directly: "I do not wish or need to use mcp with pi... do not bloat
+  pi."
+- **A `UserPromptSubmit` hook picks up the summary** — rejected per
+  Decision 3 above: unnecessary machinery for a synchronous
+  primary-session-present scenario.
+
+### Still Open
+
+The `calls_dir()` retention policy (does every call leave a summary
+file forever, or is there a cleanup/rotation policy analogous to
+`recordings_dir()`'s) is not decided here — a small implementation
+detail for `vox-hobl.2`'s mission, not an architectural fork.

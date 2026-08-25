@@ -70,7 +70,16 @@ build: ## Build wheel and sdist
 	uvx twine check dist/*
 
 install: build ## Build and install locally
-	uv tool install --force dist/*.whl
+	# The [call] extra (sounddevice, PortAudio) must ship in every standard
+	# install -- a bare `uv tool install dist/*.whl` silently produces a
+	# `vox` binary that crashes with ModuleNotFoundError the moment `vox
+	# call start` runs. `dist/*.whl[call]` as one unquoted token does NOT
+	# work: the shell's glob engine treats the trailing `[call]` as part of
+	# the pathname pattern (a bracket expression), which matches no real
+	# file and the whole thing fails to expand. The glob is expanded first,
+	# in isolation, via command substitution; the extra is appended to the
+	# already-expanded literal path.
+	uv tool install --force "$$(echo dist/*.whl)[call]"
 
 clean: ## Remove build artifacts
 	rm -rf dist/ .tmp/

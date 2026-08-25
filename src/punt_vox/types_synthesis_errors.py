@@ -32,7 +32,30 @@ class ProviderNotConfiguredError(ValueError):
     context, so the daemon cannot supply one. Every synthesis surface refuses
     on this before building a wire message, replacing the daemon-side
     substitution that produced the reported wrong-provider log line.
+
+    The error owns its own actionable message (PY-CC-5), split by which
+    verb the caller can actually run -- a CLI process cannot run an MCP
+    tool and vice versa, so one shared sentence would mislead half its
+    readers.
     """
+
+    @classmethod
+    def for_cli(cls) -> Self:
+        """Build the error naming ``vox provider <name>`` as the fix."""
+        msg = (
+            "no TTS provider is configured for this repo; "
+            "set one with vox provider <name>"
+        )
+        return cls(msg)
+
+    @classmethod
+    def for_mcp(cls) -> Self:
+        """Build the error naming ``mic:provider <name>`` as the fix."""
+        msg = (
+            "no TTS provider is configured for this repo; "
+            "set one with mic:provider <name>"
+        )
+        return cls(msg)
 
 
 class ModelNotAvailableError(ValueError):

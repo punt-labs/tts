@@ -1,14 +1,18 @@
-"""Git queries the suppression ratchet needs: base resolution and blob reads.
+"""Git queries the suppression ratchet needs: base resolution and tree reads.
 
-Git supplies the *base-commit* suppression baseline
-(``git show <base>:.suppression-baseline.json``) so a PR cannot launder a rising
-suppression count by hand-editing the in-tree baseline in the same change.
+Git materializes the *base-commit* source tree (``git archive <base> --
+<paths>``, extracted with the stdlib ``tarfile`` module) so the same
+``Scanner`` that counts the current tree's suppressions also counts the base
+commit's -- there is no separate, independently-maintained baseline blob to
+drift out of sync with the code it is supposed to describe.
 """
 
 from __future__ import annotations
 
-import json
+import io
 import subprocess
+import tarfile
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Self
 
@@ -27,8 +31,6 @@ class GitRepo:
     """Answer the ratchet's git questions, or degrade to ``None`` outside git."""
 
     _root: Path | None
-
-    BASELINE_FILE: str = ".suppression-baseline.json"
 
     def __new__(cls, start: Path | None = None) -> Self:
         self = super().__new__(cls)
@@ -56,7 +58,11 @@ class GitRepo:
             result = subprocess.run(
                 args, capture_output=True, text=True, timeout=_TIMEOUT, cwd=cwd
             )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+        # UnicodeDecodeError: `text=True` decodes as UTF-8; non-UTF8 bytes on
+        # stdout/stderr (a binary path, an unusual locale) must degrade the
+        # same as a failed spawn, not crash the caller with an uncaught
+        # exception.
+        except (FileNotFoundError, subprocess.TimeoutExpired, UnicodeDecodeError):
             return None
         if result.returncode != 0:
             return None
@@ -66,6 +72,11 @@ class GitRepo:
         if self._root is None:
             return None  # not in a repo: degrade, never run against the ambient CWD
         return self._run(["git", *args], cwd=self._root)
+
+    def short_head(self) -> str | None:
+        """Return the abbreviated HEAD commit hash."""
+        out = self._git(["rev-parse", "--short", "HEAD"])
+        return out.strip() if out is not None else None
 
     def resolve_ref(self, ref: str) -> str | None:
         """Return the full commit hash for a ref, or ``None`` if unresolvable."""
@@ -83,59 +94,89 @@ class GitRepo:
             return self.resolve_ref(base_ref)
         return self.merge_base("origin/main", "HEAD")
 
-    def show_baseline(self, ref: str) -> dict[str, object] | None:
-        """Return the suppression baseline committed at ``ref``, or ``None``.
+    def path_exists_at_ref(self, ref: str, path: str) -> bool:
+        """Return whether ``path`` exists as a blob or tree at ``ref``.
 
-        ``None`` means the blob genuinely does not exist at that ref — the
-        first-adoption case. A real git error raises ``GitError`` rather than
-        masquerading as absence, so the gate never fails open on a broken call.
+        ``git cat-file -e`` exits 128 both for "not in this tree" and for
+        unrelated failures (a corrupted object, a bad ref spelling) -- only
+        the former is absence. A blank ``path`` addresses the ref's root
+        tree (``git cat-file -e <ref>:``); callers must not pass ``"."``.
         """
-        out = self._show_file(ref, self.BASELINE_FILE)
-        if out is None:
-            return None
-        blob = f"{ref}:{self.BASELINE_FILE}"
-        try:
-            loaded = json.loads(out)
-        except json.JSONDecodeError as exc:
-            msg = f"corrupt suppression baseline blob at {blob}: {exc}"
-            raise GitError(msg) from exc
-        if not isinstance(loaded, dict):
-            msg = f"non-dict suppression baseline blob at {blob}"
-            raise GitError(msg)
-        parsed: dict[str, object] = loaded
-        return parsed
-
-    def _show_file(self, ref: str, path: str) -> str | None:
         if self._root is None:
-            return None  # not in a repo: degrade, never run against the ambient CWD
+            msg = "not inside a git repository"
+            raise GitError(msg)
+        spec = f"{ref}:{path}"
         try:
             result = subprocess.run(
-                ["git", "show", f"{ref}:{path}"],
+                ["git", "cat-file", "-e", spec],
                 capture_output=True,
                 text=True,
                 timeout=_TIMEOUT,
                 cwd=self._root,
             )
+        # UnicodeDecodeError: `text=True` decodes as UTF-8; non-UTF8 bytes on
+        # stderr (a binary path in the error message, an unusual locale) must
+        # fail closed as GitError, not crash the gate with an uncaught
+        # exception.
         except (
             FileNotFoundError,
             subprocess.TimeoutExpired,
             UnicodeDecodeError,
         ) as exc:
-            # UnicodeDecodeError: git show returned non-UTF8 bytes that text=True
-            # could not decode -- fail closed rather than crash the gate.
-            msg = f"git show {ref}:{path} failed to run: {exc}"
+            msg = f"git cat-file -e {spec} failed to run: {exc}"
             raise GitError(msg) from exc
         if result.returncode == 0:
-            return result.stdout
-        if self._is_absent_path(result.returncode, result.stderr):
-            return None
-        detail = result.stderr.strip() or f"exit {result.returncode}"
-        msg = f"git show {ref}:{path} errored: {detail}"
+            return True
+        # Git's message casing can vary across versions/locales; comparing
+        # lowercased avoids a case mismatch alone turning a genuine absence
+        # into a raised GitError.
+        stderr = result.stderr.strip().lower()
+        if result.returncode == 128 and (
+            "does not exist in" in stderr or "exists on disk, but not in" in stderr
+        ):
+            return False
+        msg = f"git cat-file -e {spec} errored: {stderr or f'exit {result.returncode}'}"
         raise GitError(msg)
 
-    @staticmethod
-    def _is_absent_path(returncode: int, stderr: str) -> bool:
-        if returncode != 128:
-            return False
-        lowered = stderr.lower()
-        return "does not exist in" in lowered or "exists on disk, but not in" in lowered
+    def archive_paths(self, ref: str, paths: Sequence[str], dest: Path) -> None:
+        """Materialize ``paths`` as they existed at ``ref`` into ``dest``.
+
+        One ``git archive``, extracted in-process with ``tarfile`` -- far
+        fewer subprocess spawns than an individual ``git show`` per file, no
+        dependency on an external ``tar`` binary (absent on some minimal
+        environments), and it preserves the tree layout under ``dest`` so
+        ``Scanner`` can walk it unchanged. Callers must pre-filter ``paths``
+        to those confirmed present at ``ref`` (``path_exists_at_ref``):
+        ``git archive`` errors on any pathspec that matches nothing, and a
+        caller-side filter is what lets this method distinguish "materialize
+        what exists" from masking a genuine git failure.
+        """
+        if self._root is None:
+            msg = "not inside a git repository"
+            raise GitError(msg)
+        if not paths:
+            return
+        try:
+            archive = subprocess.run(
+                ["git", "archive", ref, "--", *paths],
+                capture_output=True,
+                timeout=_TIMEOUT,
+                cwd=self._root,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            msg = f"git archive {ref} failed to run: {exc}"
+            raise GitError(msg) from exc
+        if archive.returncode != 0:
+            detail = archive.stderr.decode(errors="replace").strip()
+            msg = f"git archive {ref} errored: {detail or f'exit {archive.returncode}'}"
+            raise GitError(msg)
+        try:
+            with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
+                # "data" filter (PEP 706): strips permission bits, refuses
+                # links/devices, and rejects any member escaping dest --
+                # git archive output is our own trusted repo's tree, but the
+                # extraction itself gets no exemption from that discipline.
+                tar.extractall(dest, filter="data")
+        except (tarfile.TarError, OSError) as exc:
+            msg = f"tar extraction of {ref} archive failed: {exc}"
+            raise GitError(msg) from exc

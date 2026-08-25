@@ -27,6 +27,7 @@ from punt_vox.cascade import Cascade, RosterError
 from punt_vox.config_writer import ConfigWriter
 from punt_vox.models import MODEL_TABLE, resolve_model
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.types_synthesis_errors import ProviderNotConfiguredError
 from punt_vox.voices import VOICE_BLURBS
 
 if TYPE_CHECKING:
@@ -139,10 +140,7 @@ class ModelTool:
             # writes into state.
             if name is None:
                 return json.dumps({"available": [], "current": session.model})
-            return _error(
-                "no TTS provider is configured for this repo; "
-                "set one with mic:provider <name>"
-            )
+            return _error(str(ProviderNotConfiguredError.for_mcp()))
 
         if name is None:
             return json.dumps(
@@ -320,10 +318,7 @@ class VoiceTool:
         # the substitution class this bead exists to prevent. Listing does
         # not require a provider (empty roster is fine); setting does.
         if not session.provider:
-            return _error(
-                "no TTS provider is configured for this repo; "
-                "set one with mic:provider <name>"
-            )
+            return _error(str(ProviderNotConfiguredError.for_mcp()))
 
         normalized = SynthesisSpec.normalize_voice(name)
         if normalized is None:

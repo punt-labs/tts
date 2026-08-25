@@ -12,6 +12,7 @@ from typing import Self, final
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.commands._result import CommandResult, Ctx, SwitchList
 from punt_vox.types_synthesis import SynthesisSpec
+from punt_vox.types_synthesis_errors import ProviderNotConfiguredError
 
 
 @final
@@ -46,10 +47,7 @@ class VoiceCommand:
         # the substitution class this bead exists to prevent. Listing does
         # not require a provider (empty roster is fine); setting does.
         if not cfg.provider:
-            message = (
-                "no TTS provider is configured for this repo; "
-                "set one with vox provider <name>"
-            )
+            message = str(ProviderNotConfiguredError.for_cli())
             return CommandResult(
                 text=f"Error: {message}",
                 json_data={"error": message},
