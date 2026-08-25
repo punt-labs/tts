@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Self, final
 
 from punt_vox.atomic_file import AtomicFile
+from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_repo_root
 from punt_vox.types_programs.wire import JsonObject
 
 if TYPE_CHECKING:
@@ -57,6 +58,18 @@ class CallControl:
         self = super().__new__(cls)
         self._path = path
         return self
+
+    @classmethod
+    def for_repo(cls) -> Self:
+        """Build a :class:`CallControl` at this repo's ``call.control`` path.
+
+        Mirrors :meth:`~.call_lock.CallLock.for_repo` and
+        :meth:`~punt_vox.session_spec.SessionSpec.for_repo` -- one place
+        this construction is written, instead of every ``vox call`` verb
+        rebuilding the same path independently.
+        """
+        root = find_repo_root() or Path.cwd()
+        return cls(root / DEFAULT_CONFIG_DIR / "call" / "call.control")
 
     def request_stop(self) -> None:
         """Ask the running call to hang up."""

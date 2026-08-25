@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Self, final
 
 from punt_vox.atomic_file import AtomicFile
+from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_repo_root
 from punt_vox.types_programs.wire import JsonObject
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,18 @@ class CallLock:
         self = super().__new__(cls)
         self._path = path
         return self
+
+    @classmethod
+    def for_repo(cls) -> Self:
+        """Build a :class:`CallLock` at this repo's ``call.lock`` path.
+
+        ``vox call start/stop/transfer`` each rebuilt the same
+        ``<config-dir>/call/call.lock`` path independently -- this is the
+        single place that construction is written, mirroring
+        :meth:`~punt_vox.session_spec.SessionSpec.for_repo`'s own precedent.
+        """
+        root = find_repo_root() or Path.cwd()
+        return cls(root / DEFAULT_CONFIG_DIR / "call" / "call.lock")
 
     @property
     def path(self) -> Path:

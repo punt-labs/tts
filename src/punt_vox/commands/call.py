@@ -57,7 +57,6 @@ from punt_vox.commands.call_options import (
 )
 from punt_vox.commands.call_scripted import ScriptedCallDriver
 from punt_vox.commands.call_spec import resolve_call_spec
-from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_repo_root
 from punt_vox.logging_config import configure_turn_timer_logging
 from punt_vox.voxd.conversation_mode.call_control import CallControl
 from punt_vox.voxd.conversation_mode.call_lock import CallLock, CallLockActiveError
@@ -123,7 +122,7 @@ class CallCli:
         validated again on :meth:`~.call_control.CallControl.consume`.
         """
         self._require_live_call()
-        CallControl(self._lock_dir() / "call.control").request_stop()
+        CallControl.for_repo().request_stop()
 
     def transfer(self, session: _TransferSessionOpt = None) -> None:
         """Ask the running call to re-attach to a different active session.
@@ -132,7 +131,7 @@ class CallCli:
         :meth:`stop` -- see that docstring.
         """
         self._require_live_call()
-        CallControl(self._lock_dir() / "call.control").request_transfer(session)
+        CallControl.for_repo().request_transfer(session)
 
     def _require_live_call(self) -> None:
         # is_live(), not read() is not None: a lock file can outlive the
@@ -141,14 +140,9 @@ class CallCli:
         # stale file must refuse the same as "no call is active" -- writing
         # one anyway lands in a mailbox nobody will ever read, since the
         # process it thinks it is stopping is long gone.
-        if not CallLock(self._lock_dir() / "call.lock").is_live():
+        if not CallLock.for_repo().is_live():
             msg = "no call is active"
             raise typer.BadParameter(msg)
-
-    @staticmethod
-    def _lock_dir() -> Path:
-        root = find_repo_root() or Path.cwd()
-        return root / DEFAULT_CONFIG_DIR / "call"
 
     @staticmethod
     async def _resolve_session_attach(
@@ -201,8 +195,8 @@ class CallCli:
         except BareAuthMissingError as exc:
             raise typer.BadParameter(str(exc)) from exc
 
-        lock = CallLock(self._lock_dir() / "call.lock")
-        control = CallControl(self._lock_dir() / "call.control")
+        lock = CallLock.for_repo()
+        control = CallControl.for_repo()
         session_attach = await self._resolve_session_attach(Path.cwd(), session_id)
 
         try:

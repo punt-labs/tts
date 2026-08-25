@@ -48,6 +48,26 @@ def _resolved_session_spec(
     return patch.object(SessionSpec, "for_repo", return_value=fake_spec)
 
 
+def _call_lock_at(tmp_path: Path) -> AbstractContextManager[object]:
+    """Patch ``CallLock.for_repo`` to a lock rooted at *tmp_path*.
+
+    Mirrors ``_resolved_session_spec``'s own pattern -- ``for_repo()`` is
+    the one construction path ``call.py`` uses now (F7), so patching it
+    directly keeps tests hermetic without touching the repo-root lookup
+    underneath it.
+    """
+    return patch.object(
+        CallLock, "for_repo", return_value=CallLock(tmp_path / "call.lock")
+    )
+
+
+def _call_control_at(tmp_path: Path) -> AbstractContextManager[object]:
+    """Patch ``CallControl.for_repo`` to a mailbox rooted at *tmp_path*."""
+    return patch.object(
+        CallControl, "for_repo", return_value=CallControl(tmp_path / "call.control")
+    )
+
+
 def _script_file(tmp_path: Path, lines: list[dict[str, object]]) -> Path:
     path = tmp_path / "script.jsonl"
     path.write_text("\n".join(json.dumps(line) for line in lines))
@@ -91,7 +111,7 @@ def _fake_process(reply_text: str) -> AsyncMock:
 
 def test_stop_writes_a_stop_request(tmp_path: Path) -> None:
     CallLock(tmp_path / "call.lock").acquire("conversation mode call active")
-    with patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path):
+    with _call_lock_at(tmp_path), _call_control_at(tmp_path):
         result = runner.invoke(build_call_app(), ["stop"])
     assert result.exit_code == 0
     control = CallControl(tmp_path / "call.control")
@@ -101,7 +121,7 @@ def test_stop_writes_a_stop_request(tmp_path: Path) -> None:
 
 
 def test_stop_refuses_when_no_call_is_active(tmp_path: Path) -> None:
-    with patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path):
+    with _call_lock_at(tmp_path), _call_control_at(tmp_path):
         result = runner.invoke(build_call_app(), ["stop"])
     assert result.exit_code != 0
     assert CallControl(tmp_path / "call.control").consume() is None
@@ -109,7 +129,7 @@ def test_stop_refuses_when_no_call_is_active(tmp_path: Path) -> None:
 
 def test_transfer_writes_a_transfer_request_with_session_id(tmp_path: Path) -> None:
     CallLock(tmp_path / "call.lock").acquire("conversation mode call active")
-    with patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path):
+    with _call_lock_at(tmp_path), _call_control_at(tmp_path):
         result = runner.invoke(build_call_app(), ["transfer", "--session", "session-b"])
     assert result.exit_code == 0
     control = CallControl(tmp_path / "call.control")
@@ -120,7 +140,7 @@ def test_transfer_writes_a_transfer_request_with_session_id(tmp_path: Path) -> N
 
 
 def test_transfer_refuses_when_no_call_is_active(tmp_path: Path) -> None:
-    with patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path):
+    with _call_lock_at(tmp_path), _call_control_at(tmp_path):
         result = runner.invoke(build_call_app(), ["transfer"])
     assert result.exit_code != 0
     assert CallControl(tmp_path / "call.control").consume() is None
@@ -230,7 +250,8 @@ def test_stop_refuses_against_a_stale_lock_with_a_dead_pid(tmp_path: Path) -> No
     CallLock(tmp_path / "call.lock").acquire("stale call")
     with (
         patch("os.kill", side_effect=ProcessLookupError),
-        patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path),
+        _call_lock_at(tmp_path),
+        _call_control_at(tmp_path),
     ):
         result = runner.invoke(build_call_app(), ["stop"])
     assert result.exit_code != 0
@@ -243,7 +264,8 @@ def test_transfer_refuses_against_a_stale_lock_with_a_dead_pid(tmp_path: Path) -
     CallLock(tmp_path / "call.lock").acquire("stale call")
     with (
         patch("os.kill", side_effect=ProcessLookupError),
-        patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path),
+        _call_lock_at(tmp_path),
+        _call_control_at(tmp_path),
     ):
         result = runner.invoke(build_call_app(), ["transfer", "--session", "session-b"])
     assert result.exit_code != 0
@@ -348,7 +370,8 @@ async def test_run_call_passes_a_resolved_spec_with_a_provider_to_synthesize(
     with (
         patch.object(call_module, "VoxClientSync", return_value=_FakeClient()),
         _resolved_session_spec("elevenlabs"),
-        patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path),
+        _call_lock_at(tmp_path),
+        _call_control_at(tmp_path),
     ):
         await call_module.CallCli()._run(script, "session-a")
 
@@ -385,7 +408,8 @@ async def test_run_call_speaks_the_reply_and_holds_the_lock_only_while_active(
             "punt_vox.voxd.conversation_mode.claude_session_attach.asyncio.create_subprocess_exec",
             return_value=_fake_process("It returns the sum."),
         ),
-        patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path),
+        _call_lock_at(tmp_path),
+        _call_control_at(tmp_path),
     ):
         await call_module.CallCli()._run(script, "session-a")
 
@@ -482,7 +506,8 @@ async def test_run_call_live_path_captures_from_mic_and_transcribes(
             "punt_vox.voxd.conversation_mode.claude_session_attach.asyncio.create_subprocess_exec",
             return_value=_fake_process("It returns the sum."),
         ),
-        patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path),
+        _call_lock_at(tmp_path),
+        _call_control_at(tmp_path),
     ):
         await call_module.CallCli()._run(None, "session-a")
 
@@ -541,7 +566,8 @@ async def test_run_call_live_path_times_out_after_inactivity(tmp_path: Path) -> 
             "punt_vox.commands.call_live_driver.ElevenLabsSTTProvider", return_value=stt
         ),
         patch("punt_vox.commands.call_live_driver._INACTIVITY_TIMEOUT_S", 0.0),
-        patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path),
+        _call_lock_at(tmp_path),
+        _call_control_at(tmp_path),
     ):
         await call_module.CallCli()._run(None, "session-a")
 
@@ -598,7 +624,8 @@ async def test_outer_boundary_speaks_and_reraises_on_a_mid_call_crash(
             "asyncio.create_subprocess_exec",
             side_effect=OSError("mic device busy"),
         ),
-        patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path),
+        _call_lock_at(tmp_path),
+        _call_control_at(tmp_path),
         caplog.at_level("ERROR", logger="punt_vox.commands.call"),
         pytest.raises(OSError, match="mic device busy"),
     ):
@@ -637,7 +664,8 @@ async def test_outer_boundary_survives_a_failing_speak_and_reraises_the_original
             "asyncio.create_subprocess_exec",
             side_effect=OSError("mic device busy"),
         ),
-        patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path),
+        _call_lock_at(tmp_path),
+        _call_control_at(tmp_path),
         caplog.at_level("ERROR", logger="punt_vox.commands.call"),
         # The original OSError, not the RuntimeError the fallback speak()
         # call raises, must be what actually propagates.
@@ -681,7 +709,8 @@ async def test_a_missing_api_key_surfaces_as_a_clean_usage_error_not_a_crash(
         patch.object(call_module, "VoxClientSync", return_value=_FakeClient()),
         _resolved_session_spec(),
         patch.dict("os.environ", {}, clear=False),
-        patch("punt_vox.commands.call.CallCli._lock_dir", return_value=tmp_path),
+        _call_lock_at(tmp_path),
+        _call_control_at(tmp_path),
         caplog.at_level("ERROR", logger="punt_vox.commands.call"),
     ):
         import os
