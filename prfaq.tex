@@ -793,7 +793,7 @@ vox say "Build finished."
   A CLI-only \texttt{install.sh --no-plugin} install for scripts, CI, and
   non-Claude harnesses (v4.16.0). \texttt{/unmute}/\texttt{/mute} for voice
   vs.\ chime. Permission-blocked notification via \texttt{Notification}
-  hook. \texttt{/recap} command (agent-executed spoken summary).
+  hook. \texttt{/vox:recap} command (agent-executed spoken summary).
   \texttt{/vibe} with auto-detection and manual modes --- auto-vibe uses
   deterministic signal-to-tag mapping (no LLM needed) to resolve
   ElevenLabs expressive tags from accumulated session signals.
@@ -1013,7 +1013,7 @@ available on PyPI.
   \featureitem{\texttt{/unmute} and \texttt{/mute} commands}{Toggle voice vs.\ chime. \texttt{/unmute} enables spoken notifications with optional voice selection. \texttt{/mute} switches to chime-only. Shipped v0.11.0.}\label{feat:speak}
   \featureitem{Chime audio}{Mood-aware audio tones for chime mode (\texttt{/mute}). Eight distinct signals pitch-shift to match session vibe (bright/neutral/dark). 24 total assets. Shipped v0.11.0.}\label{feat:chime}
   \featureitem{Provider auto-detection}{Detect best available TTS provider on first use. ElevenLabs > OpenAI > Polly > macOS \texttt{say} > Linux \texttt{espeak-ng}. Shipped v0.7.0.}\label{feat:autodetect}
-  \featureitem{\texttt{/recap} command}{On-demand spoken summary of the last Claude response. Agent extracts key points and speaks them. Shipped v0.2.0.}\label{feat:recap}
+  \featureitem{\texttt{/vox:recap} command}{On-demand spoken summary of the last Claude response. Agent extracts key points and speaks them. Shipped v0.2.0.}\label{feat:recap}
   \featureitem{Plugin marketplace}{Listed in the Claude Code plugin marketplace for one-click install. Shipped v1.2.0.}\label{feat:marketplace}
   \featureitem{\texttt{voxd} audio daemon}{Dedicated audio server with WebSocket protocol. Separates synthesis/playback from MCP server for fast hook dispatch (observed on the order of a few milliseconds; not formally benchmarked). Playback queue, dedup, caching. Shipped v3.0.0.}\label{feat:voxd}
   \featureitem{Background music}{Vibe-driven instrumental music via ElevenLabs Music API. Adapts to session mood. \texttt{/music on|off}. The agent plays DJ --- a music-panel DJ-booth personality drives vibe-matched pools --- so vox is partly entertainment by design. Shipped v4.4.0.}\label{feat:music}
