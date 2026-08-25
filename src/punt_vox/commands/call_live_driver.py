@@ -211,12 +211,7 @@ class LiveCallDriver:
                     break
         finally:
             await chunks.aclose()
-            # timeout() already returned the call to idle; hangup() on an
-            # idle call would raise (EndCall requires an active mode), so
-            # only call it when nothing above already ended the call itself
-            # -- including an abnormal exit via an uncaught exception.
-            if self._session.actor.mode is not Mode.IDLE:
-                await self._session.hangup()
+            await self._session.hangup_if_active()
 
     def _due_for_control_check(self) -> bool:
         """Return whether enough time has passed to check the mailbox again.

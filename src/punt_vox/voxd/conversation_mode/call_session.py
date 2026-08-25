@@ -24,7 +24,6 @@ from typing import TYPE_CHECKING, Self, final
 from punt_vox.quips import CALL_ACK_PHRASES
 from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
-from punt_vox.voxd.conversation_mode.barge_in import BargeIn
 from punt_vox.voxd.conversation_mode.call_actor import CallActor
 from punt_vox.voxd.conversation_mode.capture_during_wait import CaptureDuringWait
 from punt_vox.voxd.conversation_mode.end_call import EndCall
@@ -101,12 +100,10 @@ class CallSession:
     addendum: speech the turn detector closed while the call was already
     ``waiting`` on the prior turn's reply. ``None`` when there is none.
     :attr:`CallActor.has_pending_addendum` tracks the same *fact* only up to
-    the return to ``listening`` -- ``CallState.reply_ends``/``barge_in``
-    discharge that flag as part of the transition's own invariant, but this
-    attribute deliberately survives past it, since folding the addendum's
-    text into the next turn (FR-9) is this class's job, not the state
-    machine's, and the text has to still be here when that next turn
-    arrives."""
+    the return to ``listening`` -- ``CallState.reply_ends`` discharges that
+    flag as part of the transition's own invariant, but this attribute
+    survives past it, since folding the addendum's text into the next turn
+    (FR-9) is this class's job, and the text must still be here then."""
     _turn_timer: TurnTimer
 
     def __new__(
@@ -153,6 +150,18 @@ class CallSession:
     async def hangup(self) -> None:
         """FR-2's explicit end: any active mode -> idle."""
         self._actor.apply(EndCall())
+
+    async def hangup_if_active(self) -> None:
+        """Hang up unless the call is already idle.
+
+        :meth:`hangup` on an idle call raises (``EndCall`` requires an
+        active mode) -- both drivers' ``finally`` blocks need this guard
+        since ``timeout()`` or a mid-loop self-inflicted ``EndCall()``
+        (a rejected STT credential, a missing ``ANTHROPIC_API_KEY``) can
+        already have returned the call to idle by the time they run it.
+        """
+        if self._actor.mode is not Mode.IDLE:
+            await self.hangup()
 
     async def timeout(self) -> None:
         """FR-2's bounded-inactivity end: listening -> idle."""
@@ -320,12 +329,3 @@ class CallSession:
         )
         self._actor.apply(ReplyEnds())
         await self._speak("Ready.")
-
-    async def barge_in(self) -> None:
-        """FR-8: interrupt the agent's speech; speaking -> listening.
-
-        A separate barge-in *detector* task calls this once one exists; it
-        does not yet, so this transition is exercised directly in tests
-        rather than through a live detector.
-        """
-        self._actor.apply(BargeIn())

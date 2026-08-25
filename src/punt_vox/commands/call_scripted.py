@@ -25,7 +25,6 @@ import typer
 
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.call_session import CallSession
-from punt_vox.voxd.conversation_mode.mode import Mode
 from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
 from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
 
@@ -254,11 +253,11 @@ class ScriptedCallDriver:
         ``try``/``finally`` (mirroring
         :meth:`~punt_vox.commands.call_live_driver.LiveCallDriver.run`) means
         an exception out of ``process_chunk`` still reaches ``hangup()``
-        rather than leaving :class:`~.call_actor.CallActor`'s mode stale. The
-        ``mode is not Mode.IDLE`` guard covers a mid-call
-        ``BareAuthMissingError``, which already ends the call itself and
-        speaks its own goodbye -- an unconditional ``hangup()`` would then
-        raise ``IllegalTransitionError``.
+        rather than leaving :class:`~.call_actor.CallActor`'s mode stale.
+        :meth:`~.call_session.CallSession.hangup_if_active`'s own guard
+        covers a mid-call ``BareAuthMissingError``, which already ends the
+        call itself and speaks its own goodbye -- an unconditional
+        ``hangup()`` would then raise ``IllegalTransitionError``.
         """
         await self._session.start()
         try:
@@ -268,5 +267,4 @@ class ScriptedCallDriver:
                 for chunk in turn.synthetic_chunks():
                     await self._session.process_chunk(chunk)
         finally:
-            if self._session.actor.mode is not Mode.IDLE:
-                await self._session.hangup()
+            await self._session.hangup_if_active()
