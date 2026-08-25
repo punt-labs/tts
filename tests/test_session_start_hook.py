@@ -68,12 +68,14 @@ def _make_prod_plugin(root: Path) -> Path:
     return dest
 
 
-def _run(plugin_dir: Path, home: Path) -> subprocess.CompletedProcess[str]:
+def _run(
+    plugin_dir: Path, home: Path, *, bash: str = "bash"
+) -> subprocess.CompletedProcess[str]:
     home.mkdir(parents=True, exist_ok=True)
     hook = plugin_dir / "hooks" / "session-start.sh"
     env = {"HOME": str(home), "PATH": _system_path()}
     return subprocess.run(
-        ["bash", str(hook)],
+        [bash, str(hook)],
         input=json.dumps({"cwd": str(home)}),
         env=env,
         text=True,
@@ -361,6 +363,36 @@ class TestPermissionGrantsAreNamespaced:
         for name in _NAMESPACED_ONLY:
             assert f"Skill({name})" in allow
 
+    def test_write_failure_is_reported(self, tmp_path: Path) -> None:
+        # The stale-grant write goes through the same mktemp/jq/mv sequence
+        # as the legacy-MCP-pattern cleanup and the main permissions write,
+        # and must report failure the same way if that sequence can't run.
+        # settings.json's PARENT directory (~/.claude), not settings.json
+        # itself, needs to be unwritable: mktemp creates its temp file
+        # directly inside that directory. ~/.claude/commands stays writable
+        # (it is its own directory), so file retirement still succeeds and
+        # populates CLEANED -- the write only fails at the settings.json step.
+        plugin_dir = _make_prod_plugin(tmp_path)
+        home = tmp_path / "home"
+        claude_dir = home / ".claude"
+        commands_dir = claude_dir / "commands"
+        commands_dir.mkdir(parents=True)
+        (commands_dir / "model.md").write_text(
+            _pre_pr_content("model"), encoding="utf-8"
+        )
+        self._seed_settings_with_stale_grants(home)
+        claude_dir.chmod(stat.S_IRUSR | stat.S_IXUSR)
+        try:
+            result = _run(plugin_dir, home)
+        finally:
+            claude_dir.chmod(stat.S_IRWXU)
+        assert result.returncode == 0, result.stderr
+        # The file side still succeeded -- model.md was genuinely retired.
+        assert "model.md" not in _deployed_names(home)
+        context = _additional_context(result)
+        assert "Failed to remove stale bare Skill() grants for" in context
+        assert "Skill(model)" in context
+
 
 class TestForeignFileWithGenericNameSurvives:
     """A user's own command sharing a namespaced-only name is never deleted.
@@ -452,3 +484,65 @@ class TestDeployAndCleanupFailuresAreSurfaced:
         context = _additional_context(result)
         assert "Failed to deploy" in context
         assert "vox.md" in context
+
+
+_STOCK_BASH = "/bin/bash"
+
+
+class TestStockMacBashCompatibility:
+    """The hook must run under the exact bash stock macOS ships, not just PATH.
+
+    Regression test: bash 3.2 (stock /bin/bash on every unmodified Mac, and
+    still the default -- Apple has not shipped a newer bash since the GPLv3
+    license change) raises "unbound variable" on "${empty_array[@]}" under
+    `set -u`, even after `arr=()` -- a real bug in that bash version, fixed
+    in 4.4. Every other test in this module spawns "bash" resolved via
+    PATH, which on a dev machine is a newer Homebrew bash that doesn't
+    reproduce the bug -- these tests spawn /bin/bash explicitly so this
+    class of regression can't hide behind a modern shell again.
+    """
+
+    pytestmark = pytest.mark.skipif(
+        not Path(_STOCK_BASH).exists(), reason=f"{_STOCK_BASH} not present"
+    )
+
+    def test_fresh_install_does_not_abort(self, tmp_path: Path) -> None:
+        plugin_dir = _make_prod_plugin(tmp_path)
+        home = tmp_path / "home"
+        result = _run(plugin_dir, home, bash=_STOCK_BASH)
+        assert result.returncode == 0, result.stderr
+        assert "unbound variable" not in result.stderr
+        deployed = _deployed_names(home)
+        for name in _BARE:
+            assert f"{name}.md" in deployed
+        allow = _settings_allow(home)
+        for name in _NAMESPACED_ONLY:
+            assert f"Skill(vox:{name})" in allow
+
+    def test_steady_state_session_does_not_abort(self, tmp_path: Path) -> None:
+        # The common case after the one-time retirement: CLEANED is empty
+        # on every subsequent session, which is exactly the condition that
+        # aborted the whole hook under bash 3.2.
+        plugin_dir = _make_prod_plugin(tmp_path)
+        home = tmp_path / "home"
+        _run(plugin_dir, home, bash=_STOCK_BASH)
+        result = _run(plugin_dir, home, bash=_STOCK_BASH)
+        assert result.returncode == 0, result.stderr
+        assert "unbound variable" not in result.stderr
+
+    def test_stale_grant_pruning_run_does_not_abort(self, tmp_path: Path) -> None:
+        # The branch where CLEANED is non-empty -- populated, iterated, and
+        # used to build STALE_SKILL_ARGS -- exercises every array expansion
+        # this regression touched, not just the common empty-CLEANED path.
+        plugin_dir = _make_prod_plugin(tmp_path)
+        home = tmp_path / "home"
+        commands_dir = _commands_dir(home)
+        commands_dir.mkdir(parents=True)
+        (commands_dir / "model.md").write_text(
+            _pre_pr_content("model"), encoding="utf-8"
+        )
+        result = _run(plugin_dir, home, bash=_STOCK_BASH)
+        assert result.returncode == 0, result.stderr
+        assert "unbound variable" not in result.stderr
+        context = _additional_context(result)
+        assert "Cleaned retired commands: /model" in context
