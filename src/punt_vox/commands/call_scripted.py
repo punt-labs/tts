@@ -26,7 +26,6 @@ import typer
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.call_session import CallSession
 from punt_vox.voxd.conversation_mode.mode import Mode
-from punt_vox.voxd.conversation_mode.session_attach import BareAuthMissingError
 from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
 from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
 
@@ -226,20 +225,13 @@ class ScriptedCallDriver:
         control: CallControl,
         apply_control: ApplyControlFn,
     ) -> Self:
-        """Build a driver from *script*, after the same pre-flight check the
-        live path already runs in
-        :meth:`~punt_vox.commands.call_live_driver.LiveCallDriver.create`.
+        """Build a driver from *script*.
 
-        Without this, a scripted call with no ``ANTHROPIC_API_KEY`` survives
-        the "Listening." cue and dies one turn in, inside
-        :class:`~punt_vox.voxd.conversation_mode.reply_recovery.ReplyRecovery`'s
-        own handling -- failing here instead gives the same actionable
-        message at startup, before any turn is spoken.
+        ``ANTHROPIC_API_KEY`` itself is checked once, by :mod:`~.call`'s
+        ``_run`` -- the one call site this driver and
+        :class:`~punt_vox.commands.call_live_driver.LiveCallDriver` share --
+        rather than here.
         """
-        try:
-            BareAuthMissingError.check()
-        except BareAuthMissingError as exc:
-            raise typer.BadParameter(str(exc)) from exc
         turns = ScriptedTurn.read_script(script)
         session = CallSession(
             turn_detector=ScriptedTurn.calibrated_detector(),

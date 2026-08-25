@@ -21,7 +21,6 @@ from punt_vox.providers.elevenlabs_stt import ElevenLabsSTTProvider
 from punt_vox.voxd.conversation_mode.call_session import CallSession
 from punt_vox.voxd.conversation_mode.mic_audio_source import MicAudioSource
 from punt_vox.voxd.conversation_mode.mode import Mode
-from punt_vox.voxd.conversation_mode.session_attach import BareAuthMissingError
 from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
 
 if TYPE_CHECKING:
@@ -164,20 +163,15 @@ class LiveCallDriver:
     ) -> Self:
         """Build a driver with a real :class:`MicAudioSource`, calibrated first.
 
-        Checks the STT provider's credentials and ``ANTHROPIC_API_KEY``
-        before calibration even starts -- matching the pre-flight check
-        :func:`~.call_spec.resolve_call_spec` already runs for the TTS
-        provider -- so a missing or bad credential fails the call right
-        here, rather than surviving 2s of mic calibration and the spoken
-        "Listening." cue and only surfacing once the first turn's
-        transcribe or session-attach spawn fails.
+        Checks the STT provider's credentials before calibration even
+        starts -- so a bad credential fails the call right here, rather
+        than surviving 2s of mic calibration and the spoken "Listening."
+        cue and only surfacing once the first turn's transcribe fails.
+        ``ANTHROPIC_API_KEY`` itself is checked by :mod:`~.call`'s ``_run``,
+        the one call site both this driver and the scripted driver share.
         """
         stt_provider = ElevenLabsSTTProvider()
         _require_healthy(stt_provider)
-        try:
-            BareAuthMissingError.check()
-        except BareAuthMissingError as exc:
-            raise typer.BadParameter(str(exc)) from exc
         mic_source = MicAudioSource()
         detector = TurnDetector()
         detector.calibrate(await mic_source.capture_seconds(_CALIBRATION_S))

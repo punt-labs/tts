@@ -26,24 +26,15 @@ machine, session discovery, ``ClaudeSessionAttach``, the audible cues -- is
 shared between both paths, unchanged by which one is chosen.
 
 **Known limitation: the mic-echo guard is duration-estimated, not
-signal-based.** ``VoxClientSync.synthesize`` (via ``client.py``'s
-``send_and_drain(..., early_terminal="playing")``) returns as soon as voxd
-reports audio *enqueued*, not when it finishes playing -- ``client.py``
-does not expose a true playback-completion signal, and extending it to do
-so needs its own change.
-:class:`~.call_live_driver.LiveCallDriver` closes the microphone
-gate before speaking and holds it shut for an *estimated* speech duration
-plus a safety margin, not the real one -- see
-:func:`~punt_vox.providers.convert.estimate_speech_duration_s`. This bounds
-the echo window; it does not eliminate it. A real fix needs either
-``client.py`` to expose a genuine "wait for playback done" option, or
-continuous-stream playback ownership (extending production
-``PlaybackQueue`` directly, per ``docs/conversation-mode-prd.tex``
-Chapter 2) -- follow-up work, not attempted here. The estimate also assumes
-playback
-starts immediately once ``synthesize()`` returns; if the daemon queues the
-utterance behind music or a chime, the gate can reopen while the reply is
-still actually playing.
+signal-based.** ``client.py`` has no true playback-completion signal --
+``VoxClientSync.synthesize`` returns once voxd reports audio *enqueued*,
+not once it finishes playing. :class:`~.call_live_driver.LiveCallDriver`
+closes the mic gate before speaking and holds it shut for an *estimated*
+duration (:func:`~punt_vox.providers.convert.estimate_speech_duration_s`)
+plus a safety margin -- bounding, not eliminating, the echo window. A real
+fix needs either a genuine "wait for playback done" option on the client,
+or continuous-stream playback ownership (``docs/conversation-mode-prd.tex``
+Chapter 2) -- follow-up work, not attempted here.
 """
 
 from __future__ import annotations
@@ -72,6 +63,7 @@ from punt_vox.voxd.conversation_mode.call_control import CallControl
 from punt_vox.voxd.conversation_mode.call_lock import CallLock, CallLockActiveError
 from punt_vox.voxd.conversation_mode.call_session import CallSession, SpeakFn
 from punt_vox.voxd.conversation_mode.claude_session_attach import ClaudeSessionAttach
+from punt_vox.voxd.conversation_mode.session_attach import BareAuthMissingError
 from punt_vox.voxd.conversation_mode.session_discovery import (
     SessionDiscovery,
     SessionDiscoveryError,
@@ -202,6 +194,12 @@ class CallCli:
         cues = DaemonCues(client, resolve_call_spec())
         speak = cues.speak
         chime = cues.chime
+        # Same fail-fast pattern, for the third and last credential a call
+        # needs -- one shared check instead of each driver running its own.
+        try:
+            BareAuthMissingError.check()
+        except BareAuthMissingError as exc:
+            raise typer.BadParameter(str(exc)) from exc
 
         lock = CallLock(self._lock_dir() / "call.lock")
         control = CallControl(self._lock_dir() / "call.control")

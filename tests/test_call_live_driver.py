@@ -234,14 +234,6 @@ class TestLiveCallDriverInactivity:
 
 
 class TestLiveCallDriverCreate:
-    @pytest.fixture(autouse=True)
-    def _bare_auth(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """``create()`` now runs the ``ANTHROPIC_API_KEY`` pre-flight check
-        itself -- every test here but the one exercising its absence needs a
-        key present, or ``create()`` fails immediately before reaching the
-        behavior under test."""
-        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
-
     async def test_create_calibrates_before_building_the_session(
         self, tmp_path: Path
     ) -> None:
@@ -286,36 +278,6 @@ class TestLiveCallDriverCreate:
                 return_value=_FakeSTTProvider(healthy=False),
             ),
             pytest.raises(typer.BadParameter, match="no API key"),
-        ):
-            await LiveCallDriver.create(
-                session_attach=_FakeSessionAttach("reply"),
-                speak=speak,
-                chime=_no_op_chime,
-                control=_control(tmp_path),
-                apply_control=_never_stop,
-            )
-        assert mic_source.calibration_durations == []
-
-    async def test_create_refuses_to_start_when_anthropic_api_key_is_missing(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The ``ANTHROPIC_API_KEY`` pre-flight check must fail the call
-        before calibration begins too -- the same treatment the STT
-        credential check above already gets, so a missing key never
-        survives to the first turn's session-attach spawn.
-        """
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        mic_source = _FakeMicSource([], calibration=ScriptedTurn.silence_chunks(10))
-
-        async def speak(text: str) -> None:
-            del text
-
-        with (
-            patch.object(driver_module, "MicAudioSource", return_value=mic_source),
-            patch.object(
-                driver_module, "ElevenLabsSTTProvider", return_value=_FakeSTTProvider()
-            ),
-            pytest.raises(typer.BadParameter, match="ANTHROPIC_API_KEY"),
         ):
             await LiveCallDriver.create(
                 session_attach=_FakeSessionAttach("reply"),

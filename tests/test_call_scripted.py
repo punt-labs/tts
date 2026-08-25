@@ -157,34 +157,6 @@ class _BareAuthSessionAttach:
         )
 
 
-class TestScriptedCallDriverCreate:
-    def test_create_refuses_to_start_when_anthropic_api_key_is_missing(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The same startup pre-flight ``LiveCallDriver.create`` already runs
-        -- a missing key fails before "Listening." is ever spoken, not one
-        turn into the call.
-        """
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        script = tmp_path / "script.jsonl"
-        script.write_text(json.dumps({"text": "hi", "confidence": 0.9}))
-        speak = _RecordingSpeak()
-
-        async def chime() -> None:
-            return None
-
-        with pytest.raises(typer.BadParameter, match="ANTHROPIC_API_KEY"):
-            ScriptedCallDriver.create(
-                script=script,
-                session_attach=_BareAuthSessionAttach(),
-                speak=speak,
-                chime=chime,
-                control=_control(tmp_path),
-                apply_control=_never_stop,
-            )
-        assert speak.said == []  # never reached "Listening."
-
-
 class TestScriptedCallDriverRun:
     async def test_run_ends_cleanly_with_one_message_when_bare_auth_fails_mid_call(
         self, tmp_path: Path
