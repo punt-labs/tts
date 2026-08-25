@@ -491,6 +491,59 @@ class TestDeployAndCleanupFailuresAreSurfaced:
 
 
 _STOCK_BASH = "/bin/bash"
+# The empty-array "unbound variable" bug these tests regression-test was
+# fixed in bash 4.4 -- a bash at or above that version, whatever binary it
+# is, cannot reproduce it.
+_MIN_BUGGY_BASH_VERSION = (4, 4)
+
+
+def _stock_bash_version() -> tuple[int, int] | None:
+    """Return (major, minor) for the bash at ``_STOCK_BASH``, or ``None``.
+
+    ``None`` covers both "the binary is absent" and "its version couldn't be
+    read" -- either way there is nothing to run the regression against.
+    """
+    if not Path(_STOCK_BASH).exists():
+        return None
+    result = subprocess.run(
+        [
+            _STOCK_BASH,
+            "-c",
+            'printf "%s.%s" "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}"',
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    major, _, minor = result.stdout.strip().partition(".")
+    if not major.isdigit() or not minor.isdigit():
+        return None
+    return (int(major), int(minor))
+
+
+def _stock_bash_skip_reason() -> str:
+    """Return why ``TestStockMacBashCompatibility`` should skip, or "" to run.
+
+    Checking binary presence alone is not enough: on Linux CI runners
+    ``/bin/bash`` exists but is typically bash 5.x, which does not reproduce
+    the bug this class regression-tests. Running there would report green
+    without ever exercising the buggy code path -- false confidence, not
+    coverage. The skip reason names the actual version found so a reader
+    knows why the regression coverage isn't live in that environment.
+    """
+    version = _stock_bash_version()
+    if version is None:
+        return f"{_STOCK_BASH} not present or its version could not be read"
+    if version >= _MIN_BUGGY_BASH_VERSION:
+        return (
+            f"bash {version[0]}.{version[1]} at {_STOCK_BASH} is >= "
+            f"{_MIN_BUGGY_BASH_VERSION[0]}.{_MIN_BUGGY_BASH_VERSION[1]} "
+            "(the version the bug was fixed in) -- found a newer bash "
+            "where stock macOS's bash 3.2 was expected"
+        )
+    return ""
 
 
 class TestStockMacBashCompatibility:
@@ -507,7 +560,7 @@ class TestStockMacBashCompatibility:
     """
 
     pytestmark = pytest.mark.skipif(
-        not Path(_STOCK_BASH).exists(), reason=f"{_STOCK_BASH} not present"
+        bool(_stock_bash_skip_reason()), reason=_stock_bash_skip_reason()
     )
 
     def test_fresh_install_does_not_abort(self, tmp_path: Path) -> None:
