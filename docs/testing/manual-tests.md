@@ -168,6 +168,27 @@ No audio — assert each: the traversal ref is refused and writes nothing, `remo
 of the playing album is refused with an "is playing" message, and after stopping
 the remove succeeds.
 
+### Step 12 — command namespace: `/model` does not collide (no audio to judge — assert the outcomes)
+
+vox-ovz3: `model.md`, `provider.md`, `voice.md`, and `recap.md` deploy
+namespaced-only — a bare top-level command would shadow a name Claude Code
+itself may claim (`/model` already does). This step only matters after a
+prod-mode plugin install (a plain marketplace install, or a scratch copy
+with `plugin.json`'s `name` swapped off `-dev`), because dev mode skips
+command deployment entirely and relies on the sibling prod plugin:
+
+```bash
+ls ~/.claude/commands/ | grep -E '^(model|provider|voice|recap)\.md$'
+echo "exit=$?"   # must be non-zero -- none of the four are deployed bare
+ls ~/.claude/commands/ | grep -E '^(vox|unmute|mute|vibe|music)\.md$'
+# all five must be present -- the session-scoped verbs are unaffected
+```
+
+No audio — assert: typing `/model` in Claude Code offers only Claude Code's
+own built-in (vox does not appear), and `/vox:model` (or `/vox-dev:model-dev`
+in dev mode) invokes vox's model switch. Repeat the `/vox:recap` check the
+same way — `/recap` typed bare offers nothing from vox.
+
 ## Post-flight
 
 - Summarize: which steps passed, which raised findings.
