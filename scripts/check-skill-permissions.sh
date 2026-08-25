@@ -76,12 +76,24 @@ done < <(
 
 _is_namespaced() {
   local cmd="$1" n
+  # Guard against an empty NAMESPACED: on bash 3.2 (stock macOS /bin/bash),
+  # "${empty_array[@]}" raises "unbound variable" under `set -u` even after
+  # `arr=()` -- a real bug in that bash version, fixed in 4.4. NAMESPACED is
+  # non-empty today, but a future edit to session-start.sh's NAMESPACED_ONLY
+  # line (or a sed-pattern drift) could empty it, and this gate must fail
+  # with a clear message, not crash on an unbound-variable error.
+  [[ ${#NAMESPACED[@]} -eq 0 ]] && return 1
   for n in "${NAMESPACED[@]}"; do
     [[ "$cmd" == "$n" ]] && return 0
   done
   return 1
 }
 
+# ALLOWED can legitimately be empty (e.g. a future edit breaks the
+# PLUGIN_RULES sed extraction above), and on bash 3.2 (stock macOS
+# /bin/bash) "${empty_array[@]}" raises "unbound variable" under `set -u`
+# even after `arr=()`. Guard every loop over it so an empty ALLOWED is
+# reported as "everything is missing", not a crash.
 missing=()
 for cmd in "${COMMANDS[@]}"; do
   if _is_namespaced "$cmd"; then
@@ -90,22 +102,26 @@ for cmd in "${COMMANDS[@]}"; do
     want="$cmd"
   fi
   found=0
-  for allow in "${ALLOWED[@]}"; do
-    [[ "$want" == "$allow" ]] && { found=1; break; }
-  done
+  if [[ ${#ALLOWED[@]} -gt 0 ]]; then
+    for allow in "${ALLOWED[@]}"; do
+      [[ "$want" == "$allow" ]] && { found=1; break; }
+    done
+  fi
   [[ $found -eq 0 ]] && missing+=("$cmd (expected Skill($want))")
 done
 
 extra=()
-for allow in "${ALLOWED[@]}"; do
-  found=0
-  for cmd in "${COMMANDS[@]}"; do
-    want="$cmd"
-    _is_namespaced "$cmd" && want="vox:$cmd"
-    [[ "$want" == "$allow" ]] && { found=1; break; }
+if [[ ${#ALLOWED[@]} -gt 0 ]]; then
+  for allow in "${ALLOWED[@]}"; do
+    found=0
+    for cmd in "${COMMANDS[@]}"; do
+      want="$cmd"
+      _is_namespaced "$cmd" && want="vox:$cmd"
+      [[ "$want" == "$allow" ]] && { found=1; break; }
+    done
+    [[ $found -eq 0 ]] && extra+=("$allow")
   done
-  [[ $found -eq 0 ]] && extra+=("$allow")
-done
+fi
 
 status=0
 if [[ ${#missing[@]} -gt 0 ]]; then

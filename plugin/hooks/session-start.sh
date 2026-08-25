@@ -235,7 +235,14 @@ else
   # sibling prod plugin wrote (that would just have prod re-add them next
   # start, churning settings.json every dev/prod session flip).
   STALE_SKILL_ARGS=()
-  if [[ "$PLUGIN_MODE" == "prod" ]]; then
+  # Stock macOS ships bash 3.2 as /bin/bash, and "${empty_array[@]}" on that
+  # version raises "unbound variable" under `set -u` even after `arr=()` --
+  # a real bug in bash itself, not a `set -u` false alarm, fixed in bash 4.4.
+  # CLEANED is empty on every fresh install and on every steady-state session
+  # after the one-time retirement, so this is the common case, not an edge
+  # case -- every other array expansion in this file is already guarded with
+  # a `${#arr[@]} -gt 0` check; this one needs the same guard.
+  if [[ "$PLUGIN_MODE" == "prod" ]] && [[ ${#CLEANED[@]} -gt 0 ]]; then
     for cleaned in "${CLEANED[@]}"; do
       bare="${cleaned#/}"
       for skip in "${NAMESPACED_ONLY[@]}"; do
