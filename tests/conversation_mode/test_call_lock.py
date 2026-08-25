@@ -164,6 +164,20 @@ def test_is_live_false_for_a_stale_lock_with_a_dead_pid(tmp_path: Path) -> None:
         assert lock.is_live() is False
 
 
+def test_read_treats_invalid_utf8_bytes_as_no_active_call(tmp_path: Path) -> None:
+    """A lock file with invalid UTF-8 bytes (corrupted, hand-edited with
+    binary garbage) must hit the same discard path as a parse failure --
+    not raise ``UnicodeDecodeError`` straight out of :meth:`CallLock.read`,
+    which both :meth:`CallLock.acquire` and :meth:`CallLock.is_live` call.
+    """
+    path = tmp_path / "call.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\xff\xfe\x00\x01garbage")
+
+    lock = CallLock(path)
+    assert lock.read() is None
+
+
 def test_is_live_true_for_a_pid_owned_by_another_user(tmp_path: Path) -> None:
     """A PermissionError still proves the process exists (mirrors acquire())."""
     lock = CallLock(tmp_path / "call.lock")

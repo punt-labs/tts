@@ -143,10 +143,13 @@ class CallLock:
         that need to know whether a call is genuinely live, not merely
         "a lock file exists", must use :meth:`is_live` instead.
         """
-        raw = AtomicFile(self._path).read()
-        if not raw:
-            return None
         try:
+            # Read and parse share one try (mirrors CallControl.consume):
+            # AtomicFile.read's UnicodeDecodeError is a ValueError subclass,
+            # so corrupt bytes discard the same way bad JSON does.
+            raw = AtomicFile(self._path).read()
+            if not raw:
+                return None
             # JsonObject.require_int already excludes bool (an int
             # subclass) -- without that, a hand-edited ``"pid": true``
             # would coerce to PID 1 in os.kill, a real, foreign process
