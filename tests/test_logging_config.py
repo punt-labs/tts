@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import ExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
@@ -310,6 +312,23 @@ class TestConfigureTurnTimerLogging:
         logging_config.configure_turn_timer_logging(echo_to_console=True)
         target = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
         assert len(target.handlers) == 2  # one append + one console, not four
+
+    def test_repeated_calls_close_the_prior_handlers(self) -> None:
+        """A second call must not leak the first call's handler resources --
+        each replaced handler is closed before the logger drops its
+        reference, not just cleared from the handler list."""
+        logging_config.configure_turn_timer_logging(echo_to_console=True)
+        target = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
+        first_handlers = target.handlers[:]
+
+        with ExitStack() as stack:
+            spies = [
+                stack.enter_context(patch.object(handler, "close", wraps=handler.close))
+                for handler in first_handlers
+            ]
+            logging_config.configure_turn_timer_logging(echo_to_console=True)
+            for spy in spies:
+                spy.assert_called_once()
 
 
 class TestLogHealth:

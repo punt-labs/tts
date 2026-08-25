@@ -124,7 +124,13 @@ def configure_turn_timer_logging(*, echo_to_console: bool) -> None:
     logger_ = logging.getLogger(_TURN_TIMER_LOGGER_NAME)
     logger_.setLevel(logging.DEBUG)
     logger_.propagate = False
-    logger_.handlers.clear()  # idempotent: safe to call more than once per process
+    # Close before clearing: a second call in a long-lived process (or a
+    # test that never explicitly closes handlers) would otherwise leak
+    # each replaced handler's open resources. Idempotent -- safe to call
+    # more than once per process.
+    for handler in logger_.handlers:
+        handler.close()
+    logger_.handlers.clear()
     logger_.addHandler(
         AppendLogHandler.bind(
             AtomicAppendLog(_LOG_FILE), name_prefix="client.cli.", level="DEBUG"
