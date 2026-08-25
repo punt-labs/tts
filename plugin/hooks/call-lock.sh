@@ -37,12 +37,16 @@ _lock_file="$_repo_root/.punt-labs/vox/call/call.lock"
 # `finally`), which would otherwise wedge every UserPromptSubmit in this
 # repo indefinitely until a human noticed and deleted the file by hand.
 # `kill -0` delivers no signal, only probes whether the pid still exists.
+# An empty $_lock_pid (missing "pid" field, corrupt/truncated JSON, jq
+# absent and the grep fallback finding nothing) is treated the same as a
+# dead one — a lock file this hook cannot even parse a pid out of must not
+# permanently block every prompt with no recovery but a manual rm.
 if command -v jq >/dev/null 2>&1; then
   _lock_pid=$(jq -r '.pid // empty' "$_lock_file" 2>/dev/null)
 else
   _lock_pid=$(grep -oE '"pid"[[:space:]]*:[[:space:]]*[0-9]+' "$_lock_file" | head -1 | grep -oE '[0-9]+$')
 fi
-if [ -n "$_lock_pid" ] && ! kill -0 "$_lock_pid" 2>/dev/null; then
+if [ -z "$_lock_pid" ] || ! kill -0 "$_lock_pid" 2>/dev/null; then
   rm -f "$_lock_file"
   exit 0
 fi

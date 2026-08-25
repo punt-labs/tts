@@ -701,3 +701,53 @@ class TestCallLockHook:
         )
 
         assert result.returncode == 0
+
+    def test_lock_missing_pid_field_self_clears_and_does_not_block(
+        self, tmp_path: Path
+    ) -> None:
+        """A lock file with no ``pid`` field must not wedge every prompt
+        forever -- an unparseable pid is treated the same as a dead one."""
+        repo = _make_repo(tmp_path)
+        _mark_enabled(repo)
+        lock = self._lock_path(repo)
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text('{"reason": "call active"}', encoding="utf-8")
+
+        result = self._run(repo)
+
+        assert result.returncode == 0
+        assert not lock.exists(), "lock with a missing pid field was not self-cleared"
+
+    def test_lock_corrupt_json_self_clears_and_does_not_block(
+        self, tmp_path: Path
+    ) -> None:
+        """Truncated/malformed JSON must not permanently lock out every
+        prompt with no recovery but a manual ``rm``."""
+        repo = _make_repo(tmp_path)
+        _mark_enabled(repo)
+        lock = self._lock_path(repo)
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text('{"reason": "call active", "pid": ', encoding="utf-8")
+
+        result = self._run(repo)
+
+        assert result.returncode == 0
+        assert not lock.exists(), "lock with corrupt JSON was not self-cleared"
+
+    def test_lock_non_numeric_pid_self_clears_and_does_not_block(
+        self, tmp_path: Path
+    ) -> None:
+        """A hand-edited non-numeric pid must not survive as an unkillable,
+        permanently-live holder."""
+        repo = _make_repo(tmp_path)
+        _mark_enabled(repo)
+        lock = self._lock_path(repo)
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        lock.write_text(
+            '{"reason": "call active", "pid": "not-a-pid"}', encoding="utf-8"
+        )
+
+        result = self._run(repo)
+
+        assert result.returncode == 0
+        assert not lock.exists(), "lock with a non-numeric pid was not self-cleared"
