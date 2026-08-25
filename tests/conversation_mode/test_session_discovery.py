@@ -68,6 +68,22 @@ async def test_malformed_json_raises_session_discovery_error() -> None:
             await discovery.discover(Path("/repo"))
 
 
+async def test_non_utf8_stdout_raises_session_discovery_error_not_unicode_error() -> (
+    None
+):
+    # A strict `.decode()` on non-UTF8 stdout bytes would raise
+    # UnicodeDecodeError, escaping this module's own SessionDiscoveryError
+    # boundary -- errors="replace" must route it through the same
+    # invalid-JSON handling instead.
+    with patch(
+        "asyncio.create_subprocess_exec",
+        return_value=_fake_process(b"\xff\xfe not valid utf-8"),
+    ):
+        discovery = SessionDiscovery()
+        with pytest.raises(SessionDiscoveryError, match="invalid JSON"):
+            await discovery.discover(Path("/repo"))
+
+
 async def test_entry_missing_id_raises_session_discovery_error() -> None:
     with patch(
         "asyncio.create_subprocess_exec",

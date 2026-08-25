@@ -116,7 +116,11 @@ class SessionDiscovery:
                 f"{process.returncode}: {stderr.decode(errors='replace').strip()}"
             )
             raise SessionDiscoveryError(msg)
-        return self._parse(stdout.decode())
+        # errors="replace", matching stderr's decode above: non-UTF8 bytes
+        # must still reach _parse and fail closed as SessionDiscoveryError
+        # via its JSONDecodeError handling, not escape here as an unwrapped
+        # UnicodeDecodeError outside this module's error boundary.
+        return self._parse(stdout.decode(errors="replace"))
 
     @staticmethod
     def _parse(raw: str) -> tuple[SessionCandidate, ...]:
