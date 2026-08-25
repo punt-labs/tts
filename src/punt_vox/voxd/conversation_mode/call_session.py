@@ -18,10 +18,8 @@ scripted fakes' production counterparts for demos, tests, and CI.
 from __future__ import annotations
 
 import logging
-import random
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.quips import CALL_ACK_PHRASES
 from punt_vox.types_provider_errors import ProviderAuthError
 from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.call_actor import CallActor
@@ -29,10 +27,7 @@ from punt_vox.voxd.conversation_mode.capture_during_wait import CaptureDuringWai
 from punt_vox.voxd.conversation_mode.end_call import EndCall
 from punt_vox.voxd.conversation_mode.mode import Detector, Mode
 from punt_vox.voxd.conversation_mode.pending_capture import PendingCapture
-from punt_vox.voxd.conversation_mode.reply_begins import ReplyBegins
-from punt_vox.voxd.conversation_mode.reply_ends import ReplyEnds
-from punt_vox.voxd.conversation_mode.reply_recovery import ReplyRecovery
-from punt_vox.voxd.conversation_mode.session_attach import SessionAttachError
+from punt_vox.voxd.conversation_mode.reply_delivery import ReplyDelivery
 from punt_vox.voxd.conversation_mode.speak_fn import SpeakFn
 from punt_vox.voxd.conversation_mode.start_call import StartCall
 from punt_vox.voxd.conversation_mode.timeout_call import TimeoutCall
@@ -41,7 +36,6 @@ from punt_vox.voxd.conversation_mode.turn_detected import TurnDetected
 from punt_vox.voxd.conversation_mode.turn_signal import TurnSignal
 from punt_vox.voxd.conversation_mode.turn_timer import LoggingTurnTimer
 from punt_vox.voxd.conversation_mode.turn_transcriber import TurnTranscriber
-from punt_vox.voxd.conversation_mode.wait_cue import WaitCue
 
 if TYPE_CHECKING:
     from punt_vox.voxd.conversation_mode.session_attach import SessionAttach
@@ -73,25 +67,20 @@ class CallSession:
         "_actor",
         "_capture",
         "_pending_addendum",
-        "_reply_recovery",
-        "_session_attach",
+        "_reply_delivery",
         "_speak",
         "_transcriber",
         "_turn_detector",
         "_turn_timer",
-        "_wait_cue",
     )
     _actor: CallActor
     _turn_detector: TurnDetector
     _transcriber: TurnTranscriber
-    _reply_recovery: ReplyRecovery
-    _session_attach: SessionAttach
+    _reply_delivery: ReplyDelivery
+    """Owns the ack cue, wait chime, session-attach exchange, redaction, and
+    speech for one turn's reply -- see :class:`ReplyDelivery`'s own
+    docstring for why that was split out of this class."""
     _speak: SpeakFn
-    _wait_cue: WaitCue
-    """Constructed with ``chime=None`` for the scripted (``--script``) path
-    and every existing test that doesn't pass one -- see that constructor
-    argument's own docstring for why absence is a legitimate default, not a
-    deferred decision."""
     _capture: PendingCapture
     """The run currently accumulating -- see :class:`PendingCapture` for the
     close/discard split this class relies on."""
@@ -119,21 +108,25 @@ class CallSession:
         # calls logger.debug(); whether that record goes anywhere is a
         # logging-config decision made elsewhere, not this constructor's).
         turn_timer: TurnTimer | None = None,
-        # See _wait_cue's own docstring for why None is a real default, not
-        # a deferred decision.
+        # See ReplyDelivery's own WaitCue for why None is a real default,
+        # not a deferred decision.
         chime: ChimeFn | None = None,
     ) -> Self:
         self = super().__new__(cls)
         self._actor = CallActor()
         self._turn_detector = turn_detector
-        self._session_attach = session_attach
         self._speak = speak
-        self._reply_recovery = ReplyRecovery(self._actor, speak)
-        self._wait_cue = WaitCue(chime)
         self._capture = PendingCapture()
         self._pending_addendum = None
         self._turn_timer = turn_timer if turn_timer is not None else LoggingTurnTimer()
         self._transcriber = TurnTranscriber(stt_provider, self._turn_timer)
+        self._reply_delivery = ReplyDelivery(
+            session_attach=session_attach,
+            speak=speak,
+            actor=self._actor,
+            turn_timer=self._turn_timer,
+            chime=chime,
+        )
         self._actor.on_transition(self._discard_pending_capture)
         return self
 
@@ -193,7 +186,7 @@ class CallSession:
         keeps talking to the session it started with, since it already has
         a reply streaming back from that session's own subprocess.
         """
-        self._session_attach = session_attach
+        self._reply_delivery.replace_session_attach(session_attach)
 
     async def process_chunk(self, chunk: AudioChunk) -> None:
         """Feed one captured chunk to the turn detector; act on a closed run.
@@ -282,50 +275,4 @@ class CallSession:
             turn = TranscribedTurn(text=f"{self._pending_addendum.text} {turn.text}")
             self._pending_addendum = None
         self._actor.apply(TurnDetected())
-        await self._speak_reply(turn)
-
-    async def _speak_reply(self, turn: TranscribedTurn) -> None:
-        # The per-turn claude subprocess spawn measured 13-25s median -- an
-        # instant acknowledgment covers the human's first few seconds of
-        # otherwise-dead silence, before the STT->claude->TTS round trip
-        # even starts. Goes through self._speak, the same mic-gated channel
-        # every other cue in this flow uses, so it is never captured as if
-        # the human said it.
-        await self._speak(random.choice(CALL_ACK_PHRASES))
-        self._turn_timer.mark("ack_spoken")
-
-        # "claude_spawned"/"first_reply_frame" approximate a subprocess this
-        # class has no visibility into: SessionAttach is a Protocol, and the
-        # production ClaudeSessionAttach spawns claude -p --resume as the
-        # very first thing send_turn does, before its first yield -- so
-        # marking just before iterating starts, and again on the first
-        # chunk received, is accurate for that implementation even though
-        # this class cannot see inside it.
-        self._turn_timer.mark("claude_spawned")
-        pieces: list[str] = []
-        first_frame_seen = False
-        try:
-            async with self._wait_cue.active():
-                async for chunk in self._session_attach.send_turn(turn):
-                    if not first_frame_seen:
-                        self._turn_timer.mark("first_reply_frame")
-                        first_frame_seen = True
-                    pieces.append(chunk.text)
-        except SessionAttachError as exc:
-            await self._reply_recovery.recover(exc)
-            return
-        self._turn_timer.mark("reply_complete")
-        self._actor.apply(ReplyBegins())
-        self._turn_timer.mark("tts_request_sent")
-        await self._speak("".join(pieces))
-        # "playback_started" is the best available proxy, not a real signal:
-        # SpeakFn's own contract (see that Protocol's docstring) is "returns
-        # once playback has started OR completed" -- this class cannot tell
-        # which, and a caller wrapping speak() in its own timing-sensitive
-        # logic (the live path's mic-echo gate) can push this mark later
-        # still, past when audio actually started.
-        self._turn_timer.mark(
-            "playback_started", detail="approximate -- see SpeakFn's contract"
-        )
-        self._actor.apply(ReplyEnds())
-        await self._speak("Ready.")
+        await self._reply_delivery.deliver(turn)

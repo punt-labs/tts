@@ -9,8 +9,10 @@ the reply is spoken through the injected ``speak`` callable.
 
 from __future__ import annotations
 
+import logging
 import struct
 from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING
 
 from conversation_mode._session_attach_fakes import FakeSessionAttach, ScriptedChunk
 from conversation_mode._stt_fakes import FakeSTTProvider
@@ -25,6 +27,9 @@ from punt_vox.voxd.conversation_mode.reply_ends import ReplyEnds
 from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
 from punt_vox.voxd.conversation_mode.turn_detected import TurnDetected
 from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
+
+if TYPE_CHECKING:
+    import pytest
 
 _CHUNK_S = 0.02
 
@@ -788,3 +793,35 @@ class TestTurnTimerMarks:
         )
         await session.start()
         await _feed_one_turn(session)  # must not raise
+
+
+async def test_reply_containing_a_secret_is_redacted_before_speaking(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A resumed session is not read-only -- a reply that echoes back a
+    real credential must never reach speech synthesis verbatim, but the
+    full text must still land in the log for the operator."""
+    caplog.set_level(
+        logging.INFO, logger="punt_vox.voxd.conversation_mode.reply_delivery"
+    )
+    secret = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789"
+    speak = _Recorder()
+    stt = FakeSTTProvider(
+        [TranscriptEvent(text="what's in the env file", confidence=0.95, is_final=True)]
+    )
+    session_attach = FakeSessionAttach(
+        (ScriptedChunk(ReplyChunk(text=f"The key is {secret}", is_final=True)),)
+    )
+    session = CallSession(
+        turn_detector=_detector(),
+        stt_provider=stt,
+        session_attach=session_attach,
+        speak=speak,
+    )
+
+    await session.start()
+    await _feed_one_turn(session)
+
+    assert not any(secret in phrase for phrase in speak.said)
+    assert any("[redacted]" in phrase for phrase in speak.said)
+    assert any(secret in record.message for record in caplog.records)

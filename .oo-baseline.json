@@ -2316,10 +2316,10 @@
   "src/punt_vox/voxd/conversation_mode/call_session.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 1.09,
+    "avg_params": 1.1,
     "max_complexity": 6.0,
-    "avg_complexity": 2.27,
-    "module_size": 300.0,
+    "avg_complexity": 2.1,
+    "module_size": 249.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
@@ -2482,6 +2482,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/voxd/conversation_mode/reply_delivery.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 2.33,
+    "max_complexity": 4.0,
+    "avg_complexity": 2.0,
+    "module_size": 118.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/voxd/conversation_mode/reply_ends.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -2502,6 +2515,19 @@
     "max_complexity": 2.0,
     "avg_complexity": 1.5,
     "module_size": 66.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
+  "src/punt_vox/voxd/conversation_mode/reply_redaction.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.5,
+    "max_complexity": 2.0,
+    "avg_complexity": 1.5,
+    "module_size": 55.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
