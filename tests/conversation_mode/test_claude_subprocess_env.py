@@ -58,3 +58,42 @@ def test_keep_api_key_default_still_strips(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-stale")
     env = claude_subprocess_env()
     assert "ANTHROPIC_API_KEY" not in env
+
+
+def test_keep_api_key_does_not_forward_unrelated_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bare relay subprocess is reachable by a live, untrusted voice
+    turn -- it must get a minimal environment, not the parent's secrets."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-a-real-key")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "sk-eleven-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-secret")
+    monkeypatch.setenv("SOME_OTHER_SECRET", "do-not-forward-me")
+    env = claude_subprocess_env(keep_api_key=True)
+    assert "ELEVENLABS_API_KEY" not in env
+    assert "OPENAI_API_KEY" not in env
+    assert "SOME_OTHER_SECRET" not in env
+    assert env["ANTHROPIC_API_KEY"] == "sk-ant-a-real-key"
+
+
+def test_keep_api_key_still_forwards_path_and_home(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-a-real-key")
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("HOME", "/home/relay")
+    env = claude_subprocess_env(keep_api_key=True)
+    assert env["PATH"] == "/usr/bin:/bin"
+    assert env["HOME"] == "/home/relay"
+
+
+def test_default_path_still_forwards_full_parent_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The non-bare call sites' existing behavior must not change --
+    they forward the parent environment, minus the API key."""
+    monkeypatch.setenv("SOME_OTHER_VAR", "keep-me")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-stale")
+    env = claude_subprocess_env()
+    assert env["SOME_OTHER_VAR"] == "keep-me"
+    assert "ANTHROPIC_API_KEY" not in env

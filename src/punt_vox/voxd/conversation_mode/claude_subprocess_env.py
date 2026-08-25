@@ -42,33 +42,56 @@ class ClaudeSubprocessEnv:
 
     _STRIPPED_ENV_VARS = ("ANTHROPIC_API_KEY",)
 
+    # keep_api_key=True's subprocess (the --bare relay) is reachable by a
+    # live, untrusted voice turn -- forwarding the whole parent environment
+    # would hand it every other secret in the caller's shell. This is the
+    # minimal set `claude -p --resume --bare` needs to run (verified
+    # empirically: PATH+HOME+ANTHROPIC_API_KEY alone starts it and reaches
+    # session-id validation, no SHELL/USER/TERM/LANG complaint).
+    # ANTHROPIC_API_KEY is added separately below -- its presence is a
+    # precondition owned upstream (BareAuthMissingError.check).
+    _MINIMAL_RELAY_VARS = ("PATH", "HOME")
+
     def __new__(cls) -> Self:
         return super().__new__(cls)
 
     def __call__(
         self, *, extra: dict[str, str] | None = None, keep_api_key: bool = False
     ) -> dict[str, str]:
-        """Return the parent environment minus every stripped var.
+        """Return the subprocess's environment, minus every stripped var.
 
         *extra* is merged in last, so a caller-specific marker (e.g.
         :class:`ClaudeSessionAttach`'s ``VOX_CALL_RELAY``) always wins over
-        anything of the same name inherited from the parent -- not that any
-        entry in *extra* is expected to collide with a stripped var today.
+        anything of the same name inherited from the parent.
 
         *keep_api_key*, default ``False``, preserves every other call site's
-        existing behavior -- ``ANTHROPIC_API_KEY`` stripped so a resumed
-        session uses its own claude.ai OAuth login (see this class's own
-        docstring). ``True`` is the exact opposite requirement: a ``claude
-        --bare`` invocation has no OAuth support at all and *requires*
-        ``ANTHROPIC_API_KEY`` explicitly (``claude --help``: "Anthropic auth
-        is strictly ANTHROPIC_API_KEY or apiKeyHelper via --settings") --
-        stripping it there does not fall back to OAuth, it fails every turn
-        with "Not logged in".
+        existing behavior -- the full parent environment minus
+        ``ANTHROPIC_API_KEY`` (see this class's own docstring). ``True`` is
+        the opposite requirement twice over: ``claude --bare`` has no OAuth
+        support and *requires* the key explicitly, and its subprocess is the
+        one reachable by untrusted voice input -- so it gets a MINIMAL
+        environment (:data:`_MINIMAL_RELAY_VARS` plus the key), never the
+        parent's full environment.
         """
-        stripped = () if keep_api_key else self._STRIPPED_ENV_VARS
-        env = {k: v for k, v in os.environ.items() if k not in stripped}
+        env = self._minimal_relay_env() if keep_api_key else self._full_env_minus_key()
         if extra:
             env.update(extra)
+        return env
+
+    def _full_env_minus_key(self) -> dict[str, str]:
+        """Return the parent environment, minus :data:`_STRIPPED_ENV_VARS`."""
+        return {k: v for k, v in os.environ.items() if k not in self._STRIPPED_ENV_VARS}
+
+    def _minimal_relay_env(self) -> dict[str, str]:
+        """Return only what ``claude -p --resume --bare`` needs to run."""
+        env = {
+            name: os.environ[name]
+            for name in self._MINIMAL_RELAY_VARS
+            if name in os.environ
+        }
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if api_key is not None:
+            env["ANTHROPIC_API_KEY"] = api_key
         return env
 
 
