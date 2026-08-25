@@ -413,8 +413,9 @@ per the org verification standard:
    session pointed at the fixed plugin). Confirm `~/.claude/commands/`
    contains **no** `model.md`, `provider.md`, `voice.md`, or `recap.md`.
    Confirm typing `/model` shows only Claude Code's own built-in — vox does
-   not appear. Confirm `/vox:model` (or `/vox-dev:model-dev` in dev mode)
-   **does** invoke vox's model switch, with no permission prompt if §4.3's
+   not appear. Confirm `/vox:model` (or `/vox-dev:model` in dev mode — the
+   plugin namespace gets the `-dev` suffix, not the command name; there is
+   no `model-dev.md`) **does** invoke vox's model switch, with no permission prompt if §4.3's
    fix is correct (or exactly one prompt, granted once, if it is not —
    either way, confirm which). Repeat the same "does invoke, no unexpected
    prompt" check for `/vox:recap` — there is no bare-form regression to
