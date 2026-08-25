@@ -28,7 +28,11 @@ from punt_vox.voxd.conversation_mode.audio_chunk import AudioChunk
 from punt_vox.voxd.conversation_mode.call_control import CallControl
 from punt_vox.voxd.conversation_mode.call_lock import CallLock
 
-runner = CliRunner()
+# Force a wide terminal so typer's Rich-based help renderer never wraps flag
+# names across lines -- CI's headless runner reports a narrow or undefined
+# width, and a plain substring assertion against wrapped/truncated output is
+# not what these tests mean to check (see the two ``--help`` tests below).
+runner = CliRunner(env={"COLUMNS": "200"})
 
 
 def _resolved_session_spec(
@@ -341,6 +345,7 @@ def test_start_without_trace_turns_does_not_echo_the_turn_timer_to_console() -> 
 
 async def test_run_call_passes_a_resolved_spec_with_a_provider_to_synthesize(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Regression: a bare ``client.synthesize(text)`` sends no provider on the
     wire, and voxd's ``speech_handlers.py`` rejects with ``Unknown provider
@@ -350,6 +355,12 @@ async def test_run_call_passes_a_resolved_spec_with_a_provider_to_synthesize(
     just call ``speak()`` at all.
     """
     from punt_vox.commands import call as call_module
+
+    # This test exercises ``_run`` end-to-end, which runs the ``--bare``
+    # pre-flight (``BareAuthMissingError.check()``) before reaching the
+    # behavior under test -- isolate from whatever's ambient, don't rely on
+    # a developer shell's own ``ANTHROPIC_API_KEY``.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-value")
 
     script = _script_file(tmp_path, [])  # empty script: only the "Listening." cue
 
@@ -381,9 +392,12 @@ async def test_run_call_passes_a_resolved_spec_with_a_provider_to_synthesize(
 
 async def test_run_call_speaks_the_reply_and_holds_the_lock_only_while_active(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """End-to-end through the CLI orchestration: real detector, fake speech I/O."""
     from punt_vox.commands import call as call_module
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-value")
 
     script = _script_file(tmp_path, [{"text": "what does this do", "confidence": 0.95}])
 
@@ -470,9 +484,12 @@ class _FakeLiveSTT:
 
 async def test_run_call_live_path_captures_from_mic_and_transcribes(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Default (no ``--script``) drives mic capture + ElevenLabs STT, both faked."""
     from punt_vox.commands import call as call_module
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-value")
 
     calibration = ScriptedTurn.silence_chunks(10)
     live_chunks = ScriptedTurn(text="ignored", confidence=1.0).synthetic_chunks()
@@ -530,9 +547,14 @@ async def test_run_call_live_path_captures_from_mic_and_transcribes(
     assert mic_source.listening_calls == [False, True] * 4
 
 
-async def test_run_call_live_path_times_out_after_inactivity(tmp_path: Path) -> None:
+async def test_run_call_live_path_times_out_after_inactivity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """FR-2's bounded-inactivity end must actually be wired into the live loop."""
     from punt_vox.commands import call as call_module
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-value")
 
     calibration = ScriptedTurn.silence_chunks(10)
     # Plain silence, never enough to close a turn -- nothing here should
@@ -602,7 +624,9 @@ class _ClientFailingOnErrorSummary:
 
 
 async def test_outer_boundary_speaks_and_reraises_on_a_mid_call_crash(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The one mechanism that turns a mid-call crash into audible feedback:
     ``commands/call.py``'s outer ``except Exception`` handler must speak a
@@ -610,6 +634,8 @@ async def test_outer_boundary_speaks_and_reraises_on_a_mid_call_crash(
     ``finally``, and still re-raise so the process exits non-zero.
     """
     from punt_vox.commands import call as call_module
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-value")
 
     script = _script_file(tmp_path, [{"text": "what does this do", "confidence": 0.95}])
     client = _ClientFailingOnErrorSummary()
@@ -644,7 +670,9 @@ async def test_outer_boundary_speaks_and_reraises_on_a_mid_call_crash(
 
 
 async def test_outer_boundary_survives_a_failing_speak_and_reraises_the_original(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A ``speak()`` failure inside the outer boundary's own fallback call
     must not replace the original exception -- the root cause, not a
@@ -652,6 +680,8 @@ async def test_outer_boundary_survives_a_failing_speak_and_reraises_the_original
     process's exit code must show.
     """
     from punt_vox.commands import call as call_module
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-value")
 
     script = _script_file(tmp_path, [{"text": "what does this do", "confidence": 0.95}])
     client = _ClientFailingOnErrorSummary()
