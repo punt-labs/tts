@@ -17,12 +17,12 @@ class TestEstimateSpeechDurationS:
     def test_normal_text_uses_word_count_at_default_wpm(self) -> None:
         # 175 WPM default -> 175 words takes 60s.
         text = " ".join(["word"] * 175)
-        assert estimate_speech_duration_s(text) == 60.0
+        assert estimate_speech_duration_s(text) == pytest.approx(60.0)
 
     def test_custom_wpm_scales_the_estimate(self) -> None:
         text = " ".join(["word"] * 100)
         # 100 WPM -> 100 words takes 60s.
-        assert estimate_speech_duration_s(text, wpm=100) == 60.0
+        assert estimate_speech_duration_s(text, wpm=100) == pytest.approx(60.0)
 
     def test_single_very_long_token_is_not_treated_as_one_short_word(self) -> None:
         # A 400-character unbroken token (e.g. a URL or file path) counts
