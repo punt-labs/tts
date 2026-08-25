@@ -60,6 +60,39 @@ async def test_a_low_confidence_final_event_returns_none() -> None:
     assert result is None
 
 
+async def test_a_trailing_non_final_event_returns_none() -> None:
+    """A stream that ends on a partial result must not be mistaken for a
+    settled transcript -- ``is_final`` marks the last event for a turn, and
+    a stream ending without one means recognition never settled.
+    """
+    timer = _SpyTurnTimer()
+    stt = FakeSTTProvider(
+        [TranscriptEvent(text="partial", confidence=0.95, is_final=False)]
+    )
+    transcriber = TurnTranscriber(stt, timer)
+
+    result = await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk()))
+
+    assert result is None
+    assert dict(timer.marks)["stt_response_received"] == "no transcript"
+
+
+async def test_a_final_event_wins_over_an_earlier_non_final_event() -> None:
+    timer = _SpyTurnTimer()
+    stt = FakeSTTProvider(
+        [
+            TranscriptEvent(text="partial", confidence=0.30, is_final=False),
+            TranscriptEvent(text="hello", confidence=0.95, is_final=True),
+        ]
+    )
+    transcriber = TurnTranscriber(stt, timer)
+
+    result = await transcriber.transcribe(AudioChunk.as_async_iter(_one_chunk()))
+
+    assert result is not None
+    assert result.text == "hello"
+
+
 async def test_no_events_at_all_returns_none() -> None:
     timer = _SpyTurnTimer()
     stt = FakeSTTProvider([])

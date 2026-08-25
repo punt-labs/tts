@@ -64,7 +64,12 @@ class TurnTranscriber:
         final_event = None
         try:
             async for event in self._provider.transcribe(chunks):
-                final_event = event
+                # Only a final event settles the transcript -- a provider
+                # that yields a partial as the last thing before ending its
+                # stream must not have that partial mistaken for a settled
+                # result (Copilot review, PR #460).
+                if event.is_final:
+                    final_event = event
         except ProviderAuthError:
             # A revoked/expired STT credential is certain and permanent --
             # every subsequent turn would hit exactly the same rejection,
