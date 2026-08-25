@@ -113,11 +113,7 @@ class SessionSpec:
         downstream surfaces see, so no padded name crosses the boundary.
         """
         if not (candidate := (override or self._state.provider or "").strip()):
-            msg = (
-                "no TTS provider is configured for this repo; "
-                "set one with mic:provider <name>"
-            )
-            raise ProviderNotConfiguredError(msg)
+            raise ProviderNotConfiguredError.for_mcp()
         return candidate
 
     def _state_model_for(self, provider: str) -> str | None:

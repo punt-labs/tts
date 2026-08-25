@@ -47,23 +47,18 @@ class _CallSpecResolver:
         once, before the call state machine starts.
 
         :class:`~punt_vox.session_spec.SessionSpec`'s own
-        :class:`ProviderNotConfiguredError` message names ``mic:provider``
-        -- the MCP tool, not a command a CLI user can run.
-        :mod:`punt_vox.commands.model` and :mod:`punt_vox.commands.voice`
-        hit the same "no provider configured" condition and write their
-        own CLI-appropriate hint rather than surfacing the shared
-        exception's text verbatim; matched here.
+        :class:`ProviderNotConfiguredError` is raised with the MCP-flavored
+        ``for_mcp()`` message -- the wrong verb for a CLI caller, so this
+        rebuilds it with :meth:`ProviderNotConfiguredError.for_cli`, the
+        same classmethod :mod:`punt_vox.commands.model` and
+        :mod:`punt_vox.commands.voice` use for the identical condition.
         :class:`ModelNotAvailableError`'s message carries no such
         MCP-flavored text, so it passes through unchanged.
         """
         try:
             return SessionSpec.for_repo().fill()
         except ProviderNotConfiguredError as exc:
-            msg = (
-                "no TTS provider is configured for this repo; "
-                "set one with vox provider <name>"
-            )
-            raise typer.BadParameter(msg) from exc
+            raise typer.BadParameter(str(ProviderNotConfiguredError.for_cli())) from exc
         except ModelNotAvailableError as exc:
             raise typer.BadParameter(str(exc)) from exc
 
