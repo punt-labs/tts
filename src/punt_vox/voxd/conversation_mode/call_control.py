@@ -109,11 +109,12 @@ class CallControl:
                 # UnicodeDecodeError (from AtomicFile.read's utf-8 decode, on
                 # a hand-edited or partially-overwritten file with invalid
                 # bytes) is a ValueError subclass, same family as
-                # JsonObject's own raises -- both mean "this mailbox entry
-                # is not usable", not "the call ended". Read and parse share
-                # one try so a decode failure hits the same discard path a
-                # parse failure already does, instead of propagating to the
-                # call-ending boundary handler this method exists to spare.
+                # JsonObject's own raises -- both, plus OSError (a
+                # permissions or disk I/O failure on the read), mean "this
+                # mailbox entry is not usable", not "the call ended". Read
+                # and parse share one try so any of these hits the same
+                # discard path, instead of propagating to the call-ending
+                # boundary handler this method exists to spare.
                 raw = AtomicFile(consuming_path).read()
                 if not raw:
                     return None
@@ -141,7 +142,7 @@ class CallControl:
                     )
                 msg = f"unrecognized control kind {kind!r}"
                 raise ValueError(msg)
-            except ValueError as exc:
+            except (OSError, ValueError) as exc:
                 logger.warning(
                     "call.control request is unreadable, discarding: %s", exc
                 )

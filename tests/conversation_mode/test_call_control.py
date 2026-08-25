@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import stat
 from pathlib import Path
+from unittest.mock import patch
 
 from punt_vox.voxd.conversation_mode.call_control import CallControl
 
@@ -149,6 +150,26 @@ def test_consume_treats_a_wrong_typed_target_session_id_as_no_request(
 
     control = CallControl(path)
     assert control.consume() is None
+    assert not path.exists()
+
+
+def test_consume_treats_an_os_error_on_read_as_no_request(tmp_path: Path) -> None:
+    """A permissions or disk I/O failure on the read must hit the same
+    discard-and-log path as a parse failure -- consume()'s docstring
+    promises "logged and reported as 'no request' rather than raised" for
+    any unusable mailbox entry, not only malformed JSON.
+    """
+    path = tmp_path / "call.control"
+    control = CallControl(path)
+    control.request_stop()
+
+    with patch(
+        "punt_vox.voxd.conversation_mode.call_control.AtomicFile.read",
+        side_effect=OSError("permission denied"),
+    ):
+        assert control.consume() is None
+    # Cleared, not re-read and re-failed forever -- same discipline as
+    # every other discard-and-log path in this method.
     assert not path.exists()
 
 

@@ -179,6 +179,23 @@ def test_read_treats_invalid_utf8_bytes_as_no_active_call(tmp_path: Path) -> Non
     assert lock.read() is None
 
 
+def test_read_treats_an_os_error_as_no_active_call(tmp_path: Path) -> None:
+    """A permissions or disk I/O failure on the read must be treated as
+    stale, the same as a corrupt or missing lock file -- not raised past
+    :meth:`CallLock.read`, which both :meth:`acquire` and :meth:`is_live`
+    call.
+    """
+    path = tmp_path / "call.lock"
+    lock = CallLock(path)
+    lock.acquire("call active")
+
+    with patch(
+        "punt_vox.voxd.conversation_mode.call_lock.AtomicFile.read",
+        side_effect=OSError("permission denied"),
+    ):
+        assert lock.read() is None
+
+
 def test_is_live_true_for_a_pid_owned_by_another_user(tmp_path: Path) -> None:
     """A PermissionError still proves the process exists (mirrors acquire())."""
     lock = CallLock(tmp_path / "call.lock")

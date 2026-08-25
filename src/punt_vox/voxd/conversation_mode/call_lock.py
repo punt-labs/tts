@@ -152,7 +152,9 @@ class CallLock:
         try:
             # Read and parse share one try (mirrors CallControl.consume):
             # AtomicFile.read's UnicodeDecodeError is a ValueError subclass,
-            # so corrupt bytes discard the same way bad JSON does.
+            # so corrupt bytes discard the same way bad JSON does. OSError
+            # (a permissions or disk I/O failure on the read) is the same
+            # kind of "unusable entry" and must discard the same way too.
             raw = AtomicFile(self._path).read()
             if not raw:
                 return None
@@ -165,7 +167,7 @@ class CallLock:
             return CallLockState(
                 reason=obj.require_str("reason"), pid=obj.require_int("pid")
             )
-        except (json.JSONDecodeError, ValueError) as exc:
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
             logger.warning("call.lock is unreadable, treating as stale: %s", exc)
             return None
 
