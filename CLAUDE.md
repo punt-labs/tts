@@ -87,7 +87,7 @@ Two rules follow, and both are load-bearing:
 | `plugin/hooks/vibe-nudge.sh` | UserPromptSubmit → `vox hook vibe-nudge` |
 | `plugin/hooks/subagent.sh` | SubagentStart/SubagentStop → `vox hook subagent-start` / `subagent-stop` |
 | `plugin/hooks/farewell.sh` | SessionEnd → `vox hook session-end` |
-| `plugin/commands/` | `/vox`, `/unmute`, `/mute`, `/recap`, `/vibe`, `/music`, `/model`, `/provider`, `/voice` |
+| `plugin/commands/` | `/vox`, `/unmute`, `/mute`, `/vibe`, `/music`, `/model`, `/provider`, `/voice`, `/recap` (`/model`/`/provider`/`/voice`/`/recap` deploy namespaced-only, as `/vox:model` etc.) |
 
 Two gates hold the surface, both wired into `make lint` and the lint workflow:
 

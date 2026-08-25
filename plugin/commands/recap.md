@@ -3,13 +3,13 @@ description: "Spoken summary of what just happened"
 allowed-tools: ["mcp__plugin_vox_mic__unmute"]
 ---
 
-# /recap command
+# /vox:recap command
 
 Speak a brief summary of the last response.
 
 ## Usage
 
-`/recap`
+`/vox:recap`
 
 ## Implementation
 
