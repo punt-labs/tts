@@ -374,6 +374,176 @@ specification, because \texttt{docs/conversation-mode-prd.tex} explicitly
 requires this document to be the place that gap is settled, not an
 implementation detail discovered afterward.
 
+\section{Playback Sink Ordering}
+\label{sec:sink-ordering}
+
+Section \ref{sec:design-termination}'s \S\ref{sec:dispatch} predecessor left
+three concurrency questions explicitly open for Slice 2a
+(\texttt{docs/conversation-mode-prd.tex}, \S\ref{sec:design-termination}):
+what happens when a barge-in stop-signal races a segment finishing
+naturally; what happens when a second barge-in fires while the first's
+buffer-clear is still in flight; and from what thread, under what
+discipline, a buffer clear is safe relative to a concurrent writer. This
+section resolves all three, by the same means \S\ref{sec:dispatch} already
+resolved the analogous problem for \texttt{CallState}: not a lock, an actor
+with an internal, single-consumer command queue.
+
+\subsection{Basic Types and State}
+
+\begin{zed}
+  [CHUNK, REASON]
+\end{zed}
+
+$CHUNK$ is an opaque handle for one piece of synthesized audio -- what a
+\texttt{SinkWrite} command carries in the implementation
+(\texttt{src/punt\_vox/voxd/conversation\_mode/sink\_write.py}). Its
+internal structure (sample rate, encoding) is outside this model, exactly
+as $TURN$'s transcript text is outside \S 2's. $REASON$ is the same
+opaque, human-readable diagnostic type \texttt{docs/audio-programs.tex}
+declares for its own operations -- \texttt{SinkClear}'s $reason?$ is
+carried for logging only and, per the operation schema below, never
+affects the transition it labels.
+
+\begin{zed}
+  SinkStatus ::= sinkIdle | sinkWriting | sinkClosed
+\end{zed}
+
+\begin{schema}{PlaybackSinkState}
+  status : SinkStatus
+\end{schema}
+
+Unlike \texttt{CallState}, a sink carries no pending-addendum-shaped
+invariant of its own -- $sinkClosed$ is simply terminal, enforced by every
+operation's precondition below rather than by a cross-field invariant.
+
+\subsection{Initialisation}
+
+\begin{schema}{SinkInit}
+  PlaybackSinkState'
+  \where
+  status' = sinkIdle
+\end{schema}
+
+\subsection{Operations}
+
+\begin{schema}{SinkWriteOp}
+  \Delta PlaybackSinkState \\
+  chunk? : CHUNK
+  \where
+  status \neq sinkClosed \\
+  status' = sinkWriting
+\end{schema}
+
+Appending a chunk is valid from either $sinkIdle$ or $sinkWriting$ --
+consecutive writes are the common case, not a special one -- and always
+leaves the sink in $sinkWriting$. $chunk?$ is not read by this schema
+beyond declaring it; the model tracks lifecycle state, not buffer contents.
+
+\begin{schema}{SinkClearOp}
+  \Delta PlaybackSinkState \\
+  reason? : REASON
+  \where
+  status \neq sinkClosed \\
+  status' = sinkIdle
+\end{schema}
+
+The barge-in primitive. Valid from either $sinkIdle$ or $sinkWriting$, and
+always lands on $sinkIdle$ -- which is exactly what makes it idempotent:
+applying $SinkClearOp$ to a state already at $sinkIdle$ is a well-defined
+operation whose postcondition ($status' = sinkIdle$) already holds. This is
+the resolution to the second open question (stop-during-a-stop): a second
+$SinkClearOp$ immediately following the first has a precondition that is
+still satisfied ($sinkIdle \neq sinkClosed$) and a postcondition that is
+unchanged by being applied twice. Nothing about applying $SinkClearOp$
+$n$ times for any $n \geq 1$ differs, observably, from applying it once.
+
+\begin{schema}{SinkCloseOp}
+  \Delta PlaybackSinkState
+  \where
+  status' = sinkClosed
+\end{schema}
+
+Valid from any status, including $sinkClosed$ itself (closing an
+already-closed sink is a no-op, matching the executable
+:class:`PlaybackSink` Protocol's stated contract) -- the only operation with
+no precondition, because it is the only one a caller may always issue
+safely regardless of what it does not yet know about the sink's state.
+
+\subsection{The First Open Question: Natural Completion vs. Barge-In}
+
+$SinkWriteOp$ and $SinkClearOp$ are the two operations that can race: a
+synthesis pipeline finishing a reply's last segment issues one final
+$SinkWriteOp$ at approximately the same real-world instant a barge-in
+detector, having just fired, issues a $SinkClearOp$. The Z schemas above
+do not, and structurally cannot, answer "which happens first" -- that is a
+scheduling question, outside what a precondition/postcondition pair can
+express (the same limit \S\ref{sec:dispatch} already names for
+\texttt{CallState}). What the schemas \emph{do} guarantee, checked by
+\texttt{fuzz}, is that \textbf{every reachable ordering of the two
+operations lands in a well-defined state}: $SinkWriteOp$ then $SinkClearOp$
+ends at $sinkIdle$; $SinkClearOp$ then $SinkWriteOp$ ends at $sinkWriting$.
+Neither ordering is a violated precondition, an undefined state, or data
+loss -- the race is real, but its two outcomes are both valid, both
+represented in the model, and neither corrupts anything. This is why the
+resolution does not need to pick a winner: it only needs to guarantee the
+loser's operation still applies cleanly to whatever the winner left behind,
+which the model proves for both orderings by construction.
+
+\subsection{The Second and Third Open Questions: Actor, Not Lock}
+
+The third open question -- from what thread, under what discipline, a clear
+is safe relative to a concurrent writer -- is not a question the pure state
+schema above can answer any more than \texttt{CallState} could answer
+\S\ref{sec:dispatch}'s equivalent. The resolution is the same one
+\S\ref{sec:dispatch} already gives, reused rather than reinvented: an actor
+with an internal, single-consumer \texttt{asyncio.Queue} of commands.
+\texttt{PlaybackSinkActor} (\texttt{src/punt\_vox/voxd/conversation\_mode/
+playback\_sink\_actor.py}) owns one \texttt{PlaybackSink} and one queue of
+\texttt{SinkCommand} values (\texttt{SinkWrite}, \texttt{SinkClear},
+\texttt{SinkClose} -- the executable form of $SinkWriteOp$, $SinkClearOp$,
+$SinkCloseOp$). Every producer -- the sentence-streamed synthesis pipeline,
+the barge-in detector -- holds a reference to the actor and calls
+\texttt{enqueue}; none ever calls \texttt{write}, \texttt{clear}, or
+\texttt{close} on the sink directly. Exactly one task drains the queue,
+applying one command's \texttt{apply} coroutine to completion -- awaits and
+all -- before the next command is even dequeued.
+
+This differs from \texttt{CallActor} in one respect worth naming precisely,
+because the difference is deliberate, not sloppy reuse: \texttt{CallActor}'s
+documented guarantee is that nothing is \emph{awaited} inside a single
+\texttt{apply} (its operations are synchronous bare-attribute assignments),
+so an operation cannot be interrupted mid-statement even in principle.
+\texttt{PlaybackSinkActor}'s operations \emph{are} coroutines --
+writing, clearing, and closing a real audio stream is I/O -- so that
+stronger guarantee is unavailable. The guarantee this actor provides
+instead, and the one the second and third open questions actually need, is
+weaker but sufficient: \textbf{one command's \texttt{apply}, including
+whatever it awaits internally, always runs to completion before the next
+command's \texttt{apply} begins.} No two commands' internal awaits ever
+interleave, because the second command is not dequeued -- its \texttt{apply}
+does not even start -- until the first has returned. This is what resolves
+the third open question: there is exactly one caller of
+\texttt{sink.write}/\texttt{sink.clear}/\texttt{sink.close} at any point in
+the program, always the actor's own dispatch loop, so "which thread clears
+relative to which thread writes" has a single answer -- the same one,
+every time -- by construction, not by discipline the caller has to
+remember. It is also what resolves the second open question operationally:
+a stop-during-a-stop is two \texttt{SinkClear} commands enqueued close
+together; the actor applies the first to completion, then the second, and
+$SinkClearOp$'s idempotence (\S\ref{sec:sink-ordering} above) means the
+second is a no-op that leaves the sink exactly where the first already put
+it.
+
+A concrete sink implementation whose real I/O spans an OS thread outside
+this event loop (a PortAudio callback thread, Slice 2b's decision) still
+must not receive concurrent calls from that thread and from the actor's
+dispatch loop; the Protocol contract in
+\texttt{playback\_sink.py} states this as a requirement on any conforming
+implementation, but discharging it is Slice 2b's work, not this model's --
+consistent with how \S\ref{sec:dispatch} states the single-writer
+requirement on \texttt{CallActor}'s callers without itself being able to
+enforce cross-thread safety inside a concrete implementation.
+
 \section{Known Limitations}
 
 This model does not address two items \texttt{docs/conversation-mode-prd.tex}

@@ -743,10 +743,7 @@ def _provider_status_block(provider: str | None) -> ProviderReadiness:
             name="",
             ready=False,
             reason="unconfigured",
-            detail=(
-                "no TTS provider is configured for this repo; "
-                "set one with mic:provider <name>"
-            ),
+            detail=str(ProviderNotConfiguredError.for_mcp()),
         )
     try:
         payload = _voxd_client().provider_status(provider)

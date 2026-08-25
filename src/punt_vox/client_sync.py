@@ -151,16 +151,26 @@ class VoxClientSync:
         return self._runner.run(_op())
 
     def synthesize(
-        self, text: str, spec: SynthesisSpec | None = None, *, once: int | None = None
+        self,
+        text: str,
+        spec: SynthesisSpec | None = None,
+        *,
+        once: int | None = None,
+        timeout: float | None = None,
     ) -> SynthesizeResult:
         """Send synthesize request. Audio plays on server.
 
         *spec* bundles the voice/provider/rate parameters; *once* is the dedup
-        TTL. See :class:`SynthesizeResult` for the returned fields -- in
-        particular the ``deduped`` flag that surfaces when ``once=<ttl>`` matches
-        an identical text already played within the window.
+        TTL. *timeout* overrides how long to wait for voxd's 'playing' ack --
+        see :meth:`VoxClient.synthesize`'s own parameter comment; absence
+        keeps every caller's current default. See :class:`SynthesizeResult`
+        for the returned fields -- in particular the ``deduped`` flag that
+        surfaces when ``once=<ttl>`` matches an identical text already
+        played within the window.
         """
-        return self._drive(lambda c: c.synthesize(text, spec, once=once))
+        return self._drive(
+            lambda c: c.synthesize(text, spec, once=once, timeout=timeout)
+        )
 
     def chime(self, signal: str) -> None:
         """Play a bundled chime asset."""

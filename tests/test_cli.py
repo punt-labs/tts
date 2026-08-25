@@ -74,6 +74,49 @@ class TestSayCommand:
         call_kwargs = mock_instance.synthesize.call_args
         assert call_kwargs.args[1].voice == "hans"
 
+    @patch(f"{_CLI}.VoxClientSync")
+    def test_say_fills_provider_through_session_spec_for_repo(
+        self,
+        mock_client_cls: MagicMock,
+        tmp_path: Path,
+        monkeypatch: MagicMock,
+    ) -> None:
+        """Regression: ``_fill_from_state`` must route through
+        ``SessionSpec.for_repo()`` -- the one config-lookup path every
+        synthesis surface is meant to share -- not a private, duplicated
+        ``ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()``
+        that would silently drift from ``vox rec new``/``vox call``'s.
+        """
+        from punt_vox.client import SynthesizeResult
+        from punt_vox.session_spec import SessionSpec
+
+        monkeypatch.chdir(tmp_path)
+        mock_instance = mock_client_cls.return_value
+        mock_instance.synthesize.return_value = SynthesizeResult(request_id="abc123")
+
+        runner = CliRunner()
+        with patch.object(
+            SessionSpec, "for_repo", wraps=SessionSpec.for_repo
+        ) as spy_for_repo:
+            result = runner.invoke(app, ["say", "hello"])
+        assert result.exit_code == 0
+        spy_for_repo.assert_called_once()
+
+    def test_say_no_provider_shows_cli_guidance_not_mcp(
+        self, hermetic_config: Path
+    ) -> None:
+        """SessionSpec._resolve_provider raises the MCP-flavored for_mcp()
+        message by default -- the CLI must show `vox provider`, the runnable
+        fix for a terminal user, never `mic:provider` (an MCP-only tool)."""
+        (hermetic_config / "vox.md").write_text("---\n---\n")
+
+        runner = CliRunner()
+        result = runner.invoke(app, ["say", "hello"])
+
+        assert result.exit_code == 1
+        assert "vox provider" in result.output
+        assert "mic:provider" not in result.output
+
     def test_say_no_text_fails(self) -> None:
         runner = CliRunner()
         result = runner.invoke(app, ["say"])

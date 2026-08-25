@@ -29,6 +29,8 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Self, final
 
+from punt_vox.config import ConfigStore
+from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_config_dir
 from punt_vox.models import MODEL_TABLE
 from punt_vox.session_state import SessionState
 from punt_vox.types_synthesis import SynthesisSpec
@@ -55,6 +57,22 @@ class SessionSpec:
         self = super().__new__(cls)
         self._state = state
         return self
+
+    @classmethod
+    def for_repo(cls) -> Self:
+        """Build a :class:`SessionSpec` from this repo's ``vox.md``.
+
+        The one config-lookup path every synthesis surface shares --
+        ``vox say``, ``vox rec new``, and ``vox call`` all read the same
+        ``ConfigStore`` at the same repo-scoped directory, so this is the
+        single place that lookup is written rather than copied at each call
+        site. A surface that skipped this (built a bare
+        :class:`~punt_vox.types_synthesis.SynthesisSpec` and called
+        :meth:`fill` on it without ever consulting state) would be back to
+        the exact bug this whole module exists to prevent.
+        """
+        config = ConfigStore(find_config_dir() or DEFAULT_CONFIG_DIR).read()
+        return cls(config)
 
     def fill(self, override: SynthesisSpec | None = None) -> SynthesisSpec:
         """Return *override* filled from state, provider and model both authoritative.
@@ -95,11 +113,7 @@ class SessionSpec:
         downstream surfaces see, so no padded name crosses the boundary.
         """
         if not (candidate := (override or self._state.provider or "").strip()):
-            msg = (
-                "no TTS provider is configured for this repo; "
-                "set one with mic:provider <name>"
-            )
-            raise ProviderNotConfiguredError(msg)
+            raise ProviderNotConfiguredError.for_mcp()
         return candidate
 
     def _state_model_for(self, provider: str) -> str | None:

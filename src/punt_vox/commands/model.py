@@ -12,6 +12,7 @@ from typing import Self, final
 from punt_vox.cascade import Cascade, RosterError
 from punt_vox.commands._result import CommandResult, Ctx, SwitchList
 from punt_vox.models import MODEL_TABLE, resolve_model
+from punt_vox.types_synthesis_errors import ProviderNotConfiguredError
 
 
 @final
@@ -53,10 +54,7 @@ class ModelCommand:
                     text=listing.render("No models for this provider."),
                     json_data=listing.payload(),
                 )
-            message = (
-                "no TTS provider is configured for this repo; "
-                "set one with vox provider <name>"
-            )
+            message = str(ProviderNotConfiguredError.for_cli())
             return CommandResult(
                 text=f"Error: {message}",
                 json_data={"error": message},

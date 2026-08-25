@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -402,6 +403,56 @@ class TestVoxClientSynthesize:
 
         result = await client.synthesize("Hello world")
         assert result.cached is False
+
+    @pytest.mark.asyncio
+    async def test_explicit_timeout_covers_a_slow_synthesis_the_default_would_kill(
+        self,
+    ) -> None:
+        """Regression: a long reply's real synthesis time (a 1133-char
+        reply measured ~43s live) exceeded the fixed 30s default and
+        killed the call mid-reply with VoxdProtocolError. A caller (vox
+        call's speak()) that knows its own text can run long passes a
+        longer, explicit timeout instead -- proven here with a delay
+        longer than a deliberately tiny default, comfortably covered by
+        the explicit value.
+        """
+        mock_ws = _make_mock_ws()
+
+        async def _delayed_recv() -> str:
+            await asyncio.sleep(0.05)
+            return json.dumps({"type": "playing", "id": "req1"})
+
+        mock_ws.recv = AsyncMock(side_effect=_delayed_recv)
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with patch("punt_vox.client._TIMEOUT_SYNTHESIS", 0.01):
+            # The default (0.01s) is shorter than the 0.05s delay -- an
+            # explicit timeout=1.0 must still cover it.
+            result = await client.synthesize("Hello world", timeout=1.0)
+        assert isinstance(result.request_id, str)
+
+    @pytest.mark.asyncio
+    async def test_omitted_timeout_falls_back_to_the_default(self) -> None:
+        """Absence of an explicit timeout keeps every existing caller's
+        current behavior unchanged (mic:unmute, vox say, the Stop-hook
+        speech helper) -- only a caller that opts in gets a longer bound.
+        """
+        mock_ws = _make_mock_ws()
+
+        async def _delayed_recv() -> str:
+            await asyncio.sleep(0.05)
+            return json.dumps({"type": "playing", "id": "req1"})
+
+        mock_ws.recv = AsyncMock(side_effect=_delayed_recv)
+        client = VoxClient(port=8421, token="tok")
+        client._transport._ws = mock_ws  # pyright: ignore[reportPrivateUsage]
+
+        with (
+            patch("punt_vox.client._TIMEOUT_SYNTHESIS", 0.01),
+            pytest.raises(VoxdProtocolError, match="Timeout"),
+        ):
+            await client.synthesize("Hello world")
 
 
 class TestVoxClientChime:
@@ -1631,6 +1682,35 @@ class TestVoxClientSync:
         sent = json.loads(mock_ws.send.call_args[0][0])
         assert sent["api_key"] == "sk_project_a"
         assert sent["text"] == "Bill to project A"
+
+    def test_synthesize_forwards_a_longer_timeout(self) -> None:
+        """Regression: vox call's speak() needs a longer bound than the
+        default (a long reply's real synthesis time can exceed 30s) --
+        the sync wrapper must actually forward *timeout* through to
+        VoxClient.synthesize, not silently drop it on the bridge.
+        """
+        mock_ws = _make_mock_ws()
+
+        async def _delayed_recv() -> str:
+            await asyncio.sleep(0.05)
+            return json.dumps({"type": "playing", "id": "x"})
+
+        mock_ws.recv = AsyncMock(side_effect=_delayed_recv)
+
+        with (
+            patch(
+                "punt_vox.client.websockets.asyncio.client.connect",
+                new_callable=AsyncMock,
+                return_value=mock_ws,
+            ),
+            patch("punt_vox.client._TIMEOUT_SYNTHESIS", 0.01),
+        ):
+            sync_client = VoxClientSync(port=8421, token="tok")
+            # The default (0.01s) is shorter than the 0.05s delay --
+            # timeout=1.0 must still cover it, proving it reached the
+            # underlying VoxClient.synthesize call.
+            result = sync_client.synthesize("Hello", timeout=1.0)
+        assert isinstance(result.request_id, str)
 
     def test_chime(self) -> None:
         mock_ws = _make_mock_ws()

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
+from contextlib import ExitStack
 from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
@@ -246,6 +248,87 @@ class TestConfigureClientLogging:
         logging_config.configure_client_logging(role="mcp")
         assert logging.getLogger("httpx").level == logging.WARNING
         assert logging.getLogger("httpx2").level == logging.WARNING
+
+
+class TestConfigureTurnTimerLogging:
+    """vox call's turn-latency trace: always to vox.log, optionally to console too."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> Iterator[None]:
+        yield from _redirect_log_tree(tmp_path, monkeypatch)
+        # configure_turn_timer_logging mutates a specific named logger, not
+        # just root -- the shared fixture above only saves/restores root, so
+        # this logger needs its own save/restore or state leaks across tests.
+
+    @pytest.fixture(autouse=True)
+    def _isolate_turn_timer_logger(self) -> Iterator[None]:
+        target = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
+        saved_handlers = target.handlers[:]
+        saved_level = target.level
+        saved_propagate = target.propagate
+        yield
+        for handler in target.handlers[:]:
+            handler.close()
+        target.handlers[:] = saved_handlers
+        target.setLevel(saved_level)
+        target.propagate = saved_propagate
+
+    def test_debug_reaches_vox_log_without_verbose(self, tmp_path: Path) -> None:
+        """The whole point: unconditional, not gated by echo_to_console."""
+        logging_config.configure_turn_timer_logging(echo_to_console=False)
+        logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME).debug(
+            "turn_ended (+1.20s step, +3.45s turn)"
+        )
+        contents = (tmp_path / "logs" / "vox.log").read_text(encoding="utf-8")
+        assert "turn_ended (+1.20s step, +3.45s turn)" in contents
+
+    def test_echo_to_console_false_attaches_no_stream_handler(self) -> None:
+        logging_config.configure_turn_timer_logging(echo_to_console=False)
+        target = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
+        assert not any(
+            isinstance(h, logging.StreamHandler) and not isinstance(h, AppendLogHandler)
+            for h in target.handlers
+        )
+
+    def test_echo_to_console_true_attaches_a_stream_handler(self) -> None:
+        logging_config.configure_turn_timer_logging(echo_to_console=True)
+        target = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
+        assert any(
+            isinstance(h, logging.StreamHandler) and not isinstance(h, AppendLogHandler)
+            for h in target.handlers
+        )
+
+    def test_does_not_propagate_to_root(self) -> None:
+        """Other modules' DEBUG noise must not become durable for the call's
+        duration just because this logger was forced to DEBUG."""
+        logging_config.configure_turn_timer_logging(echo_to_console=False)
+        target = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
+        assert target.propagate is False
+
+    def test_repeated_calls_do_not_accumulate_handlers(self) -> None:
+        logging_config.configure_turn_timer_logging(echo_to_console=True)
+        logging_config.configure_turn_timer_logging(echo_to_console=True)
+        target = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
+        assert len(target.handlers) == 2  # one append + one console, not four
+
+    def test_repeated_calls_close_the_prior_handlers(self) -> None:
+        """A second call must not leak the first call's handler resources --
+        each replaced handler is closed before the logger drops its
+        reference, not just cleared from the handler list."""
+        logging_config.configure_turn_timer_logging(echo_to_console=True)
+        target = logging.getLogger(logging_config._TURN_TIMER_LOGGER_NAME)
+        first_handlers = target.handlers[:]
+
+        with ExitStack() as stack:
+            spies = [
+                stack.enter_context(patch.object(handler, "close", wraps=handler.close))
+                for handler in first_handlers
+            ]
+            logging_config.configure_turn_timer_logging(echo_to_console=True)
+            for spy in spies:
+                spy.assert_called_once()
 
 
 class TestLogHealth:
