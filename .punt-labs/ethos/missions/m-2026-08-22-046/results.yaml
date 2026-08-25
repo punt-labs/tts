@@ -1,0 +1,157 @@
+results:
+    - mission: m-2026-08-22-046
+      round: 1
+      created_at: "2026-08-22T15:06:20Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.85
+      files_changed:
+        - path: docs/conversation-mode-prd.tex
+          added: 1325
+          removed: 0
+        - path: docs/conversation-mode-spikes.md
+          added: 710
+          removed: 0
+        - path: docs/conversation-mode-call-state.tex
+          added: 400
+          removed: 0
+        - path: docs/conversation-mode-session-attach-adr.md
+          added: 217
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/__init__.py
+          added: 25
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/reply.py
+          added: 24
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/session_attach.py
+          added: 55
+          removed: 0
+        - path: src/punt_vox/voxd/conversation_mode/turn.py
+          added: 21
+          removed: 0
+        - path: tests/conversation_mode/__init__.py
+          added: 0
+          removed: 0
+        - path: tests/conversation_mode/_session_attach_fakes.py
+          added: 89
+          removed: 0
+        - path: tests/conversation_mode/test_session_attach_fake.py
+          added: 122
+          removed: 0
+        - path: tests/conversation_mode/coverage-matrix.md
+          added: 64
+          removed: 0
+        - path: tests/conversation_mode/harnesses/__init__.py
+          added: 0
+          removed: 0
+      evidence:
+        - name: fuzz -t docs/conversation-mode-call-state.tex
+          status: pass
+        - name: pdflatex two-pass build of the Z spec (docs/conversation-mode-call-state.pdf)
+          status: pass
+        - name: uv run pytest tests/conversation_mode/ (7 tests)
+          status: pass
+        - name: make check (full repo -- lint, mypy, pyright, markdownlint, 4342 tests, OO ratchet, coupling, suppression ratchet)
+          status: pass
+        - name: markdownlint-cli2 on new/edited markdown (conversation-mode-spikes.md, conversation-mode-session-attach-adr.md, coverage-matrix.md, DESIGN.md)
+          status: pass
+      open_questions:
+        - 'OPERATOR RATIFICATION REQUIRED before Slice 1b (vox-gs9u.2) dispatches -- three decisions, full detail in docs/conversation-mode-session-attach-adr.md''s Escalation section and DESIGN.md DES-064: (1) confirm or overrule the recommended session-attach mechanism (a headless `claude -p --resume <session-id>` subprocess per human turn, stream-json in both directions, session discovered via `claude agents --json --cwd <path>`); (2) confirm the ADR''s reading of FR-4 ("same task context", satisfied by a new subprocess resuming the same session ID) over a stricter "same OS process" reading that no documented Claude Code surface supports at all -- if the operator intends the stricter reading, no option investigated here satisfies it and that itself needs a ruling, not a default; (3) confirm that Slice 1b''s first concrete task is a spike verifying concurrent-resume safety (does Claude Code''s session storage tolerate a live interactive session and a headless --resume of the same session ID running at the same time) before any further plumbing is built on that unverified assumption. This mission deliberately did not resolve this fork itself, per punt-labs/CLAUDE.md''s design-review-before-implementation gate reserving it for the operator.'
+        - 'Three committed files fall outside this mission''s declared write_set (docs/, tests/conversation_mode/, src/punt_vox/voxd/conversation_mode/) and are omitted from files_changed above for that reason, though they are genuinely part of this mission''s commits: DESIGN.md (the DES-064 ADR entry -- org convention per punt-labs/CLAUDE.md''s ADR log, docs/conversation-mode-session-attach-adr.md is the design of record it points to) and .oo-baseline.json/.oo-audit.jsonl (mandatory per-commit OO ratchet update whenever src/punt_vox/ changes, per vox''s own CLAUDE.md -- committing new src files without updating these would leave check-oo failing on main). Flagging for the leader rather than silently omitting them from the commit history or leaving the ratchet failing.'
+      prose: |
+        Slice 1a (vox-gs9u.1) design-phase deliverable, five commits on top of
+        main (75beca1), all under punt-labs/vox's own worktree isolation:
+
+        1. Brought docs/conversation-mode-prd.tex and docs/conversation-mode-spikes.md
+           into the tracked repo -- neither existed on any branch before this mission;
+           they were the source design context this deliverable builds on.
+
+        2. docs/conversation-mode-call-state.tex -- Z specification for the call
+           state machine (idle/listening/waiting/speaking + turn-detect/barge-in),
+           fuzz-clean (`fuzz -t` exits with no errors, verified directly, not
+           inferred). Resolves both named ambiguities explicitly, as the contract
+           required:
+             (a) which detector governs a human speaking during the agent's silent
+                 think-time (waiting): modeled as a total function
+                 activeDetector : Mode -> Detector, mapping both listening and
+                 waiting to turnDetector (barge-in requires agent audio to
+                 interrupt, which does not exist yet in waiting) -- checkable
+                 because fuzz rejects a non-total function, not just a prose claim.
+             (b) where the single serialized dispatch point lives: resolved in
+                 prose (Section 6 of the spec) as an actor with an internal
+                 asyncio.Queue -- argued from voxd being fully async already and
+                 from Program's own precedent of stating, not formalizing, its
+                 single-writer discipline. This is explicitly a design requirement
+                 on Slice 1b's implementation, not something this mission builds.
+
+        3. docs/conversation-mode-session-attach-adr.md + DESIGN.md DES-064 --
+           the ADR-style investigation into what Claude Code's session surface
+           actually permits. This is real, tool-verified investigation (quoted
+           `claude --help` / `claude agents --help` output run directly on this
+           machine, not recalled from training data), not speculation: found
+           `--resume <session-id>` + `--input-format/--output-format stream-json`
+           + `--include-partial-messages` as a documented mechanism for resuming
+           an existing session's history and streaming both directions over a
+           subprocess's stdin/stdout, and `claude agents --json --cwd <path>` for
+           discovering which session is the user's active one. Three alternatives
+           (hooking Claude Code's own hook surface, a polled queue, embedding the
+           agent loop inside voxd) are named and rejected with reasons. The
+           document explicitly does NOT proceed to implementation and ends with a
+           three-item operator escalation (see open_questions above) -- the fourth
+           mission success criterion, satisfied as a deliverable rather than a
+           mission-blocking state.
+
+        4. src/punt_vox/voxd/conversation_mode/ -- the SessionAttach Protocol
+           (structural, @runtime_checkable, matching program_gateway.py's shape),
+           TranscribedTurn and ReplyChunk dataclasses. send_turn returns an async
+           iterator, not an awaited value, so a caller can start speaking on the
+           first chunk (FR-11) before the rest of the reply exists.
+           SessionAttachError is the boundary fault for an unreachable/aborted
+           session. OO ratchet: all 11 metrics PASS on all 4 new files (verified
+           via `make check-oo`, not assumed); baseline updated and committed.
+
+        5. tests/conversation_mode/_session_attach_fakes.py -- FakeSessionAttach,
+           matching tests/_program_fakes.py's FakeProgramGateway style (records
+           every call via a SessionAttachCall list, structural, no inheritance),
+           but scripts a SEQUENCE of ScriptedChunk(chunk, delay_s) entries with
+           independently controllable per-chunk timing -- the shape the contract
+           required to exercise FR-11, which a single-reply fake cannot test.
+           Seven tests in test_session_attach_fake.py cover call recording, chunk
+           ordering, the empty-script case, a genuinely-incremental-delivery
+           assertion (checks partial state mid-`async for`, proving the stream is
+           not eagerly materialized), independently varying per-chunk delays, and
+           both the success and SessionAttachError paths. All 7 pass
+           (`uv run pytest tests/conversation_mode/`).
+
+        6. tests/conversation_mode/harnesses/ scaffolded (package, currently
+           empty -- no harness exists yet; this mission's job was the directory,
+           not its contents) and tests/conversation_mode/coverage-matrix.md with
+           one empty row per FR/NFR label found in
+           docs/conversation-mode-prd.tex Chapter 1 (grepped directly: FR-1
+           through FR-22 including 7a/14a, NFR-1 through NFR-6 -- 28 rows total),
+           ready for later slices to fill in rather than starting from zero.
+
+        What this mission did NOT do, by design: no implementation of the real
+        (non-fake) session-attach mechanism -- that is Slice 1b, explicitly
+        blocked on the operator ratification named in open_questions. No
+        concurrent-resume spike was run (that investigation needs a real,
+        separately-running interactive Claude Code session to test against
+        safely, which this design mission correctly treats as out of its own
+        scope and names as Slice 1b's first task).
+
+        Verification performed, not just claimed: `fuzz -t` run directly on the
+        Z spec (clean, no errors grepped); the spec also built to a real PDF via
+        two pdflatex passes (docs/conversation-mode-call-state.pdf, committed);
+        the session-attach ADR's CLI claims are quoted from `claude --help` /
+        `claude agents --help` run on this machine, not recalled; the fake's own
+        7 tests run and pass directly; and a full `make check` (lint, mypy,
+        pyright, markdownlint, all 4342 repo tests, OO ratchet, coupling ratchet,
+        suppression ratchet) passed clean on the final commit -- output captured
+        in full, not truncated-and-assumed. One test (test_hook_gate.py::
+        TestPanelSpawn::test_spawns_when_enabled_and_vox_panel_present) failed
+        once on an earlier run of the full suite with a background-process-
+        timing assertion unrelated to any file this mission touched, and passed
+        on the very next full run with no code change -- recorded here as an
+        observed flake in existing test infrastructure, not attributed to this
+        mission's diff, and confirmed not to recur on the final green run.

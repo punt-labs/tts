@@ -1,0 +1,52 @@
+mission_id: m-2026-08-22-046
+status: closed
+type: design
+created_at: "2026-08-22T13:42:47Z"
+updated_at: "2026-08-22T15:19:08Z"
+closed_at: "2026-08-22T15:19:08Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: gvr
+    pinned_at: "2026-08-22T13:42:47Z"
+    hash: eb4247340456006562a94dd93747ddc68165b14d29f551bc6d4a8bd168877980
+inputs: {}
+write_set:
+    - docs/
+    - tests/conversation_mode/
+    - src/punt_vox/voxd/conversation_mode/
+success_criteria:
+    - Investigate what Claude Code's session surface actually permits for injecting a transcribed turn into, and extracting a streamed reply from, the user's already-running (not freshly-spawned) session. Produce an ADR-style writeup with rejected alternatives (hook into session surface? a queue the session polls? does it require running inside voxd's process space or communicating over IPC?).
+    - 'Produce the Z specification for the call state machine (idle/listening/waiting/speaking + barge-in + turn-detect sub-transitions), fuzz-clean. It must explicitly name and resolve: (a) which detector governs a human speaking during the agent''s silent think-time (the waiting state, before reply audio starts) -- an edge case that must be named before modeling, not discovered during it; (b) where the single serialized dispatch point for the state machine lives (a queue, an actor, or an explicit lock at the call boundary) -- turn detection, barge-in detection, and sentence-streamed synthesis are three independently-running processes that can call into shared call state concurrently, and the state machine is only safe (mirroring voxd/programs/program.py''s Program shape) under a single-writer assumption Program itself does not enforce internally.'
+    - Define the session-attach Protocol (structural, non-inheritance, matching tests/_program_fakes.py's FakeProgramGateway style) AND build its fake as part of this deliverable, not deferred to implementation. New code goes under src/punt_vox/voxd/conversation_mode/ (new subpackage -- does not exist yet, avoids conflicting with other active missions touching src/punt_vox/). The fake must script a SEQUENCE of reply chunks with independently controllable timing between them (not a single reply value) -- it has to exercise FR-11 (speaking begins on the reply's first complete portion, not the whole reply), which a single-reply fake cannot test.
+    - The fake has its own passing unit tests before this mission closes.
+    - Scaffold tests/conversation_mode/ and tests/conversation_mode/harnesses/ directories, and a skeleton coverage-matrix file (FR/NFR id -> tier -> test path, one empty row per FR/NFR named in docs/conversation-mode-prd.tex Chapter 1) -- this is the first bead in the epic, nothing later should start from zero.
+    - 'End with an explicit written escalation to the operator: the session-attach mechanism''s shape is an operator-reserved decision per this project''s workflow (design forks are surfaced with a recommendation and wait for ratification, never resolved silently inside a mission). Present the ADR''s chosen approach as a recommendation, not a fait accompli. Do NOT proceed to any implementation of the real (non-fake) session-attach mechanism -- that is Slice 1b, blocked on this ratification.'
+    - Commit incrementally -- one commit per logical step (file group, single concern, or single PR-equivalent slice). Each commit must pass make check. Do not accumulate more than 30 minutes of uncommitted changes.
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 1
+context: |
+    Working in the isolated worktree /Users/jfreeman/Coding/punt-labs/vox/.claude/worktrees/conversation-mode-spikes
+    (branch worktree-conversation-mode-spikes) -- cd there, do all work inside it. This worktree
+    is isolated from the main working tree, where other unrelated agents are active (confirmed via
+    bd mission show m-2026-08-15-003) -- do not touch anything outside this worktree.
+
+    This is Slice 1a of bead epic vox-gs9u (Conversation Mode -- Phase 1). Read in full before
+    starting: docs/conversation-mode-prd.tex (all three chapters -- product requirements,
+    technical design synthesized from five live spikes, and the new test-plan chapter), and
+    `bd show vox-gs9u.1` for this slice's full notes (several addenda were appended after two
+    rounds of independent design review -- read all of them, they change the deliverable beyond
+    the original bead description).
+
+    Also read docs/conversation-mode-spikes.md for the underlying experimental evidence (five
+    real spikes against real hardware and a real ElevenLabs account), and tests/_program_fakes.py
+    for the exact fake style to match (structural Protocol conformance, no inheritance, records
+    every call, caller controls what comes back).
+
+    This is a DESIGN mission. Per this project's workflow, a design mission's contract does not
+    prescribe an exact write-set beyond the areas above -- decide what to create, split, or
+    extract within them. The one hard constraint: do not implement the real (non-fake)
+    session-attach mechanism or start Slice 1b's scope. This mission's job is the investigation,
+    the Z spec, the fake, and the operator escalation -- nothing past that boundary.

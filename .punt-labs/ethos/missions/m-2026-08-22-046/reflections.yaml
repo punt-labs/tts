@@ -1,0 +1,18 @@
+reflections:
+    - mission: m-2026-08-22-046
+      round: 1
+      created_at: "2026-08-22T15:18:26Z"
+      author: gvr
+      converging: true
+      signals:
+        - 'fuzz -t docs/conversation-mode-call-state.tex: no type errors, independently re-run'
+        - 'both required Z-spec ambiguities resolved: activeDetector total function (waiting -> turnDetector) with pending-addendum invariant; single serialized dispatch point resolved in prose as a CallActor with one asyncio.Queue consumer, citing Program''s documented (unenforced) single-writer precedent, verified present in program.py'
+        - ADR cites real, independently-verified claude --help flags (--resume, --input-format, --output-format, --include-partial-messages, --replay-user-messages, --fork-session); presents 4 options with 3 genuine rejections (hook surface, session-polling queue, in-process agent) plus one open, honestly-stated risk (concurrent-resume safety unverified); ends in a concrete 3-item operator escalation, not a vague ask
+        - 'SessionAttach Protocol matches tests/_program_fakes.py''s FakeProgramGateway shape: __new__ constructor, __slots__, runtime_checkable Protocol, no inheritance'
+        - FakeSessionAttach scripts a true chunk sequence (ScriptedChunk tuple) with independently controllable per-chunk delay_s, not a single reply; test_caller_can_start_speaking_before_the_reply_finishes proves genuinely incremental yielding via a mid-iteration assertion, not just construct-and-no-crash
+        - 7 of 7 fake tests pass in isolation (uv run pytest tests/conversation_mode -v)
+        - 'make check green on 3cd90e1: ruff, shellcheck, skill-permissions, plugin-surface, mypy, pyright, markdownlint, 4342 pytest tests, OO ratchet PASS improved, coupling PASS, suppression ratchet improved 201 to 200'
+        - 'write set is clean: only docs, tests conversation_mode, src punt_vox voxd conversation_mode, plus baseline and audit files -- no implementation of the real non-fake session-attach mechanism, per the mission boundary'
+        - 5 commits, one logical step each, no accumulated uncommitted changes
+      recommendation: stop
+      reason: Independently re-verified every deliverable against the actual diff, not the worker's self-report. Fuzz-checked the Z spec myself, ran claude --help myself to confirm the ADR's cited flags are real, ran the fake's tests and the full make check myself. Both required Z-spec ambiguities are resolved with a total function and a prose-justified dispatch design, not hand-waved. The ADR is a genuine investigation with real rejected alternatives and an honestly-named open risk, not a foregone conclusion. The fake exercises FR-11's incremental-streaming requirement with a real assertion, not a smoke test. No findings. Round 1 accepted as-is; ready to close.

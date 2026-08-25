@@ -25,6 +25,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`make install` ships the `call` extra by default.** It built `vox` via a bare `uv tool install --force dist/*.whl`, silently omitting `sounddevice`/PortAudio -- every install crashed with `ModuleNotFoundError` the moment `vox call start` ran. `dist/*.whl[call]` as one unquoted shell token does not work (the glob engine treats `[call]` as a bracket expression in the pathname pattern); the glob is now expanded first via command substitution, then the extra is appended to the literal path.
 - **`vox call start` places a real voice call by default -- live microphone capture and ElevenLabs speech-to-text (vox-gs9u.2).** Two prior gaps in the Conversation Mode slice are closed: `punt_vox.providers.elevenlabs_stt.ElevenLabsSTTProvider` transcribes each closed turn via `speech_to_text.convert` (a batch call, model `scribe_v1` by default), deriving an honest `[0.0, 1.0]` confidence from the SDK's per-word log-probabilities (a transcript-level confidence the SDK does not itself report) so FR-19's "ask the human to repeat rather than act on an ambiguous or failed capture" gate has a real signal instead of the scripted fake's canned value; `punt_vox.voxd.conversation_mode.mic_audio_source.MicAudioSource` captures the system microphone through `sounddevice` and yields `AudioChunk` at the same cadence `TurnDetector` was designed against. `sounddevice` ships behind a new `call` optional extra, not as a hard dependency -- `uv sync --extra call` / `pip install punt-vox[call]` -- because it requires PortAudio, a system-level (non-Python) library not otherwise needed by `vox`: Homebrew's `portaudio` on macOS, `libportaudio2` on most Linux distributions. Every other `vox` command works without it. `--script` (a JSON Lines file of pre-written turns) is now an explicit opt-in for demos, tests, and CI -- it no longer stands in for the primary way to place a call. `ScriptedTurn`/`ScriptedSTTProvider` moved to the new `punt_vox.commands.call_scripted` module. `/call transfer` re-attaches an in-progress call to a different session via `CallSession.replace_session_attach`, without ending the call; an invalid transfer request (no session found, or too many to pick from) declines the transfer and speaks why, rather than ending the call. The live path's mic-echo defense, the `MicAudioSource.set_listening` gate plus `estimate_speech_duration_s`-based hold, an atomic take-by-rename `CallControl.consume`, kill+reap hardening on every `ClaudeSessionAttach` failure path (including `BaseException`, not just `Exception`), a stale-lock refusal on `/call stop`/`/call transfer`, and FR-2's inactivity timeout actually wired into the live drive loop all landed in the same slice and are extracted into the new `punt_vox.commands.call_live_driver.LiveCallDriver`. **Known limitation:** the mic-echo guard is duration-estimated, not signal-based -- `VoxClientSync.synthesize` returns once voxd reports audio *enqueued*, not once it finishes playing, so `LiveCallDriver` closes the mic gate for an *estimated* speech duration plus a safety margin rather than the real one. This bounds the echo window; it does not eliminate it. A real fix needs either `client.py` to expose a genuine "wait for playback done" signal, or routing live-call playback through the already-built `PlaybackSinkActor` (vox-gs9u.3, not yet wired to any caller) -- both are follow-up work.
 
+## [5.0.1] - 2026-08-23
+
+### Fixed
+
+- **The published v5.0.0 PyPI release could not start `voxd`.** The tagged tree
+  predated `bdfe559` (#439, `vox-oyfs`), which migrated `voxd`'s lux client to
+  the `punt-lux>=0.28` `LuxClient` facade. The released build still imported
+  `LuxHubClient` and `LuxRestClient` directly from `punt_lux` at module load
+  time — names that facade removed — so `voxd` raised `ImportError` on every
+  launch against any current `punt-lux` install. launchd retried and
+  throttled it into a permanent crash loop (`spawn scheduled`, exit code 1),
+  and every hook silently degraded to "voxd not running, skipping
+  chime/speech" with no other symptom. This release re-tags the already-fixed
+  `main` so `voxd` starts cleanly again.
+- **`punt_vox.__version__` was a literal that missed this same release's
+  version bump.** `src/punt_vox/__init__.py` hardcoded `__version__ =
+  "5.0.0"` — the CLI's `--version`, the MCP server's advertised version, and
+  `vox doctor`'s daemon-staleness check all read it, and none of them noticed
+  `pyproject.toml` had moved on. `__version__` is now computed once at import
+  time from `importlib.metadata.version("punt-vox")`, the single source of
+  truth `pyproject.toml` already feeds. `paths.installed_version()`, which
+  backed the same value for `vox doctor` and `voxd`'s health response, no
+  longer falls back to the literal on `PackageNotFoundError` — an uninstalled
+  source tree is a broken environment, so it now raises with a message
+  naming the fix (`reinstall with 'uv tool install punt-vox'`) instead of
+  reporting a version that may not match what's actually running.
+
 ## [5.0.0] - 2026-08-19
 
 ### Fixed

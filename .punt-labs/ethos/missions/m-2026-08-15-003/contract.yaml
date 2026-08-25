@@ -1,0 +1,72 @@
+mission_id: m-2026-08-15-003
+status: closed
+type: implement
+created_at: "2026-08-15T02:32:42Z"
+updated_at: "2026-08-23T14:26:33Z"
+closed_at: "2026-08-23T14:26:33Z"
+leader: claude
+worker: gvr
+evaluator:
+    handle: rmh
+    pinned_at: "2026-08-15T02:32:42Z"
+    hash: 5b496cf24ebb9b95b94676bb1d6671dcc6f8eb7d56747e0648efc9f7ae36a953
+inputs:
+    files:
+        - docs/provider-authority.md
+write_set:
+    - src/punt_vox/types_provider.py
+    - src/punt_vox/voxd/provider_status_handler.py
+    - src/punt_vox/voxd/handler_registry.py
+    - src/punt_vox/providers/credentials.py
+    - src/punt_vox/client.py
+    - src/punt_vox/client_sync.py
+    - src/punt_vox/server.py
+    - src/punt_vox/doctor.py
+    - src/punt_vox/enablement.py
+    - tests/test_types_provider.py
+    - tests/test_voxd_provider_status_handler.py
+    - tests/test_credentials.py
+    - tests/test_client.py
+    - tests/test_server.py
+    - tests/test_doctor.py
+    - tests/test_enablement.py
+    - CHANGELOG.md
+    - README.md
+    - .oo-baseline.json
+    - .oo-audit.jsonl
+    - .oo-coupling-baseline.json
+    - .oo-coupling-audit.jsonl
+success_criteria:
+    - 'PR 3 of 3 for bead vox-w3f8 -- the LAST one. PRs 1 (0843ddc) and 2 (33c0868) are merged to main. Implement design section 3.6 ONLY: the provider_status wire op, the mic:status block, the doctor readiness section, and enable writing a daemon-proposed provider. Read docs/provider-authority.md on main first.'
+    - 'BRANCH: feat/vox-w3f8-observability off current main, in a git worktree at .claude/worktrees/vox-w3f8-pr3. The MAIN working tree is occupied by another agent (adb, on fix/vox-mwc2-launchagent) -- do not touch it, do not switch its branch.'
+    - 'THE ENUMERATION LESSON, and this surface is where it bites. `reason` is a closed set: Literal["ok", "unconfigured", "unknown_provider", "no_credentials", "voxd_unavailable"]. PRs 1 and 2 each shipped a defect whose shape was "the boundary looks complete because everything it names is correct, and nobody checked what it does not name" -- F3 had a catch clause with no raise site, F4 was omitted from a catch whose comment enumerated F2/F3/F5. You proposed carrying the fix into this PR: land the enumeration comment WHERE THE LITERAL LIVES, not in prose that rots, naming which values are producible from which code path. Do that.'
+    - 'D1 AS AMENDED (operator ratified): enable writes a provider into vox.md chosen by THE DAEMON, via the new provider_status op -- not by probing the enabling process own environment. The leader caught that in design review: doctor previously checked the caller environment when the daemon is the one that matters, and the first draft of enable repeated it. If voxd is unreachable, enable writes NO provider and says so; preferred == null is a true report of an unusable host, not an error.'
+    - 'require AND report SHARE ONE MAP. The design argument is that status and behaviour cannot drift because they are one function called two ways. Test that property directly: a provider that require() rejects must report() as not-ready, and vice versa, for every provider.'
+    - 'THE STATUS BLOCK: mic:status gains provider_status, shaped and handled exactly like the music program block beside it -- fetched fresh from voxd on every call, never cached server-side, with an unavailable form when the daemon is unreachable. Mirror MusicStateView.unavailable.'
+    - 'DOCTOR: the F2 message tells the user to run `vox doctor`, so doctor has to answer. Add a per-provider readiness section fed by the new op. PR 2 already removed the caller-environment check and the phantom (provider: ...) line; do not reinstate either.'
+    - NO MIGRATION, COMPAT, SHIM OR VERSION-BRIDGE CODE. Forward integration only.
+    - 'ERROR CLASSES: any new exception that builds a message from more than one constructor argument needs an explicit __str__, because BaseException.__init__ clobbers args set in __new__ (bead vox-ll26), plus a test asserting the FULL rendered message -- never a substring. `match="polly"` passes against a tuple repr, which is how that class of bug survived review on PR 1.'
+    - 'WATCH THE MODULE COUNT: types_errors, types_synthesis_errors and types_provider_errors already exist, each holding two classes because of PY-OO-2 three-per-module cap. If this PR needs a FOURTH error module, stop and tell me -- that is the cap driving the design rather than a domain grouping being chosen, and it is a design conversation not a mechanical split.'
+    - 'QUALITY: make check green before EVERY commit. No noqa, no type: ignore, no xfail. Two live hazards: check-coupling baseline is defective (bead vox-orvz, 171 of 264 files at a sentinel) so a REGRESSED verdict is untrustworthy -- verify against the base blob and label relaxations Class A (correcting the sentinel) or Class B (real growth). And CI suppression ratchet is MERGE-BASE scoped (--base-ref --require-base); it does not read the in-tree baseline file, so editing that file will not make CI pass. Count on main is now 201.'
+    - DO NOT use `git commit -a`. It stages every modified tracked file, and .punt-labs/vox/vox.md is the daemon live session state -- it is almost always dirty. The leader swept it into PR 2 that way and a bot caught it before merge. Stage explicit paths.
+    - Commit incrementally. REPORT MEANS COMMITTED. Do NOT push, no PR, no make install, no daemon restart, no bd close.
+    - Submit via `ethos mission result` with commit SHAs, and state what your evidence does NOT cover alongside what it does -- you started doing that on PR 2 unprompted and it is the most useful thing in your reports.
+budget:
+    rounds: 3
+    reflection_after_each: false
+current_round: 1
+context: |-
+    Bead vox-w3f8, PR 3 of 3 -- the last one. This closes the bead.
+
+    You designed this document and have implemented both halves of it.
+    The observability surface is what makes the other two legible: F2
+    tells a user to run `vox doctor`, and until this lands, doctor
+    cannot answer.
+
+    The write set was derived by grepping actual callers of
+    ProviderCredentials on main, not from the design's file table.
+    That table cost three rounds of mid-flight failures on PR 1. If you
+    still find a file outside the set that is a genuine consequence,
+    make the change and list it in files_changed.
+
+    rmh evaluates.

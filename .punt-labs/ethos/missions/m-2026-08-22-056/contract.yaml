@@ -1,0 +1,39 @@
+mission_id: m-2026-08-22-056
+status: open
+type: implement
+created_at: "2026-08-22T19:04:03Z"
+updated_at: "2026-08-22T19:04:03Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: bwk
+    pinned_at: "2026-08-22T19:04:03Z"
+    hash: b106f88d6d76d24f00c3960e9b2b7a7dbc94e7ef98c1036ccd20074c9e9bf944
+inputs:
+    ticket: vox-gs9u.2
+write_set:
+    - src/punt_vox/voxd/conversation_mode/
+    - src/punt_vox/commands/
+    - src/punt_vox/__main__.py
+    - plugin/hooks/
+    - plugin/commands/
+    - plugin/hooks/hooks.json
+    - tests/conversation_mode/
+    - tests/test_cli_call.py
+success_criteria:
+    - 'End-to-end: a hotkey (or vox call start) triggers turn detection (accumulated-run model, calibrated at call start), captures speech via ElevenLabs STT, sends the transcribed turn through the ratified session-attach mechanism (claude -p --resume, per docs/conversation-mode-session-attach-adr.md), gets one full non-streamed reply, and speaks it via ElevenLabs TTS'
+    - 'Implement the UserPromptSubmit lock exactly as verified in the ADR: a hook checking a lock file voxd owns, blocking the human''s interactive input while a call is active with a clear reason message, and a VOX_CALL_RELAY env-var bypass on voxd''s own relay subprocess so the call''s own turns are never blocked by their own lock'
+    - Session discovery via claude agents --json --cwd <path> must surface all candidates and require explicit confirmation whenever more than one session exists for the directory -- never silently auto-pick (verified unsafe in the ADR)
+    - 'Commands per docs/conversation-mode-session-attach-adr.md naming: vox call start|transfer|stop (CLI), /call start|transfer|stop (slash command) -- noun-first per punt-kit/standards/cli.md, matching vox music/vox rec''s existing shape. Do NOT touch src/punt_vox/server.py or src/punt_vox/providers/ in this mission -- both are write-set-locked by another open mission (m-2026-08-15-003). Build the mic:call MCP tool wiring and the concrete ElevenLabs STTProvider implementation as a fast follow-up once unblocked; note this explicitly in your result. Put the STTProvider Protocol definition itself in src/punt_vox/voxd/conversation_mode/ (in this mission''s write-set) rather than under providers/'
+    - Audible state cues for listening and reply-ready via mic:unmute per NFR-6, built in from the start
+    - Call timeout (FR-2) and basic hangup implemented
+    - STTProvider Protocol defined generically (runtime_checkable, check_health method, matching TTSProvider's pattern but with partial/streaming transcript delivery and a confidence signal TTSProvider has no counterpart for) even though only ElevenLabs implements it -- FR-21. Ship this slice against a fake/scripted STTProvider; the real ElevenLabs-backed implementation is deferred with the providers/ follow-up above
+    - 'Never fabricate on ambiguous or failed capture (FR-19): on a low-confidence transcript, ask the human to repeat rather than acting on it'
+    - 'TESTABILITY (build test infra FIRST, feature code against it second, per epic binding sequencing rule): (1) turn detector accepts chunk duration/timestamp as a parameter, never reads the wall clock internally, and never imports sounddevice directly -- PCM chunks passed as plain method arguments; (2) STTProvider fake returns a scripted transcript AND a scripted confidence value, with an FR-19 test (low-confidence -> system asks human to repeat) written against the fake; (3) reuse Slice 1a''s SessionAttach fake (tests/conversation_mode/_session_attach_fakes.py) for all orchestration-logic tests that don''t specifically need the real session'
+    - Add a row to tests/conversation_mode/coverage-matrix.md for every FR/NFR this slice covers, as part of closing this bead, not a follow-up
+    - make check green on every commit; commit incrementally, one commit per logical step, never more than 30 minutes of uncommitted work
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+context: 'Slice 1b of the Conversation Mode epic (vox-gs9u). All three operator-reserved design forks are ratified: (1) session-attach mechanism as specified in docs/conversation-mode-session-attach-adr.md -- claude -p --resume per turn with the UserPromptSubmit lock, verified safe by direct spike against the real claude CLI; (2) continuous-stream playback ownership goes into production PlaybackQueue directly, not a new sibling component (Slice 2a territory, noted for context); (3) presence-signal mechanism is the static-asset path (Slice 2a/4 territory, noted for context). Explicitly out of scope for THIS slice: barge-in, presence signal, sentence-streamed synthesis (reply is spoken as one block), graceful degradation beyond ''the call doesn''t start'', server.py MCP wiring and the real ElevenLabs STT provider file (both blocked by an unrelated open mission -- build against a fake STTProvider, defer the real one). Read docs/conversation-mode-prd.tex Chapters 1-2, docs/conversation-mode-session-attach-adr.md, and docs/conversation-mode-call-state.tex (the Z-spec) before starting -- the design is fully settled and operator-ratified, do not re-litigate it, implement it.'

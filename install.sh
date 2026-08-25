@@ -19,7 +19,7 @@ MARKETPLACE_REPO="punt-labs/claude-plugins"
 MARKETPLACE_NAME="punt-labs"
 PLUGIN_NAME="vox"
 PACKAGE="punt-vox"
-VERSION="5.0.0"
+VERSION="5.0.1"
 BINARY="vox"
 
 # --- Argument parsing: --no-plugin / VOX_NO_PLUGIN (install-cli-only.md) ---

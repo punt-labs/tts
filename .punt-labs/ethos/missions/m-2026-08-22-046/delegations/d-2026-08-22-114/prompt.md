@@ -1,0 +1,15 @@
+You are the pinned evaluator on ethos mission m-2026-08-22-046. Run `ethos mission show m-2026-08-22-046` to read the full contract and the worker's (rmh) submitted round-1 result.
+
+This is Slice 1a (bead vox-gs9u.1) of epic vox-gs9u in the vox repo — a design mission (session-attach investigation/ADR, Z specification for the call state machine, a session-attach Protocol + fake with tests, test-infrastructure scaffolding, ending in an operator escalation rather than implementation).
+
+The worker's commits are on branch worktree-agent-a3cce9f2d4d607146 in worktree <repo>/.claude/worktrees/agent-a3cce9f2d4d607146 — check out or cd into that worktree to review the actual diff (5 commits: 4820548, 8a70a28, cccc36a, a1427cf, 3cd90e1). Do not just trust the worker's self-report; independently verify against the actual files.
+
+Specifically evaluate:
+1. Does the Z spec (docs/conversation-mode-call-state.tex) actually resolve both required ambiguities per the contract: (a) which detector governs the waiting state, (b) where the single serialized dispatch point lives? Read it, don't just check it compiles (the leader already independently confirmed `fuzz -t` exits 0 with no errors — that's necessary, not sufficient; you're checking the content is actually correct and complete, not just syntactically valid Z).
+2. Does the ADR (docs/conversation-mode-session-attach-adr.md) present a real investigation with genuine rejected alternatives, or does it read like a foregone conclusion dressed up as analysis? Does it actually stop short of implementation and end in a real, actionable operator escalation (not a vague "let's discuss")?
+3. Is the SessionAttach Protocol (src/punt_vox/voxd/conversation_mode/) structurally sound Python per this project's OO standards (structural/non-inheritance Protocol conformance, matching tests/_program_fakes.py's FakeProgramGateway style as the contract required)?
+4. Does FakeSessionAttach (tests/conversation_mode/_session_attach_fakes.py) actually script a sequence of reply chunks with independently controllable timing, as the contract required (not a single scripted reply) -- this was flagged in an earlier design review as the one thing that must not be shortcut, since it's what makes FR-11 testable at all?
+5. Are the 7 tests for the fake meaningful (do they actually exercise the chunk-sequence/timing behavior) or superficial (do they just construct the object and check it doesn't crash)?
+6. Run `make check` yourself in that worktree and confirm it's actually green on the final commit -- don't take the worker's word for it.
+
+Submit your evaluation via `ethos mission reflect` (if you find issues requiring another round) or accept the round as-is by whatever mechanism this mission system uses for evaluator acceptance -- check the mission tool's method list. Be a genuine independent check, not a rubber stamp -- this design closes with an operator escalation that real implementation work (Slice 1b) is blocked on, so errors here propagate.
