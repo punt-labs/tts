@@ -137,7 +137,7 @@ def configure_turn_timer_logging(*, echo_to_console: bool) -> None:
         )
     )
     if echo_to_console:
-        console = logging.StreamHandler(sys.stdout)
+        console = logging.StreamHandler(sys.stderr)
         console.setLevel(logging.DEBUG)
         console.setFormatter(logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT))
         logger_.addHandler(console)
