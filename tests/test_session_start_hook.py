@@ -4,13 +4,19 @@ vox-ovz3: model.md, provider.md, voice.md, and recap.md are namespaced-only
 commands (``/vox:model``, never bare ``/model``) because a bare top-level
 form collides with a name Claude Code itself may claim — ``/model`` already
 does. The deploy loop must skip them, and the RETIRED cleanup must remove
-any copy a prior session already deployed — unless that copy's content no
-longer matches vox's own shipped file, in which case it is a user's own
-hand-authored command sharing the name and must survive untouched. The five
+any copy a prior session already deployed — unless the file carries no
+``mcp__plugin_vox_mic__`` fingerprint, in which case it is a user's own
+hand-authored command sharing the name and must survive untouched. The
+fingerprint check, not exact content equality, is deliberate: a command
+file's prose can change release to release (recap.md's own H1 and Usage
+text moved from bare to namespaced in the same release), so a stale file
+from an older release is never byte-identical to the current source — only
+a content-independent ownership signal survives that. The five
 session-scoped verbs (``vox``, ``unmute``, ``mute``, ``vibe``, ``music``) are
 unaffected and must keep deploying bare, unchanged. The permission grants for
 the four namespaced commands must read ``Skill(vox:<name>)``, never the bare
-form, and any stale bare grant from before this change must be pruned.
+form, and a stale bare grant is pruned only for a name this run's file
+retirement actually cleaned — not unconditionally, and not in dev mode.
 
 Driven as a subprocess against the real script, with a copy of the real
 ``plugin/`` tree and a sandboxed ``$HOME`` — the interface is the contract,
@@ -100,6 +106,29 @@ def _additional_context(result: subprocess.CompletedProcess[str]) -> str:
     return context
 
 
+def _pre_pr_content(name: str) -> str:
+    """Return ``name``'s command file content as it shipped at v5.0.1.
+
+    A real upgrading install never has the CURRENT plugin source deployed as
+    its "stale" file -- it has whatever an earlier release shipped, which for
+    a file whose prose keeps changing (recap.md's H1 and Usage text move from
+    bare to namespaced) is never byte-identical to the source tree's present
+    content. Seeding a test from the current plugin source instead of a real
+    past release means the seeded file always matches the live source and
+    the test can never observe a genuine content mismatch -- exactly the gap
+    that hid this class of retirement bug. v5.0.1 ships all nine command
+    files, so it is a real historical snapshot for every name this test uses.
+    """
+    result = subprocess.run(
+        ["git", "show", f"v5.0.1:plugin/commands/{name}.md"],
+        cwd=_REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    return result.stdout
+
+
 def _settings_allow(home: Path) -> list[str]:
     settings = home / ".claude" / "settings.json"
     if not settings.is_file():
@@ -148,9 +177,8 @@ class TestStaleInstallIsRetired:
         commands_dir = _commands_dir(home)
         commands_dir.mkdir(parents=True, exist_ok=True)
         for name in (*_NAMESPACED_ONLY, *_BARE):
-            src = plugin_dir / "commands" / f"{name}.md"
             (commands_dir / f"{name}.md").write_text(
-                src.read_text(encoding="utf-8"), encoding="utf-8"
+                _pre_pr_content(name), encoding="utf-8"
             )
 
     def test_retired_cleanup_removes_the_four(self, tmp_path: Path) -> None:
@@ -184,6 +212,30 @@ class TestStaleInstallIsRetired:
         assert "Cleaned retired commands" in context
         for name in _NAMESPACED_ONLY:
             assert f"/{name}" in context
+
+    def test_recap_is_retired_despite_prose_changing_in_the_same_release(
+        self, tmp_path: Path
+    ) -> None:
+        # Regression test: recap.md's own H1 and Usage text moved from bare
+        # /recap to /vox:recap in the same release that made it
+        # namespaced-only, so it never byte-matches the current shipped
+        # file. Content equality would leave it stuck bare forever; the
+        # fingerprint check must retire it anyway.
+        plugin_dir = _make_prod_plugin(tmp_path)
+        home = tmp_path / "home"
+        commands_dir = _commands_dir(home)
+        commands_dir.mkdir(parents=True)
+        stale = _pre_pr_content("recap")
+        current = (plugin_dir / "commands" / "recap.md").read_text(encoding="utf-8")
+        assert stale != current, (
+            "fixture invalid -- recap.md's prose must actually differ "
+            "between the pre-namespacing snapshot and the current source "
+            "for this test to exercise the bug"
+        )
+        (commands_dir / "recap.md").write_text(stale, encoding="utf-8")
+        result = _run(plugin_dir, home)
+        assert result.returncode == 0, result.stderr
+        assert "recap.md" not in _deployed_names(home)
 
 
 class TestDevModeSkipsDeployment:
@@ -238,16 +290,9 @@ class TestPermissionGrantsAreNamespaced:
         for name in _BARE:
             assert f"Skill({name})" in allow
 
-    def test_stale_bare_grants_are_pruned(self, tmp_path: Path) -> None:
-        # An install that ran an earlier version of this hook would have
-        # written the bare grants for these four names into settings.json.
-        # Upgrading must remove them, not leave four permanently
-        # meaningless entries behind.
-        plugin_dir = _make_prod_plugin(tmp_path)
-        home = tmp_path / "home"
-        home.mkdir(parents=True)
+    def _seed_settings_with_stale_grants(self, home: Path) -> None:
         claude_dir = home / ".claude"
-        claude_dir.mkdir()
+        claude_dir.mkdir(parents=True, exist_ok=True)
         stale = {
             "permissions": {
                 "allow": [
@@ -260,6 +305,22 @@ class TestPermissionGrantsAreNamespaced:
             }
         }
         (claude_dir / "settings.json").write_text(json.dumps(stale), encoding="utf-8")
+
+    def test_stale_bare_grants_are_pruned_alongside_their_files(
+        self, tmp_path: Path
+    ) -> None:
+        # A grant is pruned only for a name this run's retirement ACTUALLY
+        # cleaned -- so the fixture must seed both the stale command file
+        # (real vox content, eligible for retirement) and the stale grant.
+        plugin_dir = _make_prod_plugin(tmp_path)
+        home = tmp_path / "home"
+        self._seed_settings_with_stale_grants(home)
+        commands_dir = _commands_dir(home)
+        commands_dir.mkdir(parents=True, exist_ok=True)
+        for name in _NAMESPACED_ONLY:
+            (commands_dir / f"{name}.md").write_text(
+                _pre_pr_content(name), encoding="utf-8"
+            )
         result = _run(plugin_dir, home)
         assert result.returncode == 0, result.stderr
         allow = _settings_allow(home)
@@ -267,6 +328,38 @@ class TestPermissionGrantsAreNamespaced:
             assert f"Skill({name})" not in allow
         # An unrelated bare grant that was never namespaced survives.
         assert "Skill(vibe)" in allow
+
+    def test_stale_grant_survives_when_its_file_was_never_deployed(
+        self, tmp_path: Path
+    ) -> None:
+        # A grant with no corresponding file this run retired must NOT be
+        # pruned -- it is exactly as plausibly the user's own permission for
+        # their own hand-authored command as the file itself would be (see
+        # TestForeignFileWithGenericNameSurvives). Pruning independent of
+        # whether the file was actually vox's would silently revoke a grant
+        # the hook has no evidence it ever wrote.
+        plugin_dir = _make_prod_plugin(tmp_path)
+        home = tmp_path / "home"
+        self._seed_settings_with_stale_grants(home)
+        result = _run(plugin_dir, home)
+        assert result.returncode == 0, result.stderr
+        allow = _settings_allow(home)
+        for name in _NAMESPACED_ONLY:
+            assert f"Skill({name})" in allow
+
+    def test_stale_grant_survives_dev_mode(self, tmp_path: Path) -> None:
+        # Dev mode never runs file retirement, so CLEANED is always empty --
+        # the grant-pruning block must not run independently of it, or a
+        # vox-dev session would strip grants the sibling prod plugin wrote.
+        dest = tmp_path / "plugin"
+        shutil.copytree(_PLUGIN_SRC, dest)
+        home = tmp_path / "home"
+        self._seed_settings_with_stale_grants(home)
+        result = _run(dest, home)
+        assert result.returncode == 0, result.stderr
+        allow = _settings_allow(home)
+        for name in _NAMESPACED_ONLY:
+            assert f"Skill({name})" in allow
 
 
 class TestForeignFileWithGenericNameSurvives:
