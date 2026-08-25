@@ -66,11 +66,17 @@ fi
 # cleanup and the deploy loop below, so the two cannot drift apart.
 NAMESPACED_ONLY=(model.md provider.md voice.md recap.md)
 
+# CLEANED names the retired commands this run's rm actually removed. Declared
+# here, above the prod-only block that populates it, so the permission
+# section below (which reads it to decide which Skill() grants to prune) can
+# reference it safely under `set -u` even when PLUGIN_MODE never reaches the
+# prod branch that fills it in.
+CLEANED=()
+
 # ── Clean up retired commands ─────────────────────────────────────────
 if [[ "$PLUGIN_MODE" == "prod" ]]; then
   RETIRED=(say.md speak.md notify.md vox-on.md vox-off.md enable.md disable.md \
     model.md provider.md voice.md recap.md)
-  CLEANED=()
   FAILED_CLEAN=0
   for name in "${RETIRED[@]}"; do
     dest="$COMMANDS_DIR/$name"
@@ -79,30 +85,39 @@ if [[ "$PLUGIN_MODE" == "prod" ]]; then
     # voice, recap) that a user could plausibly have hand-authored their own
     # command of the same name -- unlike the other seven retired names
     # (say.md, vox-on.md, ...), which are vox-specific with no realistic
-    # collision. Only retire a NAMESPACED_ONLY file when its content still
-    # matches vox's own shipped copy, i.e. it is genuinely vox's stale
-    # deployment and not the user's own file that happens to share the name.
+    # collision. Only retire a NAMESPACED_ONLY file when it is genuinely
+    # vox's own deployment.
+    #
+    # This is a FINGERPRINT check, not exact content equality: every vox
+    # command file's frontmatter references an `mcp__plugin_vox_mic__*` tool
+    # (the tool namespace vox's own MCP server registers under, not
+    # something a user's hand-authored command would plausibly contain), and
+    # that string is stable across edits to a command's prose. Exact-content
+    # equality was tried first and is wrong -- recap.md's own H1 and Usage
+    # text changed in this same PR (bare /recap -> /vox:recap), so a stale
+    # pre-PR recap.md deployed by an earlier session would never byte-match
+    # the current shipped file and would never be retired, leaving /recap
+    # bare forever on every upgrading install. A fingerprint that only cares
+    # "is this vox's own file" survives that class of future edit too.
     _namespaced=0
     for skip in "${NAMESPACED_ONLY[@]}"; do
       [[ "$name" == "$skip" ]] && { _namespaced=1; break; }
     done
     if [[ "$_namespaced" -eq 1 ]] \
-      && ! diff -q "$PLUGIN_ROOT/commands/$name" "$dest" >/dev/null 2>&1; then
+      && ! grep -q 'mcp__plugin_vox_mic__' "$dest" 2>/dev/null; then
       continue
     fi
     # `-f` passing doesn't guarantee $COMMANDS_DIR is writable -- an rm that
     # fails here must not take the rest of the hook down with it under `set -e`.
-    # The captured stderr is sanitized (quotes -> apostrophes, newlines ->
-    # spaces) before it reaches ACTIONS -- the no-jq heredoc fallback below
-    # embeds these messages in a JSON string literal with no escaping, so an
-    # OS error message carrying a `"` would otherwise produce invalid JSON.
+    # The captured stderr is sanitized before it reaches ACTIONS -- see the
+    # sanitization-invariant comment on the no-jq heredoc fallback below.
     if _rm_err=$(rm "$dest" 2>&1); then
       CLEANED+=("/${name%.md}")
     else
       FAILED_CLEAN=$((FAILED_CLEAN + 1))
       _rm_err="${_rm_err//\\/}"
       _rm_err="${_rm_err//\"/\'}"
-      _rm_err="${_rm_err//$'\n'/ }"
+      _rm_err="${_rm_err//[[:cntrl:]]/ }"
       ACTIONS+=("Failed to remove retired command ~/.claude/commands/$name: $_rm_err")
     fi
   done
@@ -147,15 +162,15 @@ if [[ "$PLUGIN_MODE" == "prod" ]]; then
       [[ "$_skip" -eq 1 ]] && continue
       dest="$COMMANDS_DIR/$name"
       if [[ ! -f "$dest" ]] || ! diff -q "$cmd_file" "$dest" >/dev/null 2>&1; then
-        # Sanitized the same way the retired-command rm error is (quotes ->
-        # apostrophes, newlines -> spaces) -- see that comment above.
+        # Sanitized the same way the retired-command rm error is -- see the
+        # sanitization-invariant comment on the no-jq heredoc fallback below.
         if _cp_err=$(cp "$cmd_file" "$dest" 2>&1); then
           DEPLOYED+=("/${name%.md}")
         else
           FAILED_DEPLOY=$((FAILED_DEPLOY + 1))
           _cp_err="${_cp_err//\\/}"
           _cp_err="${_cp_err//\"/\'}"
-          _cp_err="${_cp_err//$'\n'/ }"
+          _cp_err="${_cp_err//[[:cntrl:]]/ }"
           ACTIONS+=("Failed to deploy ~/.claude/commands/$name: $_cp_err")
         fi
       fi
@@ -200,24 +215,48 @@ else
     fi
   fi
 
-  # Remove stale bare Skill(model)/Skill(provider)/Skill(voice)/Skill(recap)
-  # grants left over from before these four commands became namespaced-only.
-  # Forward-integration cleanup of superseded state, the same class of thing
-  # the RETIRED command cleanup already does for files above -- an upgrading
-  # user would otherwise keep four now-meaningless grants forever, since
-  # nothing else in this hook ever removes a permission rule once added.
-  STALE_SKILLS='["Skill(model)","Skill(provider)","Skill(voice)","Skill(recap)"]'
-  if jq -e --argjson stale "$STALE_SKILLS" \
-    '.permissions.allow // [] | map(select(. as $r | $stale | index($r))) | length > 0' \
-    "$SETTINGS" >/dev/null 2>&1; then
-    TMPFILE="$(mktemp "$SETTINGS.XXXXXX" 2>/dev/null || printf '')"
-    if [[ -n "$TMPFILE" ]] && jq --argjson stale "$STALE_SKILLS" \
-      '.permissions.allow = [.permissions.allow[] | select(. as $r | $stale | index($r) | not)]' \
-      "$SETTINGS" > "$TMPFILE" && mv "$TMPFILE" "$SETTINGS"; then
-      ACTIONS+=("Removed stale bare Skill() grants for model/provider/voice/recap (now namespaced-only)")
-    else
-      [[ -n "$TMPFILE" ]] && rm -f "$TMPFILE"
-      ACTIONS+=("Failed to remove stale bare Skill() grants for model/provider/voice/recap")
+  # Remove a stale bare Skill(<name>) grant for each of model/provider/
+  # voice/recap that this run's retired-command cleanup ACTUALLY removed
+  # (CLEANED, populated above -- prod mode only, and only for a file that
+  # passed the vox-fingerprint check). Forward-integration cleanup of
+  # superseded state, the same class of thing the RETIRED command cleanup
+  # already does for files above -- an upgrading user would otherwise keep
+  # a now-meaningless grant forever, since nothing else in this hook ever
+  # removes a permission rule once added.
+  #
+  # Deliberately NOT unconditional the way the legacy-MCP-pattern cleanup
+  # above is: a bare Skill(model) grant is exactly as plausibly the user's
+  # own permission for their own hand-authored command as
+  # ~/.claude/commands/model.md itself is (see the fingerprint-check
+  # comment on the file retirement above) -- stripping it independent of
+  # whether the file was actually vox's would silently revoke a grant that
+  # was never vox's to touch. Scoped to prod mode only, matching where
+  # file retirement runs, so a vox-dev session never strips grants the
+  # sibling prod plugin wrote (that would just have prod re-add them next
+  # start, churning settings.json every dev/prod session flip).
+  STALE_SKILL_ARGS=()
+  if [[ "$PLUGIN_MODE" == "prod" ]]; then
+    for cleaned in "${CLEANED[@]}"; do
+      bare="${cleaned#/}"
+      for skip in "${NAMESPACED_ONLY[@]}"; do
+        [[ "${bare}.md" == "$skip" ]] && { STALE_SKILL_ARGS+=("Skill($bare)"); break; }
+      done
+    done
+  fi
+  if [[ ${#STALE_SKILL_ARGS[@]} -gt 0 ]]; then
+    STALE_SKILLS=$(jq -cn --args '$ARGS.positional' -- "${STALE_SKILL_ARGS[@]}")
+    if jq -e --argjson stale "$STALE_SKILLS" \
+      '.permissions.allow // [] | map(select(. as $r | $stale | index($r))) | length > 0' \
+      "$SETTINGS" >/dev/null 2>&1; then
+      TMPFILE="$(mktemp "$SETTINGS.XXXXXX" 2>/dev/null || printf '')"
+      if [[ -n "$TMPFILE" ]] && jq --argjson stale "$STALE_SKILLS" \
+        '.permissions.allow = [.permissions.allow[] | select(. as $r | $stale | index($r) | not)]' \
+        "$SETTINGS" > "$TMPFILE" && mv "$TMPFILE" "$SETTINGS"; then
+        ACTIONS+=("Removed stale bare Skill() grants for: ${STALE_SKILL_ARGS[*]} (now namespaced-only)")
+      else
+        [[ -n "$TMPFILE" ]] && rm -f "$TMPFILE"
+        ACTIONS+=("Failed to remove stale bare Skill() grants for: ${STALE_SKILL_ARGS[*]}")
+      fi
     fi
   fi
 
@@ -283,7 +322,15 @@ if [[ ${#ACTIONS[@]} -gt 0 ]]; then
   if command -v jq >/dev/null 2>&1; then
     jq -n --arg msg "$MSG" '{hookSpecificOutput: {hookEventName: "SessionStart", additionalContext: $msg}}'
   else
-    # Fallback: ACTIONS messages are ASCII literals, safe for heredoc
+    # Fallback, no jq: this heredoc has no JSON escaping, so it embeds $MSG
+    # into the string literal verbatim. ACTIONS messages may carry sanitized
+    # dynamic content (the OS error text from a failed rm/cp) -- backslash
+    # and double-quote are stripped, and every control character (newline,
+    # tab, carriage return, ...) is replaced with a space, at the point each
+    # message is built (see the sanitization at the rm/cp call sites above).
+    # A literal-text-only ACTIONS message is inherently safe; a message
+    # carrying variable content is safe only because it was sanitized before
+    # ever reaching this array.
     cat <<ENDJSON
 {"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"$MSG"}}
 ENDJSON
