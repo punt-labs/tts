@@ -251,8 +251,19 @@ else
     done
   fi
   if [[ ${#STALE_SKILL_ARGS[@]} -gt 0 ]]; then
-    STALE_SKILLS=$(jq -cn --args '$ARGS.positional' -- "${STALE_SKILL_ARGS[@]}")
-    if jq -e --argjson stale "$STALE_SKILLS" \
+    # Guarded the same way every other command substitution that can fail in
+    # this file is (_rm_err, _cp_err, PLUGIN_RULES, ADDED, TMP, _repo_root) --
+    # a bare assignment under `set -euo pipefail` aborts the whole script on
+    # failure, with no ACTIONS message and no exit-0 guarantee, violating this
+    # file's own "a SessionStart hook must not take the session down with it"
+    # invariant (see the PLUGIN_MODE comment above). Reproduced directly: a
+    # failing `jq -cn --args` here kills the hook before it reaches the Lux
+    # panel launch block, with nothing on stdout.
+    STALE_SKILLS=$(jq -cn --args '$ARGS.positional' -- "${STALE_SKILL_ARGS[@]}") || {
+      ACTIONS+=("jq failed to build stale-grant list — skipping stale grant cleanup")
+      STALE_SKILLS=""
+    }
+    if [[ -n "$STALE_SKILLS" ]] && jq -e --argjson stale "$STALE_SKILLS" \
       '.permissions.allow // [] | map(select(. as $r | $stale | index($r))) | length > 0' \
       "$SETTINGS" >/dev/null 2>&1; then
       TMPFILE="$(mktemp "$SETTINGS.XXXXXX" 2>/dev/null || printf '')"
