@@ -38,26 +38,57 @@ if [[ ${#COMMANDS[@]} -eq 0 ]]; then
   exit 2
 fi
 
-# Skill() rules declared in the hook's PLUGIN_RULES jq expression.
+# Commands the hook deploys only under their plugin-namespaced form
+# (/vox:model, never bare /model) — parsed from the hook's own
+# NAMESPACED_ONLY array so the two lists cannot drift apart. Each such
+# command's Skill() grant must read Skill(vox:<name>), not Skill(<name>).
+NAMESPACED=()
+while IFS= read -r name; do
+  NAMESPACED+=("$name")
+done < <(
+  sed -n 's/^NAMESPACED_ONLY=(\(.*\))$/\1/p' "$HOOK" \
+    | tr ' ' '\n' \
+    | sed -E 's/\.md$//' \
+    | sort
+)
+
+# Skill() rules declared in the hook's PLUGIN_RULES jq expression. A colon
+# is allowed so a namespaced grant like Skill(vox:model) is captured whole,
+# not split at the colon.
 ALLOWED=()
 while IFS= read -r allow; do
   ALLOWED+=("$allow")
-done < <(grep -oE 'Skill\([a-z_-]+\)' "$HOOK" | sed -E 's/Skill\(|\)//g' | sort -u)
+done < <(grep -oE 'Skill\([a-z_:-]+\)' "$HOOK" | sed -E 's/Skill\(|\)//g' | sort -u)
+
+_is_namespaced() {
+  local cmd="$1" n
+  for n in "${NAMESPACED[@]}"; do
+    [[ "$cmd" == "$n" ]] && return 0
+  done
+  return 1
+}
 
 missing=()
 for cmd in "${COMMANDS[@]}"; do
+  if _is_namespaced "$cmd"; then
+    want="vox:$cmd"
+  else
+    want="$cmd"
+  fi
   found=0
   for allow in "${ALLOWED[@]}"; do
-    [[ "$cmd" == "$allow" ]] && { found=1; break; }
+    [[ "$want" == "$allow" ]] && { found=1; break; }
   done
-  [[ $found -eq 0 ]] && missing+=("$cmd")
+  [[ $found -eq 0 ]] && missing+=("$cmd (expected Skill($want))")
 done
 
 extra=()
 for allow in "${ALLOWED[@]}"; do
   found=0
   for cmd in "${COMMANDS[@]}"; do
-    [[ "$cmd" == "$allow" ]] && { found=1; break; }
+    want="$cmd"
+    _is_namespaced "$cmd" && want="vox:$cmd"
+    [[ "$want" == "$allow" ]] && { found=1; break; }
   done
   [[ $found -eq 0 ]] && extra+=("$allow")
 done

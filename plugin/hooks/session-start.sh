@@ -59,7 +59,8 @@ fi
 
 # ── Clean up retired commands ─────────────────────────────────────────
 if [[ "$PLUGIN_MODE" == "prod" ]]; then
-  RETIRED=(say.md speak.md notify.md vox-on.md vox-off.md enable.md disable.md)
+  RETIRED=(say.md speak.md notify.md vox-on.md vox-off.md enable.md disable.md \
+    model.md provider.md voice.md recap.md)
   CLEANED=()
   FAILED_CLEAN=0
   for name in "${RETIRED[@]}"; do
@@ -84,7 +85,14 @@ fi
 
 # ── Deploy top-level commands if missing ──────────────────────────────
 # In dev mode, skip command deployment — prod plugin handles top-level commands.
-# Skip *-dev.md files — dev commands use plugin namespace (vox-dev:say-dev)
+# Skip *-dev.md files — dev commands use plugin namespace (vox-dev:say-dev).
+# Skip NAMESPACED_ONLY files — model/provider/voice/recap are deliberately
+# namespaced-only (/vox:model, not /model), because a bare top-level command
+# claims a name Claude Code itself may use (model already collides; provider
+# and voice are the same class of risk). recap has no known collision but is
+# namespaced by operator ruling for consistency with the other three. See
+# docs/vox-ovz3-command-namespace.md.
+NAMESPACED_ONLY=(model.md provider.md voice.md recap.md)
 if [[ "$PLUGIN_MODE" == "prod" ]]; then
   DEPLOYED=()
   FAILED_DEPLOY=0
@@ -104,6 +112,11 @@ if [[ "$PLUGIN_MODE" == "prod" ]]; then
     for cmd_file in "$PLUGIN_ROOT/commands/"*.md; do
       name="$(basename "$cmd_file")"
       [[ "$name" == *-dev.md ]] && continue
+      _skip=0
+      for skip in "${NAMESPACED_ONLY[@]}"; do
+        [[ "$name" == "$skip" ]] && { _skip=1; break; }
+      done
+      [[ "$_skip" -eq 1 ]] && continue
       dest="$COMMANDS_DIR/$name"
       if [[ ! -f "$dest" ]] || ! diff -q "$cmd_file" "$dest" >/dev/null 2>&1; then
         if cp "$cmd_file" "$dest" 2>/dev/null; then
@@ -154,8 +167,14 @@ else
   fi
 
   # Build PLUGIN_RULES via jq to avoid JSON injection from $TOOL_GLOB
+  #
+  # model/provider/voice/recap are namespaced-only commands (NAMESPACED_ONLY
+  # above), so their skill grant is the plugin-qualified name Skill(vox:model)
+  # etc., not the un-namespaced form -- a grant on the bare command name would
+  # pre-approve a command that no longer deploys and never matches the actual
+  # /vox:model invocation.
   PLUGIN_RULES=$(jq -n --arg glob "$TOOL_GLOB" \
-    '[$glob, "Skill(unmute)", "Skill(mute)", "Skill(recap)", "Skill(vibe)", "Skill(vox)", "Skill(music)", "Skill(model)", "Skill(provider)", "Skill(voice)"]' 2>/dev/null) || {
+    '[$glob, "Skill(unmute)", "Skill(mute)", "Skill(vibe)", "Skill(vox)", "Skill(music)", "Skill(vox:model)", "Skill(vox:provider)", "Skill(vox:voice)", "Skill(vox:recap)"]' 2>/dev/null) || {
     ACTIONS+=("jq failed to build permission rules — skipping permission setup")
     PLUGIN_RULES=""
   }
