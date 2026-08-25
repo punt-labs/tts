@@ -14,10 +14,12 @@ import json
 from collections.abc import AsyncIterator, Coroutine
 from contextlib import AbstractContextManager
 from pathlib import Path
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import typer
+import typer.core
 from typer.testing import CliRunner
 
 from punt_vox.commands.call import build_call_app
@@ -277,12 +279,29 @@ def test_transfer_refuses_against_a_stale_lock_with_a_dead_pid(tmp_path: Path) -
     assert CallControl(tmp_path / "call.control").consume() is None
 
 
+def _start_command() -> typer.core.TyperCommand:
+    """Return the ``start`` subcommand's underlying Typer/click command.
+
+    Introspecting the registered parameters, rather than parsing rendered
+    ``--help`` text, is immune to Typer's Rich-based help renderer wrapping
+    or truncating output based on the runner's detected terminal width --
+    observed to differ between a local shell and CI's headless runner even
+    with ``COLUMNS`` forced, since Rich's own width-detection heuristics
+    depend on more than that one variable. Typer 0.27 vendors its own
+    internal click fork (``typer._click``), so the returned group is a
+    ``typer.core.TyperGroup``, not an instance of the top-level ``click``
+    package's ``Group`` -- accessed here by duck-typed attribute, not
+    ``isinstance``.
+    """
+    app_command = typer.main.get_command(build_call_app())
+    group = cast("typer.core.TyperGroup", app_command)
+    return cast("typer.core.TyperCommand", group.commands["start"])
+
+
 def test_start_no_longer_requires_the_script_option() -> None:
     """``--script`` is the dev/test opt-in now, not a required flag."""
-    result = runner.invoke(build_call_app(), ["start", "--help"])
-    assert result.exit_code == 0
-    assert "--script" in result.stdout
-    assert "not required" not in result.stdout  # sanity: help text renders
+    script_param = next(p for p in _start_command().params if p.name == "script")
+    assert script_param.required is False
 
 
 def _close_coro(coro: Coroutine[object, object, object]) -> None:
@@ -297,9 +316,8 @@ def _close_coro(coro: Coroutine[object, object, object]) -> None:
 
 
 def test_start_help_shows_the_trace_turns_flag() -> None:
-    result = runner.invoke(build_call_app(), ["start", "--help"])
-    assert result.exit_code == 0
-    assert "--trace-turns" in result.stdout
+    param_names = {p.name for p in _start_command().params}
+    assert "trace_turns" in param_names
 
 
 def test_start_help_does_not_collide_with_the_global_verbose_flag() -> None:
