@@ -168,6 +168,36 @@ No audio — assert each: the traversal ref is refused and writes nothing, `remo
 of the playing album is refused with an "is playing" message, and after stopping
 the remove succeeds.
 
+### Step 12 — command namespace: `/model` does not collide (no audio to judge — assert the outcomes)
+
+vox-ovz3: `model.md`, `provider.md`, `voice.md`, and `recap.md` deploy
+namespaced-only — a bare top-level command would shadow a name Claude Code
+itself may claim (`/model` already does). This step only matters after a
+prod-mode plugin install (a plain marketplace install, or a scratch copy
+with `plugin.json`'s `name` swapped off `-dev`), because dev mode skips
+command deployment entirely and relies on the sibling prod plugin:
+
+```bash
+ls ~/.claude/commands/ | grep -E '^(model|provider|voice|recap)\.md$'
+echo "exit=$?"   # must be non-zero -- none of the four are deployed bare
+ls ~/.claude/commands/ | grep -E '^(vox|unmute|mute|vibe|music)\.md$'
+# all five must be present -- the session-scoped verbs are unaffected
+```
+
+No audio — assert: typing `/model` in Claude Code offers only Claude Code's
+own built-in (vox does not appear), and `/vox:model` (or `/vox-dev:model`
+in dev mode — the plugin namespace gets the `-dev` suffix, not the command
+name; there is no `model-dev.md`) invokes vox's model switch **with no
+permission prompt** — the `Skill(vox:model)` grant (§4.3 of
+`docs/vox-ovz3-command-namespace.md`) is supposed to auto-approve it the
+same way the five bare commands are auto-approved today, so a prompt
+appearing here is itself a finding, not
+merely an inconvenience to click through. Note explicitly which happened:
+"no prompt" (grant works) or "one prompt, then granted" (grant name needs
+revisiting — see the design doc's fallback candidates). Repeat the
+`/vox:recap` check the same way, including the no-prompt assertion —
+`/recap` typed bare offers nothing from vox.
+
 ## Post-flight
 
 - Summarize: which steps passed, which raised findings.

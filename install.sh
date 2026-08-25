@@ -413,7 +413,7 @@ if [ "$SKIP_PLUGIN" = "0" ]; then
   printf '%b%b%s is ready!%b\n\n' "$GREEN" "$BOLD" "$PLUGIN_NAME" "$NC"
   printf 'Restart Claude Code, then:\n'
   printf '  /vox enable   # turn vox on for this repo\n'
-  printf '  /recap        # spoken summary of what just happened\n\n'
+  printf '  /vox:recap    # spoken summary of what just happened\n\n'
 else
   printf '%b%bvox CLI is ready!%b\n\n' "$GREEN" "$BOLD" "$NC"
   printf 'The vox CLI is installed (no Claude Code plugin). Try:\n'

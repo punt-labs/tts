@@ -267,8 +267,8 @@ failures, with expressive cues (\texttt{[excited]}, \texttt{[weary]},
 character role-play but a session that sounds like it is going the way it is
 going --- a collaborator with a voice, not a status bar.
 
-\texttt{/recap} is on-demand: after a wall of terminal output, the developer
-types \texttt{/recap} and hears a 30-second spoken summary of what just
+\texttt{/vox:recap} is on-demand: after a wall of terminal output, the developer
+types \texttt{/vox:recap} and hears a 30-second spoken summary of what just
 happened. No scrolling, no parsing diffs. The agent extracts the key points
 and speaks them while the developer scans the code
 (see \faqref{faq:getting-started}).
@@ -465,7 +465,7 @@ Restart Claude Code and type \texttt{/vox enable}.
 
   The script installs the CLI, registers the MCP server with Claude Code, and
   runs \texttt{vox doctor} to verify providers. Restart Claude Code. Type
-  \texttt{/vox enable}. Notifications are now active. Type \texttt{/recap} after
+  \texttt{/vox enable}. Notifications are now active. Type \texttt{/vox:recap} after
   any long output for a spoken summary.
 
   For manual installation:
@@ -508,7 +508,7 @@ Restart Claude Code and type \texttt{/vox enable}.
 
 \begin{faqpair}{How can I use vox --- MCP server, Python library, or CLI?}
   The Claude Code plugin (\texttt{/vox}, \texttt{/unmute}, \texttt{/mute},
-  \texttt{/recap}, \texttt{/vibe}, \texttt{/music}) is one way to use vox, not
+  \texttt{/vox:recap}, \texttt{/vibe}, \texttt{/music}) is one way to use vox, not
   the only way. vox ships three first-class surfaces, and a reader should come
   away seeing that it is usable well outside a Claude Code plugin:
 
@@ -738,7 +738,7 @@ vox say "Build finished."
   streaming API and OpenAI TTS both return first audio within 200--500ms.
   AWS Polly is faster still. Mitigation: auto-detect the lowest-latency
   available provider for notifications; reserve higher-quality providers for
-  \texttt{/recap} summaries where latency is less critical.
+  \texttt{/vox:recap} summaries where latency is less critical.
 
   \textbf{Audio playback on headless/remote systems (resolved, shipped
   v4.7.7):} Developers using Claude Code via SSH or in cloud VMs previously
@@ -762,7 +762,7 @@ vox say "Build finished."
 \begin{faqpair}{What dependencies exist on external systems?}
   \textbf{Claude Code hooks:} Required for \texttt{/vox} notifications to fire
   automatically. Without hooks, vox still works as a manual TTS tool
-  (\texttt{/recap}, CLI synthesis) but loses its primary value proposition.
+  (\texttt{/vox:recap}, CLI synthesis) but loses its primary value proposition.
 
   \textbf{TTS provider APIs:} At least one of ElevenLabs, OpenAI, or AWS
   Polly must be reachable. Auto-detection falls back through the chain.
@@ -793,7 +793,7 @@ vox say "Build finished."
   A CLI-only \texttt{install.sh --no-plugin} install for scripts, CI, and
   non-Claude harnesses (v4.16.0). \texttt{/unmute}/\texttt{/mute} for voice
   vs.\ chime. Permission-blocked notification via \texttt{Notification}
-  hook. \texttt{/recap} command (agent-executed spoken summary).
+  hook. \texttt{/vox:recap} command (agent-executed spoken summary).
   \texttt{/vibe} with auto-detection and manual modes --- auto-vibe uses
   deterministic signal-to-tag mapping (no LLM needed) to resolve
   ElevenLabs expressive tags from accumulated session signals.
@@ -949,7 +949,7 @@ vox say "Build finished."
   runs make the task-completion notification more valuable.
   \textit{Response:} Monitor the event distribution metric. If permission
   prompts decline to less than 10\% of notifications, pivot messaging to
-  ``hear when your agent finishes'' and invest in \texttt{/recap} quality.
+  ``hear when your agent finishes'' and invest in \texttt{/vox:recap} quality.
 \end{faqpair}
 
 % ══════════════════════════════════════════════════════════════════════════════
@@ -1013,7 +1013,7 @@ available on PyPI.
   \featureitem{\texttt{/unmute} and \texttt{/mute} commands}{Toggle voice vs.\ chime. \texttt{/unmute} enables spoken notifications with optional voice selection. \texttt{/mute} switches to chime-only. Shipped v0.11.0.}\label{feat:speak}
   \featureitem{Chime audio}{Mood-aware audio tones for chime mode (\texttt{/mute}). Eight distinct signals pitch-shift to match session vibe (bright/neutral/dark). 24 total assets. Shipped v0.11.0.}\label{feat:chime}
   \featureitem{Provider auto-detection}{Detect best available TTS provider on first use. ElevenLabs > OpenAI > Polly > macOS \texttt{say} > Linux \texttt{espeak-ng}. Shipped v0.7.0.}\label{feat:autodetect}
-  \featureitem{\texttt{/recap} command}{On-demand spoken summary of the last Claude response. Agent extracts key points and speaks them. Shipped v0.2.0.}\label{feat:recap}
+  \featureitem{\texttt{/vox:recap} command}{On-demand spoken summary of the last Claude response. Agent extracts key points and speaks them. Shipped v0.2.0.}\label{feat:recap}
   \featureitem{Plugin marketplace}{Listed in the Claude Code plugin marketplace for one-click install. Shipped v1.2.0.}\label{feat:marketplace}
   \featureitem{\texttt{voxd} audio daemon}{Dedicated audio server with WebSocket protocol. Separates synthesis/playback from MCP server for fast hook dispatch (observed on the order of a few milliseconds; not formally benchmarked). Playback queue, dedup, caching. Shipped v3.0.0.}\label{feat:voxd}
   \featureitem{Background music}{Vibe-driven instrumental music via ElevenLabs Music API. Adapts to session mood. \texttt{/music on|off}. The agent plays DJ --- a music-panel DJ-booth personality drives vibe-matched pools --- so vox is partly entertainment by design. Shipped v4.4.0.}\label{feat:music}

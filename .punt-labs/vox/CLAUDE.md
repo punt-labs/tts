@@ -130,7 +130,7 @@ Catalog verbs (address a saved album by the id `list` prints):
 - `/mute` — chimes only (spoken notifications off).
 - `/vibe <mood>|auto|off` — set session mood.
 - `/music on|stop|next|prev|pause|resume|play [<name>]|list|status` — background music.
-- `/recap` — speak a 2–3 point summary of your last response.
+- `/vox:recap` — speak a 2–3 point summary of your last response.
 
 ## Driving vox from the CLI (no plugin)
 

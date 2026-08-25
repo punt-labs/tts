@@ -13,6 +13,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Bare `/model` collided with Claude Code's own built-in `/model`.**
+  `plugin/hooks/session-start.sh` deployed every `plugin/commands/*.md` to
+  `~/.claude/commands/` unconditionally, so `/vox:model` — already the
+  documented, correctly-namespaced invocation — also acquired an unwanted
+  bare top-level form (`/model`) that shadowed Claude Code's own slash
+  command. `model.md`, `provider.md`, `voice.md`, and `recap.md` now deploy
+  namespaced-only, as `/vox:model`, `/vox:provider`, `/vox:voice`, and
+  `/vox:recap`. `/provider` and `/voice` are not known to collide with
+  anything today; they're namespaced preemptively for consistency with
+  `/model` — the same class of name a future Claude Code release could
+  equally claim. `/recap` has no collision either, namespaced by explicit
+  operator ruling for consistency with the other three. The five
+  session-scoped verbs — `/vox`, `/unmute`, `/mute`, `/vibe`, `/music` —
+  are unaffected and still deploy bare. An already-installed plugin drops
+  the stale bare copies on its next session start.
 - **Seven rounds of local review hardened the `vox call` conversation-mode slice after it shipped without one.** Two confirmed-reachable crash/hang bugs stand out: `LiveCallDriver.run`'s drive loop never checked whether `CallSession` had already ended the call itself (a `BareAuthMissingError` or an `ElevenLabsSTTProvider` auth failure both apply `EndCall()` mid-loop) -- the loop spun on mic chunks forever, holding the `UserPromptSubmit` lock, until Ctrl-C; and `--script` calls crashed with `IllegalTransitionError` plus a second, contradictory spoken message on the same class of permanent auth failure, because the scripted driver never got the live driver's own IDLE-mode hangup guard. Also fixed: an uncaught `SessionAttachError`/STT-transcribe exception that ended the entire call instead of recovering to listening (mirroring the low-confidence-STT recovery path already in place); an STT `ProviderAuthError` (a revoked ElevenLabs key) previously laundered into an infinite "didn't catch that, try again" loop instead of ending the call with an actionable message; a missing `ANTHROPIC_API_KEY` never actually pre-flighted despite `LiveCallDriver.create`'s own docstring claiming it was; a missing `claude` binary bypassing `SessionAttachError` recovery entirely; `typer.BadParameter` (an expected usage error) getting buried under a generic "call ended unexpectedly" crash message instead of typer's own clean CLI error path; raw exception text (including decoded subprocess stderr) spoken aloud on a failed `/call transfer`, a real voice-disclosure hazard; a 50Hz control-mailbox poll turned into a 250ms interval; unvalidated cross-process lock/control file fields (`pid`, `kind`, `target_session_id`) crashing instead of being treated as stale/discarded, including a `bool`-is-a-subclass-of-`int` gotcha that could wedge the lock on PID 1 forever; a corrupt/hand-edited `call.lock` file with invalid UTF-8 raising uncaught instead of being treated as no active call; an `asyncio.gather` task leak on a mid-exchange `stdout` failure; a second interruption during one agent-turn wait silently overwriting the first instead of folding both together (an FR-9 violation); stale `_pending_chunks`/turn-in-progress state surviving past a reply, corrupting the *next* turn's own latency measurements; and a `MicAudioSource` device-open failure leaving its internal queue permanently marked live. An entire unwired playback-sink subsystem (~700 lines, zero production callers) and `CallActor`'s unused command-queue methods were deleted rather than left as scaffolding, per a standing no-dead-code policy for a codebase with no production users yet. Duplication cleanup: a byte-identical pre-flight check and hangup guard, both previously copy-pasted across the live and scripted drivers, are now each defined once; a six-times-duplicated "no TTS provider configured" message now lives on the exception class that raises it; two hand-rolled JSON field validators were replaced with an existing shared `JsonObject` helper.
 
 ### Added
