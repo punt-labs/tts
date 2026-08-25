@@ -29,9 +29,8 @@ from punt_vox.voxd.conversation_mode.stt_provider import TranscriptEvent
 from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
 
 if TYPE_CHECKING:
-    from punt_vox.commands.call_live_driver import ApplyControlFn
     from punt_vox.types import HealthCheck
-    from punt_vox.voxd.conversation_mode.call_control import CallControl
+    from punt_vox.voxd.conversation_mode.call_control import ApplyControlFn, CallControl
     from punt_vox.voxd.conversation_mode.call_session import SpeakFn
     from punt_vox.voxd.conversation_mode.session_attach import SessionAttach
     from punt_vox.voxd.conversation_mode.wait_cue import ChimeFn

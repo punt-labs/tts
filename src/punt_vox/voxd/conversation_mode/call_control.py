@@ -14,16 +14,27 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Self, final
+from typing import TYPE_CHECKING, Literal, Self, final
 
 from punt_vox.atomic_file import AtomicFile
 from punt_vox.types_programs.wire import JsonObject
 
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from punt_vox.voxd.conversation_mode.call_session import CallSession, SpeakFn
+
 logger = logging.getLogger(__name__)
 
-__all__ = ["CallControl", "ControlRequest"]
+__all__ = ["ApplyControlFn", "CallControl", "ControlRequest"]
 
 type ControlKind = Literal["stop", "transfer"]
+
+# Consumes one pending stop/transfer request, speaking through *speak* on a
+# declined transfer; returns whether the drive loop should stop. Shared by
+# the live and scripted drivers (call_live_driver.py, call_scripted.py) as
+# a collaborator, rather than each duplicating transfer-resolution logic.
+type ApplyControlFn = Callable[["CallControl", CallSession, "SpeakFn"], Awaitable[bool]]
 
 
 @final

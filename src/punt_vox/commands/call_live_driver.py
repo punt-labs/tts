@@ -24,23 +24,13 @@ from punt_vox.voxd.conversation_mode.mode import Mode
 from punt_vox.voxd.conversation_mode.turn_detector import TurnDetector
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
-    from punt_vox.voxd.conversation_mode.call_control import CallControl
+    from punt_vox.voxd.conversation_mode.call_control import ApplyControlFn, CallControl
     from punt_vox.voxd.conversation_mode.call_session import SpeakFn
     from punt_vox.voxd.conversation_mode.session_attach import SessionAttach
     from punt_vox.voxd.conversation_mode.stt_provider import STTProvider
     from punt_vox.voxd.conversation_mode.wait_cue import ChimeFn
 
 __all__ = ["LiveCallDriver"]
-
-# A control-request handler with the same shape as ``CallCli._apply_control``:
-# consume one pending stop/transfer request against *session*, speaking
-# through *speak* on a declined transfer; return whether the drive loop
-# should stop. Shared with the scripted path (see call.py), so this driver
-# takes it as a collaborator rather than duplicating transfer-resolution
-# logic here.
-type ApplyControlFn = Callable[["CallControl", CallSession, "SpeakFn"], Awaitable[bool]]
 
 # FR-1's "a few seconds of 'say something'" calibration step: how long to
 # sample ambient microphone audio before the call opens for real speech, so
