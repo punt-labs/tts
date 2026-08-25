@@ -1,15 +1,17 @@
 """Git queries the suppression ratchet needs: base resolution and tree reads.
 
 Git materializes the *base-commit* source tree (``git archive <base> --
-<paths> | tar -x``) so the same ``Scanner`` that counts the current tree's
-suppressions also counts the base commit's -- there is no separate,
-independently-maintained baseline blob to drift out of sync with the code it
-is supposed to describe.
+<paths>``, extracted with the stdlib ``tarfile`` module) so the same
+``Scanner`` that counts the current tree's suppressions also counts the base
+commit's -- there is no separate, independently-maintained baseline blob to
+drift out of sync with the code it is supposed to describe.
 """
 
 from __future__ import annotations
 
+import io
 import subprocess
+import tarfile
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Self
@@ -127,14 +129,15 @@ class GitRepo:
     def archive_paths(self, ref: str, paths: Sequence[str], dest: Path) -> None:
         """Materialize ``paths`` as they existed at ``ref`` into ``dest``.
 
-        One ``git archive`` piped into ``tar -x`` -- far fewer subprocess
-        spawns than an individual ``git show`` per file, and it preserves the
-        tree layout under ``dest`` so ``Scanner`` can walk it unchanged.
-        Callers must pre-filter ``paths`` to those confirmed present at
-        ``ref`` (``path_exists_at_ref``): ``git archive`` errors on any
-        pathspec that matches nothing, and a caller-side filter is what lets
-        this method distinguish "materialize what exists" from masking a
-        genuine git failure.
+        One ``git archive``, extracted in-process with ``tarfile`` -- far
+        fewer subprocess spawns than an individual ``git show`` per file, no
+        dependency on an external ``tar`` binary (absent on some minimal
+        environments), and it preserves the tree layout under ``dest`` so
+        ``Scanner`` can walk it unchanged. Callers must pre-filter ``paths``
+        to those confirmed present at ``ref`` (``path_exists_at_ref``):
+        ``git archive`` errors on any pathspec that matches nothing, and a
+        caller-side filter is what lets this method distinguish "materialize
+        what exists" from masking a genuine git failure.
         """
         if self._root is None:
             msg = "not inside a git repository"
@@ -156,17 +159,12 @@ class GitRepo:
             msg = f"git archive {ref} errored: {detail or f'exit {archive.returncode}'}"
             raise GitError(msg)
         try:
-            tar = subprocess.run(
-                ["tar", "-x", "-C", str(dest)],
-                input=archive.stdout,
-                capture_output=True,
-                timeout=_TIMEOUT,
-            )
-        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
-            msg = f"tar extraction of {ref} archive failed to run: {exc}"
+            with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
+                # "data" filter (PEP 706): strips permission bits, refuses
+                # links/devices, and rejects any member escaping dest --
+                # git archive output is our own trusted repo's tree, but the
+                # extraction itself gets no exemption from that discipline.
+                tar.extractall(dest, filter="data")
+        except (tarfile.TarError, OSError) as exc:
+            msg = f"tar extraction of {ref} archive failed: {exc}"
             raise GitError(msg) from exc
-        if tar.returncode != 0:
-            detail = tar.stderr.decode(errors="replace").strip()
-            fallback = f"exit {tar.returncode}"
-            msg = f"tar extraction of {ref} archive errored: {detail or fallback}"
-            raise GitError(msg)

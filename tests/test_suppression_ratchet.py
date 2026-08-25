@@ -303,12 +303,24 @@ class TestGitRepoArchivePaths:
         with pytest.raises(GitError):
             repo.archive_paths("0" * 40, ["pkg/a.py"], dest)
 
-    def test_missing_dest_raises(self, gfx: GitFixture, tmp_path: Path) -> None:
+    def test_missing_dest_is_created(self, gfx: GitFixture, tmp_path: Path) -> None:
+        # tarfile.extractall creates a missing destination directory itself
+        # (unlike `tar -x -C`, which requires it to pre-exist).
         gfx.write_source("x = 1\n")
         base = gfx.commit("base")
         repo = GitRepo(gfx.root)
+        dest = tmp_path / "does-not-exist"
+        repo.archive_paths(base, ["pkg/a.py"], dest)
+        assert (dest / "pkg" / "a.py").read_text() == "x = 1\n"
+
+    def test_unwritable_dest_raises(self, gfx: GitFixture, tmp_path: Path) -> None:
+        gfx.write_source("x = 1\n")
+        base = gfx.commit("base")
+        repo = GitRepo(gfx.root)
+        dest = tmp_path / "blocked"
+        dest.write_text("a file, not a directory")
         with pytest.raises(GitError):
-            repo.archive_paths(base, ["pkg/a.py"], tmp_path / "does-not-exist")
+            repo.archive_paths(base, ["pkg/a.py"], dest)
 
     def test_empty_paths_is_a_no_op(self, gfx: GitFixture, tmp_path: Path) -> None:
         gfx.write_source("x = 1\n")

@@ -5,7 +5,7 @@ from __future__ import annotations
 from punt_vox.voxd.conversation_mode.reply_redaction import reply_redactor
 
 
-def test_redacts_openai_style_key() -> None:
+def test_redacts_anthropic_style_key() -> None:
     text = (
         "Your key is sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789 -- keep it safe."
     )
