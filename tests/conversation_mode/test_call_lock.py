@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 from unittest.mock import patch
 
@@ -185,3 +186,17 @@ def test_is_live_true_for_a_pid_owned_by_another_user(tmp_path: Path) -> None:
 
     with patch("os.kill", side_effect=PermissionError):
         assert lock.is_live() is True
+
+
+def test_acquire_writes_the_lock_file_and_directory_with_restrictive_permissions(
+    tmp_path: Path,
+) -> None:
+    """The lock file records a pid/reason -- not itself a secret -- but the
+    sibling call.control mailbox carries session ids that are capability-like
+    for --resume, so both share this directory's 0700 and land at 0600."""
+    lock_dir = tmp_path / "call"
+    lock = CallLock(lock_dir / "call.lock")
+    lock.acquire("call active")
+
+    assert stat.S_IMODE(lock_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE(lock.path.stat().st_mode) == 0o600

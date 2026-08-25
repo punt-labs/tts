@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Literal, Self, final
 
 from punt_vox.atomic_file import AtomicFile
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_repo_root
+from punt_vox.private_state import PrivateState
 from punt_vox.types_programs.wire import JsonObject
 
 if TYPE_CHECKING:
@@ -151,6 +152,10 @@ class CallControl:
     def _write(self, request: ControlRequest) -> None:
         # AtomicFile.replace, not a bare write_text: consume() polls this
         # file between turns, and a truncate-then-write leaves a window in
-        # which it could read a partial, unparseable file.
+        # which it could read a partial, unparseable file. A transfer
+        # request carries a session id -- capability-like for --resume --
+        # so this lands at 0o600 under a 0o700 dir, not AtomicFile's
+        # default (0o644 world-readable).
         payload = {"kind": request.kind, "target_session_id": request.target_session_id}
-        AtomicFile(self._path).replace(json.dumps(payload))
+        PrivateState(self._path).ensure_private_tree()
+        AtomicFile(self._path).replace(json.dumps(payload), mode=0o600)

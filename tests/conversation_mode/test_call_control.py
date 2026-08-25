@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import stat
 from pathlib import Path
 
 from punt_vox.voxd.conversation_mode.call_control import CallControl
@@ -164,3 +165,17 @@ def test_a_request_written_after_consume_is_not_lost(tmp_path: Path) -> None:
     assert second is not None
     assert second.kind == "transfer"
     assert second.target_session_id == "session-c"
+
+
+def test_request_stop_writes_control_file_and_dir_with_restrictive_perms(
+    tmp_path: Path,
+) -> None:
+    """A transfer request's session id is capability-like for --resume --
+    the mailbox lands at 0600 under a 0700 directory, not the world-readable
+    default."""
+    control_dir = tmp_path / "call"
+    control = CallControl(control_dir / "call.control")
+    control.request_stop()
+
+    assert stat.S_IMODE(control_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE((control_dir / "call.control").stat().st_mode) == 0o600

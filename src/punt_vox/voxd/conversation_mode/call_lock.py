@@ -19,6 +19,7 @@ from typing import Self, final
 
 from punt_vox.atomic_file import AtomicFile
 from punt_vox.dirs import DEFAULT_CONFIG_DIR, find_repo_root
+from punt_vox.private_state import PrivateState
 from punt_vox.types_programs.wire import JsonObject
 
 logger = logging.getLogger(__name__)
@@ -123,7 +124,12 @@ class CallLock:
         if existing is not None and self._process_is_alive(existing.pid):
             raise CallLockActiveError(existing)
         payload = {"reason": reason, "pid": os.getpid()}
-        AtomicFile(self._path).replace(json.dumps(payload))
+        # Session ids reachable through call.control's transfer requests are
+        # capability-like for --resume -- whoever can read this directory
+        # can potentially attach to the call's session. 0o700 dir / 0o600
+        # file, not the AtomicFile default (0o644 world-readable).
+        PrivateState(self._path).ensure_private_tree()
+        AtomicFile(self._path).replace(json.dumps(payload), mode=0o600)
 
     def release(self) -> None:
         """Remove the lock file if present; a no-op if it is already gone."""

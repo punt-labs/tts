@@ -34,6 +34,10 @@ research/
 .punt-labs/vox/vox.local.md
 .punt-labs/vox/ephemeral/
 
+# vox call lock/control mailbox (CallLock, CallControl): runtime
+# process state (pid, transfer session ids), never committed.
+.punt-labs/vox/call/
+
 # LaTeX auxiliary files (prfaq.pdf is tracked, build artifacts are not)
 *.aux
 *.bbl
