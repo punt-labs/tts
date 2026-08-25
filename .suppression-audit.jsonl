@@ -4,3 +4,5 @@
 {"ts":"2026-07-05T21:18:37Z","total":226,"by_category":{"noqa":33,"type_ignore":20,"pylint_disable":0,"pyright_ignore":94,"per_file_ignores":79}}
 {"ts":"2026-07-12T17:30:02Z","total":213,"by_category":{"noqa":32,"type_ignore":14,"pylint_disable":0,"pyright_ignore":93,"per_file_ignores":74}}
 {"ts":"2026-08-24T09:29:08Z","total":205,"by_category":{"noqa":32,"type_ignore":4,"pylint_disable":0,"pyright_ignore":92,"per_file_ignores":77}}
+{"ts":"2026-08-25T06:45:51Z","total":202,"by_category":{"noqa":31,"type_ignore":4,"pylint_disable":0,"pyright_ignore":91,"per_file_ignores":76}}
+{"ts":"2026-08-25T08:01:32Z","verdict":"relaxed","file":"src/punt_vox/voxd/conversation_mode/mic_audio_source.py","before":0,"after":1,"reason":"Lazy sounddevice import for the optional call extra (PortAudio dependency) -- matches 6 existing precedents in this pyproject.toml for optional heavy providers; a hard top-level import would break every vox invocation on a host without PortAudio.","commit":"cf6246b"}

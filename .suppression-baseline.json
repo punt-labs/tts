@@ -1,11 +1,11 @@
 {
-  "total": 205,
+  "total": 202,
   "by_category": {
-    "noqa": 32,
+    "noqa": 31,
     "type_ignore": 4,
     "pylint_disable": 0,
-    "pyright_ignore": 92,
-    "per_file_ignores": 77
+    "pyright_ignore": 91,
+    "per_file_ignores": 76
   },
   "by_file": {
     "src/punt_vox/__main__.py": {
@@ -16,9 +16,6 @@
       "pyright_ignore": 2
     },
     "src/punt_vox/cli_rec.py": {
-      "noqa": 1
-    },
-    "src/punt_vox/commands/call.py": {
       "noqa": 1
     },
     "src/punt_vox/core.py": {
@@ -83,9 +80,6 @@
     "src/punt_vox/types_synthesis_errors.py": {
       "pyright_ignore": 1
     },
-    "src/punt_vox/voxd/conversation_mode/call_lock.py": {
-      "pyright_ignore": 1
-    },
     "src/punt_vox/voxd/daemon.py": {
       "type_ignore": 1
     },
@@ -108,5 +102,5 @@
       "noqa": 1
     }
   },
-  "updated_at": "2026-08-24T09:29:08Z"
+  "updated_at": "2026-08-25T06:45:51Z"
 }
