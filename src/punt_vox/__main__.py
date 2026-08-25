@@ -118,7 +118,15 @@ def _fill_from_state(spec: SynthesisSpec) -> SynthesisSpec:
     """
     try:
         return SessionSpec.for_repo().fill(spec)
-    except (ProviderNotConfiguredError, ModelNotAvailableError) as exc:
+    except ProviderNotConfiguredError as exc:
+        # SessionSpec._resolve_provider raises the MCP-flavored for_mcp()
+        # message by default -- the wrong verb for this CLI path (mirrors
+        # commands/model.py, commands/voice.py, and commands/call_spec.py's
+        # identical rebuild).
+        message = str(ProviderNotConfiguredError.for_cli())
+        _formatter.error(message, f"Error: {message}")
+        raise typer.Exit(code=1) from exc
+    except ModelNotAvailableError as exc:
         message = str(exc)
         _formatter.error(message, f"Error: {message}")
         raise typer.Exit(code=1) from exc

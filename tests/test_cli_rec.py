@@ -600,3 +600,21 @@ def test_list_accepts_json_flag_after_the_subcommand() -> None:
 
     assert result.exit_code == 0
     assert json.loads(result.stdout) == {"recordings": []}
+
+
+def test_new_unconfigured_provider_shows_cli_guidance_not_mcp(
+    hermetic_config: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """SessionSpec._resolve_provider raises the MCP-flavored for_mcp()
+    message by default -- this CLI path must show the runnable CLI fix
+    (vox provider), never the MCP-only one (mic:provider)."""
+    hermetic_config.joinpath("vox.md").write_text("---\n---\n")
+    fake = InMemoryRecordGateway()
+    cli, _formatter = _cli(fake)
+
+    with pytest.raises(typer.Exit):
+        cli.new(text="hi")
+
+    err = capsys.readouterr().err
+    assert "vox provider" in err
+    assert "mic:provider" not in err

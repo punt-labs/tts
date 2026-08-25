@@ -357,7 +357,12 @@ class RecCli:
         """
         try:
             return SessionSpec.for_repo().fill(spec)
-        except (ProviderNotConfiguredError, ModelNotAvailableError) as exc:
+        except ProviderNotConfiguredError:
+            # for_mcp() is SessionSpec._resolve_provider's default message --
+            # the wrong verb here, mirroring __main__._fill_from_state's
+            # identical rebuild for the same CLI-vs-MCP split.
+            self._fail(str(ProviderNotConfiguredError.for_cli()))
+        except ModelNotAvailableError as exc:
             self._fail(str(exc))
 
     def _bare_ref(self, ref: str) -> str:
