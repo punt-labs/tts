@@ -57,6 +57,15 @@ elif [[ "$PLUGIN_MODE" == "prod" ]]; then
   TOOL_GLOB="mcp__plugin_vox_mic__*"
 fi
 
+# NAMESPACED_ONLY files — model/provider/voice/recap are deliberately
+# namespaced-only (/vox:model, not /model), because a bare top-level command
+# claims a name Claude Code itself may use (model already collides; provider
+# and voice are the same class of risk). recap has no known collision but is
+# namespaced by operator ruling for consistency with the other three. See
+# docs/vox-ovz3-command-namespace.md. Declared once, above both the RETIRED
+# cleanup and the deploy loop below, so the two cannot drift apart.
+NAMESPACED_ONLY=(model.md provider.md voice.md recap.md)
+
 # ── Clean up retired commands ─────────────────────────────────────────
 if [[ "$PLUGIN_MODE" == "prod" ]]; then
   RETIRED=(say.md speak.md notify.md vox-on.md vox-off.md enable.md disable.md \
@@ -65,14 +74,36 @@ if [[ "$PLUGIN_MODE" == "prod" ]]; then
   FAILED_CLEAN=0
   for name in "${RETIRED[@]}"; do
     dest="$COMMANDS_DIR/$name"
+    [[ -f "$dest" ]] || continue
+    # The four NAMESPACED_ONLY names are generic enough (model, provider,
+    # voice, recap) that a user could plausibly have hand-authored their own
+    # command of the same name -- unlike the other seven retired names
+    # (say.md, vox-on.md, ...), which are vox-specific with no realistic
+    # collision. Only retire a NAMESPACED_ONLY file when its content still
+    # matches vox's own shipped copy, i.e. it is genuinely vox's stale
+    # deployment and not the user's own file that happens to share the name.
+    _namespaced=0
+    for skip in "${NAMESPACED_ONLY[@]}"; do
+      [[ "$name" == "$skip" ]] && { _namespaced=1; break; }
+    done
+    if [[ "$_namespaced" -eq 1 ]] \
+      && ! diff -q "$PLUGIN_ROOT/commands/$name" "$dest" >/dev/null 2>&1; then
+      continue
+    fi
     # `-f` passing doesn't guarantee $COMMANDS_DIR is writable -- an rm that
     # fails here must not take the rest of the hook down with it under `set -e`.
-    if [[ -f "$dest" ]]; then
-      if rm "$dest" 2>/dev/null; then
-        CLEANED+=("/${name%.md}")
-      else
-        FAILED_CLEAN=$((FAILED_CLEAN + 1))
-      fi
+    # The captured stderr is sanitized (quotes -> apostrophes, newlines ->
+    # spaces) before it reaches ACTIONS -- the no-jq heredoc fallback below
+    # embeds these messages in a JSON string literal with no escaping, so an
+    # OS error message carrying a `"` would otherwise produce invalid JSON.
+    if _rm_err=$(rm "$dest" 2>&1); then
+      CLEANED+=("/${name%.md}")
+    else
+      FAILED_CLEAN=$((FAILED_CLEAN + 1))
+      _rm_err="${_rm_err//\\/}"
+      _rm_err="${_rm_err//\"/\'}"
+      _rm_err="${_rm_err//$'\n'/ }"
+      ACTIONS+=("Failed to remove retired command ~/.claude/commands/$name: $_rm_err")
     fi
   done
   if [[ ${#CLEANED[@]} -gt 0 ]]; then
@@ -86,13 +117,8 @@ fi
 # ── Deploy top-level commands if missing ──────────────────────────────
 # In dev mode, skip command deployment — prod plugin handles top-level commands.
 # Skip *-dev.md files — dev commands use plugin namespace (vox-dev:say-dev).
-# Skip NAMESPACED_ONLY files — model/provider/voice/recap are deliberately
-# namespaced-only (/vox:model, not /model), because a bare top-level command
-# claims a name Claude Code itself may use (model already collides; provider
-# and voice are the same class of risk). recap has no known collision but is
-# namespaced by operator ruling for consistency with the other three. See
-# docs/vox-ovz3-command-namespace.md.
-NAMESPACED_ONLY=(model.md provider.md voice.md recap.md)
+# Skip NAMESPACED_ONLY files (declared above) — model/provider/voice/recap are
+# deliberately namespaced-only.
 if [[ "$PLUGIN_MODE" == "prod" ]]; then
   DEPLOYED=()
   FAILED_DEPLOY=0
@@ -104,10 +130,12 @@ if [[ "$PLUGIN_MODE" == "prod" ]]; then
   # too. Report every failure via ACTIONS (the settings.json block below
   # does the same on its identical failure class) instead of aborting or
   # skipping silently -- the agent's additionalContext is the only
-  # channel this hook has to say why commands never showed up. ACTIONS
-  # messages are ASCII literals for the no-jq heredoc fallback below, so
-  # this reports the fixed path "~/.claude/commands", never $COMMANDS_DIR
-  # (which could carry a quote or backslash from an unusual $HOME).
+  # channel this hook has to say why commands never showed up. This static
+  # summary line reports the fixed path "~/.claude/commands", never
+  # $COMMANDS_DIR (which could carry a quote or backslash from an unusual
+  # $HOME); the per-file failure message added below the loop DOES carry
+  # variable content (the OS error text), so it is sanitized before joining
+  # ACTIONS -- see the comment at its cp/rm call site.
   if mkdir -p "$COMMANDS_DIR" 2>/dev/null; then
     for cmd_file in "$PLUGIN_ROOT/commands/"*.md; do
       name="$(basename "$cmd_file")"
@@ -119,10 +147,16 @@ if [[ "$PLUGIN_MODE" == "prod" ]]; then
       [[ "$_skip" -eq 1 ]] && continue
       dest="$COMMANDS_DIR/$name"
       if [[ ! -f "$dest" ]] || ! diff -q "$cmd_file" "$dest" >/dev/null 2>&1; then
-        if cp "$cmd_file" "$dest" 2>/dev/null; then
+        # Sanitized the same way the retired-command rm error is (quotes ->
+        # apostrophes, newlines -> spaces) -- see that comment above.
+        if _cp_err=$(cp "$cmd_file" "$dest" 2>&1); then
           DEPLOYED+=("/${name%.md}")
         else
           FAILED_DEPLOY=$((FAILED_DEPLOY + 1))
+          _cp_err="${_cp_err//\\/}"
+          _cp_err="${_cp_err//\"/\'}"
+          _cp_err="${_cp_err//$'\n'/ }"
+          ACTIONS+=("Failed to deploy ~/.claude/commands/$name: $_cp_err")
         fi
       fi
     done
@@ -166,13 +200,34 @@ else
     fi
   fi
 
+  # Remove stale bare Skill(model)/Skill(provider)/Skill(voice)/Skill(recap)
+  # grants left over from before these four commands became namespaced-only.
+  # Forward-integration cleanup of superseded state, the same class of thing
+  # the RETIRED command cleanup already does for files above -- an upgrading
+  # user would otherwise keep four now-meaningless grants forever, since
+  # nothing else in this hook ever removes a permission rule once added.
+  STALE_SKILLS='["Skill(model)","Skill(provider)","Skill(voice)","Skill(recap)"]'
+  if jq -e --argjson stale "$STALE_SKILLS" \
+    '.permissions.allow // [] | map(select(. as $r | $stale | index($r))) | length > 0' \
+    "$SETTINGS" >/dev/null 2>&1; then
+    TMPFILE="$(mktemp "$SETTINGS.XXXXXX" 2>/dev/null || printf '')"
+    if [[ -n "$TMPFILE" ]] && jq --argjson stale "$STALE_SKILLS" \
+      '.permissions.allow = [.permissions.allow[] | select(. as $r | $stale | index($r) | not)]' \
+      "$SETTINGS" > "$TMPFILE" && mv "$TMPFILE" "$SETTINGS"; then
+      ACTIONS+=("Removed stale bare Skill() grants for model/provider/voice/recap (now namespaced-only)")
+    else
+      [[ -n "$TMPFILE" ]] && rm -f "$TMPFILE"
+      ACTIONS+=("Failed to remove stale bare Skill() grants for model/provider/voice/recap")
+    fi
+  fi
+
   # Build PLUGIN_RULES via jq to avoid JSON injection from $TOOL_GLOB
   #
   # model/provider/voice/recap are namespaced-only commands (NAMESPACED_ONLY
-  # above), so their skill grant is the plugin-qualified name Skill(vox:model)
-  # etc., not the un-namespaced form -- a grant on the bare command name would
+  # above), so their skill grant is qualified with the plugin namespace below,
+  # not the un-namespaced form -- a grant on the bare command name would
   # pre-approve a command that no longer deploys and never matches the actual
-  # /vox:model invocation.
+  # namespaced invocation.
   PLUGIN_RULES=$(jq -n --arg glob "$TOOL_GLOB" \
     '[$glob, "Skill(unmute)", "Skill(mute)", "Skill(vibe)", "Skill(vox)", "Skill(music)", "Skill(vox:model)", "Skill(vox:provider)", "Skill(vox:voice)", "Skill(vox:recap)"]' 2>/dev/null) || {
     ACTIONS+=("jq failed to build permission rules — skipping permission setup")

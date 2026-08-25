@@ -52,13 +52,27 @@ done < <(
     | sort
 )
 
-# Skill() rules declared in the hook's PLUGIN_RULES jq expression. A colon
-# is allowed so a namespaced grant like Skill(vox:model) is captured whole,
-# not split at the colon.
+# Skill() rules declared in the hook's PLUGIN_RULES jq expression.
+# Scoped to the PLUGIN_RULES=$(jq -n ...) assignment block ONLY -- a
+# `Skill(...)` token can legitimately appear in an explanatory comment
+# elsewhere in the hook (as it does, describing why a grant is
+# namespaced), and grepping the whole file would count that prose as a
+# real grant. Scoping to the block that actually builds PLUGIN_RULES
+# means a grant deleted from the array is caught even if a comment still
+# mentions its name. A colon is allowed in the extraction regex so a
+# namespaced grant like Skill(vox:model) is captured whole, not split at
+# the colon.
 ALLOWED=()
 while IFS= read -r allow; do
   ALLOWED+=("$allow")
-done < <(grep -oE 'Skill\([a-z_:-]+\)' "$HOOK" | sed -E 's/Skill\(|\)//g' | sort -u)
+done < <(
+  # shellcheck disable=SC2016  # single quotes deliberate: this is a sed
+  # address expression, not a shell variable expansion.
+  sed -n '/^  PLUGIN_RULES=\$(jq -n/,/2>\/dev\/null) || {$/p' "$HOOK" \
+    | grep -oE 'Skill\([a-z_:-]+\)' \
+    | sed -E 's/Skill\(|\)//g' \
+    | sort -u
+)
 
 _is_namespaced() {
   local cmd="$1" n
