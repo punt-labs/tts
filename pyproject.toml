@@ -1,6 +1,6 @@
 [project]
 name = "punt-vox"
-version = "5.0.1"
+version = "5.0.2"
 description = "Text-to-speech CLI, MCP server, and Claude Code plugin (ElevenLabs, AWS Polly, OpenAI)"
 readme = "README.md"
 authors = [{ name = "Punt Labs", email = "hello@punt-labs.com" }]

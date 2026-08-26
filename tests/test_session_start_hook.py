@@ -68,6 +68,24 @@ def _make_prod_plugin(root: Path) -> Path:
     return dest
 
 
+def _make_dev_plugin(root: Path) -> Path:
+    """Copy the real plugin/ tree into ``root`` with a dev-named manifest.
+
+    Mirrors ``_make_prod_plugin`` for the dev branch: the working-tree
+    manifest carries ``"vox-dev"`` during development but is swapped to
+    ``"vox"`` by ``scripts/release-plugin.sh`` at release time, so a test
+    that must exercise dev mode has to force the name into the copy rather
+    than trusting whatever the working tree carries.
+    """
+    dest = root / "plugin"
+    shutil.copytree(_PLUGIN_SRC, dest)
+    manifest = dest / ".claude-plugin" / "plugin.json"
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    data["name"] = "vox-dev"
+    manifest.write_text(json.dumps(data), encoding="utf-8")
+    return dest
+
+
 def _run(
     plugin_dir: Path, home: Path, *, bash: str = "bash"
 ) -> subprocess.CompletedProcess[str]:
@@ -253,12 +271,13 @@ class TestDevModeSkipsDeployment:
     """
 
     def test_dev_manifest_deploys_nothing(self, tmp_path: Path) -> None:
-        # _PLUGIN_SRC's own manifest already carries "vox-dev" in the
-        # working tree, so a plain copy with no rename exercises dev mode.
-        dest = tmp_path / "plugin"
-        shutil.copytree(_PLUGIN_SRC, dest)
+        # Force the copied manifest to "vox-dev": the working tree carries
+        # that name during development but scripts/release-plugin.sh swaps
+        # it to "vox" at release time, so trusting the source manifest
+        # exercises prod mode on the release branch.
+        plugin_dir = _make_dev_plugin(tmp_path)
         home = tmp_path / "home"
-        result = _run(dest, home)
+        result = _run(plugin_dir, home)
         assert result.returncode == 0, result.stderr
         assert not _commands_dir(home).exists() or not _deployed_names(home)
 
