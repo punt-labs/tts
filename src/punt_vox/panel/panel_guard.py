@@ -103,7 +103,17 @@ class PanelGuard:
             self._note(exc, what)
 
     async def repush(self) -> None:
-        """Send the held scene back out, letting an absent luxd drop it."""
+        """Refresh the held scene in place, letting an absent luxd drop it.
+
+        This is the re-push behind a control change, so the user is mid-interaction
+        with a panel that is already on screen: it takes the patch path, which
+        leaves the frame's stacking order alone. Showing here instead is what made
+        every radio click raise the window.
+
+        A fresh REST client per push is safe for that: luxd derives the connection
+        id from the declared identity rather than the socket, so this client
+        patches the scene an earlier one installed.
+        """
         with self.outage("luxd unavailable; dropped the panel re-push"):
             await self._service.push_scene(self._rest_factory())
 

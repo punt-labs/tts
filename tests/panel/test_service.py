@@ -6,7 +6,7 @@ import threading
 from typing import TYPE_CHECKING, cast, final
 
 import pytest
-from punt_lux import OpError
+from punt_lux import HubUnavailableError, OpError
 from punt_lux.operations import Ok
 
 from punt_vox.client_errors import (
@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from punt_lux import LuxClient, RenderRequest, SceneShown
     from punt_lux.applets import ClickLatency
     from punt_lux.hub_client import CallbackHandler, ConnectHandler, EventHandler
+    from punt_lux.operations import UpdateRequest
 
     from punt_vox.client import SynthesizeResult
     from punt_vox.config import VoxConfig
@@ -97,6 +98,16 @@ class _FakeSceneAccessor:
         self._outer.rendered.append(request)
         return cast("SceneShown", Ok())
 
+    async def update(
+        self, scene_id: str, request: UpdateRequest | OpError
+    ) -> SceneShown | OpError:
+        if self._outer._refuse:
+            return OpError(code="rejected", reason="no display")
+        if isinstance(request, OpError):
+            return request
+        self._outer.patched.append(request.to_wire())
+        return cast("SceneShown", Ok())
+
 
 @final
 class _FakeCallbackAccessor:
@@ -105,12 +116,46 @@ class _FakeCallbackAccessor:
 
 
 @final
+class _DownSceneAccessor:
+    """What a stopped luxd looks like from the panel's push path."""
+
+    async def show(self, request: RenderRequest | OpError) -> SceneShown | OpError:
+        raise HubUnavailableError("luxd is not running")
+
+    async def update(
+        self, scene_id: str, request: UpdateRequest | OpError
+    ) -> SceneShown | OpError:
+        raise HubUnavailableError("luxd is not running")
+
+
+@final
+class _DownRest:
+    def __init__(self) -> None:
+        self.scene = _DownSceneAccessor()
+        self.callback = _FakeCallbackAccessor()
+
+    def listener(
+        self,
+        *,
+        on_callback: CallbackHandler,
+        on_event: EventHandler,
+        on_connect: ConnectHandler | None = None,
+    ) -> HubListener:
+        raise NotImplementedError
+
+
+@final
 class _FakeRest:
-    """A ``PanelRestClient`` double that only needs ``scene.show`` for these tests."""
+    """A ``PanelRestClient`` double recording shows and patches apart.
+
+    They are recorded apart because they mean different things on screen: a show
+    raises the frame, a patch must leave it exactly where the user put it.
+    """
 
     def __init__(self, *, refuse: bool = False) -> None:
         self._refuse = refuse
         self.rendered: list[RenderRequest] = []
+        self.patched: list[list[dict[str, object]]] = []
         self.scene = _FakeSceneAccessor(self)
         self.callback = _FakeCallbackAccessor()
 
@@ -151,6 +196,13 @@ def _config(
         vibe=None,
         vibe_tags=None,
     )
+
+
+def _openai_index() -> int:
+    """Return the combo index a click on the ``openai`` provider carries."""
+    from punt_vox.server_switches import PROVIDER_NAMES
+
+    return PROVIDER_NAMES.index("openai")
 
 
 class TestPrefetch:
@@ -631,6 +683,87 @@ class TestPushScene:
         await service.push_scene(
             cast("LuxClient", _FakeRest(refuse=True))
         )  # must not raise
+
+    async def test_a_refusal_disarms_so_the_next_push_installs(self) -> None:
+        # luxd kept whatever it had, so what we believe is installed is a guess;
+        # patching against that guess would write onto the wrong tree.
+        service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
+        await service.push_scene(cast("LuxClient", _FakeRest(refuse=True)))
+
+        rest = _FakeRest()
+        await service.push_scene(cast("LuxClient", rest))
+
+        assert len(rest.rendered) == 1
+        assert rest.patched == []
+
+    async def test_an_absent_luxd_disarms_and_propagates(self) -> None:
+        # The outage guard around the caller owns the throttled reporting, so the
+        # error has to reach it -- but the live scene forgets first.
+        service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
+        with pytest.raises(HubUnavailableError):
+            await service.push_scene(cast("LuxClient", _DownRest()))
+
+        rest = _FakeRest()
+        await service.push_scene(cast("LuxClient", rest))
+
+        assert len(rest.rendered) == 1  # installed on the fresh connection
+        assert rest.patched == []
+
+
+class TestRefreshDoesNotReinstall:
+    async def test_a_second_push_of_a_changed_scene_patches(self) -> None:
+        # The reported defect: every control change re-showed the panel, which
+        # raises its frame -- so a radio click yanked the window forward.
+        service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
+        rest = _FakeRest()
+
+        await service.push_scene(cast("LuxClient", rest))
+        service.apply_event(PanelTopic.NOTIFY, {"value": 1})
+        await service.push_scene(cast("LuxClient", rest))
+
+        assert len(rest.rendered) == 1  # NOT re-installed
+        assert [entry["id"] for entry in rest.patched[0]] == ["vox.panel.notify"]
+
+    async def test_an_unchanged_scene_puts_nothing_on_the_wire(self) -> None:
+        service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
+        rest = _FakeRest()
+
+        await service.push_scene(cast("LuxClient", rest))
+        await service.push_scene(cast("LuxClient", rest))
+
+        assert len(rest.rendered) == 1
+        assert rest.patched == []
+
+    async def test_a_provider_change_patches_the_model_combo_in_one_batch(self) -> None:
+        # The model list changes with the provider, so items and selected move
+        # together. combo validates selected against items after the whole batch,
+        # so one batch is both correct and order-insensitive.
+        store = _FakeStore(_config(provider="elevenlabs", model="eleven_flash_v2_5"))
+        service = VoxPanelService(_FakeDaemonClient(), store)
+        service.refresh()
+        rest = _FakeRest()
+        await service.push_scene(cast("LuxClient", rest))
+
+        service.apply_event(PanelTopic.PROVIDER, {"value": _openai_index()})
+        await service.push_scene(cast("LuxClient", rest))
+
+        model = next(
+            entry for entry in rest.patched[0] if entry["id"] == "vox.panel.model"
+        )
+        assert set(cast("dict[str, object]", model["set"])) == {"items", "selected"}
+
+
+class TestInstallScene:
+    async def test_install_shows_even_when_nothing_changed(self) -> None:
+        # The Vox menu entry's whole job: bring the window forward.
+        service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
+        rest = _FakeRest()
+
+        await service.push_scene(cast("LuxClient", rest))
+        await service.install_scene(cast("LuxClient", rest))
+
+        assert len(rest.rendered) == 2
+        assert rest.patched == []
 
 
 class TestRefreshAndRecover:

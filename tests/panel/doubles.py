@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     import pytest
     from punt_lux import RenderRequest, SceneShown
     from punt_lux.hub_client import CallbackHandler, ConnectHandler, EventHandler
-    from punt_lux.operations import OpError
+    from punt_lux.operations import OpError, UpdateRequest
 
     from punt_vox.panel.ports import HubListener
 
@@ -124,13 +124,24 @@ class FakeListener:
 
 @final
 class FakeSceneAccessor:
-    """The ``client.scene`` verbs the panel's push path uses -- ``show`` only."""
+    """The ``client.scene`` verbs the panel's push path uses: ``show`` and ``update``.
+
+    Both are counted, and counted apart: an install raises the frame and a patch
+    must not, so a double that cannot tell them apart cannot see the difference
+    the panel now depends on.
+    """
 
     def __init__(self, outer: FakeRest) -> None:
         self._outer = outer
 
     async def show(self, request: RenderRequest) -> SceneShown | OpError:
         self._outer.rendered_count += 1
+        return cast("SceneShown", Ok())
+
+    async def update(
+        self, scene_id: str, request: UpdateRequest | OpError
+    ) -> SceneShown | OpError:
+        self._outer.patched_count += 1
         return cast("SceneShown", Ok())
 
 
@@ -165,6 +176,7 @@ class FakeRest:
         self.register_result = register_result if register_result is not None else Ok()
         self.registered: list[tuple[str, str]] = []
         self.rendered_count = 0
+        self.patched_count = 0
         self.listener_built: FakeListener | None = None
         self.fail_at = fail_at
         self.error = error if error is not None else HubUnavailableError("down")
@@ -203,6 +215,7 @@ class FakeService:
         self.applied: list[tuple[str, Mapping[str, object]]] = []
         self.apply_returns = True
         self.pushed = 0
+        self.installed = 0
         self.recovered: list[str] = []
         self.rejections: list[str] = []
         self._raise_on = raise_on
@@ -219,6 +232,7 @@ class FakeService:
 
     async def acknowledge(self, client: object, latency: object) -> None:
         self.acknowledged += 1
+        await self.install_scene(client)
 
     async def service(self, client: object, latency: object) -> None:
         if self._raise_on == "service":
@@ -226,6 +240,7 @@ class FakeService:
         if self._raise_on == "unexpected":
             raise RuntimeError(_BUG)
         self.serviced += 1
+        await self.push_scene(client)
 
     def apply_event(self, topic: str, payload: Mapping[str, object]) -> bool:
         if self._raise_on == "apply":
@@ -249,6 +264,9 @@ class FakeService:
 
     async def push_scene(self, client: object) -> None:
         self.pushed += 1
+
+    async def install_scene(self, client: object) -> None:
+        self.installed += 1
 
     def recover_from_write_failure(self, field: str) -> None:
         self.recovered.append(field)

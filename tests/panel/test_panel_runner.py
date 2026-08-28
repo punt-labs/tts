@@ -103,6 +103,18 @@ class TestClicked:
         assert service.acknowledged == 1
         assert service.serviced == 1
 
+    async def test_a_click_installs_first_then_refreshes_behind_it(
+        self, build_runner: Callable[..., PanelRunner]
+    ) -> None:
+        # The click's two halves have opposite intents. acknowledge answers the
+        # gesture -- the user asked to see the panel, so it shows and the frame
+        # comes forward. service lands milliseconds later onto the window that
+        # just came forward, so it refreshes rather than raising it again.
+        rest = FakeRest()
+        service = FakeService()
+        await build_runner(service, lambda: rest).clicked()
+        assert (service.installed, service.pushed) == (1, 1)
+
     async def test_an_unexpected_click_failure_is_logged_at_error(
         self,
         caplog: pytest.LogCaptureFixture,
@@ -129,6 +141,9 @@ class TestChanged:
         )
         assert service.applied == [(PanelTopic.NOTIFY.value, {"value": 1})]
         assert service.pushed == 1
+        # The user is mid-interaction with a panel already on screen, so the
+        # re-push must not raise its frame.
+        assert service.installed == 0
 
     async def test_an_unchanged_event_does_not_re_push(
         self, build_runner: Callable[..., PanelRunner]

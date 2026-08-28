@@ -103,10 +103,13 @@ class TestOffscreenRejection:
 
 
 class TestRepush:
-    async def test_a_push_reaches_the_service(self) -> None:
+    async def test_a_push_reaches_the_service_as_a_refresh(self) -> None:
+        # repush is the control-change path: it patches the panel where it sits
+        # rather than showing it, which would drag the frame forward on every
+        # radio click.
         service = FakeService()
         await _guard_for(service).repush()
-        assert service.pushed == 1
+        assert (service.pushed, service.installed) == (1, 0)
 
     async def test_luxd_going_away_mid_push_is_swallowed(self) -> None:
         service = FakeService()

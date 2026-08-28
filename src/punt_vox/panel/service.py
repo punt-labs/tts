@@ -10,6 +10,14 @@ The held ``_state``/``_notice`` pair is read from more than one thread: a menu
 click and a control event each run their sync work on an ``asyncio.to_thread``
 worker, so two can be mid-update at once. ``_lock`` serializes every
 read-modify-write so one thread's commit is never overwritten.
+
+Reaching luxd is :class:`~punt_vox.panel.panel_push.PanelPush`'s job, not this
+one's. The two verbs it exposes differ in intent rather than content:
+:meth:`VoxPanelService.install_scene` shows, raising the frame, and is reached
+only from the ``Vox`` menu click; :meth:`VoxPanelService.push_scene` refreshes the
+panel where it already sits, which is what the confirm push behind a click and
+every control-change re-push want. Radio clicks used to take the ``show`` path,
+so changing a setting yanked the panel in front of whatever was on top of it.
 """
 
 from __future__ import annotations
@@ -20,13 +28,12 @@ import threading
 from dataclasses import replace
 from typing import TYPE_CHECKING, Self, final
 
-from punt_lux import OpError
-
 from punt_vox.cascade import Cascade, RosterError, RosterRejectedError
 from punt_vox.client_errors import VoxdConnectionError, VoxdRejectionError
 from punt_vox.models import MODEL_TABLE
 from punt_vox.panel.model_control import ModelControl
 from punt_vox.panel.panel_notice import PanelNotice
+from punt_vox.panel.panel_push import PanelPush
 from punt_vox.panel.provider_control import ProviderControl
 from punt_vox.panel.radio_control import MIC_MODE_SPEC, NOTIFY_SPEC
 from punt_vox.panel.state import PanelState
@@ -67,7 +74,8 @@ class VoxPanelService:
     _state: PanelState
     _notice: PanelNotice
     _lock: threading.Lock
-    __slots__ = ("_client", "_lock", "_notice", "_state", "_store")
+    _push: PanelPush
+    __slots__ = ("_client", "_lock", "_notice", "_push", "_state", "_store")
 
     def __new__(cls, client: PanelDaemonClient, store: SettingsStore) -> Self:
         self = super().__new__(cls)
@@ -76,6 +84,7 @@ class VoxPanelService:
         self._state = PanelState.empty()
         self._notice = PanelNotice.silent()
         self._lock = threading.Lock()
+        self._push = PanelPush()
         return self
 
     @property
@@ -93,12 +102,20 @@ class VoxPanelService:
         self.refresh()
 
     async def acknowledge(self, client: LuxClient, latency: ClickLatency) -> None:
-        """Push the held scene now -- the visible half of the click."""
+        """Install the held scene now -- the visible half of the click.
+
+        This is the ``Vox`` menu entry answering, so showing the scene (and with
+        it raising the frame) is the answer, not a side effect.
+        """
         with latency.answering():
-            await self.push_scene(client)
+            await self.install_scene(client)
 
     async def service(self, client: LuxClient, latency: ClickLatency) -> None:
-        """Re-read settings fresh and push the confirmed scene."""
+        """Re-read settings fresh and refresh the scene with the confirmed ones.
+
+        A few milliseconds behind :meth:`acknowledge`, onto the same window it
+        just raised -- so this refreshes rather than installing again.
+        """
         with latency.stage("refreshed"):
             await asyncio.to_thread(self.refresh)
         await self.push_scene(client)
@@ -108,11 +125,13 @@ class VoxPanelService:
         with self._lock:
             return replace(self._state.scene(), notice=self._notice)
 
+    async def install_scene(self, client: LuxClient) -> None:
+        """Show the held scene outright, frame raise and all (a menu click)."""
+        await self._push.install(client, self.scene().render_request())
+
     async def push_scene(self, client: LuxClient) -> None:
-        """Push the currently-held scene, logging (never raising) a refusal."""
-        result = await client.scene.show(self.scene().render_request())
-        if isinstance(result, OpError):
-            logger.error("vox-panel: luxd rejected the scene: %s", result.reason)
+        """Refresh the installed scene with the currently-held one."""
+        await self._push.refresh(client, self.scene().render_request())
 
     def refresh(self) -> None:
         """Re-read settings from disk and voxd; note staleness if voxd is down."""
