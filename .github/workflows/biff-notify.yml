@@ -25,6 +25,9 @@ jobs:
       github.event.workflow_run.conclusion == 'failure'
       && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
+    # 2 minutes was too tight for a cold uvx resolve (no cache yet on a
+    # fresh runner); 10 gives headroom without masking a genuine hang —
+    # a stuck relay still surfaces as a timed-out run, just later.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -53,6 +56,11 @@ jobs:
           BIFF_RELAY_URL: ${{ vars.BIFF_RELAY_URL }}
           BIFF_RELAY_TOKEN: ${{ secrets.BIFF_RELAY_TOKEN }}
           BIFF_RELAY_TLS_HANDSHAKE_FIRST: ${{ vars.BIFF_RELAY_TLS_HANDSHAKE_FIRST }}
+        # Pinned rather than floating: this job IS the CI-failure alert path,
+        # so an unannounced flag/behavior change in a newer punt-biff would
+        # fail silently here (this job isn't itself in the watched
+        # `workflows:` list above, so nobody is alerted if it breaks). Bump
+        # deliberately, and re-verify a green run after bumping.
         run: >-
           uvx --from punt-biff==1.16.0 biff --user github-actions wall
           "CI failed: ${WORKFLOW_NAME} on ${BRANCH} — ${RUN_URL}"
