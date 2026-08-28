@@ -655,6 +655,23 @@ class TestCheckClaudeDesktop:
         assert len(results) == 2
         assert "could not read config" in results[1].message
 
+    def test_non_utf8_config_is_reported_not_crashed(self, tmp_path: Path) -> None:
+        """Bytes that are not UTF-8 fail in ``read_text``, not in ``json.loads``.
+
+        ``UnicodeDecodeError`` is not an ``OSError``, so a config saved in a
+        legacy encoding would have aborted the whole ``vox doctor`` run.
+        """
+        config = tmp_path / "config.json"
+        config.write_bytes(b'{"mcpServers": {"vox": "\xff\xfe"}}')
+        with patch(
+            "punt_vox.desktop_install.DesktopInstaller.config_path",
+            return_value=config,
+        ):
+            results = DoctorCheck().check_claude_desktop()
+
+        assert len(results) == 2
+        assert "could not read config" in results[1].message
+
     def test_non_object_mcpservers_is_not_a_false_registration(
         self, tmp_path: Path
     ) -> None:

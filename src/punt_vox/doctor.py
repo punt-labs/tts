@@ -325,16 +325,16 @@ class DoctorCheck:
         """Return whether an existing config registers the vox MCP server.
 
         Reading someone else's config file is a system boundary: unparseable
-        JSON, an unreadable file, or a top level that is not a JSON object are
-        all reported as "could not read", never as a crash and never as a false
-        "not registered". The non-object case is the one that bites silently --
-        ``json.loads`` accepts a bare list or string happily and only the
-        ``mcpServers`` lookup afterwards would raise.
+        JSON, an unreadable file, bytes that are not UTF-8, or a top level that
+        is not a JSON object are all reported as "could not read", never as a
+        crash and never as a false "not registered". The non-object case is the
+        one that bites silently -- ``json.loads`` accepts a bare list or string
+        happily and only the ``mcpServers`` lookup afterwards would raise.
         """
         parsed: object
         try:
             parsed = json.loads(config_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             # Unreadable and non-object share one verdict, so a parse failure
             # falls through to the same gate rather than duplicating the row.
             parsed = None
