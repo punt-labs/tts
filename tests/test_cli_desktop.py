@@ -270,3 +270,105 @@ class TestUninstall:
         remaining = json.loads(config_path.read_text(encoding="utf-8"))
         assert "vox" not in remaining["mcpServers"]
         assert "other" in remaining["mcpServers"]
+
+
+class TestConfigWriteIsAtomicAndPrivate:
+    """``claude_desktop_config.json`` is shared and holds other servers' secrets.
+
+    vox rewrites the whole document to change one key of it, so the write has
+    to be a rename over a fully-written temp file rather than a truncate --
+    a partial write loses every other MCP server's entry, not just vox's.
+    """
+
+    def test_created_config_is_owner_only(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_path = _linux_host(monkeypatch, tmp_path)
+
+        assert _install(out=tmp_path / "audio").exit_code == 0
+
+        assert config_path.stat().st_mode & 0o777 == 0o600
+
+    def test_created_config_directory_is_owner_only(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """vox creates ``Claude/`` when the app has not run on this host yet."""
+        config_path = _linux_host(monkeypatch, tmp_path)
+        assert not config_path.parent.exists()
+
+        assert _install(out=tmp_path / "audio").exit_code == 0
+
+        assert config_path.parent.stat().st_mode & 0o777 == 0o700
+
+    def test_rewrite_narrows_a_world_readable_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An existing 0644 config comes out 0600, matching the Desktop app."""
+        config_path = _linux_host(monkeypatch, tmp_path)
+        config_path.parent.mkdir(parents=True)
+        config_path.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+        config_path.chmod(0o644)
+
+        assert _install(out=tmp_path / "audio").exit_code == 0
+
+        assert config_path.stat().st_mode & 0o777 == 0o600
+
+    def test_successful_write_leaves_no_temp_sibling(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_path = _linux_host(monkeypatch, tmp_path)
+
+        assert _install(out=tmp_path / "audio").exit_code == 0
+
+        assert sorted(p.name for p in config_path.parent.iterdir()) == [
+            config_path.name
+        ]
+
+    def test_failed_write_leaves_the_old_config_and_no_temp_sibling(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A write that dies mid-stream must not damage the shared document.
+
+        This is the whole point of the rename: the previous truncate-then-write
+        would have left an empty or half-written file here, destroying the
+        ``other`` entry that vox does not own. The failure is also reported the
+        way a failed *read* already is -- one error line, not a traceback.
+        """
+        config_path = _linux_host(monkeypatch, tmp_path)
+        config_path.parent.mkdir(parents=True)
+        original = json.dumps({"mcpServers": {"other": {"command": "x"}}})
+        config_path.write_text(original, encoding="utf-8")
+
+        def _boom(_self: object, _path: Path, _text: str) -> None:
+            raise OSError("simulated disk full")
+
+        monkeypatch.setattr(f"{_CLI_MOD}.DesktopCli._replace_atomically", _boom)
+
+        result = _install(out=tmp_path / "audio")
+
+        assert result.exit_code == 1
+        assert "Could not write" in result.output
+        assert config_path.read_text(encoding="utf-8") == original
+        assert sorted(p.name for p in config_path.parent.iterdir()) == [
+            config_path.name
+        ]
+
+    def test_a_dying_write_removes_its_own_temp_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The cleanup is on the atomic swap itself, not only on its caller."""
+        config_path = _linux_host(monkeypatch, tmp_path)
+        config_path.parent.mkdir(parents=True)
+        config_path.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+
+        def _boom(_self: Path, _mode: int) -> None:
+            raise OSError("simulated chmod failure")
+
+        monkeypatch.setattr(f"{_CLI_MOD}.Path.chmod", _boom)
+
+        result = _install(out=tmp_path / "audio")
+
+        assert result.exit_code == 1
+        assert sorted(p.name for p in config_path.parent.iterdir()) == [
+            config_path.name
+        ]

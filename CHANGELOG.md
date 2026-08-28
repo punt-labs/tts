@@ -51,6 +51,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Absoluteness is judged after tilde expansion, so `XDG_CONFIG_HOME=~/elsewhere`
   is still honoured.
 
+### Security
+
+- **`vox desktop install` / `uninstall` no longer risk other MCP servers'
+  entries when rewriting `claude_desktop_config.json` (vox-1gub).** That file
+  is shared: every MCP server the user has registered keeps its own `env`
+  block there, API keys included, and vox rewrote the whole document to change
+  one key of it with a truncate-then-write. A crash, a full disk, or Claude
+  Desktop reading concurrently could see a half-written or empty file — losing
+  *their* entries, not just vox's. The write now goes to a sibling temp file
+  and lands by atomic rename, so a reader sees the old document or the new one
+  and never a partial one; a failed write removes its own temp file and is
+  reported as one error line rather than a traceback. The config is now left
+  mode 0600 and a `Claude/` directory vox creates is 0700, matching what the
+  Claude Desktop app itself writes — previously they took the process umask
+  default, typically 0644/0755, leaving other servers' credentials
+  world-readable.
+
 ## [5.0.2] - 2026-08-26
 
 ### Changed

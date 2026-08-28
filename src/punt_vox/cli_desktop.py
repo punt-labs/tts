@@ -18,9 +18,11 @@ verdict and doctor's read-back cannot disagree about where the file lives.
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Self, cast, final
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Self, cast, final
 
 import typer
 
@@ -63,6 +65,12 @@ class DesktopCli:
     _formatter: OutputFormatter
     _flags: OutputFlags
 
+    # What the Claude Desktop app itself writes, and what a file holding other
+    # MCP servers' credentials should be: owner-only, on the file and on the
+    # directory vox creates when the app has not run yet.
+    _CONFIG_MODE: ClassVar[int] = 0o600
+    _CONFIG_DIR_MODE: ClassVar[int] = 0o700
+
     def __new__(cls, formatter: OutputFormatter, flags: OutputFlags) -> Self:
         self = super().__new__(cls)
         self._formatter = formatter
@@ -89,10 +97,45 @@ class DesktopCli:
             raise typer.Exit(code=1)
         return cast("dict[str, Any]", parsed)
 
-    @staticmethod
-    def _write_config(config_path: Path, data: dict[str, Any]) -> None:
-        """Write the whole config back, trailing newline included."""
-        config_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    def _write_config(self, config_path: Path, data: dict[str, Any]) -> None:
+        """Replace the config, or refuse with a clean error.
+
+        Symmetric with :meth:`_load_config`: a filesystem failure at this
+        boundary becomes one Typer error line, not a traceback.
+        """
+        try:
+            self._replace_atomically(config_path, json.dumps(data, indent=2) + "\n")
+        except OSError as exc:
+            detail = f"Could not write {config_path}: {exc}"
+            self._formatter.error(detail, f"Error: {detail}")
+            raise typer.Exit(code=1) from exc
+
+    @classmethod
+    def _replace_atomically(cls, config_path: Path, text: str) -> None:
+        """Swap *text* in as the whole of *config_path* by rename.
+
+        ``claude_desktop_config.json`` is not vox's file: every other MCP
+        server keeps its own ``env`` block there, secrets included, and vox
+        rewrites the whole document to change one key of it. A
+        truncate-then-write that dies mid-stream therefore destroys *their*
+        entries, not just vox's. The temp file is a sibling so the rename
+        stays on one filesystem and stays atomic; it inherits ``mkstemp``'s
+        0600 and carries it through, leaving the config owner-only the way the
+        Claude Desktop app writes it. A failed write takes its temp file with
+        it rather than leaving a stray dotfile behind.
+        """
+        fd, tmp_name = tempfile.mkstemp(
+            dir=config_path.parent, prefix=f".{config_path.name}.", suffix=".tmp"
+        )
+        tmp_path = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            tmp_path.chmod(cls._CONFIG_MODE)
+            tmp_path.replace(config_path)
+        except OSError:
+            tmp_path.unlink(missing_ok=True)
+            raise
 
     def _resolve_config_path(self) -> Path:
         """Return the Claude Desktop config path for this host, or refuse.
@@ -160,7 +203,9 @@ class DesktopCli:
         audio_dir.mkdir(parents=True, exist_ok=True)
         installer = self._resolve_installer(install_provider, audio_dir)
 
-        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.parent.mkdir(
+            parents=True, exist_ok=True, mode=self._CONFIG_DIR_MODE
+        )
         data = self._load_config(config_path)
         servers = data.setdefault("mcpServers", {})
         overwriting = "vox" in servers
