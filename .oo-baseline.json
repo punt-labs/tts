@@ -805,6 +805,19 @@
     "public_attr_violations": 0.0,
     "future_annotations": 1.0
   },
+  "src/punt_vox/lux_common/live_scene.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.71,
+    "max_complexity": 5.0,
+    "avg_complexity": 2.0,
+    "module_size": 76.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/lux_common/notice.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -813,6 +826,32 @@
     "avg_complexity": 1.0,
     "module_size": 28.0,
     "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
+  "src/punt_vox/lux_common/scene_patch.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.7,
+    "max_complexity": 5.0,
+    "avg_complexity": 2.7,
+    "module_size": 146.0,
+    "classes_per_module": 3.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
+  "src/punt_vox/lux_common/scene_push.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.5,
+    "max_complexity": 2.0,
+    "avg_complexity": 1.12,
+    "module_size": 103.0,
+    "classes_per_module": 3.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
     "public_attr_violations": 0.0,

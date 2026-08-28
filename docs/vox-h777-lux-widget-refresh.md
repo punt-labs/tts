@@ -121,7 +121,7 @@ class AlbumDisplay:
     """One album's display cells: its genre, its live track count, and its id."""
 
     album: Album
-    tracks: int          # ready Parts as of this projection — never the snapshot
+    tracks: int  # ready Parts as of this projection — never the snapshot
 
     @classmethod
     def read(cls, album: Album) -> Self:
@@ -150,7 +150,7 @@ class AlbumRoster:
     def read(cls, albums: tuple[Album, ...]) -> Self: ...
 
     @property
-    def albums(self) -> tuple[Album, ...]: ...      # the readable subset
+    def albums(self) -> tuple[Album, ...]: ...  # the readable subset
     @property
     def displays(self) -> tuple[AlbumDisplay, ...]: ...
 ```
