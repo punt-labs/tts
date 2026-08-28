@@ -10,14 +10,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
 
+import pytest
 from typer.testing import CliRunner, Result
 
 from punt_vox.__main__ import app
-
-if TYPE_CHECKING:
-    import pytest
 
 _INSTALL_MOD = "punt_vox.desktop_install"
 _CLI_MOD = "punt_vox.cli_desktop"
@@ -227,6 +224,52 @@ class TestInstallPrerequisites:
 
         assert result.exit_code == 1
         assert "No TTS provider credentials" in result.output
+        # This refusal is the last of the four, so it is the one that proves
+        # the ordering: it used to fire *after* the output directory had
+        # already been created.
+        assert not (tmp_path / "audio").exists()
+        assert not (tmp_path / "xdg").exists()
+
+    @pytest.mark.parametrize(
+        "cause", ["missing_uvx", "unsupported_platform", "no_credentials"]
+    )
+    def test_no_refusal_creates_anything_on_disk(
+        self, cause: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every way ``install`` can decline leaves the filesystem untouched.
+
+        The invariant, not one instance of it. ``install`` resolves four
+        prerequisites and each can exit non-zero; the ordering bug this guards
+        was invisible because the two refusals under test at the time both
+        fired before the ``mkdir``, while the credentials refusal fired after
+        it. Parametrising over the causes means a fifth refusal added above
+        the ``mkdir`` boundary later cannot reintroduce it silently.
+        """
+        _on_platform(monkeypatch, "Linux")
+        _with_uvx(monkeypatch, "/usr/bin/uvx")
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+        if cause == "missing_uvx":
+            _with_uvx(monkeypatch, None)
+        elif cause == "unsupported_platform":
+            _on_platform(monkeypatch, "Windows")
+        else:
+
+            def _nothing_ready(_self: object) -> str | None:
+                return None
+
+            monkeypatch.setattr(
+                f"{_INSTALL_MOD}.ProviderCredentials.preferred", _nothing_ready
+            )
+
+        result = CliRunner().invoke(
+            app,
+            ["desktop", "install", "--output-dir", str(tmp_path / "audio")],
+        )
+
+        assert result.exit_code == 1
+        assert not (tmp_path / "audio").exists()
+        assert not (tmp_path / "xdg").exists()
 
 
 class TestUninstall:

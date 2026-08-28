@@ -67,6 +67,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Claude Desktop app itself writes — previously they took the process umask
   default, typically 0644/0755, leaving other servers' credentials
   world-readable.
+- **`vox desktop install` no longer leaves an empty output directory behind
+  when it refuses (vox-1gub).** `install` resolves four prerequisites — uvx,
+  the platform's config location, the provider, and the credentials behind it
+  — and each can decline. The output directory was created *before* the last
+  of them, so `vox desktop install` with no provider credentials in view
+  printed "No TTS provider credentials found" and still left an empty
+  `~/Music/vox` (or `--output-dir`) behind, contradicting the command's own
+  documented promise to create nothing on a refusal. All four refusals now run
+  before anything is written to disk.
 
 ## [5.0.2] - 2026-08-26
 

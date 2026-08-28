@@ -196,13 +196,16 @@ class DesktopCli:
         a host vox cannot register with leaves no output directory behind.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
+
+        # Every refusal comes first: each _resolve_* raises Exit(1), so the
+        # mkdirs below run only once nothing can decline. _resolve_installer
+        # merely records audio_dir; it does not need the directory to exist.
         uvx = self._resolve_uvx(uvx_path)
         config_path = self._resolve_config_path()
-
         audio_dir = output_dir or default_output_dir()
-        audio_dir.mkdir(parents=True, exist_ok=True)
         installer = self._resolve_installer(install_provider, audio_dir)
 
+        audio_dir.mkdir(parents=True, exist_ok=True)
         config_path.parent.mkdir(
             parents=True, exist_ok=True, mode=self._CONFIG_DIR_MODE
         )
