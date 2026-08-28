@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`vox desktop install` now knows where Claude Desktop keeps its config on
+  Linux (vox-1gub).** Claude Desktop ships for Linux, where its Electron shell
+  keeps `userData` under `$XDG_CONFIG_HOME` (default `~/.config`) — verified
+  against a live install at `~/.config/Claude/claude_desktop_config.json`.
+  `DesktopInstaller.config_path()` knew only the macOS
+  `~/Library/Application Support` root, so every Linux run printed "config path
+  is only known for macOS" and then wrote the registration to a macOS-shaped
+  path Claude Desktop never reads. `config_path()` is now the single place that
+  decides which platforms vox can register with: `vox desktop install` and
+  `vox desktop uninstall` ask it for a path and report the refusal it returns,
+  instead of running a second `platform.system()` probe that could reach a
+  different verdict. On a platform vox has not verified, both verbs now refuse
+  with a named reason and exit non-zero — before creating the output directory —
+  rather than reporting success over a file that will never be read. Windows is
+  deliberately still unsupported: vox's daemon installs on macOS and Linux only,
+  so no supported host reaches the refusal, and no unverified path is guessed
+  for one that does.
+
 ## [5.0.2] - 2026-08-26
 
 ### Changed

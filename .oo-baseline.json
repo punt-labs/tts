@@ -169,12 +169,12 @@
     "public_attr_violations": 0.0
   },
   "src/punt_vox/cli_desktop.py": {
-    "method_ratio": 0.8,
+    "method_ratio": 0.889,
     "encapsulation_ratio": 1.0,
-    "avg_params": 2.8,
-    "max_complexity": 7.0,
-    "avg_complexity": 3.4,
-    "module_size": 196.0,
+    "avg_params": 2.11,
+    "max_complexity": 4.0,
+    "avg_complexity": 2.33,
+    "module_size": 211.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 0.5,
     "init_violations": 0.0,
