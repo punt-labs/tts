@@ -56,8 +56,8 @@ class LaunchdBackend:
 
         ``SSL_CERT_FILE`` and ``REQUESTS_CA_BUNDLE`` are forwarded when set so
         that voxd can reach HTTPS endpoints behind a corporate TLS-inspection
-        proxy (e.g. Zscaler) without requiring a separate ``launchctl
-        bootout``/``bootstrap`` cycle in activation scripts. Propagating them
+        proxy (e.g. Zscaler) without requiring a separate ``launchctl bootout``/
+        ``launchctl bootstrap`` cycle in activation scripts. Propagating them
         here means ``vox daemon install`` captures the CA configuration in one
         pass so the LaunchAgent environment matches the install environment.
         """
