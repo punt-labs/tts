@@ -9,6 +9,7 @@ refuses instead of writing a file Claude Desktop will never read.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -524,6 +525,36 @@ class TestConfigWriteIsAtomicAndPrivate:
         with pytest.raises(UnicodeEncodeError):
             DesktopCli._replace_atomically(config_path, "\ud800")
 
+        assert sorted(p.name for p in config_path.parent.iterdir()) == [
+            config_path.name
+        ]
+
+    def test_a_failing_fdopen_closes_the_descriptor_it_was_handed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``mkstemp`` yields a raw fd that only ``fdopen`` takes ownership of.
+
+        When ``fdopen`` is the call that raises, no file object exists to close
+        it, so the swap must close it itself -- otherwise every failed write
+        leaks a descriptor and a long-lived process eventually runs out.
+        """
+        config_path = _linux_host(monkeypatch, tmp_path)
+        config_path.parent.mkdir(parents=True)
+        config_path.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+        handed: list[int] = []
+
+        def _boom(fd: int, *_args: object, **_kwargs: object) -> None:
+            handed.append(fd)
+            raise OSError("simulated fdopen failure")
+
+        monkeypatch.setattr(f"{_CLI_MOD}.os.fdopen", _boom)
+
+        with pytest.raises(OSError, match="simulated fdopen failure"):
+            DesktopCli._replace_atomically(config_path, "{}")
+
+        assert len(handed) == 1
+        with pytest.raises(OSError, match="Bad file descriptor"):
+            os.fstat(handed[0])
         assert sorted(p.name for p in config_path.parent.iterdir()) == [
             config_path.name
         ]

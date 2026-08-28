@@ -156,7 +156,14 @@ class DesktopCli:
         )
         tmp_path = Path(tmp_name)
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            # Until fdopen returns, nothing but this frame owns fd.
+            handle = os.fdopen(fd, "w", encoding="utf-8")
+        except BaseException:
+            os.close(fd)
+            tmp_path.unlink(missing_ok=True)
+            raise
+        try:
+            with handle:
                 handle.write(text)
             tmp_path.chmod(cls._CONFIG_MODE)
             tmp_path.replace(target)
