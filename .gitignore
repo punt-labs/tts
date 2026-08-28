@@ -160,3 +160,9 @@ MagicMock/
 # settings.json, and any future host. Unanchored so it matches at any depth,
 # including worktrees under .claude/worktrees/ and pytest temp roots.
 *.punt-import.lock
+
+# ethos runtime (never track) — DES-058 live zone + mission locks
+.punt-labs/**/local/**
+.punt-labs/ethos/missions/**/*.lock
+# ethos: machine-local files (.local.*) — may hold secrets, never track
+.punt-labs/**/*.local.*
