@@ -142,6 +142,7 @@ def test_launchd_plist_bakes_ssl_cert_env_vars() -> None:
     these env vars must travel with voxd so it can reach HTTPS endpoints.
     Baking them into the plist ensures voxd starts under launchd with the same
     CA configuration that was present at install time.
+    """
     be = LaunchdBackend(
         ProcessManager(),
         lambda: ["/usr/local/bin/voxd", "--port", "8421"],
