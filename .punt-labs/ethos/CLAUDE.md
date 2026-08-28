@@ -32,7 +32,7 @@ SessionStart; restart Claude Code to regenerate them after a team change.
   was created but never had a worker spawned against it (zero
   delegations, zero results). Refuses if any delegation or result
   exists — use `close` for those. Not a bypass of `close`'s result
-  gate; see `docs/mission-abandon.md`.
+  gate; see <https://github.com/punt-labs/ethos/blob/main/docs/mission-abandon.md>.
 - `ethos mission pipeline list|show|instantiate <name>` — drive multi-stage
   work from a template.
 
