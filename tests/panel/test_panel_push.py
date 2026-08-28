@@ -9,6 +9,7 @@ never accepted.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, cast, final
 
@@ -63,7 +64,49 @@ class _FakeClient:
         self.scene = _FakeSceneAccessor(refuse=refuse, down=down)
 
 
-def _as_client(fake: _FakeClient) -> LuxClient:
+@final
+class _GatedSceneAccessor:
+    """Records every call in order and holds the first one open until released.
+
+    The gate is what makes the interleaving deterministic: it parks one push
+    mid-flight, exactly in the window between its plan and its confirmation,
+    which is the window a second push must not be able to see through.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self.patched: list[list[dict[str, object]]] = []
+        self.released = asyncio.Event()
+        self.first_call_started = asyncio.Event()
+
+    async def show(self, request: RenderRequest) -> SceneShown | OpError:
+        self.calls.append("show")
+        await self._gate()
+        return SceneShown(scene_id=request.scene_id)
+
+    async def update(
+        self, scene_id: str, request: UpdateRequest | OpError
+    ) -> SceneShown | OpError:
+        self.calls.append("update")
+        assert not isinstance(request, OpError)
+        self.patched.append(request.to_wire())
+        await self._gate()
+        return SceneShown(scene_id=scene_id)
+
+    async def _gate(self) -> None:
+        if self.first_call_started.is_set():
+            return
+        self.first_call_started.set()
+        await self.released.wait()
+
+
+@final
+class _GatedClient:
+    def __init__(self) -> None:
+        self.scene = _GatedSceneAccessor()
+
+
+def _as_client(fake: _FakeClient | _GatedClient) -> LuxClient:
     return cast("LuxClient", fake)
 
 
@@ -100,6 +143,54 @@ class TestInstall:
 
         assert len(client.scene.shown) == 2
         assert client.scene.patched == []
+
+
+class TestConcurrentPushes:
+    """The panel's leg spawns a bare task per click and per control event.
+
+    Nothing orders those tasks, so two pushes can be in flight at once. Planning
+    a push claims a render as installed and applying it is a separate await; a
+    second push that plans inside that window diffs against a tree luxd has not
+    got yet, and if the two land out of order the screen and this object disagree
+    permanently -- every later diff skips the fields they disagree about.
+    """
+
+    async def test_a_second_push_cannot_plan_while_the_first_is_in_flight(
+        self,
+    ) -> None:
+        push, client = PanelPush(), _GatedClient()
+
+        first = asyncio.create_task(push.refresh(_as_client(client), _scene("first")))
+        await asyncio.wait_for(client.scene.first_call_started.wait(), timeout=1.0)
+
+        second = asyncio.create_task(push.refresh(_as_client(client), _scene("second")))
+        await asyncio.sleep(0.05)  # ample time for an unserialized push to run
+
+        # The whole assertion: while the install is still in flight, the second
+        # push has touched the client not at all. Unserialized, it would already
+        # have sent an `update` diffed against a scene luxd has never seen.
+        assert client.scene.calls == ["show"]
+
+        client.scene.released.set()
+        await asyncio.gather(first, second)
+
+    async def test_the_second_push_patches_against_what_actually_landed(
+        self,
+    ) -> None:
+        push, client = PanelPush(), _GatedClient()
+
+        first = asyncio.create_task(push.refresh(_as_client(client), _scene("first")))
+        await asyncio.wait_for(client.scene.first_call_started.wait(), timeout=1.0)
+        second = asyncio.create_task(push.refresh(_as_client(client), _scene("second")))
+        client.scene.released.set()
+        await asyncio.gather(first, second)
+
+        # Install then patch, in that order, with the patch carrying the field
+        # that actually differs from the render that landed.
+        assert client.scene.calls == ["show", "update"]
+        assert client.scene.patched == [
+            [{"id": "vox.panel.status", "set": {"content": "second"}}]
+        ]
 
 
 class TestRecovery:
