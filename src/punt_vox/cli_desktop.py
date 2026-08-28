@@ -82,12 +82,15 @@ class DesktopCli:
 
         A non-object top level (list/string) would crash deep inside the
         caller's ``setdefault`` merge; rejected here with a clean Typer error.
+        Bytes that are not UTF-8 fail in ``read_text`` rather than in
+        ``json.loads``, so ``UnicodeDecodeError`` is caught alongside the
+        parse and I/O failures -- it is the same "unreadable config" verdict.
         """
         if not config_path.exists():
             return {}
         try:
             parsed = json.loads(config_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
             detail = f"Could not read {config_path}: {exc}"
             self._formatter.error(detail, f"Error: {detail}")
             raise typer.Exit(code=1) from exc

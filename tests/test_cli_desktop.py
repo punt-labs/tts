@@ -196,6 +196,19 @@ class TestInstallConfigMerge:
         assert 'must have a JSON object under "mcpServers"' in result.output
         assert config_path.read_text(encoding="utf-8") == original
 
+    def test_non_utf8_config_is_a_clean_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Undecodable bytes fail in ``read_text``, not in ``json.loads``."""
+        config_path = _linux_host(monkeypatch, tmp_path)
+        config_path.parent.mkdir(parents=True)
+        config_path.write_bytes(b'{"mcpServers": {"caf\xe9": {}}}')
+
+        result = _install(out=tmp_path / "audio")
+
+        assert result.exit_code == 1
+        assert "Could not read" in result.output
+
 
 class TestInstallPrerequisites:
     def test_missing_uvx_names_the_fix(
