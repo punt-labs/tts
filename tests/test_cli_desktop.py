@@ -34,6 +34,25 @@ def _failing_replace(monkeypatch: pytest.MonkeyPatch, exc: BaseException) -> Non
     monkeypatch.setattr(f"{_CLI_MOD}.AtomicFile.replace", _boom)
 
 
+def _failing_mkdir(monkeypatch: pytest.MonkeyPatch, target: Path) -> None:
+    """Make ``mkdir`` raise ``OSError`` for *target* only.
+
+    ``install`` creates two directories in sequence, so a blanket patch could
+    not tell which of them the CLI failed to report on; pinning one target
+    leaves the other on the real implementation.
+    """
+    real = Path.mkdir
+
+    def _boom(
+        self: Path, mode: int = 0o777, parents: bool = False, exist_ok: bool = False
+    ) -> None:
+        if self == target:
+            raise OSError("simulated permission denied")
+        real(self, mode, parents=parents, exist_ok=exist_ok)
+
+    monkeypatch.setattr(Path, "mkdir", _boom)
+
+
 def _on_platform(monkeypatch: pytest.MonkeyPatch, system: str) -> None:
     """Pin the platform the installer resolves its config location from."""
     monkeypatch.setattr(f"{_INSTALL_MOD}.platform.system", lambda: system)
@@ -318,6 +337,56 @@ class TestInstallPrerequisites:
         assert result.exit_code == 1
         assert not (tmp_path / "audio").exists()
         assert not (tmp_path / "xdg").exists()
+
+
+class TestInstallDirectoryCreation:
+    """The two ``mkdir`` calls are a boundary like the config read and write.
+
+    They come after every refusal has passed, so a failure there is the first
+    thing that can go wrong once ``install`` has committed to acting -- and an
+    unguarded ``mkdir`` reported it as a traceback, bypassing the formatter and
+    leaving a ``--json`` caller with no envelope to parse.
+    """
+
+    def test_unwritable_output_dir_is_a_clean_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_path = _linux_host(monkeypatch, tmp_path)
+        audio_dir = tmp_path / "audio"
+        _failing_mkdir(monkeypatch, audio_dir)
+
+        result = _install(out=audio_dir)
+
+        assert result.exit_code == 1
+        assert f"Could not create {audio_dir}" in result.output
+        assert "Traceback" not in result.output
+        assert not config_path.parent.exists()
+
+    def test_unwritable_config_dir_is_a_clean_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_path = _linux_host(monkeypatch, tmp_path)
+        _failing_mkdir(monkeypatch, config_path.parent)
+
+        result = _install(out=tmp_path / "audio")
+
+        assert result.exit_code == 1
+        assert f"Could not create {config_path.parent}" in result.output
+        assert "Traceback" not in result.output
+        assert not config_path.exists()
+
+    def test_unwritable_output_dir_json_gets_an_error_envelope(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The refusal a traceback used to swallow: ``--json`` still parses."""
+        _linux_host(monkeypatch, tmp_path)
+        audio_dir = tmp_path / "audio"
+        _failing_mkdir(monkeypatch, audio_dir)
+
+        result = _install("--json", out=audio_dir)
+
+        assert result.exit_code == 1
+        assert "Could not create" in json.loads(result.output)["error"]
 
 
 class TestUninstall:

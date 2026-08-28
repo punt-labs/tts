@@ -72,6 +72,9 @@ class DesktopCli:
     # directory vox creates when the app has not run yet.
     _CONFIG_MODE: ClassVar[int] = 0o600
     _CONFIG_DIR_MODE: ClassVar[int] = 0o700
+    # The audio directory holds no secrets: ``Path.mkdir``'s own default, which
+    # the caller's umask narrows the way it does for any directory they make.
+    _OUTPUT_DIR_MODE: ClassVar[int] = 0o777
 
     def __new__(cls, formatter: OutputFormatter, flags: OutputFlags) -> Self:
         self = super().__new__(cls)
@@ -192,6 +195,23 @@ class DesktopCli:
             self._formatter.error(str(exc), f"Error: {exc}")
             raise typer.Exit(code=1) from exc
 
+    def _make_dir(self, path: Path, mode: int) -> None:
+        """Create *path* and its parents at *mode*, or refuse with a clean error.
+
+        A directory the CLI cannot create -- no write permission on the parent,
+        a regular file already sitting at the path, a full disk -- is the same
+        refusal as an unreadable config and reports the same way: one error
+        line through :class:`OutputFormatter`. An unguarded ``mkdir`` raised
+        past the formatter, so a ``--json`` caller got a traceback and no
+        envelope at all.
+        """
+        try:
+            path.mkdir(parents=True, exist_ok=True, mode=mode)
+        except OSError as exc:
+            detail = f"Could not create {path}: {exc}"
+            self._formatter.error(detail, f"Error: {detail}")
+            raise typer.Exit(code=1) from exc
+
     def _report_nothing_to_do(self, reason: str, message: str) -> None:
         """Report an idempotent no-op: nothing was unregistered, and that is fine.
 
@@ -231,10 +251,8 @@ class DesktopCli:
         audio_dir = output_dir or default_output_dir()
         installer = self._resolve_installer(install_provider, audio_dir)
 
-        audio_dir.mkdir(parents=True, exist_ok=True)
-        config_path.parent.mkdir(
-            parents=True, exist_ok=True, mode=self._CONFIG_DIR_MODE
-        )
+        self._make_dir(audio_dir, self._OUTPUT_DIR_MODE)
+        self._make_dir(config_path.parent, self._CONFIG_DIR_MODE)
         data = self._load_config()
         servers = self._server_map(data)
         overwriting = "vox" in servers
