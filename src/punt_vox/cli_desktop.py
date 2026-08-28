@@ -97,6 +97,22 @@ class DesktopCli:
             raise typer.Exit(code=1)
         return cast("dict[str, Any]", parsed)
 
+    def _server_map(self, config_path: Path, data: dict[str, Any]) -> dict[str, Any]:
+        """Return the config's ``mcpServers`` object, creating it when absent.
+
+        A non-object value under that key is the case that bites silently:
+        ``"vox" in servers`` against a string is a *substring* test, so a
+        hand-edited ``"mcpServers": "vox"`` reads as an existing registration
+        and the assignment right after it raises. Rejected here with the same
+        clean Typer error a non-object top level gets.
+        """
+        servers = data.setdefault("mcpServers", {})
+        if not isinstance(servers, dict):
+            detail = f'{config_path} must have a JSON object under "mcpServers".'
+            self._formatter.error(detail, f"Error: {detail}")
+            raise typer.Exit(code=1)
+        return cast("dict[str, Any]", servers)
+
     def _write_config(self, config_path: Path, data: dict[str, Any]) -> None:
         """Replace the config, or refuse with a clean error.
 
@@ -210,7 +226,7 @@ class DesktopCli:
             parents=True, exist_ok=True, mode=self._CONFIG_DIR_MODE
         )
         data = self._load_config(config_path)
-        servers = data.setdefault("mcpServers", {})
+        servers = self._server_map(config_path, data)
         overwriting = "vox" in servers
         servers["vox"] = {
             "command": uvx,

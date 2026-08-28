@@ -175,6 +175,27 @@ class TestInstallConfigMerge:
         assert result.exit_code == 1
         assert "must be a JSON object" in result.output
 
+    @pytest.mark.parametrize("value", ["vox", ["vox"]])
+    def test_non_object_mcpservers_is_rejected(
+        self, value: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-object ``mcpServers`` crashed the merge instead of reporting.
+
+        The string case is the nastier of the two: ``"vox" in "vox"`` is a
+        substring test that reports an overwrite, and the item assignment
+        after it raises ``TypeError`` out of the CLI.
+        """
+        config_path = _linux_host(monkeypatch, tmp_path)
+        config_path.parent.mkdir(parents=True)
+        original = json.dumps({"mcpServers": value})
+        config_path.write_text(original, encoding="utf-8")
+
+        result = _install(out=tmp_path / "audio")
+
+        assert result.exit_code == 1
+        assert 'must have a JSON object under "mcpServers"' in result.output
+        assert config_path.read_text(encoding="utf-8") == original
+
 
 class TestInstallPrerequisites:
     def test_missing_uvx_names_the_fix(
