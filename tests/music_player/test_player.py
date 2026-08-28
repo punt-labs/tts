@@ -46,13 +46,21 @@ class _FakeService:
 
 @final
 class _CapturingPublisher:
-    """A ScenePublisher double that records every submitted scene."""
+    """A ScenePublisher double recording refreshes and installs separately.
+
+    They are recorded apart because they mean different things on screen: an
+    install raises the frame, a refresh must leave it alone.
+    """
 
     def __init__(self) -> None:
         self.submitted: list[RenderRequest] = []
+        self.installed: list[RenderRequest] = []
 
     def submit(self, request: RenderRequest) -> None:
         self.submitted.append(request)
+
+    def reinstall(self, request: RenderRequest) -> None:
+        self.installed.append(request)
 
 
 def test_notify_changed_projects_the_playing_scene_and_submits_once(
@@ -126,6 +134,45 @@ def test_present_play_failure_keeps_now_playing_when_a_source_plays(
         _by_id(elements, "music.status")["content"]
         == "⚠ couldn't play ff99ee — no longer in the crate"
     )
+
+
+class TestInstallVersusRefresh:
+    def test_a_change_refreshes_and_never_installs(
+        self, album_of: AlbumFactory
+    ) -> None:
+        publisher = _CapturingPublisher()
+        service = _FakeService(ProgramStatus.idle(), (album_of("aa11bb"),))
+
+        MusicPlayer(service, publisher).notify_changed()
+
+        assert len(publisher.submitted) == 1
+        assert publisher.installed == []  # no frame raise on a state change
+
+    def test_install_installs_and_never_refreshes(self, album_of: AlbumFactory) -> None:
+        publisher = _CapturingPublisher()
+        service = _FakeService(ProgramStatus.idle(), (album_of("aa11bb"),))
+
+        MusicPlayer(service, publisher).install()
+
+        assert len(publisher.installed) == 1
+        assert publisher.submitted == []
+
+    def test_a_refused_click_refreshes_because_the_user_is_already_here(
+        self, album_of: AlbumFactory
+    ) -> None:
+        # The user clicked *inside* this window, so it is already in front of
+        # them; the warning belongs in place, not behind a frame raise.
+        publisher = _CapturingPublisher()
+        service = _FakeService(ProgramStatus.idle(), (album_of("aa11bb"),))
+        player = MusicPlayer(service, publisher)
+
+        player.present_play_failure(AlbumId("aa11bb"))
+        player.present_stop_failure()
+        player.present_resolve_failure("Ghost")
+        player.present_transport_failure()
+
+        assert len(publisher.submitted) == 4
+        assert publisher.installed == []
 
 
 def test_the_submitted_scene_carries_live_track_counts(

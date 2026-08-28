@@ -35,8 +35,18 @@ class PlayerService(Protocol):
 
 @runtime_checkable
 class ScenePublisher(Protocol):
-    """A non-blocking sink the player submits each rendered scene to (PY-DP-11)."""
+    """A non-blocking sink the player hands each rendered scene to.
+
+    Two verbs, because a push carries an intent as well as a tree. A refresh
+    updates a window the user is already looking at and must leave its stacking
+    order alone; an install puts the window in front of the user, which is what a
+    menu click asks for and what a fresh hub connection needs.
+    """
 
     def submit(self, request: RenderRequest) -> None:
-        """Accept the newest scene without blocking the caller's thread."""
+        """Accept the newest scene as a refresh, without blocking the caller."""
+        ...
+
+    def reinstall(self, request: RenderRequest) -> None:
+        """Accept the newest scene as an install -- show it, frame raise and all."""
         ...

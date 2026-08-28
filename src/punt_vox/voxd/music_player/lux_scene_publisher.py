@@ -1,13 +1,24 @@
 """``LuxScenePublisher`` -- drain the scene mailbox and push through the LuxClient.
 
-:meth:`submit` runs on the control-channel single-writer and only hands the newest
-scene to a latest-wins :class:`SceneMailbox` -- it never blocks. :meth:`run` is the
-publisher's own task: it drains the mailbox and awaits ``client.scene.show``, which
-is natively async on the ``LuxClient`` facade, so a slow luxd cannot stall the event
-loop (and thus playback). A lux timeout / :class:`HubUnavailableError` is logged and
-dropped and the client is dropped for a fresh reconnect; an engine-side ``OpError``
--- a scene luxd refused, almost always a projection defect rather than an absent
-display -- is logged at error. No lux failure is propagated back into audio control.
+:meth:`submit` and :meth:`reinstall` run on the control-channel single-writer and
+only hand the newest scene to a latest-wins :class:`SceneMailbox` -- neither ever
+blocks. :meth:`run` is the publisher's own task: it drains the mailbox and awaits
+the push, which is natively async on the ``LuxClient`` facade, so a slow luxd
+cannot stall the event loop (and thus playback).
+
+What goes on the wire is :class:`LiveScene`'s decision, not this module's. A
+refresh whose render is byte-identical to the installed one costs nothing; one
+whose values moved is a field patch that leaves the frame's stacking order alone;
+one whose element roster or frame shell changed re-installs, because no patch can
+express that. :meth:`reinstall` is the other intent entirely -- the Music menu was
+clicked, or a hub handshake says nothing is installed -- and it always shows,
+because raising the frame is the answer the user asked for.
+
+A lux timeout / :class:`HubUnavailableError` is logged, dropped, and disarms the
+live scene, so the fresh connection installs rather than patching a scene the new
+luxd never saw. An engine-side ``OpError`` -- a scene luxd refused, almost always
+a projection defect rather than an absent display -- is logged at error. No lux
+failure is propagated back into audio control.
 """
 
 from __future__ import annotations
@@ -15,8 +26,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Self, final
 
-from punt_lux import HubUnavailableError, OpError
+from punt_lux import HubUnavailableError
 
+from punt_vox.lux_common import LiveScene
 from punt_vox.voxd.music_player.lux_trace import LuxTrace
 from punt_vox.voxd.music_player.scene_mailbox import SceneMailbox
 
@@ -24,6 +36,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from punt_lux import LuxClient, RenderRequest
+
+    from punt_vox.lux_common import ScenePush
+    from punt_vox.voxd.music_player.scene_mailbox import SceneDelivery
 
 __all__ = ["LuxScenePublisher"]
 
@@ -35,21 +50,27 @@ _trace = LuxTrace(logger)
 class LuxScenePublisher:
     """Own the scene mailbox and render each newest scene to luxd on its own task."""
 
-    __slots__ = ("_client", "_connect", "_mailbox")
+    __slots__ = ("_client", "_connect", "_live", "_mailbox")
     _connect: Callable[[], LuxClient]
     _client: LuxClient | None  # None until first connect / after a drop
     _mailbox: SceneMailbox
+    _live: LiveScene
 
     def __new__(cls, connect: Callable[[], LuxClient]) -> Self:
         self = super().__new__(cls)
         self._connect = connect
         self._client = None
         self._mailbox = SceneMailbox()
+        self._live = LiveScene()
         return self
 
     def submit(self, request: RenderRequest) -> None:
         """Hand the newest scene to the mailbox -- non-blocking, writer-safe."""
         self._mailbox.submit(request)
+
+    def reinstall(self, request: RenderRequest) -> None:
+        """Hand over a scene that must be installed, frame raise and all."""
+        self._mailbox.reinstall(request)
 
     async def run(self) -> None:
         """Drain the mailbox forever, rendering each newest scene to luxd.
@@ -59,31 +80,41 @@ class LuxScenePublisher:
         never kills the publisher task (and playback is untouched regardless).
         """
         while True:
-            request = await self._mailbox.get()
+            delivery = await self._mailbox.get()
             try:
-                await self._publish(request)
+                await self._publish(delivery)
             except Exception:
                 logger.exception(
                     "[lux] scene publisher: unexpected error rendering a scene"
                 )
 
-    async def _publish(self, request: RenderRequest) -> None:
-        """Connect if needed and push the scene, dropping any lux failure."""
+    async def _publish(self, delivery: SceneDelivery) -> None:
+        """Connect if needed and complete the planned push, dropping any lux failure."""
+        request = delivery.request
         try:
-            client = self._ensure_client()
-            result = await client.scene.show(request)
+            push = self._plan(delivery)
+            refusal = await push.apply(self._ensure_client())
         except HubUnavailableError:
             self._client = None  # force a reconnect on the next scene
+            self._live.disarm()  # ... which must install, not patch
             _trace.warning("luxd unavailable; dropped %s scene push", request.scene_id)
             return
-        if isinstance(result, OpError):
+        if refusal is not None:
             # A refused scene is a projection defect, not an absent display: log
             # at error so it reads distinctly from the down-luxd warning above.
-            _trace.error("rejected %s scene: %s", request.scene_id, result.reason)
+            # Disarm too -- luxd kept whatever it had, so what we believe is
+            # installed is now a guess, and the next push must install afresh
+            # rather than patch against a tree that was never accepted.
+            self._live.disarm()
+            _trace.error("rejected %s scene: %s", request.scene_id, refusal.reason)
             return
-        _trace.info(
-            "pushed %s scene (%d elements)", request.scene_id, len(request.elements)
-        )
+        _trace.info("%s", push.summary)
+
+    def _plan(self, delivery: SceneDelivery) -> ScenePush:
+        """Return the push this delivery asked for: a demanded install, or the plan."""
+        if delivery.install:
+            return self._live.install(delivery.request)
+        return self._live.plan(delivery.request)
 
     def _ensure_client(self) -> LuxClient:
         """Return the connected client, building the facade on first use."""

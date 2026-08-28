@@ -225,33 +225,41 @@ class LuxSubscription:
             logger.exception("[lux] could not surface the resolve failure")
 
     async def on_callback(self, callback_id: str) -> None:
-        """Open (re-push) the music scene when the ``Music`` menu entry is clicked."""
+        """Install the music scene when the ``Music`` menu entry is clicked.
+
+        This is one of the two sites that install rather than refresh, and the
+        reason is the whole point of the entry: the user clicked *Music* to see
+        the window, so raising its frame is the answer, not a side effect.
+        """
         if callback_id != _MENU_CALLBACK_ID:
             return
-        _trace.info("Music menu clicked; re-pushing the scene")
+        _trace.info("Music menu clicked; installing the scene")
         try:
-            self._presenter.notify_changed()
+            self._presenter.install()
         except Exception:
             logger.exception("[lux] music menu open failed for %r", callback_id)
 
     async def on_connect(self) -> None:
-        """Re-register the ``Music`` menu and re-push the scene after every handshake.
+        """Re-register the ``Music`` menu and install the scene after every handshake.
 
         The hub client fires this once per successful handshake -- first connect and
         every internal reconnect -- after the ready frame and re-subscribe. A >30s
         luxd outage lapses the menu lease, luxd sweeps the entry, and the internal
         reconnect ``listen`` rides out then fires this to restore it, without waiting
         for an outer fault (register-fresh, invariant III). The registration is
-        best-effort and never raises; the scene re-push is guarded here so a transient
+        best-effort and never raises; the scene push is guarded here so a transient
         projection failure is logged, not lost, and never skips the registration. lux
         logs-and-continues if this raises, so the session survives regardless.
+
+        The push installs rather than refreshes: this connection carries nothing
+        yet, so there is no installed tree for a patch to write onto.
         """
-        _trace.info("hub handshake complete; re-registering menu and re-pushing scene")
+        _trace.info("hub handshake complete; re-registering menu and installing scene")
         # The handshake is the ground-truth "luxd is back" signal for both legs,
         # so it closes the shared outage window before the menu register runs.
         self._outage.clear()
         await self._menu.register(_MENU_CALLBACK_ID, _MENU_LABEL)
         try:
-            self._presenter.notify_changed()
+            self._presenter.install()
         except Exception:
             logger.exception("[lux] music scene projection on connect failed")

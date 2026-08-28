@@ -6,6 +6,12 @@ the fresh status and catalog, builds the :class:`PlayerView` and the
 Everything it does is fast, synchronous, non-blocking work -- the blocking REST
 push happens on the publisher's own task, so the control-channel single-writer
 that fires the notification is never held up.
+
+Every projection here is the same tree; what differs is the *intent* the player
+attaches to it. :meth:`MusicPlayer.notify_changed` and the failure presenters all
+refresh, so a window the user has parked stays parked. :meth:`MusicPlayer.install`
+is the one verb that shows -- and it is reached only from the Music menu click and
+the hub handshake, the two moments that genuinely mean "put this in front of me".
 """
 
 from __future__ import annotations
@@ -18,6 +24,8 @@ from punt_vox.voxd.music_player.player_view import PlayerView
 from punt_vox.voxd.music_player.scene import AlbumListScene
 
 if TYPE_CHECKING:
+    from punt_lux import RenderRequest
+
     from punt_vox.voxd.music_player.ports import PlayerService, ScenePublisher
     from punt_vox.voxd.programs.album_id import AlbumId
     from punt_vox.voxd.programs.catalog import Album
@@ -31,7 +39,9 @@ class MusicPlayer:
 
     As the daemon's :class:`ChangeListener` it repaints silently on every state
     change; as the receive leg's :class:`ScenePresenter` it also repaints with a
-    transient warning when a clicked Play or Stop could not be applied.
+    transient warning when a clicked Play or Stop could not be applied, and
+    installs the scene outright on the two triggers that mean the user asked to
+    see the window.
     """
 
     __slots__ = ("_publisher", "_service")
@@ -52,6 +62,16 @@ class MusicPlayer:
         clears any warning a prior failed click had raised.
         """
         self._submit(self._service.catalog_albums(), PlaybackNotice.silent())
+
+    def install(self) -> None:
+        """Re-project the scene and install it, raising its frame.
+
+        The one difference from :meth:`notify_changed` is intent, not content: a
+        track change is a refresh of a window the user has already placed, while a
+        menu click or a fresh hub connection is a request to see the window.
+        """
+        albums = self._service.catalog_albums()
+        self._publisher.reinstall(self._render(albums, PlaybackNotice.silent()))
 
     def present_play_failure(self, album: AlbumId) -> None:
         """Re-project the scene warning that ``album`` could not play (transient).
@@ -89,7 +109,13 @@ class MusicPlayer:
         self._submit(self._service.catalog_albums(), PlaybackNotice.silent())
 
     def _submit(self, albums: tuple[Album, ...], notice: PlaybackNotice) -> None:
-        """Project the scene from fresh status, ``albums`` and ``notice``; submit it.
+        """Project from fresh status, ``albums`` and ``notice``; submit a refresh."""
+        self._publisher.submit(self._render(albums, notice))
+
+    def _render(
+        self, albums: tuple[Album, ...], notice: PlaybackNotice
+    ) -> RenderRequest:
+        """Return the scene projected from fresh status, ``albums`` and ``notice``.
 
         The roster read is the one live store read on this path, and it happens
         here rather than in the projection: the scene stays a pure function of
@@ -98,4 +124,4 @@ class MusicPlayer:
         """
         roster = AlbumRoster.read(albums)
         view = PlayerView.from_status(self._service.status(), roster.albums)
-        self._publisher.submit(AlbumListScene(roster, view, notice).render_request())
+        return AlbumListScene(roster, view, notice).render_request()
