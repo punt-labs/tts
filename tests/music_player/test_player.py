@@ -78,7 +78,8 @@ def test_notify_changed_projects_the_idle_scene(album_of: AlbumFactory) -> None:
     MusicPlayer(service, publisher).notify_changed()
 
     elements = publisher.submitted[0].elements
-    assert _by_id(elements, "music.now")["content"] == "Nothing playing"
+    assert _by_id(elements, "music.now.album")["content"] == "### Nothing playing"
+    assert _position_text(elements) == ""
 
 
 def test_present_play_failure_surfaces_the_warning_then_a_change_clears_it(
@@ -95,7 +96,7 @@ def test_present_play_failure_surfaces_the_warning_then_a_change_clears_it(
     player.present_play_failure(AlbumId("aa11bb"))
 
     failed = publisher.submitted[-1].elements
-    assert _by_id(failed, "music.now")["content"] == "Nothing playing"  # I2 idle
+    assert _by_id(failed, "music.now.album")["content"] == "### Nothing playing"  # I2
     assert _by_id(failed, "music.status") == {
         "kind": "text",
         "id": "music.status",
@@ -125,6 +126,42 @@ def test_present_play_failure_keeps_now_playing_when_a_source_plays(
         _by_id(elements, "music.status")["content"]
         == "⚠ couldn't play ff99ee — no longer in the crate"
     )
+
+
+def test_the_submitted_scene_carries_live_track_counts(
+    album_of: AlbumFactory,
+) -> None:
+    # The player's seam is where the live read happens, so a scene it submits
+    # already knows the on-disk count -- not the empty creation-time snapshot.
+    album = album_of("aa11bb", name="Techno Mix", tracks=0, on_disk=9)
+    publisher = _CapturingPublisher()
+
+    MusicPlayer(
+        _FakeService(ProgramStatus.idle(), (album,)), publisher
+    ).notify_changed()
+
+    assert _by_id(publisher.submitted[0].elements, "music.albums")["rows"] == [
+        ["Techno Mix", "techno", 9]
+    ]
+
+
+def test_an_album_deleted_since_the_catalog_read_drops_out_coherently(
+    album_of: AlbumFactory,
+) -> None:
+    # The catalog is in memory and the album is on disk, so the two can disagree.
+    # A row whose album has been deleted disappears from the table AND from the
+    # count label -- one render, one coherent view of the catalog.
+    kept = album_of("aa11bb", name="Kept")
+    gone = album_of("cc22dd", name="Gone", fails_with=LookupError("deleted"))
+    publisher = _CapturingPublisher()
+
+    MusicPlayer(
+        _FakeService(ProgramStatus.idle(), (kept, gone)), publisher
+    ).notify_changed()
+
+    elements = publisher.submitted[0].elements
+    assert _by_id(elements, "music.albums")["rows"] == [["Kept", "techno", 3]]
+    assert _by_id(elements, "music.albums.label")["content"] == "Albums · 1 album"
 
 
 def test_present_stop_failure_surfaces_the_stop_warning(album_of: AlbumFactory) -> None:

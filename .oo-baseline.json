@@ -2912,17 +2912,17 @@
     "public_attr_violations": 0.0
   },
   "src/punt_vox/voxd/music_player/album_display.py": {
-    "avg_complexity": 1.0,
-    "avg_params": 0.0,
-    "class_to_func_ratio": 1.0,
-    "classes_per_module": 1.0,
-    "encapsulation_ratio": 1.0,
-    "future_annotations": 1.0,
-    "init_violations": 0.0,
-    "max_complexity": 1.0,
     "method_ratio": 1.0,
-    "module_size": 35.0,
-    "public_attr_violations": 0.0
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.33,
+    "max_complexity": 1.0,
+    "avg_complexity": 1.0,
+    "module_size": 45.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
   },
   "src/punt_vox/voxd/music_player/album_names.py": {
     "avg_complexity": 2.0,
@@ -2937,18 +2937,31 @@
     "module_size": 77.0,
     "public_attr_violations": 0.0
   },
-  "src/punt_vox/voxd/music_player/album_table.py": {
-    "avg_complexity": 1.17,
-    "avg_params": 0.5,
-    "class_to_func_ratio": 1.0,
-    "classes_per_module": 1.0,
-    "encapsulation_ratio": 1.0,
-    "future_annotations": 1.0,
-    "init_violations": 0.0,
-    "max_complexity": 2.0,
+  "src/punt_vox/voxd/music_player/album_roster.py": {
     "method_ratio": 1.0,
-    "module_size": 107.0,
-    "public_attr_violations": 0.0
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.6,
+    "max_complexity": 3.0,
+    "avg_complexity": 1.6,
+    "module_size": 63.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
+  "src/punt_vox/voxd/music_player/album_table.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.5,
+    "max_complexity": 2.0,
+    "avg_complexity": 1.17,
+    "module_size": 116.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
   },
   "src/punt_vox/voxd/music_player/command_ports.py": {
     "avg_complexity": 1.0,
@@ -3055,17 +3068,17 @@
     "public_attr_violations": 0.0
   },
   "src/punt_vox/voxd/music_player/now_playing_block.py": {
-    "avg_complexity": 1.5,
-    "avg_params": 0.38,
-    "class_to_func_ratio": 1.0,
-    "classes_per_module": 2.0,
-    "encapsulation_ratio": 1.0,
-    "future_annotations": 1.0,
-    "init_violations": 0.0,
-    "max_complexity": 3.0,
     "method_ratio": 1.0,
-    "module_size": 93.0,
-    "public_attr_violations": 0.0
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.25,
+    "max_complexity": 3.0,
+    "avg_complexity": 1.5,
+    "module_size": 97.0,
+    "classes_per_module": 2.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
   },
   "src/punt_vox/voxd/music_player/playback_notice.py": {
     "method_ratio": 1.0,
@@ -3086,7 +3099,7 @@
     "avg_params": 0.86,
     "max_complexity": 1.0,
     "avg_complexity": 1.0,
-    "module_size": 72.0,
+    "module_size": 79.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,
@@ -3159,17 +3172,17 @@
     "future_annotations": 1.0
   },
   "src/punt_vox/voxd/music_player/scene.py": {
-    "avg_complexity": 1.0,
-    "avg_params": 0.0,
-    "class_to_func_ratio": 1.0,
-    "classes_per_module": 1.0,
-    "encapsulation_ratio": 1.0,
-    "future_annotations": 1.0,
-    "init_violations": 0.0,
-    "max_complexity": 1.0,
     "method_ratio": 1.0,
-    "module_size": 51.0,
-    "public_attr_violations": 0.0
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.0,
+    "max_complexity": 1.0,
+    "avg_complexity": 1.0,
+    "module_size": 53.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
   },
   "src/punt_vox/voxd/music_player/scene_mailbox.py": {
     "avg_complexity": 1.67,

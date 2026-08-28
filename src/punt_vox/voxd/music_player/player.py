@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Self, final
 
+from punt_vox.voxd.music_player.album_roster import AlbumRoster
 from punt_vox.voxd.music_player.playback_notice import PlaybackNotice
 from punt_vox.voxd.music_player.player_view import PlayerView
 from punt_vox.voxd.music_player.scene import AlbumListScene
@@ -88,6 +89,13 @@ class MusicPlayer:
         self._submit(self._service.catalog_albums(), PlaybackNotice.silent())
 
     def _submit(self, albums: tuple[Album, ...], notice: PlaybackNotice) -> None:
-        """Project the scene from fresh status, ``albums`` and ``notice``; submit it."""
-        view = PlayerView.from_status(self._service.status(), albums)
-        self._publisher.submit(AlbumListScene(albums, view, notice).render_request())
+        """Project the scene from fresh status, ``albums`` and ``notice``; submit it.
+
+        The roster read is the one live store read on this path, and it happens
+        here rather than in the projection: the scene stays a pure function of
+        what it is handed, and every cell of one render sees one coherent
+        snapshot of the catalog.
+        """
+        roster = AlbumRoster.read(albums)
+        view = PlayerView.from_status(self._service.status(), roster.albums)
+        self._publisher.submit(AlbumListScene(roster, view, notice).render_request())
