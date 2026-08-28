@@ -3389,3 +3389,82 @@ The `calls_dir()` retention policy (does every call leave a summary
 file forever, or is there a cleanup/rotation policy analogous to
 `recordings_dir()`'s) is not decided here — a small implementation
 detail for `vox-hobl.2`'s mission, not an architectural fork.
+
+---
+
+## DES-068: Widget Refresh Patches an Installed Scene; `show` Is Reserved for Install and for "Bring This Window to Me"
+
+**Status:** decided (2026-08-28). Implements `vox-h777`.
+
+### Context
+
+Both of vox's lux surfaces — `vox.music` in `voxd`, `vox.panel` in the
+`vox-panel` applet — pushed every scene through `client.scene.show`. On
+the Hub side `show` installs the tree *and* raises and unminimizes the
+frame whenever the scene looks new to it. Every track change, every
+generated part, every catalog add, every radio click therefore dragged
+the window to the front of the user's stack, seconds apart, unprompted.
+
+The obvious fix — replace `show` with `update` everywhere — breaks the
+feature the menu entries exist for. Clicking **Music**, or **Vox**, is a
+request to *see* that window; raising it is the correct answer, not a
+side effect.
+
+### Decision
+
+One call was serving two intents, and they are now two verbs.
+
+**Refresh** is the default. The surface holds a `LiveScene` carrying the
+last render it put out, and each new render is diffed against it: an
+identical tree pushes nothing at all, moved values become a
+`ScenePatchSet` sent through `scene.update`, and only a changed element
+roster or frame shell falls back to `show`, because no patch can express
+those. `update` reaches the Hub's scene writer and touches frame, focus,
+and tab state not at all.
+
+**Install** is reserved for four call sites, two per scene, and each is
+either "nothing is on this connection yet" or an explicit user gesture:
+
+| Scene | Site | Why it installs |
+|---|---|---|
+| `vox.music` | hub handshake (`LuxSubscription.on_connect`) | the connection carries nothing to patch |
+| `vox.music` | **Music** menu click (`on_callback`) | the user asked for the window |
+| `vox.panel` | **Vox** menu click (`VoxPanelService.acknowledge`) | the user asked for the window |
+| `vox.panel` | *(the first push on a connection, via the same `LiveScene`)* | nothing installed yet |
+
+Two constraints of the patch seam shaped the rest of the change, and both
+are properties of the *scene*, not of the diff:
+
+- **A patch cannot add an element.** So `NowPlayingBlock` stopped
+  emitting one element when idle and two when active; it emits two
+  always, and idle changes their content rather than their number.
+  Without that, pressing play — the single most consequential refresh
+  there is — would have fallen back to `show` and raised the window.
+- **A field that vanishes between renders is invisible to a differ.** So
+  `AlbumTable._selection` always emits `selected_row_ids`, empty list
+  included; omitting it when idle would have stranded the now-playing
+  highlight on the row that stopped playing.
+
+A refused patch, a refused install, and an absent luxd all *disarm* the
+`LiveScene`, so the next push installs rather than patching a tree luxd
+never accepted. That also covers a luxd restart with no special handling:
+the first patch after it meets an unknown scene, is rejected whole
+(nothing mutated), and the fallback installs. One wasted round-trip, no
+stale state.
+
+### Rejected Alternatives
+
+- **Replace every `show` with `update`.** Rejected: it breaks the menu
+  entries, which exist precisely to bring a buried window forward. The
+  defect was never that `show` raises the frame — that is the feature —
+  but that one call was carrying both meanings.
+- **An allowlist of patchable field names per element kind.** Tempting,
+  because luxd rejects a field with no `_set_<field>` method. Rejected:
+  a hand-copied list of another package's setters is a second source of
+  truth that drifts silently. A rejected batch mutates nothing, so the
+  install fallback already handles an unpatchable field. Self-correcting
+  beats synchronized.
+- **Reading back the Hub's own tree to diff against.** Rejected: a
+  read-back races the replicator. The surfaces diff their own two wire
+  trees — the previous `RenderRequest` and the new one — which is
+  authoritative for what *they* sent and needs no round-trip.
