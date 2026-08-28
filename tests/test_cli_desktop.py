@@ -9,17 +9,29 @@ refuses instead of writing a file Claude Desktop will never read.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner, Result
 
 from punt_vox.__main__ import app
-from punt_vox.cli_desktop import DesktopCli
 
 _INSTALL_MOD = "punt_vox.desktop_install"
 _CLI_MOD = "punt_vox.cli_desktop"
+
+
+def _failing_replace(monkeypatch: pytest.MonkeyPatch, exc: BaseException) -> None:
+    """Make the config rewrite raise *exc* from inside ``AtomicFile``.
+
+    Patched at the name ``cli_desktop`` holds, so the CLI's own handling of a
+    failed write is what is under test; the swap's atomicity and its temp-file
+    cleanup belong to ``AtomicFile`` and are covered by its own tests.
+    """
+
+    def _boom(_self: object, _text: str, *, mode: int | None = None) -> None:
+        raise exc
+
+    monkeypatch.setattr(f"{_CLI_MOD}.AtomicFile.replace", _boom)
 
 
 def _on_platform(monkeypatch: pytest.MonkeyPatch, system: str) -> None:
@@ -418,10 +430,7 @@ class TestConfigWriteIsAtomicAndPrivate:
         original = json.dumps({"mcpServers": {"other": {"command": "x"}}})
         config_path.write_text(original, encoding="utf-8")
 
-        def _boom(_self: object, _path: Path, _text: str) -> None:
-            raise OSError("simulated disk full")
-
-        monkeypatch.setattr(f"{_CLI_MOD}.DesktopCli._replace_atomically", _boom)
+        _failing_replace(monkeypatch, OSError("simulated disk full"))
 
         result = _install(out=tmp_path / "audio")
 
@@ -439,7 +448,9 @@ class TestConfigWriteIsAtomicAndPrivate:
 
         Renaming onto the link replaces it with a regular file and leaves the
         real target holding the old registration -- which chezmoi or stow then
-        restores over vox's write on the next apply.
+        restores over vox's write on the next apply. ``AtomicFile`` owns the
+        write-through; this proves the CLI reaches it with the link's own path
+        rather than a pre-resolved one.
         """
         config_path = _linux_host(monkeypatch, tmp_path)
         real = tmp_path / "dotfiles" / "claude_desktop_config.json"
@@ -469,92 +480,27 @@ class TestConfigWriteIsAtomicAndPrivate:
         assert config_path.is_symlink()
         assert "vox" not in json.loads(real.read_text(encoding="utf-8"))["mcpServers"]
 
-    def test_a_dying_write_removes_its_own_temp_file(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The cleanup is on the atomic swap itself, not only on its caller."""
-        config_path = _linux_host(monkeypatch, tmp_path)
-        config_path.parent.mkdir(parents=True)
-        config_path.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
-
-        def _boom(_self: Path, _mode: int) -> None:
-            raise OSError("simulated chmod failure")
-
-        monkeypatch.setattr(f"{_CLI_MOD}.Path.chmod", _boom)
-
-        result = _install(out=tmp_path / "audio")
-
-        assert result.exit_code == 1
-        assert sorted(p.name for p in config_path.parent.iterdir()) == [
-            config_path.name
-        ]
-
     def test_an_unencodable_write_is_reported_not_raised(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Encoding failure is the same "unwritable config" verdict as I/O.
 
-        ``handle.write`` raises ``UnicodeEncodeError`` -- not an ``OSError`` --
-        for text the UTF-8 handle cannot encode, so catching only ``OSError``
-        would bypass the error envelope and crash with a traceback.
+        The write raises ``UnicodeEncodeError`` -- not an ``OSError`` -- for
+        text the UTF-8 handle cannot encode, so catching only ``OSError`` would
+        bypass the error envelope and crash with a traceback.
         """
         config_path = _linux_host(monkeypatch, tmp_path)
         config_path.parent.mkdir(parents=True)
         original = json.dumps({"mcpServers": {"other": {"command": "x"}}})
         config_path.write_text(original, encoding="utf-8")
 
-        def _boom(_self: object, _path: Path, _text: str) -> None:
-            raise UnicodeEncodeError("utf-8", "\ud800", 0, 1, "surrogates not allowed")
-
-        monkeypatch.setattr(f"{_CLI_MOD}.DesktopCli._replace_atomically", _boom)
+        _failing_replace(
+            monkeypatch,
+            UnicodeEncodeError("utf-8", "\ud800", 0, 1, "surrogates not allowed"),
+        )
 
         result = _install(out=tmp_path / "audio")
 
         assert result.exit_code == 1
         assert "Could not write" in result.output
         assert config_path.read_text(encoding="utf-8") == original
-
-    def test_an_unencodable_write_removes_its_own_temp_file(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The swap's cleanup covers encoding failures, not only I/O ones."""
-        config_path = _linux_host(monkeypatch, tmp_path)
-        config_path.parent.mkdir(parents=True)
-        config_path.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
-
-        with pytest.raises(UnicodeEncodeError):
-            DesktopCli._replace_atomically(config_path, "\ud800")
-
-        assert sorted(p.name for p in config_path.parent.iterdir()) == [
-            config_path.name
-        ]
-
-    def test_a_failing_fdopen_closes_the_descriptor_it_was_handed(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """``mkstemp`` yields a raw fd that only ``fdopen`` takes ownership of.
-
-        When ``fdopen`` is the call that raises, no file object exists to close
-        it, so the swap must close it itself -- otherwise every failed write
-        leaks a descriptor and a long-lived process eventually runs out.
-        """
-        config_path = _linux_host(monkeypatch, tmp_path)
-        config_path.parent.mkdir(parents=True)
-        config_path.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
-        handed: list[int] = []
-
-        def _boom(fd: int, *_args: object, **_kwargs: object) -> None:
-            handed.append(fd)
-            raise OSError("simulated fdopen failure")
-
-        monkeypatch.setattr(f"{_CLI_MOD}.os.fdopen", _boom)
-
-        with pytest.raises(OSError, match="simulated fdopen failure"):
-            DesktopCli._replace_atomically(config_path, "{}")
-
-        assert len(handed) == 1
-        with pytest.raises(OSError, match="Bad file descriptor"):
-            os.fstat(handed[0])
-        assert sorted(p.name for p in config_path.parent.iterdir()) == [
-            config_path.name
-        ]
