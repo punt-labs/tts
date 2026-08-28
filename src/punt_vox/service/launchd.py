@@ -57,11 +57,9 @@ class LaunchdBackend:
         ``SSL_CERT_FILE`` and ``REQUESTS_CA_BUNDLE`` are forwarded when set so
         that voxd can reach HTTPS endpoints behind a corporate TLS-inspection
         proxy (e.g. Zscaler) without requiring a separate ``launchctl
-        bootout``/``bootstrap`` cycle in activation scripts.  Propagating them
-        here means ``vox daemon install`` captures them in one pass, removing
-        the structural difference that made vox's nix-darwin home-manager
-        activation block the only one to perform that dance immediately before
-        ``claude plugin install`` (the window where SSL cert errors appeared).
+        bootout``/``bootstrap`` cycle in activation scripts. Propagating them
+        here means ``vox daemon install`` captures the CA configuration in one
+        pass so the LaunchAgent environment matches the install environment.
         """
         extras: dict[str, str] = {}
         for key in ("VOXD_BIND", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE"):
