@@ -29,8 +29,10 @@ were the shape of the state-authority defect this bead closes.
 
 from __future__ import annotations
 
+import os
+import platform
 from pathlib import Path
-from typing import Self, final
+from typing import ClassVar, Self, final
 
 from punt_vox.keys import parse_keys_env
 from punt_vox.paths import keys_env_file
@@ -62,6 +64,11 @@ class DesktopInstaller:
     _provider: str
     _audio_dir: Path
 
+    # The app's own directory and file name, identical on every platform Claude
+    # Desktop ships for; only the per-user root beneath which they sit varies.
+    _APP_DIR: ClassVar[str] = "Claude"
+    _CONFIG_FILE: ClassVar[str] = "claude_desktop_config.json"
+
     def __new__(cls, provider: str, audio_dir: Path) -> Self:
         self = super().__new__(cls)
         self._provider = provider
@@ -75,14 +82,43 @@ class DesktopInstaller:
         The path is a per-user constant of the Claude Desktop app, so it lives
         on the installer as an alternate constructor -- the class that owns
         writing (and doctor's read-back) is the class that names the location.
+
+        This is also the single place vox decides *which platforms it can
+        register with*: a caller asks for the path and handles the refusal,
+        rather than running a ``platform.system()`` probe of its own and
+        reaching a second, independently-maintained verdict.
+
+        Claude Desktop is an Electron app, so the file sits under Electron's
+        ``userData`` root: ``~/Library/Application Support`` on macOS and
+        ``$XDG_CONFIG_HOME`` (default ``~/.config``) on Linux. Windows is
+        absent deliberately -- vox's daemon installs on macOS and Linux only
+        (:meth:`punt_vox.service.installer.ServiceInstaller.detect_platform`),
+        so no host vox supports reaches the refusal, and no unverified path is
+        guessed for one it does not.
         """
-        return (
-            Path.home()
-            / "Library"
-            / "Application Support"
-            / "Claude"
-            / "claude_desktop_config.json"
-        )
+        system = platform.system()
+        if system == "Darwin":
+            root = Path.home() / "Library" / "Application Support"
+        elif system == "Linux":
+            root = cls._xdg_config_home()
+        else:
+            msg = (
+                f"Unsupported platform: {system}. vox knows the Claude Desktop "
+                "config location on macOS and Linux only; register the MCP "
+                "server by hand on this platform."
+            )
+            raise ValueError(msg)
+        return root / cls._APP_DIR / cls._CONFIG_FILE
+
+    @staticmethod
+    def _xdg_config_home() -> Path:
+        """Return the Linux per-user config root, honouring ``XDG_CONFIG_HOME``.
+
+        Reading the environment is a system boundary: unset *and* empty both
+        mean "not configured" under the XDG basedir spec, and both fall back
+        to ``~/.config`` -- the root a stock Claude Desktop install writes.
+        """
+        return Path(os.environ.get("XDG_CONFIG_HOME") or "~/.config").expanduser()
 
     @classmethod
     def detect(cls, provider_name: str | None, audio_dir: Path) -> Self:

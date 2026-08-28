@@ -20,6 +20,82 @@ _MOD = "punt_vox.desktop_install"
 _SECRET = "sk-elevenlabs-supersecret-value"
 
 
+class TestConfigPath:
+    """``config_path`` is the single platform dispatch for the config location."""
+
+    def test_macos_path_under_application_support(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(f"{_MOD}.platform.system", lambda: "Darwin")
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        assert DesktopInstaller.config_path() == (
+            tmp_path
+            / "Library"
+            / "Application Support"
+            / "Claude"
+            / "claude_desktop_config.json"
+        )
+
+    def test_linux_path_defaults_to_dot_config(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A stock Linux install writes ``~/.config/Claude/``."""
+        monkeypatch.setattr(f"{_MOD}.platform.system", lambda: "Linux")
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        assert DesktopInstaller.config_path() == (
+            tmp_path / ".config" / "Claude" / "claude_desktop_config.json"
+        )
+
+    def test_linux_path_honours_xdg_config_home(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(f"{_MOD}.platform.system", lambda: "Linux")
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+        assert DesktopInstaller.config_path() == (
+            tmp_path / "xdg" / "Claude" / "claude_desktop_config.json"
+        )
+
+    def test_linux_empty_xdg_config_home_falls_back(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Empty means "not configured" under the XDG spec, same as unset."""
+        monkeypatch.setattr(f"{_MOD}.platform.system", lambda: "Linux")
+        monkeypatch.setenv("XDG_CONFIG_HOME", "")
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        assert DesktopInstaller.config_path() == (
+            tmp_path / ".config" / "Claude" / "claude_desktop_config.json"
+        )
+
+    def test_linux_xdg_config_home_expands_tilde(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(f"{_MOD}.platform.system", lambda: "Linux")
+        monkeypatch.setenv("XDG_CONFIG_HOME", "~/elsewhere")
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        assert DesktopInstaller.config_path() == (
+            tmp_path / "elsewhere" / "Claude" / "claude_desktop_config.json"
+        )
+
+    def test_unsupported_platform_refuses_rather_than_guessing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No path is invented for a platform vox has not verified.
+
+        Writing a macOS-shaped path on Windows would report success while
+        leaving a file Claude Desktop never reads.
+        """
+        monkeypatch.setattr(f"{_MOD}.platform.system", lambda: "Windows")
+
+        with pytest.raises(ValueError, match="Unsupported platform: Windows"):
+            DesktopInstaller.config_path()
+
+
 class TestServerEnvNeverCarriesSecret:
     def test_env_excludes_api_key_even_when_exported(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
