@@ -583,6 +583,97 @@ class TestCheckClaudeDesktop:
         assert results[1].passed is False
         assert "not registered" in results[1].message
 
+    def test_unsupported_platform_degrades_to_one_optional_row(self) -> None:
+        """A platform vox cannot name the config for must not crash the run.
+
+        ``config_path`` is partial -- it raises rather than inventing a path on
+        a platform Claude Desktop's location has not been verified for. Doctor
+        calls it, so the refusal has to land as a check row; an uncaught
+        ``ValueError`` here would abort ``vox doctor`` before every later
+        check (output dir, deposited guide) got to report.
+        """
+        with patch(
+            "punt_vox.desktop_install.DesktopInstaller.config_path",
+            side_effect=ValueError("Unsupported platform: Windows. vox knows ..."),
+        ):
+            results = DoctorCheck().check_claude_desktop()
+
+        assert len(results) == 1
+        assert results[0].required is False
+        assert results[0].passed is False
+        assert results[0].status_kind == "skip"
+        assert "Unsupported platform: Windows" in results[0].message
+
+    def test_unsupported_platform_leaves_the_rest_of_the_run_intact(self) -> None:
+        """The whole ``run_all`` schedule survives the refusal.
+
+        The row-level test above proves the catch; this proves the reason the
+        catch matters -- every other sub-check still produces its verdict.
+        """
+        client = MagicMock(spec=VoxClientSync)
+        client.health.side_effect = VoxdConnectionError("down")
+        client.provider_status.side_effect = VoxdConnectionError("down")
+        with patch(
+            "punt_vox.desktop_install.DesktopInstaller.config_path",
+            side_effect=ValueError("Unsupported platform: Windows."),
+        ):
+            results = DoctorCheck(client).run_all()
+
+        messages = [r.message for r in results]
+        assert any("Unsupported platform: Windows" in m for m in messages)
+        assert any(m.startswith("Python ") for m in messages)
+        assert any(m.startswith("output") for m in messages)
+
+    def test_non_object_config_is_reported_not_crashed(self, tmp_path: Path) -> None:
+        """``json.loads`` accepts a bare list; the ``mcpServers`` lookup would not.
+
+        A hand-edited config whose top level is an array parses cleanly and
+        then raises ``AttributeError`` on the lookup -- an unhandled crash in
+        a check whose whole job is to report on a file it does not own.
+        """
+        config = tmp_path / "config.json"
+        config.write_text(json.dumps(["not", "an", "object"]), encoding="utf-8")
+        with patch(
+            "punt_vox.desktop_install.DesktopInstaller.config_path",
+            return_value=config,
+        ):
+            results = DoctorCheck().check_claude_desktop()
+
+        assert len(results) == 2
+        assert "could not read config" in results[1].message
+        assert results[1].required is False
+
+    def test_malformed_json_is_reported_not_crashed(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.json"
+        config.write_text("{not json", encoding="utf-8")
+        with patch(
+            "punt_vox.desktop_install.DesktopInstaller.config_path",
+            return_value=config,
+        ):
+            results = DoctorCheck().check_claude_desktop()
+
+        assert len(results) == 2
+        assert "could not read config" in results[1].message
+
+    def test_non_object_mcpservers_is_not_a_false_registration(
+        self, tmp_path: Path
+    ) -> None:
+        """``"mcpServers": "vox"`` must not read as a registered vox entry.
+
+        A bare ``in`` test against a string is a substring test, so the old
+        shape would have called this host registered.
+        """
+        config = tmp_path / "config.json"
+        config.write_text(json.dumps({"mcpServers": "vox"}), encoding="utf-8")
+        with patch(
+            "punt_vox.desktop_install.DesktopInstaller.config_path",
+            return_value=config,
+        ):
+            results = DoctorCheck().check_claude_desktop()
+
+        assert results[1].passed is False
+        assert "not registered" in results[1].message
+
 
 # ---------------------------------------------------------------------------
 # CheckResults.format

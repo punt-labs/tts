@@ -574,10 +574,10 @@
   "src/punt_vox/doctor.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.19,
+    "avg_params": 0.22,
     "max_complexity": 6.0,
-    "avg_complexity": 3.12,
-    "module_size": 369.0,
+    "avg_complexity": 3.06,
+    "module_size": 371.0,
     "classes_per_module": 1.0,
     "class_to_func_ratio": 1.0,
     "init_violations": 0.0,

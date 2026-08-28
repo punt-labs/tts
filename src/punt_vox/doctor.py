@@ -14,22 +14,24 @@ import os
 import platform
 import shutil
 import sys
-from typing import Self
+from typing import TYPE_CHECKING, Self, cast
 
 from punt_vox.client_errors import VoxdConnectionError, VoxdProtocolError
 from punt_vox.client_sync import VoxClientSync
 from punt_vox.desktop_install import DesktopInstaller
-from punt_vox.dirs import default_output_dir, find_repo_root
+from punt_vox.dirs import (
+    _resolve_music_dir,  # pyright: ignore[reportPrivateUsage]
+    default_output_dir,
+    find_repo_root,
+)
 from punt_vox.doctor_mpv import MpvCheck
 from punt_vox.doctor_result import OK, OPTIONAL, CheckResult
 from punt_vox.guide_stamp import GuideStamp, GuideStampVerdict
 from punt_vox.paths import installed_version
 from punt_vox.types_provider import ProviderStatusPayload
 
-# ``MPV_MIN_VERSION`` is not imported here after the doctor_mpv split (the
-# constant is used only by :class:`MpvCheck`); doctor.py delegates the mpv
-# verdict, so the direct import from ``punt_vox.voxd.programs.mpv`` that
-# vox-w3f8 PR 3 re-added does not belong on this side of the split.
+if TYPE_CHECKING:
+    from pathlib import Path
 
 __all__ = ["DoctorCheck"]
 
@@ -154,9 +156,9 @@ class DoctorCheck:
                 )
             )
         else:
-            # Provider readiness lives on the ``provider_status`` op (design
-            # §3.6, delivered by PR 3); the daemon has no provider of its
-            # own, so the health line reports the version-and-port fact only.
+            # Provider readiness lives on the ``provider_status`` op; the
+            # daemon has no provider of its own, so the health line reports
+            # the version-and-port fact only.
             version_note = f", version {running_version}" if running_version else ""
             results.append(
                 CheckResult.ok(f"Daemon: running on port {port}{version_note}")
@@ -166,24 +168,19 @@ class DoctorCheck:
     def check_provider_readiness(self) -> list[CheckResult]:
         """Report the daemon's readiness verdict for every registered provider.
 
-        Every F2 error message points here (``... run `vox doctor```),
-        so this is where those pointers are answered.  The daemon owns
-        the verdict -- ``ProviderCredentials.report_all`` walks the
-        same requirement dispatch the resolution gate uses, so a
-        provider that ``vox doctor`` says is ready is exactly a
-        provider ``mic:unmute`` will not refuse for F2 reasons, and
-        vice versa (§3.4).  A ready provider is a green pass; an
-        unready one is a warning (optional) rather than a hard fail
-        because a single-provider host is a normal configuration --
-        only the state-declared provider being unavailable is a hard
-        failure, and that surfaces the moment the caller tries to
-        synthesize.
+        Every credentials error message points here (``... run `vox doctor```).
+        The daemon owns the verdict -- ``ProviderCredentials.report_all`` walks
+        the same requirement dispatch the resolution gate uses, so a provider
+        this reports ready is exactly a provider ``mic:unmute`` will not refuse
+        for credentials reasons, and vice versa. An unready provider is a
+        warning rather than a hard fail because a single-provider host is a
+        normal configuration; only the state-declared provider being
+        unavailable is fatal, and that surfaces at synthesis.
 
-        Voxd unreachable is reported once at the section head and
-        the per-provider walk is skipped, since the answer requires
-        the daemon's environment.  The caller-side environment is
-        deliberately NOT probed -- an earlier draft did, and it was
-        the D1 wrong-process defect (§3.5).
+        The caller-side environment is deliberately NOT probed: voxd is a
+        detached service with its own environment, so answering from this
+        process would report on the wrong one. Voxd unreachable is therefore
+        reported once at the section head and the per-provider walk skipped.
         """
         client = self._client or VoxClientSync()
         try:
@@ -262,10 +259,6 @@ class DoctorCheck:
         An in-jail path under the ``output`` root, reported as a relative verdict
         so its absolute prefix never crosses to a client.
         """
-        from punt_vox.dirs import (
-            _resolve_music_dir,  # pyright: ignore[reportPrivateUsage]
-        )
-
         music_dir = _resolve_music_dir()  # pyright: ignore[reportPrivateUsage]
         if not music_dir.is_dir():
             return [
@@ -286,62 +279,73 @@ class DoctorCheck:
         )
 
     def check_claude_desktop(self) -> list[CheckResult]:
-        """Check Claude Desktop config and MCP registration."""
-        results: list[CheckResult] = []
-        config_path = DesktopInstaller.config_path()
+        """Check Claude Desktop config and MCP registration.
+
+        ``config_path`` is a *partial* function: it names the file only on the
+        platforms vox has verified Claude Desktop's location for, and raises
+        for the rest rather than guessing one. Every other sub-check still has
+        an answer on such a host, so the refusal degrades to a single optional
+        row -- a doctor run that aborts on an uncheckable optional dependency
+        reports nothing about the ones that matter. This mirrors
+        :meth:`~punt_vox.service.installer.ServiceInstaller.detect_platform`,
+        whose ``SystemExit`` Typer renders as one clean line.
+        """
+        try:
+            config_path = DesktopInstaller.config_path()
+        except ValueError as exc:
+            return [CheckResult.of(OPTIONAL, f"Claude Desktop: {exc}", required=False)]
 
         if not config_path.exists():
-            results.append(
+            return [
                 CheckResult.of(
-                    OPTIONAL,
-                    "Claude Desktop config: not found",
-                    required=False,
-                )
-            )
-            results.append(
-                CheckResult.of(
-                    OPTIONAL,
-                    "Claude Desktop MCP: not registered (run 'vox desktop install')",
-                    required=False,
-                )
-            )
-            return results
+                    OPTIONAL, "Claude Desktop config: not found", required=False
+                ),
+                self._not_registered(),
+            ]
 
-        # Out of jail (under ~/Library, neither data root): present/absent
-        # verdict only -- the absolute config path never crosses to a client.
-        results.append(
-            CheckResult.of(OK, "Claude Desktop config: present", required=False)
+        # Out of jail (under ~/Library or $XDG_CONFIG_HOME, neither data root):
+        # present/absent verdict only -- the absolute config path never crosses
+        # to a client.
+        return [
+            CheckResult.of(OK, "Claude Desktop config: present", required=False),
+            self._registration_verdict(config_path),
+        ]
+
+    @staticmethod
+    def _not_registered() -> CheckResult:
+        """Return the "no vox entry" row, with the command that creates one."""
+        return CheckResult.of(
+            OPTIONAL,
+            "Claude Desktop MCP: not registered (run 'vox desktop install')",
+            required=False,
         )
 
+    @classmethod
+    def _registration_verdict(cls, config_path: Path) -> CheckResult:
+        """Return whether an existing config registers the vox MCP server.
+
+        Reading someone else's config file is a system boundary: unparseable
+        JSON, an unreadable file, or a top level that is not a JSON object are
+        all reported as "could not read", never as a crash and never as a false
+        "not registered". The non-object case is the one that bites silently --
+        ``json.loads`` accepts a bare list or string happily and only the
+        ``mcpServers`` lookup afterwards would raise.
+        """
+        parsed: object
         try:
-            data = json.loads(config_path.read_text(encoding="utf-8"))
-            servers = data.get("mcpServers", {})
-            if "vox" in servers:
-                results.append(
-                    CheckResult.of(
-                        OK,
-                        "Claude Desktop MCP: registered",
-                        required=False,
-                    )
-                )
-            else:
-                results.append(
-                    CheckResult.of(
-                        OPTIONAL,
-                        "Claude Desktop MCP: not registered"
-                        " (run 'vox desktop install')",
-                        required=False,
-                    )
-                )
+            parsed = json.loads(config_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
-            results.append(
-                CheckResult.of(
-                    OPTIONAL,
-                    "Claude Desktop MCP: could not read config",
-                    required=False,
-                )
+            # Unreadable and non-object share one verdict, so a parse failure
+            # falls through to the same gate rather than duplicating the row.
+            parsed = None
+        if not isinstance(parsed, dict):
+            return CheckResult.of(
+                OPTIONAL, "Claude Desktop MCP: could not read config", required=False
             )
-        return results
+        servers = cast("dict[str, object]", parsed).get("mcpServers")
+        if isinstance(servers, dict) and "vox" in servers:
+            return CheckResult.of(OK, "Claude Desktop MCP: registered", required=False)
+        return cls._not_registered()
 
     def check_output_dir(self) -> list[CheckResult]:
         """Check the output dir -- writable verdict, no abs path or raw OSError.

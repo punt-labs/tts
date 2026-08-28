@@ -26,6 +26,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   deliberately still unsupported: vox's daemon installs on macOS and Linux only,
   so no supported host reaches the refusal, and no unverified path is guessed
   for one that does.
+- **`vox doctor` no longer aborts on a host whose Claude Desktop config
+  location vox cannot name (vox-1gub).** Making `config_path()` refuse instead
+  of guessing turned it into a partial function, and `check_claude_desktop()`
+  still called it bare — so on an unsupported platform the whole doctor run
+  died with an uncaught `ValueError` traceback, taking every later check (output
+  directory writability, the deposited-guide freshness stamp) with it. The
+  refusal is now caught and reported as a single optional row naming the
+  platform, the way `ServiceInstaller.detect_platform()`'s refusal already
+  renders as one clean line. Two further crash paths in the same check are
+  closed: a `claude_desktop_config.json` whose top level is a JSON array or
+  string parses fine and then raised `AttributeError` on the `mcpServers`
+  lookup, and a non-object `mcpServers` value made `"vox" in servers` a
+  substring test that could report an unregistered host as registered. Both
+  now report "could not read config" / "not registered" instead.
 
 ## [5.0.2] - 2026-08-26
 
