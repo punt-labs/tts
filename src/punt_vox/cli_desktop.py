@@ -142,16 +142,21 @@ class DesktopCli:
         0600 and carries it through, leaving the config owner-only the way the
         Claude Desktop app writes it. A failed write takes its temp file with
         it rather than leaving a stray dotfile behind.
+
+        A symlinked config (chezmoi, stow) is written *through*: renaming onto
+        the link replaces it with a regular file and strands the real target on
+        the old registration, which the owning tool restores on its next apply.
         """
+        target = config_path.resolve() if config_path.is_symlink() else config_path
         fd, tmp_name = tempfile.mkstemp(
-            dir=config_path.parent, prefix=f".{config_path.name}.", suffix=".tmp"
+            dir=target.parent, prefix=f".{target.name}.", suffix=".tmp"
         )
         tmp_path = Path(tmp_name)
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 handle.write(text)
             tmp_path.chmod(cls._CONFIG_MODE)
-            tmp_path.replace(config_path)
+            tmp_path.replace(target)
         except OSError:
             tmp_path.unlink(missing_ok=True)
             raise

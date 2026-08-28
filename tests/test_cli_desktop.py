@@ -430,6 +430,43 @@ class TestConfigWriteIsAtomicAndPrivate:
             config_path.name
         ]
 
+    def test_a_symlinked_config_is_written_through_not_replaced(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A dotfiles-managed config is a symlink; the rename must not eat it.
+
+        Renaming onto the link replaces it with a regular file and leaves the
+        real target holding the old registration -- which chezmoi or stow then
+        restores over vox's write on the next apply.
+        """
+        config_path = _linux_host(monkeypatch, tmp_path)
+        real = tmp_path / "dotfiles" / "claude_desktop_config.json"
+        real.parent.mkdir(parents=True)
+        real.write_text(
+            json.dumps({"mcpServers": {"other": {"command": "x"}}}), encoding="utf-8"
+        )
+        config_path.parent.mkdir(parents=True)
+        config_path.symlink_to(real)
+
+        assert _install(out=tmp_path / "audio").exit_code == 0
+
+        assert config_path.is_symlink()
+        assert config_path.readlink() == real
+        installed = json.loads(real.read_text(encoding="utf-8"))
+        assert installed["mcpServers"]["vox"]["args"] == [
+            "--from",
+            "punt-vox",
+            "vox",
+            "mcp",
+        ]
+        assert "other" in installed["mcpServers"]
+        assert sorted(p.name for p in real.parent.iterdir()) == [real.name]
+
+        assert CliRunner().invoke(app, ["desktop", "uninstall"]).exit_code == 0
+
+        assert config_path.is_symlink()
+        assert "vox" not in json.loads(real.read_text(encoding="utf-8"))["mcpServers"]
+
     def test_a_dying_write_removes_its_own_temp_file(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
