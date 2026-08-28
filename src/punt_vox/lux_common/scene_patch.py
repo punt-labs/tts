@@ -117,8 +117,19 @@ class SceneTree:
         the same order, and give each element the same field names -- a field that
         appears in one render and vanishes in the other is a roster change the
         patch seam cannot express, so it re-installs instead.
+
+        Ids must also be unique. Diffing addresses elements by id, so a repeated
+        one would silently collapse to whichever came last and the other's changes
+        would never be emitted. Checking this tree's ids covers both, since the
+        two carry identical id tuples by the time the check runs.
         """
-        if self.unidentified or previous.unidentified or self.ids != previous.ids:
+        ids = self.ids
+        if (
+            self.unidentified
+            or previous.unidentified
+            or ids != previous.ids
+            or len(set(ids)) != len(ids)
+        ):
             return False
         before = dict(previous.elements)
         return all(

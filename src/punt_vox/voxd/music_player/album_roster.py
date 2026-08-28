@@ -40,12 +40,17 @@ logger = logging.getLogger(__name__)
 class AlbumRoster:
     """The readable catalog paired with each album's live ready-Part count."""
 
-    __slots__ = ("_displays",)
+    __slots__ = ("_albums", "_displays")
     _displays: tuple[AlbumDisplay, ...]
+    # Derived once here rather than per access: the scene reads it three times
+    # per render (the table, the names map, and the player view), and a property
+    # that rebuilds a tuple each time is a method wearing an attribute's clothes.
+    _albums: tuple[Album, ...]
 
     def __new__(cls, displays: tuple[AlbumDisplay, ...]) -> Self:
         self = super().__new__(cls)
         self._displays = displays
+        self._albums = tuple(display.album for display in displays)
         return self
 
     @classmethod
@@ -56,7 +61,7 @@ class AlbumRoster:
     @property
     def albums(self) -> tuple[Album, ...]:
         """Return the albums the store still holds, in catalog order."""
-        return tuple(display.album for display in self._displays)
+        return self._albums
 
     @property
     def displays(self) -> tuple[AlbumDisplay, ...]:

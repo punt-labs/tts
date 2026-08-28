@@ -100,16 +100,16 @@ class AlbumTable:
             "kind": "table",
             "id": _TABLE_ID,
             "columns": list(_COLUMNS),
-            # ``rows`` precedes ``selected_row_ids`` and must keep doing so: on a
-            # patch, lux's setters run in this order and the selection is
-            # intersected against the rows *as they stand at setter time*, so a
-            # selection written first would name ids the old row set lacks and be
-            # silently dropped.
             "rows": [self._row(display, names) for display in self.roster.displays],
             "key_column": _KEY_COLUMN,
             "selection_mode": "single",
             "flags": list(_FLAGS),
             "handlers": [{"event": _ROW_EVENT, "publish": [MusicTopic.PLAY.value]}],
+            # The selection is spread LAST, and must stay last: on a patch lux
+            # runs the setters in the order the fields arrive, and
+            # ``_set_selected_row_ids`` intersects the ids against the rows *as
+            # they stand at setter time*. A selection written before ``rows``
+            # would name ids the old row set lacks and be silently dropped.
             **self._selection(names),
         }
 

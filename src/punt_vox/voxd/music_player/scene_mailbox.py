@@ -71,6 +71,13 @@ class SceneMailbox:
         (both writers set ``_latest`` before the event). Should that invariant
         ever break, self-heal: log and re-await the next submit rather than
         raise, so the drainer never dies silently on a spurious wakeup.
+
+        The intent is cleared when the delivery is *taken*, not when its push
+        succeeds, so a click whose install then fails would leave nothing here to
+        retry. That is safe only because ``LuxScenePublisher`` disarms its
+        ``LiveScene`` on both the outage and the refusal paths, which makes the
+        next push an install regardless of what this mailbox remembers. Drop that
+        disarm and the intent would have to survive a failed push instead.
         """
         while True:
             await self._ready.wait()

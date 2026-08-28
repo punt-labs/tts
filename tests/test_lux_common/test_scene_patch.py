@@ -82,6 +82,14 @@ class TestPatchability:
             _tree(_text("one", "a"), _text("two", "b"))
         )
 
+    def test_a_repeated_id_is_not_patchable(self) -> None:
+        # Diffing addresses elements by id, so a repeated one would collapse to
+        # whichever came last and the other's changes would never be emitted.
+        # Fail toward install, the same way an unaddressable element does.
+        before = _tree(_text("dup", "a"), _text("dup", "b"))
+        current = _tree(_text("dup", "a"), _text("dup", "c"))
+        assert not current.patchable_against(before)
+
     def test_a_vanishing_field_is_not_patchable(self) -> None:
         before = _tree({"kind": "table", "id": "t", "rows": [], "selected_row_ids": []})
         current = _tree({"kind": "table", "id": "t", "rows": []})

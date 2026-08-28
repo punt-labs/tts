@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, final, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, final
 
 from punt_lux import OpError
 from punt_lux.operations import UpdateRequest
@@ -38,9 +38,14 @@ __all__ = ["InstallScene", "NoPush", "PatchScene", "ScenePush"]
 logger = logging.getLogger(__name__)
 
 
-@runtime_checkable
 class ScenePush(Protocol):
-    """One planned push, knowing how to put itself on the wire (PY-DP-11)."""
+    """One planned push, knowing how to put itself on the wire (PY-DP-11).
+
+    Structural only, deliberately not ``runtime_checkable``: nothing isinstances
+    a push, and the decorator could not check this shape honestly if anything
+    did -- it verifies member *names*, not that ``apply`` is a coroutine or that
+    ``summary`` is a property, which is the whole contract here.
+    """
 
     async def apply(self, client: LuxClient) -> OpError | None:
         """Complete the push; return luxd's refusal, or ``None`` on success.
