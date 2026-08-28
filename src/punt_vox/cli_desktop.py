@@ -120,11 +120,14 @@ class DesktopCli:
         """Replace the config, or refuse with a clean error.
 
         Symmetric with :meth:`_load_config`: a filesystem failure at this
-        boundary becomes one Typer error line, not a traceback.
+        boundary becomes one Typer error line, not a traceback. Text that
+        cannot be encoded to UTF-8 fails in the write rather than in
+        ``json.dumps``, so ``UnicodeError`` is caught alongside the I/O
+        failures -- it is the same "unwritable config" verdict.
         """
         try:
             self._replace_atomically(config_path, json.dumps(data, indent=2) + "\n")
-        except OSError as exc:
+        except (OSError, UnicodeError) as exc:
             detail = f"Could not write {config_path}: {exc}"
             self._formatter.error(detail, f"Error: {detail}")
             raise typer.Exit(code=1) from exc
@@ -157,7 +160,7 @@ class DesktopCli:
                 handle.write(text)
             tmp_path.chmod(cls._CONFIG_MODE)
             tmp_path.replace(target)
-        except OSError:
+        except (OSError, UnicodeError):
             tmp_path.unlink(missing_ok=True)
             raise
 

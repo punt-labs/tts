@@ -15,6 +15,7 @@ import pytest
 from typer.testing import CliRunner, Result
 
 from punt_vox.__main__ import app
+from punt_vox.cli_desktop import DesktopCli
 
 _INSTALL_MOD = "punt_vox.desktop_install"
 _CLI_MOD = "punt_vox.cli_desktop"
@@ -483,6 +484,46 @@ class TestConfigWriteIsAtomicAndPrivate:
         result = _install(out=tmp_path / "audio")
 
         assert result.exit_code == 1
+        assert sorted(p.name for p in config_path.parent.iterdir()) == [
+            config_path.name
+        ]
+
+    def test_an_unencodable_write_is_reported_not_raised(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Encoding failure is the same "unwritable config" verdict as I/O.
+
+        ``handle.write`` raises ``UnicodeEncodeError`` -- not an ``OSError`` --
+        for text the UTF-8 handle cannot encode, so catching only ``OSError``
+        would bypass the error envelope and crash with a traceback.
+        """
+        config_path = _linux_host(monkeypatch, tmp_path)
+        config_path.parent.mkdir(parents=True)
+        original = json.dumps({"mcpServers": {"other": {"command": "x"}}})
+        config_path.write_text(original, encoding="utf-8")
+
+        def _boom(_self: object, _path: Path, _text: str) -> None:
+            raise UnicodeEncodeError("utf-8", "\ud800", 0, 1, "surrogates not allowed")
+
+        monkeypatch.setattr(f"{_CLI_MOD}.DesktopCli._replace_atomically", _boom)
+
+        result = _install(out=tmp_path / "audio")
+
+        assert result.exit_code == 1
+        assert "Could not write" in result.output
+        assert config_path.read_text(encoding="utf-8") == original
+
+    def test_an_unencodable_write_removes_its_own_temp_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The swap's cleanup covers encoding failures, not only I/O ones."""
+        config_path = _linux_host(monkeypatch, tmp_path)
+        config_path.parent.mkdir(parents=True)
+        config_path.write_text(json.dumps({"mcpServers": {}}), encoding="utf-8")
+
+        with pytest.raises(UnicodeEncodeError):
+            DesktopCli._replace_atomically(config_path, "\ud800")
+
         assert sorted(p.name for p in config_path.parent.iterdir()) == [
             config_path.name
         ]
