@@ -52,11 +52,22 @@ class LaunchdBackend:
 
     @staticmethod
     def _extra_env() -> dict[str, str]:
-        """Return extra env vars to bake into the launchd plist."""
+        """Return extra env vars to bake into the launchd plist.
+
+        ``SSL_CERT_FILE`` and ``REQUESTS_CA_BUNDLE`` are forwarded when set so
+        that voxd can reach HTTPS endpoints behind a corporate TLS-inspection
+        proxy (e.g. Zscaler) without requiring a separate ``launchctl
+        bootout``/``bootstrap`` cycle in activation scripts.  Propagating them
+        here means ``vox daemon install`` captures them in one pass, removing
+        the structural difference that made vox's nix-darwin home-manager
+        activation block the only one to perform that dance immediately before
+        ``claude plugin install`` (the window where SSL cert errors appeared).
+        """
         extras: dict[str, str] = {}
-        bind = os.environ.get("VOXD_BIND")
-        if bind:
-            extras["VOXD_BIND"] = bind
+        for key in ("VOXD_BIND", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE"):
+            value = os.environ.get(key)
+            if value:
+                extras[key] = value
         return extras
 
     def _program_args_xml(self) -> str:

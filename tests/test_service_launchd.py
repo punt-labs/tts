@@ -128,6 +128,44 @@ def test_launchd_plist_contains_path_from_env() -> None:
     assert "/opt/homebrew/bin:/usr/bin:/bin" in content
 
 
+@patch.dict(
+    "os.environ",
+    {
+        "SSL_CERT_FILE": "/etc/ssl/certs/zscaler.pem",
+        "REQUESTS_CA_BUNDLE": "/etc/ssl/certs/zscaler.pem",
+    },
+)
+def test_launchd_plist_bakes_ssl_cert_env_vars() -> None:
+    """SSL_CERT_FILE and REQUESTS_CA_BUNDLE are forwarded into the plist.
+
+    When a corporate TLS-inspection proxy (e.g. Zscaler) injects a custom CA,
+    these env vars must travel with voxd so it can reach HTTPS endpoints.
+    Baking them here eliminates a second bootout/bootstrap cycle in activation
+    scripts -- the structural difference that intermittently broke
+    ``claude plugin install`` with an SSL cert error (issue #473).
+    """
+    be = LaunchdBackend(
+        ProcessManager(),
+        lambda: ["/usr/local/bin/voxd", "--port", "8421"],
+    )
+    content = be.plist_content()
+    assert "<key>SSL_CERT_FILE</key>" in content
+    assert "<key>REQUESTS_CA_BUNDLE</key>" in content
+    assert "/etc/ssl/certs/zscaler.pem" in content
+
+
+@patch.dict("os.environ", {}, clear=True)
+def test_launchd_plist_omits_ssl_cert_env_vars_when_absent() -> None:
+    """SSL_CERT_FILE and REQUESTS_CA_BUNDLE are omitted when not set."""
+    be = LaunchdBackend(
+        ProcessManager(),
+        lambda: ["/usr/local/bin/voxd", "--port", "8421"],
+    )
+    content = be.plist_content()
+    assert "<key>SSL_CERT_FILE</key>" not in content
+    assert "<key>REQUESTS_CA_BUNDLE</key>" not in content
+
+
 # ---------------------------------------------------------------------------
 # stop -- delegates to the composed LaunchctlAgent
 # ---------------------------------------------------------------------------
