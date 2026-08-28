@@ -15,6 +15,8 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
+from punt_vox.lux_common import LiveScene
+from punt_vox.lux_common.scene_push import PatchScene
 from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.voxd.music_player.album_display import AlbumDisplay
 from punt_vox.voxd.music_player.album_roster import AlbumRoster
@@ -24,7 +26,9 @@ from punt_vox.voxd.music_player.player_view import PlayerView
 from punt_vox.voxd.music_player.scene import AlbumListScene
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
+
+    from punt_lux import RenderRequest
 
     from punt_vox.voxd.programs.catalog import Album
 
@@ -342,3 +346,106 @@ def test_silent_notice_leaves_the_status_line_empty(album_of: AlbumFactory) -> N
     scene = _scene((album_of("aa11bb"),), PlayerView.idle())
 
     assert _by_id(scene.render_request().elements, "music.status")["content"] == ""
+
+
+class TestSuccessiveRendersArePatchable:
+    """What two real vox.music renders ask the differ for, transition by transition.
+
+    These are the properties the reported bug turns on: every playback transition
+    has to be expressible as a field patch, or the push falls back to a full
+    install and the frame comes forward on its own.
+    """
+
+    @staticmethod
+    def _patched(
+        before: RenderRequest, after: RenderRequest
+    ) -> dict[str, Mapping[str, object]]:
+        """Return the patch the differ emits for ``before`` -> ``after``, by id."""
+        live = LiveScene()
+        live.plan(before)
+        push = live.plan(after)
+        assert isinstance(push, PatchScene)
+        return {patch.element_id: patch.fields for patch in push.patches.patches}
+
+    def test_a_track_change_patches_only_the_position_line(
+        self, album_of: AlbumFactory, playing_of: PlayingFactory
+    ) -> None:
+        # Mid-pool, so no transport boundary flips with it: the whole widget's
+        # answer to advancing a track is one content string.
+        album = album_of("aa11bb", name="Techno Mix", tracks=12)
+        second = _scene(
+            (album,), PlayerView.from_status(playing_of(album, 2, 12), (album,))
+        )
+        third = _scene(
+            (album,), PlayerView.from_status(playing_of(album, 3, 12), (album,))
+        )
+
+        patched = self._patched(second.render_request(), third.render_request())
+
+        assert patched == {"music.now.position": {"content": "3 of 12"}}
+
+    def test_reaching_the_first_track_also_enables_the_prev_button(
+        self, album_of: AlbumFactory, playing_of: PlayingFactory
+    ) -> None:
+        # The boundary case of the above: leaving track 1 un-greys prev, so that
+        # change rides the same patch rather than forcing a re-install.
+        album = album_of("aa11bb", name="Techno Mix", tracks=12)
+        first = _scene(
+            (album,), PlayerView.from_status(playing_of(album, 1, 12), (album,))
+        )
+        second = _scene(
+            (album,), PlayerView.from_status(playing_of(album, 2, 12), (album,))
+        )
+
+        patched = self._patched(first.render_request(), second.render_request())
+
+        assert patched["music.transport.prev"] == {"disabled": False}
+
+    def test_idle_to_playing_patches_rather_than_installing(
+        self, album_of: AlbumFactory, playing_of: PlayingFactory
+    ) -> None:
+        # The most consequential refresh there is: the user just pressed play. An
+        # install here would raise the frame at exactly the wrong moment.
+        album = album_of("aa11bb", name="Techno Mix", tracks=12)
+        idle = _scene((album,), PlayerView.idle())
+        playing = _scene(
+            (album,), PlayerView.from_status(playing_of(album, 1, 12), (album,))
+        )
+
+        patched = self._patched(idle.render_request(), playing.render_request())
+
+        assert "music.now.album" in patched  # the heading, not a new element
+
+    def test_play_to_pause_patches_the_buttons_label_tooltip_and_topic(
+        self, album_of: AlbumFactory, playing_of: PlayingFactory
+    ) -> None:
+        # The play/pause button flips its glyph, its tooltip, AND the topic it
+        # publishes, so ``publish`` having a setter in lux is load-bearing here.
+        album = album_of("aa11bb", name="Techno Mix", tracks=12)
+        status = playing_of(album, 1, 12)
+        playing = _scene((album,), PlayerView.from_status(status, (album,)))
+        paused = _scene((album,), PlayerView.from_status(_paused(status), (album,)))
+
+        patched = self._patched(playing.render_request(), paused.render_request())
+
+        assert set(patched["music.transport.playpause"]) == {
+            "label",
+            "tooltip",
+            "publish",
+        }
+        assert "music.transport" not in patched  # the group is descended, never patched
+
+    def test_active_to_idle_empties_the_row_selection(
+        self, album_of: AlbumFactory, playing_of: PlayingFactory
+    ) -> None:
+        # The vanishing-field guard: stopping playback must actively clear the
+        # highlight, not silently leave it on the row that stopped.
+        album = album_of("aa11bb", name="Techno Mix", tracks=12)
+        playing = _scene(
+            (album,), PlayerView.from_status(playing_of(album, 1, 12), (album,))
+        )
+        idle = _scene((album,), PlayerView.idle())
+
+        patched = self._patched(playing.render_request(), idle.render_request())
+
+        assert patched["music.albums"] == {"selected_row_ids": []}
