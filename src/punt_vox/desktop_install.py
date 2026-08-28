@@ -69,6 +69,10 @@ class DesktopInstaller:
     _APP_DIR: ClassVar[str] = "Claude"
     _CONFIG_FILE: ClassVar[str] = "claude_desktop_config.json"
 
+    # The XDG basedir spec's own default for ``XDG_CONFIG_HOME``, used
+    # whenever the variable is unset, empty, or relative.
+    _DEFAULT_CONFIG_HOME: ClassVar[str] = "~/.config"
+
     def __new__(cls, provider: str, audio_dir: Path) -> Self:
         self = super().__new__(cls)
         self._provider = provider
@@ -110,15 +114,25 @@ class DesktopInstaller:
             raise ValueError(msg)
         return root / cls._APP_DIR / cls._CONFIG_FILE
 
-    @staticmethod
-    def _xdg_config_home() -> Path:
+    @classmethod
+    def _xdg_config_home(cls) -> Path:
         """Return the Linux per-user config root, honouring ``XDG_CONFIG_HOME``.
 
-        Reading the environment is a system boundary: unset *and* empty both
-        mean "not configured" under the XDG basedir spec, and both fall back
-        to ``~/.config`` -- the root a stock Claude Desktop install writes.
+        Reading the environment is a system boundary, and the XDG basedir spec
+        names three ways the variable can fail to configure anything: unset,
+        empty, and *relative* -- a relative path "should [be considered]
+        invalid and ignored". All three fall back to ``~/.config``, the root a
+        stock Claude Desktop install writes.
+
+        Ignoring the relative case is what matters: resolving one would anchor
+        the registration to whatever directory ``vox`` was run from, writing a
+        config Claude Desktop never reads. Absoluteness is judged *after*
+        ``expanduser`` so a legitimate ``~/elsewhere`` still resolves.
         """
-        return Path(os.environ.get("XDG_CONFIG_HOME") or "~/.config").expanduser()
+        configured = Path(os.environ.get("XDG_CONFIG_HOME", "")).expanduser()
+        if configured.is_absolute():
+            return configured
+        return Path(cls._DEFAULT_CONFIG_HOME).expanduser()
 
     @classmethod
     def detect(cls, provider_name: str | None, audio_dir: Path) -> Self:

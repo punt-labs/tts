@@ -74,6 +74,11 @@ class TestConfigPath:
     def test_linux_xdg_config_home_expands_tilde(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """A tilde path is absolute once expanded, so it is honoured.
+
+        Guards the relative-path rejection below from over-reaching:
+        ``~/elsewhere`` is not absolute as written, only after ``expanduser``.
+        """
         monkeypatch.setattr(f"{_MOD}.platform.system", lambda: "Linux")
         monkeypatch.setenv("XDG_CONFIG_HOME", "~/elsewhere")
         monkeypatch.setenv("HOME", str(tmp_path))
@@ -81,6 +86,41 @@ class TestConfigPath:
         assert DesktopInstaller.config_path() == (
             tmp_path / "elsewhere" / "Claude" / "claude_desktop_config.json"
         )
+
+    @pytest.mark.parametrize("relative", ["elsewhere", "./elsewhere", "../elsewhere"])
+    def test_linux_relative_xdg_config_home_is_treated_as_unset(
+        self, relative: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The XDG spec says a relative value is invalid and must be ignored.
+
+        Resolving one would anchor the registration to whatever directory
+        ``vox`` happened to be run from, writing a config Claude Desktop never
+        reads -- the same silent wrong-path failure as not knowing the Linux
+        root at all.
+        """
+        monkeypatch.setattr(f"{_MOD}.platform.system", lambda: "Linux")
+        monkeypatch.setenv("XDG_CONFIG_HOME", relative)
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        assert DesktopInstaller.config_path() == (
+            tmp_path / ".config" / "Claude" / "claude_desktop_config.json"
+        )
+
+    def test_relative_xdg_config_home_does_not_follow_the_process_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The fallback is the home root, never the caller's shell cwd."""
+        cwd = tmp_path / "somewhere-else"
+        cwd.mkdir()
+        monkeypatch.setattr(f"{_MOD}.platform.system", lambda: "Linux")
+        monkeypatch.setenv("XDG_CONFIG_HOME", "relative/config")
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.chdir(cwd)
+
+        resolved = DesktopInstaller.config_path()
+
+        assert cwd not in resolved.parents
+        assert resolved.is_absolute()
 
     def test_unsupported_platform_refuses_rather_than_guessing(
         self, monkeypatch: pytest.MonkeyPatch

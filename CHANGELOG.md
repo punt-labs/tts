@@ -40,6 +40,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lookup, and a non-object `mcpServers` value made `"vox" in servers` a
   substring test that could report an unregistered host as registered. Both
   now report "could not read config" / "not registered" instead.
+- **A relative `XDG_CONFIG_HOME` no longer sends the Claude Desktop
+  registration into the caller's shell working directory (vox-1gub).** The XDG
+  basedir spec directs an implementation that meets a relative path in these
+  variables to treat it as invalid and ignore it; vox resolved it instead, so
+  `XDG_CONFIG_HOME=config vox desktop install` wrote
+  `./config/Claude/claude_desktop_config.json` under whatever directory the
+  command ran from — a file Claude Desktop never reads, reported as a success.
+  Relative now falls back to `~/.config` alongside unset and empty.
+  Absoluteness is judged after tilde expansion, so `XDG_CONFIG_HOME=~/elsewhere`
+  is still honoured.
 
 ## [5.0.2] - 2026-08-26
 
