@@ -140,10 +140,8 @@ def test_launchd_plist_bakes_ssl_cert_env_vars() -> None:
 
     When a corporate TLS-inspection proxy (e.g. Zscaler) injects a custom CA,
     these env vars must travel with voxd so it can reach HTTPS endpoints.
-    Baking them here eliminates a second bootout/bootstrap cycle in activation
-    scripts -- the structural difference that intermittently broke
-    ``claude plugin install`` with an SSL cert error (issue #473).
-    """
+    Baking them into the plist ensures voxd starts under launchd with the same
+    CA configuration that was present at install time.
     be = LaunchdBackend(
         ProcessManager(),
         lambda: ["/usr/local/bin/voxd", "--port", "8421"],
