@@ -10,11 +10,40 @@ from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Self, final
+from typing import Protocol, Self, final
 
 from websockets.asyncio.client import ClientConnection, connect
 
 from spike_tools import ToolBelt
+
+
+class AudioSink(Protocol):
+    """Where agent audio goes; live mode plays it, text mode discards it."""
+
+    async def play(self, pcm: bytes) -> None:
+        """Queue one PCM chunk for playback."""
+        ...
+
+    async def flush(self) -> None:
+        """Drop queued audio immediately (barge-in)."""
+        ...
+
+
+@final
+class NullAudioSink:
+    """Do-nothing sink for text-only sessions."""
+
+    __slots__ = ()
+
+    def __new__(cls) -> Self:
+        return super().__new__(cls)
+
+    async def play(self, pcm: bytes) -> None:  # noqa: ARG002 -- Null Object, PY-DP-9
+        return
+
+    async def flush(self) -> None:
+        return
+
 
 # Server events that show the agent advancing the conversation. The first
 # one received after a client_tool_result closes that invocation's
@@ -156,6 +185,7 @@ class ConvAISession:
     _toolbelt: ToolBelt
     _trace: EventTrace
     _overrides: dict[str, object]
+    _sink: AudioSink
     _ws: ClientConnection | None
     _send_lock: asyncio.Lock
     _recv_task: asyncio.Task[None] | None
@@ -178,12 +208,14 @@ class ConvAISession:
         toolbelt: ToolBelt,
         trace: EventTrace,
         overrides: Mapping[str, object],
+        sink: AudioSink | None = None,  # None -> NullAudioSink (text mode)
     ) -> Self:
         self = super().__new__(cls)
         self._url = url
         self._toolbelt = toolbelt
         self._trace = trace
         self._overrides = dict(overrides)
+        self._sink = sink if sink is not None else NullAudioSink()
         self._ws = None
         self._send_lock = asyncio.Lock()
         self._recv_task = None
@@ -389,18 +421,13 @@ class ConvAISession:
             "audio",
             {"bytes_b64": len(audio_b64), "event_id": event.get("event_id")},
         )
-        await self._handle_audio(event)
-
-    async def _handle_audio(self, event: dict[str, object]) -> None:
-        """Hook for live mode; the base session ignores audio payloads."""
+        if audio_b64:
+            await self._sink.play(base64.b64decode(audio_b64))
 
     async def _on_interruption(self, message: dict[str, object]) -> None:
         event = self._event_body(message, "interruption_event")
         self._trace.record("recv", "interruption", event)
-        await self._handle_interruption()
-
-    async def _handle_interruption(self) -> None:
-        """Hook for live mode; the base session has no playback to flush."""
+        await self._sink.flush()
 
     async def _on_correction(self, message: dict[str, object]) -> None:
         event = self._event_body(message, "agent_response_correction_event")

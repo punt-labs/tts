@@ -20,9 +20,12 @@ from spike_tools import ToolBelt
 
 _HERE = Path(__file__).parent
 _AGENT_FILE = _HERE / "agent.json"
-_LLM = "gemini-2.0-flash"
 
-_BASE_PROMPT = """\
+# Shared with run_automated.py: the prompt override must carry the base
+# prompt too, because an override REPLACES the agent prompt wholesale.
+LLM_ID = "gemini-2.0-flash"
+
+BASE_PROMPT = """\
 You are the vox voice agent for a coding session at Punt Labs.
 Keep replies short -- one or two sentences -- this is a voice conversation.
 
@@ -52,12 +55,12 @@ def main() -> None:
         print(f"created {len(tool_ids)} client tools: {', '.join(tool_ids)}")
         agent_id = plane.create_agent(
             name="vox-bst7-spike",
-            prompt=_BASE_PROMPT,
+            prompt=BASE_PROMPT,
             first_message=_FIRST_MESSAGE,
-            llm=_LLM,
+            llm=LLM_ID,
             tool_ids=tool_ids,
         )
-        print(f"created agent {agent_id} (llm={_LLM})")
+        print(f"created agent {agent_id} (llm={LLM_ID})")
         AgentHandle(agent_id=agent_id, tool_ids=tool_ids).save(_AGENT_FILE)
         print(f"wrote {_AGENT_FILE}")
     finally:
