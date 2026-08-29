@@ -1,19 +1,83 @@
 # vox-bst7 spike report — EL Conversational AI as the E+ LLM host
 
-**Status: automated criteria measured (2026-08-29). Live barge-in test
-pending, by design — it needs the operator.**
+**Status: both kill criteria adjudicated (2026-08-29). Criterion 2 by
+automated audio injection; operator live confirmation of audio UX still
+pending, by design.**
 
 ## Verdicts (DES-069 kill criteria)
 
 - **p95 tool round-trip < 1.5s: PASS (measured 993ms)** — overall
   EL-attributable overhead p95 across n=27 client-tool invocations,
   real WAN, three sessions (`results/metrics_20260829T203630Z.json`).
-- **barge-in mid-tool-call preserves state: PENDING LIVE TEST** —
-  procedure: README "Live run" playbook (`run_live.py`); evidence to
-  collect: the `results/trace_live_*.jsonl` event trace — `interruption`
-  and `agent_response_correction` events around an in-flight
-  `search_code` call, plus the agent's post-barge-in answer to "what did
-  you just find?" as the state-integrity check.
+- **barge-in mid-tool-call preserves state: FAIL (automated
+  audio-injection test, synthesized voice; operator live confirmation
+  pending)** — 3 of 4 machine-checked criteria pass (interruption inside
+  the tool window, session survival, post-barge-in `write_note`), but
+  the in-flight tool's RESULT is dropped: asked "What did you just
+  find?", the agent answers it found nothing because the search was
+  stopped — reproduced in 2 of 2 completed runs, including one with a
+  topic-neutral interruption. Precise failure shape below; evidence:
+  `results/trace_barge_in_20260829T230811Z.jsonl` +
+  `results/verdict_barge_in_20260829T230811Z.json` (and the
+  `..._20260829T225419Z` pair for run 1).
+
+## Barge-in mid-tool-call (automated audio injection)
+
+No human at the mic: `run_barge_in.py` opened a real Conv AI audio
+session and streamed espeak-ng-synthesized speech (pcm_16000, paced at
+real time with continuous silence, like a live mic). Script: trigger the
+slow `search_code` tool (2.2s), barge in 0.2s after `client_tool_call`
+arrives, then ask "What did you just find?", then round-trip
+`write_note`. `barge_in_verdict.py` rules the four criteria from the
+trace JSONL; the offline mock rehearsal (`dry_run_barge_in.py`) passed
+before any billed run. Three billed runs total (the budgeted cap).
+
+Definitive run (`trace_barge_in_20260829T230811Z.jsonl`, conversation
+`conv_9601m17wfnpxeqq8jt388t4k3mr9`):
+
+- `client_tool_call search_code` at 10224ms; `interruption` +
+  `agent_response_correction` at 10936ms — **0.71s into the 2.2s
+  execution window** ("Searching the code for playback queue." corrected
+  to "Searching the...").
+- Client posted `client_tool_result` at 12425ms (mid-barge-in); EL
+  **accepted it at the transport level** (`agent_tool_response` at
+  12520ms). No WS close; no error.
+- Agent to the neutral interruption ("Wait, wait, stop, hold on…"):
+  *"No problem, I have stopped. Let me know whenever you are ready to
+  continue."*
+- Probe "What did you just find?" → *"I did not find anything because
+  the search was stopped before it could finish. Would you like me to
+  try searching for the playback queue again?"* — **the tool's findings
+  never reached the LLM context.** Run 1 (different interruption
+  phrasing) produced the same answer shape: *"I did not find anything
+  because the search was stopped."*
+- `write_note` after the barge-in: clean call, result, and
+  acknowledgment (*"I have saved the note for you."*); `notes.txt`
+  gained the line both runs.
+
+**Failure shape — narrower than "corrupted":** conversation state is
+coherent after the barge-in (topic remembered, retry offered, session
+and subsequent tools fully usable). What breaks is specifically that a
+`client_tool_result` arriving during/after an interruption is discarded
+from the conversational context even though the platform acks it — the
+turn it belonged to was cancelled, and the result goes down with it.
+For E+ this means: any barge-in during a slow tool wastes that tool's
+work and the agent must re-run it. Whether that fails the kill bar (the
+criterion says "corrupts conversation state"; this is deterministic
+result-loss with otherwise-intact state) is the operator's call.
+
+Run log (hard cap 3): run 1 FAIL (same result-drop; interruption text
+"ask you something completely different" was a possible confound), run 2
+INCONCLUSIVE (EL ASR clipped the first utterance's onset — "Please
+search the code…" heard as "Hold for the playback queue" — scenario
+never reached; fixed with sacrificial lead-in words + waiting out the
+greeting audio), run 3 FAIL with the confound removed. Traces and
+verdict JSONs for all three are in `results/`.
+
+This is an automated synthesized-voice adjudication of STATE integrity
+only — no human ran it, and how the barge-in *sounds* (playback cut
+latency, correction naturalness) still needs the operator's ear via
+`run_live.py`.
 
 ## Latency tables (full run, 3 sessions × 7 turns, 27 invocations)
 
