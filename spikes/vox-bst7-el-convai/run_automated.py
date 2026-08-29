@@ -140,32 +140,35 @@ class SeedRun:
             "run_config",
             {"seed_bytes": self._seed_bytes, "prompt_bytes": len(prompt.encode())},
         )
-        t0 = time.monotonic()
-        url = self._plane.signed_url(self._handle.agent_id)
-        signed_url_ms = (time.monotonic() - t0) * 1000.0
-        session = ConvAISession(
-            url=url,
-            toolbelt=ToolBelt(_HERE / "notes.md"),
-            trace=trace,
-            overrides={
-                "agent": {"prompt": {"prompt": prompt}},
-                "conversation": {"text_only": True},
-            },
-        )
         record: dict[str, object] = {
             "tag": self._tag,
             "seed_bytes": self._seed_bytes,
             "prompt_bytes": len(prompt.encode()),
-            "signed_url_ms": round(signed_url_ms, 1),
         }
+        session: ConvAISession | None = None  # None when signed_url fails
         try:
+            t0 = time.monotonic()
+            url = self._plane.signed_url(self._handle.agent_id)
+            record["signed_url_ms"] = round((time.monotonic() - t0) * 1000.0, 1)
+            session = ConvAISession(
+                url=url,
+                toolbelt=ToolBelt(_HERE / "notes.md"),
+                trace=trace,
+                overrides={
+                    "agent": {"prompt": {"prompt": prompt}},
+                    "conversation": {"text_only": True},
+                },
+            )
             await session.open()
             await self._drive_turns(session, trace)
         except (TimeoutError, OSError, RuntimeError) as exc:
             record["error"] = f"{type(exc).__name__}: {exc}"
             trace.record("note", "run_error", {"error": str(exc)})
         finally:
-            await session.close()
+            if session is not None:
+                await session.close()
+        if session is None:
+            return record
         return {**record, **self._collect(session)}
 
     async def _drive_turns(self, session: ConvAISession, trace: EventTrace) -> None:

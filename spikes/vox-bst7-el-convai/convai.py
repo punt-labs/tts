@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Protocol, Self, final
 
 from websockets.asyncio.client import ClientConnection, connect
+from websockets.exceptions import ConnectionClosed, WebSocketException
 
 from spike_tools import ToolBelt
 
@@ -198,6 +199,7 @@ class ConvAISession:
     _last_progress: float
     _conversation_id: str
     _init_metadata: dict[str, object]
+    _closed_reason: str | None  # None while the socket is open
     _handlers: dict[str, Callable[[dict[str, object]], Coroutine[None, None, None]]]
     metrics: SessionMetrics
 
@@ -228,6 +230,7 @@ class ConvAISession:
         self._last_progress = 0.0
         self._conversation_id = ""
         self._init_metadata = {}
+        self._closed_reason = None
         self._handlers = {
             "conversation_initiation_metadata": self._on_init_metadata,
             "ping": self._on_ping,
@@ -252,8 +255,15 @@ class ConvAISession:
     async def open(self, *, timeout_s: float = 20.0) -> None:
         """Connect, send initiation, and wait for conversation metadata."""
         t0 = time.monotonic()
-        async with asyncio.timeout(timeout_s):
-            self._ws = await connect(self._url, max_size=None)
+        try:
+            async with asyncio.timeout(timeout_s):
+                self._ws = await connect(self._url, max_size=None)
+        except WebSocketException as exc:
+            # Typed rejection: a refused upgrade (e.g. oversized or
+            # disallowed override) must land in the run record, not
+            # crash the harness mid-batch.
+            msg = f"websocket connect rejected: {exc}"
+            raise RuntimeError(msg) from exc
         self.metrics.ws_connect_ms = (time.monotonic() - t0) * 1000.0
         self._trace.record(
             "note", "ws_open", {"ws_connect_ms": round(self.metrics.ws_connect_ms, 1)}
@@ -268,8 +278,13 @@ class ConvAISession:
             }
         )
         self._recv_task = asyncio.create_task(self._recv_loop())
-        async with asyncio.timeout(timeout_s):
-            await self._init_event.wait()
+        try:
+            async with asyncio.timeout(timeout_s):
+                await self._init_event.wait()
+        except TimeoutError as exc:
+            detail = self._closed_reason or "no conversation_initiation_metadata"
+            msg = f"session init failed: {detail}"
+            raise RuntimeError(msg) from exc
         self.metrics.init_metadata_ms = (time.monotonic() - t1) * 1000.0
 
     async def say(self, text: str, *, timeout_s: float = 90.0) -> str:
@@ -283,6 +298,9 @@ class ConvAISession:
         self.metrics.transcript.append({"role": "user", "text": text})
         deadline = t_send + timeout_s
         while True:
+            if self._closed_reason is not None:
+                msg = f"connection closed mid-turn: {self._closed_reason}"
+                raise RuntimeError(msg)
             if time.monotonic() > deadline:
                 msg = f"turn did not complete within {timeout_s}s: {text!r}"
                 raise TimeoutError(msg)
@@ -315,17 +333,24 @@ class ConvAISession:
         if self._ws is None:
             msg = "session not opened"
             raise RuntimeError(msg)
-        async for raw in self._ws:
-            message = json.loads(raw)
-            event_type = str(message.get("type", ""))
-            if event_type in _AGENT_PROGRESS_TYPES:
-                self._close_awaiting(time.monotonic())
-                self._last_progress = time.monotonic()
-            handler = self._handlers.get(event_type)
-            if handler is not None:
-                await handler(message)
-            else:
-                self._trace.record("recv", event_type, {})
+        try:
+            async for raw in self._ws:
+                message = json.loads(raw)
+                event_type = str(message.get("type", ""))
+                if event_type in _AGENT_PROGRESS_TYPES:
+                    self._close_awaiting(time.monotonic())
+                    self._last_progress = time.monotonic()
+                handler = self._handlers.get(event_type)
+                if handler is not None:
+                    await handler(message)
+                else:
+                    self._trace.record("recv", event_type, {})
+        except ConnectionClosed as exc:
+            self._closed_reason = f"{exc.rcvd or exc.sent or exc}"
+            self._trace.record("note", "ws_closed", {"reason": self._closed_reason})
+            return
+        self._closed_reason = "closed by server (clean)"
+        self._trace.record("note", "ws_closed", {"reason": self._closed_reason})
 
     async def _on_init_metadata(self, message: dict[str, object]) -> None:
         event = self._event_body(message, "conversation_initiation_metadata_event")
