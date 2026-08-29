@@ -1,0 +1,62 @@
+mission_id: m-2026-08-28-011
+status: closed
+type: implement
+created_at: "2026-08-28T13:00:00Z"
+updated_at: "2026-08-28T14:19:05Z"
+closed_at: "2026-08-28T14:19:05Z"
+leader: claude
+worker: adb
+evaluator:
+    handle: djb
+    pinned_at: "2026-08-28T13:00:00Z"
+    hash: 19095bb477fb03f170676196565c083685e3346baca4f3aabae4314b6bec37c0
+inputs:
+    ticket: vox-1gub
+    files:
+        - src/punt_vox/desktop_install.py
+        - src/punt_vox/cli_desktop.py
+        - src/punt_vox/doctor.py
+write_set:
+    - src/punt_vox/desktop_install.py
+    - src/punt_vox/cli_desktop.py
+    - src/punt_vox/doctor.py
+    - tests/test_desktop_install.py
+    - tests/test_doctor.py
+    - CHANGELOG.md
+success_criteria:
+    - 'Follow-up to escalated mission m-2026-08-28-005 (same ticket, vox-1gub), which added Linux support to DesktopInstaller.config_path() and made it raise ValueError on unsupported platforms. CRITICAL fix (this mission''s core task): doctor.py:291 check_claude_desktop() calls config_path() bare and now crashes with an uncaught ValueError/traceback on an unsupported platform where it previously degraded gracefully to "Claude Desktop config: not found". Catch ValueError there and emit CheckResult.of(OPTIONAL, ..., required=False) naming the unsupported platform, matching the sibling precedent at src/punt_vox/service/installer.py:106-115 (detect_platform() raises SystemExit, Typer renders it cleanly).'
+    - 'NOTE -- __main__.py is OUT OF SCOPE for this mission: the same crash exists in _desktop_registration() (__main__.py:744, reached by `vox status`), but src/punt_vox/__main__.py is currently write-set-locked by an unrelated open mission (m-2026-08-22-056, Conversation Mode Slice 1b). That fix is tracked separately as bead vox-i9ee and will be picked up once the lock clears. Do not touch __main__.py in this mission.'
+    - 'MEDIUM fix: XDG_CONFIG_HOME handling in desktop_install.py (around line 121, `Path(os.environ.get("XDG_CONFIG_HOME") or "~/.config").expanduser()`) does not reject relative paths per the XDG basedir spec ("if an implementation encounters a relative path in any of these variables it should consider the path invalid and ignore it"). Treat a non-absolute XDG_CONFIG_HOME as unset -- fall back to ~/.config -- instead of resolving it against the process cwd. Verify the existing tilde-path test in tests/test_desktop_install.py still passes, and add a test asserting a relative XDG_CONFIG_HOME is treated as unset.'
+    - 'LOW fix: cli_desktop.py''s _write_config (extracted in the prior mission) does a non-atomic whole-file truncate+rewrite of claude_desktop_config.json, a file shared with other MCP servers'' secrets in their env blocks. Write to a sibling temp file in the same directory and os.replace() to swap it in. Also: when the parent directory does not yet exist, create it 0700 and the file 0600 (matching the real Claude Desktop app''s permissions) instead of the current 0755/0644 defaults.'
+    - Add test coverage for `vox doctor`'s check_claude_desktop() on a simulated unsupported platform (tests/test_doctor.py) -- this exact gap (doctor.py had zero coverage of the unsupported-platform path) is why the CRITICAL finding shipped in round 1 undetected.
+    - Commit incrementally -- one commit per logical step (file group, single concern, or single PR-equivalent slice). Each commit must pass `make check`. Do not accumulate more than 30 minutes of uncommitted changes.
+    - Do not open a PR. Submit your result via `ethos mission result` when make check is green and tests pass, citing file:line for each of the three fixes (CRITICAL/MEDIUM/LOW) and the new test coverage.
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 2
+context: |
+    This is round 2 of the vox-1gub fix, continuing after mission
+    m-2026-08-28-005 was closed status=escalated. That mission's own
+    result was verdict=pass (round 1, confidence 0.95, 2 commits already
+    on this branch) -- the Linux path itself is correct and confirmed
+    against a real live install (~/.config/Claude/claude_desktop_config.json
+    exists on this host, mode 0600). The escalation is purely a write_set
+    gap: config_path() changed its contract from total to partial
+    (raises now) and doctor.py (a caller outside the original write_set)
+    was never updated to handle the new raise. A second caller,
+    __main__.py's _desktop_registration(), has the identical bug but is
+    write-set-locked by an unrelated open mission right now -- see
+    the explicit out-of-scope note above and bead vox-i9ee.
+
+    Full evaluator findings (djb, round 1 of m-2026-08-28-005) are folded
+    into the success_criteria above verbatim -- read those closely, they
+    contain exact file:line citations and reproduction steps.
+
+    Working directory: this repo's dedicated worktree at
+    /home/jfreeman/Coding/punt-labs/vox/.claude/worktrees/vox-1gub-linux-desktop,
+    branch fix/vox-1gub-linux-desktop-config (already has 2 commits from
+    round 1 -- continue on this branch, do not create a new one, do not
+    touch the main checkout).
+
+    Bead: vox-1gub (P2, claimed, in_progress).

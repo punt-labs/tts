@@ -1,0 +1,74 @@
+mission_id: m-2026-08-28-009
+status: closed
+type: implement
+created_at: "2026-08-28T12:42:40Z"
+updated_at: "2026-08-28T15:15:57Z"
+closed_at: "2026-08-28T15:15:57Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: bwk
+    pinned_at: "2026-08-28T12:42:40Z"
+    hash: b106f88d6d76d24f00c3960e9b2b7a7dbc94e7ef98c1036ccd20074c9e9bf944
+inputs:
+    ticket: vox-h777
+write_set:
+    - src/punt_vox/lux_common/scene_patch.py
+    - src/punt_vox/lux_common/scene_push.py
+    - src/punt_vox/lux_common/live_scene.py
+    - src/punt_vox/lux_common/__init__.py
+    - src/punt_vox/voxd/music_player/album_roster.py
+    - src/punt_vox/voxd/music_player/album_display.py
+    - src/punt_vox/voxd/music_player/album_table.py
+    - src/punt_vox/voxd/music_player/scene.py
+    - src/punt_vox/voxd/music_player/player.py
+    - src/punt_vox/voxd/music_player/now_playing_block.py
+    - src/punt_vox/voxd/music_player/lux_scene_publisher.py
+    - src/punt_vox/voxd/music_player/scene_mailbox.py
+    - src/punt_vox/voxd/music_player/ports.py
+    - src/punt_vox/voxd/music_player/presenter_ports.py
+    - src/punt_vox/voxd/music_player/lux_subscription.py
+    - src/punt_vox/panel/service.py
+    - src/punt_vox/panel/panel_guard.py
+    - src/punt_vox/panel/panel_push.py
+    - tests/panel/test_panel_push.py
+    - tests/lux_common
+    - tests/music_player/test_album_roster.py
+    - tests/music_player/test_album_display.py
+    - tests/music_player/test_album_table.py
+    - tests/music_player/test_scene.py
+    - tests/music_player/test_player.py
+    - tests/music_player/test_lux_scene_publisher.py
+    - tests/music_player/test_lux_subscription.py
+    - tests/music_player/test_scene_mailbox.py
+    - tests/panel/test_service.py
+    - tests/panel/test_panel_guard.py
+    - tests/panel/test_panel_runner.py
+    - DESIGN.md
+success_criteria:
+    - 'AlbumDisplay reads live ready-Part count via AlbumRoster (one read per projection, at the player.py seam) -- not the frozen manifest snapshot; AlbumListScene stays I/O-free (test: zero store reads against a raising ProgramStore double)'
+    - 'Coherence invariant holds and is tested: for the playing album, the Tracks cell equals the M in the position line''s N of M'
+    - AlbumRoster.read drops an album on LookupError (store's documented delete contract) but propagates any other exception (OSError etc.) -- no silent vanish
+    - lux_common gains ElementPatch/ScenePatchSet (scene_patch.py), InstallScene/PatchScene/NoPush (scene_push.py), and LiveScene (live_scene.py) per the design's OO section 3 -- LuxScenePublisher._publish reduces to plan() + apply(), no conditional
+    - 'Per-scene intent table from the design honored exactly: show() only for first-install/reconnect and the two explicit user-gesture sites (Music menu click, panel acknowledge on Vox menu click); every other trigger (change signal, refusals, repush, confirm) goes through update()/patch'
+    - NowPlayingBlock emits two invariant ids unconditionally (music.now.album, music.now.position) with music.now deleted outright -- no mode branch, no alias, no fallback
+    - AlbumTable._selection always returns the selected_row_ids key (empty list when idle) so a vanishing field is never silently dropped; a table patch batch orders rows before selected_row_ids (explicit test on the emitted wire list, not observed behavior)
+    - An OpError from update() falls back to show() with the same request; a HubUnavailableError disarms LiveScene so the next push installs
+    - 'vox.panel gets the identical LiveScene-based treatment: acknowledge (menu click) shows, service/repush patch'
+    - All 16 tests enumerated in docs/vox-h777-lux-widget-refresh.md section 4 exist and pass, plus updates to the 10 existing test files the design lists
+    - make check green (including check-oo -- module sizes per the design's estimates, no regression, at least one metric improved) before every commit
+    - Commit incrementally -- one commit per logical step (file group, single concern, or single PR-equivalent slice). Each commit must pass make check. Do not accumulate more than 30 minutes of uncommitted changes
+    - 'One DESIGN.md ADR per the design note''s section 7 wording (patch reserved for refresh, show reserved for install + explicit bring-to-front gestures; rejected alternative: replace all show with update)'
+    - No migration/compat/shim/dual-path code -- music.now and track_count are deleted/renamed outright, not aliased
+budget:
+    rounds: 3
+    reflection_after_each: true
+current_round: 2
+context: |-
+    vox-h777 implementation. Follow docs/vox-h777-lux-widget-refresh.md (committed d716662 in this worktree) EXACTLY -- it is the ratified design, not a suggestion. Operator has ratified both open questions it raised: (1) vox.panel is IN SCOPE alongside vox.music -- fix both widgets' show()-on-refresh focus-steal in this one PR; (2) the NowPlayingBlock idle-state layout change is ACCEPTED -- two always-present slots (album heading + position line, blank when idle), music.now deleted outright, no fallback/alias.
+
+    Read the design note first, in full, before touching code -- it has exact class shapes (AlbumDisplay.read/tracks, AlbumRoster, ElementPatch/ScenePatchSet, InstallScene/PatchScene/NoPush, LiveScene.plan/armed/disarm), the intent table for which triggers use show() vs update() per scene, the constraints from punt_lux 0.28.0 (patches cannot add elements; children/tabs are refused; setter existence per field; table selected_row_ids intersects live rows at setter time so rows must patch before selected_row_ids; combo validates selected against items after the whole batch), and the full write-set. Do not redesign; implement it. If you find the design is wrong on a point of fact once you're in the code, submit an escalate result explaining exactly where and why rather than silently deviating.
+
+    CHANGELOG.md is deliberately excluded from your write-set -- another open mission (m-2026-08-28-005) already holds it; the leader will add the CHANGELOG entry directly after your result lands.
+
+    This is a fix for bead vox-h777 (both defects: frozen track count, and window forced to raise/focus on every refresh).

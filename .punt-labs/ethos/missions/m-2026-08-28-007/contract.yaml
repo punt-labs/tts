@@ -1,0 +1,35 @@
+mission_id: m-2026-08-28-007
+status: closed
+type: design
+created_at: "2026-08-28T12:24:48Z"
+updated_at: "2026-08-28T12:39:03Z"
+closed_at: "2026-08-28T12:39:03Z"
+leader: claude
+worker: edt
+evaluator:
+    handle: dna
+    pinned_at: "2026-08-28T12:24:48Z"
+    hash: 8b4051b37bc4feb7596bed1b5e57d747dceed8318717a0f215e66eb6a9ccebfc
+inputs:
+    ticket: vox-h777
+write_set:
+    - docs/vox-h777-lux-widget-refresh.md
+success_criteria:
+    - Design how AlbumDisplay's track/album-count fields read LIVE state (via Album.read()/ready_parts() or equivalent) instead of the frozen manifest snapshot, for both this field and any other fields in the widget that may be reading frozen catalog data by the same mistake
+    - Design how the applet's periodic widget refresh moves from full-tree scene.show() to element-level scene.update() patches for an already-open scene, reserving show()/render() only for the scene's initial creation -- specify exactly which element ids/fields need patching (track count, position, title, etc) and how the applet tracks previous-vs-current state to compute the patch set
+    - Follow the OO/Python standards (../punt-kit/standards/oo.md, ../punt-kit/standards/python.md) -- behavior lives with its data, no primitive/dict-obsessed patch construction; decide whether any extraction (e.g. a PatchBuilder or diff helper) is warranted given the existing module sizes
+    - Do not prescribe exact line-level diffs -- decide the write-set for the follow-on implementation mission and hand it back
+    - No migration/compat/shim code -- this is a direct behavior change, not a versioned transition
+    - Produce a design note at docs/vox-h777-lux-widget-refresh.md covering both defects' fixes and the resulting write-set for implementation
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+context: |-
+    vox-h777: two defects in the vox Lux music widget (docs/architecture.tex four-surface model; punt_lux SceneOperations at ../lux/src/punt_lux/operations/scenes.py).
+
+    Defect 1 (confirmed root cause): src/punt_vox/voxd/music_player/album_display.py — AlbumDisplay.track_count reads album.manifest.parts, a frozen creation-time snapshot (src/punt_vox/voxd/programs/catalog.py). Parts are generated in the background after the album is minted, so the count is stuck at mint-time (0) forever. Catalog already exposes album.read()/ready_parts() for live counts — AlbumDisplay bypasses both. Meanwhile the widget's live playback-position line (now_playing_block.py) correctly reads live ProgramStatus via player_view.py — a different, correctly-live path. Two data sources, one frozen, feeding one widget.
+
+    Defect 2 (mechanism identified, fix direction open): src/punt_vox/voxd/music_player/lux_scene_publisher.py always calls the lux client's scene.show()/render() on every refresh (track change, part-generated, etc). In punt_lux, show()/render() always flows through Hub-side upsert_scene_in_frame (scene_replica.py), which raises/focuses/unminimizes the frame whenever a scene id is new to its frame -- gated on frame bookkeeping surviving between pushes (frame TTL, reconnect, etc can make it look new again). punt_lux also exposes scene.update() (element-level patches via HubSceneWriter.apply) which NEVER touches upsert_scene_in_frame or any frame/focus/tab state at all -- it is architecturally the correct call for refreshing an already-open, still-live widget. vox never calls update() anywhere today.
+
+    Both defects live on the same applet-refresh path (src/punt_vox/panel/applet.py builds the element tree; lux_scene_publisher.py pushes it), so this is one PR.

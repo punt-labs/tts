@@ -1,0 +1,242 @@
+results:
+    - mission: m-2026-08-29-016
+      round: 1
+      created_at: "2026-08-29T18:45:18Z"
+      author: rmh
+      verdict: escalate
+      confidence: 0.95
+      files_changed:
+        - path: spikes/vox-bst7-el-convai/README.md
+          added: 102
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/REPORT.md
+          added: 63
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/control_plane.py
+          added: 161
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/convai.py
+          added: 490
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/dry_run.py
+          added: 153
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/results/dry_run_notes.txt
+          added: 2
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/results/trace_dry_run.jsonl
+          added: 15
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/ruff.toml
+          added: 11
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/run_automated.py
+          added: 332
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/run_live.py
+          added: 212
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/seed.py
+          added: 116
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/setup_agent.py
+          added: 71
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/spike_tools.py
+          added: 195
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/teardown_agent.py
+          added: 36
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/test_event_trace.py
+          added: 120
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/test_latency_stats.py
+          added: 160
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/test_roundtrip_pairing.py
+          added: 294
+          removed: 0
+      evidence:
+        - name: make check (worktree, every commit)
+          status: pass
+        - name: offline dry run vs localhost mock EL server — 3 turns, 3 tool invocations paired and closed; measured overhead 352-355ms against the mock's known 350ms continuation delay (spikes/vox-bst7-el-convai/results/trace_dry_run.jsonl)
+          status: pass
+        - name: 'pytest — 26 cases: round-trip pairing by tool_call_id, orphaned calls stay out of the stats, error results complete and flag, trace integrity, nearest-rank percentile math'
+          status: pass
+        - name: real EL control plane — POST /v1/convai/tools 401 missing_permissions convai_write (GET /v1/convai/agents 200, so convai_read is present)
+          status: fail
+      open_questions:
+        - 'Blocker (operator action): ELEVENLABS_API_KEY lacks the convai_write permission. Fix: ElevenLabs dashboard -> API keys -> enable Conversational AI write on this key (or issue a new key) and update the keychain entry the repo .envrc reads. Re-probe: POST /v1/convai/tools should stop returning 401.'
+      prose: |
+        The spike harness is complete, committed (5 commits on
+        spike/vox-bst7-el-convai), ruff-clean under the repo config, and
+        verified offline end-to-end. What cannot exist yet are the real
+        measured numbers: the workspace ElevenLabs API key is scoped for TTS
+        only, and the very first control-plane call (client-tool creation)
+        requires convai_write. Escalating rather than working around, per the
+        contract.
+
+        Ready to run the moment the key is rescoped, in order:
+          uv run setup_agent.py          # creates 3 client tools + agent
+          uv run run_automated.py --smoke
+          uv run run_automated.py        # 3 seed sizes, ~27 tool invocations
+        then REPORT.md fills in from results/metrics_<ts>.json.
+
+        Measurement design (validated by the dry run): per invocation the
+        harness records exec_ms, handling_ms (call received -> result sent),
+        total_ms (call received -> next agent progress event), and
+        overhead_ms = total_ms - exec_ms, the EL-attributable round trip the
+        1.5s gate applies to. The dry run surfaced and fixed a real artifact:
+        when the agent runs two of our tools in parallel, the faster tool's
+        next-event gap measures our own slow tool, so such invocations are
+        flagged is_clean: false and excluded from the gate metric.
+
+        The live-mic entry point (run_live.py) is built and documented in the
+        README with the barge-in playbook; it logs the timestamped event
+        trace (turn boundaries, tool start/end, interruption,
+        agent_response_correction) the "barge-in preserves state" verdict
+        needs. The live session itself is post-mission, leader + operator.
+
+        Note on authorship: the three test_*.py files were contributed into
+        the shared worktree by a teammate (they arrived while round 1 was in
+        flight); they pass against my modules and I adopted and committed
+        them with the harness.
+
+        Artifacts: spikes/vox-bst7-el-convai/REPORT.md (verdict lines PENDING
+        with the exact blocker), results/trace_dry_run.jsonl, README.md run
+        instructions.
+    - mission: m-2026-08-29-016
+      round: 2
+      created_at: "2026-08-29T20:47:07Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.93
+      files_changed:
+        - path: spikes/vox-bst7-el-convai/README.md
+          added: 103
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/REPORT.md
+          added: 113
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/control_plane.py
+          added: 174
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/convai.py
+          added: 496
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/dry_run.py
+          added: 153
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/notes.txt
+          added: 10
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/results/dry_run_notes.txt
+          added: 3
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/results/metrics_20260829T203601Z.json
+          added: 135
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/results/metrics_20260829T203630Z.json
+          added: 682
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/results/trace_20260829T203601Z_seed1024.jsonl
+          added: 40
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/results/trace_20260829T203630Z_seed1024.jsonl
+          added: 135
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/results/trace_20260829T203630Z_seed10240.jsonl
+          added: 135
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/results/trace_20260829T203630Z_seed51200.jsonl
+          added: 134
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/results/trace_dry_run.jsonl
+          added: 15
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/ruff.toml
+          added: 12
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/run_automated.py
+          added: 332
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/run_live.py
+          added: 215
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/seed.py
+          added: 116
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/setup_agent.py
+          added: 71
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/spike_tools.py
+          added: 195
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/teardown_agent.py
+          added: 36
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/test_event_trace.py
+          added: 131
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/test_latency_stats.py
+          added: 249
+          removed: 0
+        - path: spikes/vox-bst7-el-convai/test_roundtrip_pairing.py
+          added: 293
+          removed: 0
+      evidence:
+        - name: 'GATE (criterion b/c): overall p95 EL-attributable tool round-trip overhead = 993ms < 1500ms over n=27 real client-tool invocations, real WAN — spikes/vox-bst7-el-convai/results/metrics_20260829T203630Z.json'
+          status: pass
+        - name: 'criterion a: 3 client tools registered via EL client-tools primitive and answered on the same WebSocket (clock <50ms, search_code 2.2-4.3s, write_note file-persisted 9 notes to notes.txt across the runs)'
+          status: pass
+        - name: 'criteria b/c volume: 3 automated text-only sessions x 7 turns = 27 tool invocations (>=20 required), 27/27 completed, 0 orphans, 0 tool errors'
+          status: pass
+        - name: 'criterion f: seed push at 1KB/10KB/50KB prompt overrides — all accepted, no rejection or truncation; session start 267-553ms (no size correlation), first response 130-409ms; mild quality degradation at 50KB (pre-tool narration instead of result summaries) — details in REPORT.md'
+          status: pass
+        - name: 'criteria d/e (harness only): run_live.py live-mic entry point with timestamped event trace (turn boundaries, tool start/end, interruption, agent_response_correction); live run instructions in README.md — live test itself is post-mission per contract'
+          status: pass
+        - name: pytest offline suite 35/35 green including the 4 round-2 TDD pins (trace-stamp precedence, JSON-parsed _summarize, duplicate tool_call_id dedup, 0.0 first-response truthiness)
+          status: pass
+        - name: make check green on every commit (9 commits on the branch)
+          status: pass
+        - name: 'teardown: spike agent and 3 tools deleted (found and handled an EL quirk: tool delete 409s right after agent delete; force-delete + 404-idempotent re-run)'
+          status: pass
+      prose: |
+        Round-2 verdict for DES-069's two kill criteria:
+
+        1. "p95 tool round-trip < 1.5s: PASS (measured 993ms)" — overall
+           clean-overhead p95, n=27, real WAN (ping RTT 64-254ms during the
+           runs). Per tool: clock p95 127ms, search_code p95 993ms,
+           write_note p95 993ms. The metric excludes our own deliberate tool
+           sleep and excludes co-scheduled invocations whose next-event gap
+           measures our slow tool rather than EL (is_clean flag; design
+           validated by the teammate's pins).
+
+        2. "barge-in mid-tool-call preserves state: PENDING LIVE TEST" — the
+           instrumented entry point (run_live.py) and the playbook (README,
+           "Live run") are ready; the live session is leader + operator,
+           post-mission, per contract.
+
+        Seed push: EL took a 50KB prompt override without complaint — no
+        rejection, no truncation, no connect penalty. Quality note for
+        DES-070: at 50KB gemini-2.0-flash drifted toward narrating tool
+        intent instead of folding results back in; 1KB and 10KB stayed crisp.
+
+        The real WebSocket matched the mock-tested protocol exactly (init
+        handshake, client_tool_call/client_tool_result, ping/pong,
+        agent_response) — zero protocol surprises, zero code changes needed
+        between the offline dry run and the live API. One control-plane
+        finding: agent deletion propagates lazily, so tool deletion straight
+        after 409s "still in use"; teardown now force-deletes and treats 404
+        as done.
+
+        Phase A (review-fix) was completed before any billed call: all six
+        findings fixed, all 4 TDD pins green. Suite tally: 35 passed / 35
+        collected (leader quoted 36 — the on-disk suite collects 35; flagged
+        for tests-bst7 to confirm nothing is missing).
+
+        Artifacts: spikes/vox-bst7-el-convai/REPORT.md (tables + verdicts),
+        results/metrics_20260829T203630Z.json (full run),
+        results/metrics_20260829T203601Z.json (smoke), per-session event
+        traces results/trace_20260829T203630Z_seed{1024,10240,51200}.jsonl.

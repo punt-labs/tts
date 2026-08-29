@@ -1,0 +1,54 @@
+mission_id: m-2026-08-29-023
+status: open
+type: implement
+created_at: "2026-08-29T22:11:41Z"
+updated_at: "2026-08-29T22:11:41Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: gvr
+    pinned_at: "2026-08-29T22:11:41Z"
+    hash: 484686a91dca1727f80404fe4fc8f873e0996955d47f5003e3ce767020c64a45
+inputs:
+    ticket: vox-bst7
+    files:
+        - spikes/vox-bst7-el-convai/README.md
+        - spikes/vox-bst7-el-convai/REPORT.md
+        - spikes/vox-bst7-el-convai/convai.py
+        - spikes/vox-bst7-el-convai/run_live.py
+write_set:
+    - spikes/vox-bst7-el-convai/
+success_criteria:
+    - 'Build and RUN an automated barge-in state-integrity test (run_barge_in.py or similar, in the spike dir) that adjudicates DES-069 kill criterion 2 with machine evidence, no human at the mic: open a REAL EL Conv AI audio session against the existing agent (agent.json is present and live), stream pre-synthesized user utterances as real PCM audio (generate them locally — e.g. espeak-ng to pcm_16000, which is on this host — no extra EL TTS spend), trigger the slow search_code tool, then stream an interrupting utterance WHILE the tool call is still executing (the tool takes 2-5s; start the interruption inside that window), and after the interruption ask "what did you just find?".'
+    - 'Verdict logic, machine-checked and reported: (a) the trace shows an interruption (and/or agent_response_correction) event occurring between client_tool_call and the agent''s post-tool response; (b) the session survives (no WS close, subsequent turns work); (c) the post-barge-in answer to "what did you just find?" is responsive to the search_code result (its transcript references the tool''s reported findings) rather than confused/absent — capture the full transcript in the trace and quote it in the report; (d) the write_note tool still works after the barge-in (state fully usable). PASS requires all four; anything else is FAIL or INCONCLUSIVE with the evidence quoted.'
+    - 'Fill REPORT.md''s criterion-2 verdict line from this evidence, labeled honestly: "PASS/FAIL (automated audio-injection test, synthesized voice; operator live confirmation pending)" — do NOT claim a human ran it. Evidence paths (trace JSONL) cited in the report.'
+    - Run the test at most 3 times total (debugging included) — each run costs real credits. If EL's VAD does not trigger on the synthesized voice after 2 attempts (no interruption event in the trace), stop and report INCONCLUSIVE with the traces rather than burning more runs; that outcome means the criterion genuinely needs the human mic.
+    - 'Offline-first discipline: exercise the new code against the existing MockElServer dry-run path (extend it to emit an interruption mid-tool-call) BEFORE any billed run. The 35-test suite must still pass; add tests for any new verdict logic. Every commit passes make check.'
+    - Commit incrementally -- one commit per logical step. Each commit must pass `make check`. Do not accumulate more than 30 minutes of uncommitted changes.
+    - Do not open a PR, create branches, or push. Work on branch spike/vox-bst7-el-convai in the worktree named in context. Do not tear down the agent (the operator live session may still follow). Submit via `ethos mission result` citing the trace evidence and the REPORT.md verdict line.
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+context: |
+    Follow-on to closed mission m-2026-08-29-016 (same bead vox-bst7).
+    Kill criterion 1 passed (p95 overhead 993ms < 1.5s, real WAN, n=27).
+    Criterion 2 — barge-in mid-tool-call preserves conversation state —
+    is PENDING and the operator is not currently available for the live
+    mic session, so the leader has authorized an automated audio-injection
+    adjudication: the criterion is about STATE integrity, which machine
+    evidence can rule on; the human ear remains only for audio-UX
+    confirmation later. Reuse the existing harness (ConvAISession,
+    EventTrace, AlsaAudio is mic-bound so you will need an audio-source
+    seam that streams PCM from files instead — the AudioSink protocol
+    pattern in convai.py shows the house style). agent.json exists and
+    the agent is live; the key has convai read+write (verified).
+
+    Working directory: the worktree at
+    /home/jfreeman/Coding/punt-labs/vox/.claude/worktrees/vox-bst7-el-convai-spike
+    on branch spike/vox-bst7-el-convai. Its own .envrc is direnv-blocked;
+    prefix env-needing commands with
+    `direnv exec /home/jfreeman/Coding/punt-labs/vox` (the main checkout,
+    same env). Do not touch the main checkout otherwise.
+
+    Bead: vox-bst7 (P1, in_progress). Labels: e-plus, spike, voice-arch.

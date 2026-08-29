@@ -1,0 +1,50 @@
+mission_id: m-2026-08-28-005
+status: escalated
+type: implement
+created_at: "2026-08-28T12:22:48Z"
+updated_at: "2026-08-28T12:58:33Z"
+closed_at: "2026-08-28T12:58:33Z"
+leader: claude
+worker: adb
+evaluator:
+    handle: djb
+    pinned_at: "2026-08-28T12:22:48Z"
+    hash: 19095bb477fb03f170676196565c083685e3346baca4f3aabae4314b6bec37c0
+inputs:
+    ticket: vox-1gub
+    files:
+        - src/punt_vox/desktop_install.py
+        - src/punt_vox/cli_desktop.py
+        - src/punt_vox/doctor.py
+        - tests/test_desktop_install.py
+write_set:
+    - src/punt_vox/desktop_install.py
+    - src/punt_vox/cli_desktop.py
+    - tests/test_desktop_install.py
+    - tests/test_cli_desktop.py
+    - CHANGELOG.md
+success_criteria:
+    - 'Claude Desktop for Linux now exists. `vox desktop install` currently hardcodes the macOS path in DesktopInstaller.config_path() (src/punt_vox/desktop_install.py:71-85: Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json") and cli_desktop.py:112-117 separately checks `platform.system() != "Darwin"` to print a "path is only known for macOS" warning. Add Linux support: the Linux path is `~/.config/Claude/claude_desktop_config.json`, respecting `XDG_CONFIG_HOME` if set (i.e. `Path(os.environ.get("XDG_CONFIG_HOME") or "~/.config").expanduser() / "Claude" / "claude_desktop_config.json"`). Confirm this matches Anthropic''s actual Linux Claude Desktop packaging if you can find authoritative evidence (release notes, the app''s own directory layout after install) -- do not guess if the real path differs.'
+    - 'Single source of truth for platform dispatch: `config_path()` and the `install()` warning currently ask "what platform am I on" independently -- this is the same two-code-paths-asking-the-same-question defect the module''s own docstring (desktop_install.py:23-27, "Design (§3.8)") already calls out for the provider-name question. Consolidate: `config_path()` should be the single place that knows which platforms are supported and raises, or the CLI should ask `DesktopInstaller` (not `platform.system()` directly) whether the current platform is supported, so cli_desktop.py''s warning and doctor.py''s checks derive from the same answer. Follow PY-OO-7 (no fake OO / helpers doing what should be a method) and the existing OO rules under punt-labs/.claude/rules/python-*.md -- this is a `@final` class already (PY-CC-1 __new__ constructor), extend it, do not bolt free functions beside it.'
+    - Windows stays out of scope (macOS + Linux only) unless you find it is trivial to add with equal confidence in the path -- if uncertain, leave Windows raising/warning as today, do not guess a Windows path.
+    - 'Tests: tests/test_desktop_install.py gets Linux-path coverage (with and without XDG_CONFIG_HOME set) alongside the existing macOS test(s), using monkeypatch/mocker on platform.system() and os.environ per the existing test patterns in that file. Add tests/test_cli_desktop.py if it does not exist -- cli_desktop.py currently has zero test coverage (PL-TT-2/PY-BS-6: every module must have tests) -- at minimum cover install()''s platform-warning branch and the config read/write/overwrite paths.'
+    - 'CHANGELOG.md: add an entry under [Unreleased] -> Fixed for Linux Claude Desktop config path support.'
+    - Commit incrementally -- one commit per logical step (file group, single concern, or single PR-equivalent slice). Each commit must pass `make check`. Do not accumulate more than 30 minutes of uncommitted changes.
+    - Do not open a PR -- the leader handles branch push, PR creation, and review cycles. Submit your result via `ethos mission result` when make check is green and tests pass, summarizing what changed and citing file:line for the new platform dispatch logic.
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 1
+context: |
+    Operator report (2026-08-28): `vox desktop install` on Linux prints
+    "Warning: Claude Desktop config path is only known for macOS. You may
+    need to configure manually on this platform." and writes nothing useful,
+    because Anthropic has shipped Claude Desktop for Linux and this vox
+    command has never been updated to know its config path.
+
+    This is a working branch already checked out at
+    fix/vox-1gub-linux-desktop-config in a dedicated worktree (another
+    agent session is active on this repo's main checkout, so this mission
+    runs isolated). Branch from the current HEAD of this worktree, not main.
+
+    Bead: vox-1gub (P2, claimed, in_progress).
