@@ -1,4 +1,3 @@
-# ruff: noqa: S101 -- pytest asserts; mirrors the repo-wide tests/* per-file-ignore
 """Offline sanity tests for the latency aggregation the spike verdict rests on.
 
 The kill criterion is "p95 tool round-trip < 1.5s". A wrong percentile or a

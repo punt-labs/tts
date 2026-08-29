@@ -135,10 +135,23 @@ class ControlPlane:
         return str(response.json()["signed_url"])
 
     def delete_tool(self, tool_id: str) -> None:
-        self._raise_for_status(self._http.delete(f"/v1/convai/tools/{tool_id}"))
+        """Delete a tool; force on 409 (agent deletion propagates lazily).
+
+        404 counts as success so a partially-failed teardown can re-run.
+        """
+        response = self._http.delete(f"/v1/convai/tools/{tool_id}")
+        if response.status_code == 409:
+            response = self._http.delete(
+                f"/v1/convai/tools/{tool_id}", params={"force": "true"}
+            )
+        if response.status_code != 404:
+            self._raise_for_status(response)
 
     def delete_agent(self, agent_id: str) -> None:
-        self._raise_for_status(self._http.delete(f"/v1/convai/agents/{agent_id}"))
+        """Delete the agent; 404 counts as success (idempotent teardown)."""
+        response = self._http.delete(f"/v1/convai/agents/{agent_id}")
+        if response.status_code != 404:
+            self._raise_for_status(response)
 
     def close(self) -> None:
         self._http.close()

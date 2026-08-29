@@ -1,4 +1,3 @@
-# ruff: noqa: S101 -- pytest asserts; mirrors the repo-wide tests/* per-file-ignore
 """Offline sanity tests for client_tool_call -> client_tool_result pairing.
 
 The p95 verdict is only as good as the pairing that produces each round-trip

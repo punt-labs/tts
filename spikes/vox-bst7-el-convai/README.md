@@ -72,6 +72,7 @@ Per invocation, from the client's clock:
 
 ```sh
 cd spikes/vox-bst7-el-convai
+direnv exec ../../ uv run setup_agent.py   # if agent.json is absent (post-teardown)
 direnv exec ../../ uv run run_live.py
 ```
 

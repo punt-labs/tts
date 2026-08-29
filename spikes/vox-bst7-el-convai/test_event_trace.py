@@ -1,4 +1,3 @@
-# ruff: noqa: S101 -- pytest asserts; mirrors the repo-wide tests/* per-file-ignore
 """Offline sanity tests for the EventTrace JSONL the barge-in evidence rides on.
 
 The live session's machine evidence is this trace: every line must parse,
