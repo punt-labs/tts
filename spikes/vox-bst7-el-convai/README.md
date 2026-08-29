@@ -23,6 +23,11 @@ so sibling imports resolve.
 | `setup_agent.py` | Creates the EL agent + tools; writes `agent.json` |
 | `run_automated.py` | Criteria a/b/c/f: text-mode conversations, latency metrics, seed push |
 | `run_live.py` | Criteria d/e: live mic/speaker call with event tracing |
+| `speech.py` | espeak-ng → pcm_16000 utterance synthesis for audio injection |
+| `barge_in.py` | `SyntheticAudio` (scripted mic + sink seam) and the barge-in flow |
+| `barge_in_verdict.py` | Four-criterion machine adjudication over a trace JSONL |
+| `run_barge_in.py` | Kill criterion 2, automated: real audio session, synthesized voice, verdict JSON (bills credits) |
+| `dry_run_barge_in.py` | Offline rehearsal of the barge-in flow vs a mock EL server |
 | `teardown_agent.py` | Deletes the agent + tools |
 | `results/` | Event traces (JSONL) and metrics (JSON) |
 
@@ -51,6 +56,25 @@ scripted turns per session (~9 tool invocations each), and answers every
 - `results/metrics_<ts>.json` — per-run session-start / first-response
   latencies and per-invocation timings, plus p50/p95/max aggregates.
 - A latency table and the gate verdict on stdout.
+
+### Automated barge-in (kill criterion 2, no human at the mic)
+
+```sh
+direnv exec ../../ uv run dry_run_barge_in.py   # offline rehearsal, must PASS first
+direnv exec ../../ uv run run_barge_in.py       # ONE billed audio run
+```
+
+`run_barge_in.py` opens a real audio session, injects espeak-synthesized
+speech through the `SyntheticAudio` seam (continuous silence + paced
+utterances, like a mic), triggers the slow `search_code` tool, barges in
+while it executes, asks "What did you just find?", then round-trips
+`write_note`. `barge_in_verdict.py` rules PASS/FAIL/INCONCLUSIVE from
+the trace: interruption inside the tool window, session survival, a
+recall answer grounded in the tool result (echoes of the question do not
+count), and a clean post-barge-in `write_note`. Output lands in
+`results/trace_barge_in_<ts>.jsonl` + `results/verdict_barge_in_<ts>.json`.
+This adjudicates STATE integrity only — audio UX still needs the
+operator's ear (`run_live.py`).
 
 ### What the latency numbers mean
 
