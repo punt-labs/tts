@@ -11,6 +11,94 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The Lux `vox.music` widget's Tracks column was frozen at album-mint time, and both `vox.music` and `vox.panel` force-raised/focused their window on every refresh instead of patching in place (vox-h777).** `AlbumDisplay.track_count` read `Album.manifest.parts`, a documented creation-time snapshot; parts are generated in the background after an album is minted, so the cell showed `0` for the album's entire life while the position line two elements above it correctly read live state — two contradictory numbers about the same album in one widget. `AlbumRoster` now performs the one live read this needs, at the seam that already touches live daemon state (`MusicPlayer._submit`), keeping `AlbumListScene` the I/O-free projection it documents; the read drops an album on `LookupError` (deleted) but propagates any other exception rather than silently vanishing it. Separately, every widget refresh — a track change, a generated part, a control-panel setting change — called `scene.show()`, which always raises and focuses the Lux frame; `show()`'s frame-raise is the *feature* the Music/Vox menu entries depend on, so replacing it everywhere would have broken those. A new `lux_common` package (`ElementPatch`/`ScenePatchSet`/`SceneTree`, `InstallScene`/`PatchScene`/`NoPush`, `LiveScene`) computes the cheapest correct push instead: nothing at all for an identical render, an element-level `scene.update()` patch when only values moved, and a full install only when the element roster or frame shell actually changed. `show()` now fires only at first-install/reconnect and the two explicit user gestures that mean "bring this window to me." Both `NowPlayingBlock` (two invariant slots, always present, blank position line when idle) and the album table's row-selection field (always emits `selected_row_ids`, empty when idle) had to stop varying their element/field shape by mode, since a patch can set or remove a field but never add one. `vox.panel` gets the identical treatment via a new `PanelPush`, extracted from `VoxPanelService` (which was already over the module-size standard) the same way `LuxScenePublisher` serves the music player. A follow-up review round found and fixed a real concurrency gap this introduced: two of the panel's triggers (a menu click and a control-change event) ran as independent, unserialized `asyncio` tasks, so an interleaved pair could diff against a render the other had claimed but not yet landed with luxd, silently dropping a field that had genuinely changed with nothing to self-heal it (the prior always-`show()` code repainted the whole tree every time, so it couldn't exhibit this) — `PanelPush` now holds an `asyncio.Lock` across the full plan-and-apply sequence, closing the window rather than detecting it after the fact.
 
+## [5.0.3] - 2026-08-29
+
+### Fixed
+
+- **The Vox Control Panel applet now survives long enough to register in the
+  Lux menu (vox-nkn8).** Every `vox-panel-*.log` under `~/.punt-labs/vox/logs`
+  contained exactly one line, ever — "session `<pid>` has gone; the applet is
+  leaving" — because `plugin/hooks/session-start.sh` passed `$PPID` to
+  `vox-panel --session-pid`, believing it named the Claude Code process that
+  ran the hook. It doesn't: Claude Code invokes SessionStart hooks through a
+  short-lived `sh` wrapper that exits within seconds of the hook script
+  finishing, so the panel's own liveness check saw its watched process vanish
+  almost immediately and left before it ever reached the Hub. The hook now
+  resolves the wrapper's parent (the genuinely persistent `claude` process),
+  verified by an exact — not substring/glob — match on its command name, and
+  falls back to the old `$PPID` behavior for any process tree that doesn't
+  match, so an unexpected shape fails safe (an applet that exits too early,
+  same as before) rather than watching an unrelated long-lived ancestor
+  forever. Both `ps` lookups are guarded so a vanished target can't abort the
+  whole hook under `set -e`.
+- **`vox desktop install` now knows where Claude Desktop keeps its config on
+  Linux (vox-1gub).** Claude Desktop ships for Linux, where its Electron shell
+  keeps `userData` under `$XDG_CONFIG_HOME` (default `~/.config`) — verified
+  against a live install at `~/.config/Claude/claude_desktop_config.json`.
+  `DesktopInstaller.config_path()` knew only the macOS
+  `~/Library/Application Support` root, so every Linux run printed "config path
+  is only known for macOS" and then wrote the registration to a macOS-shaped
+  path Claude Desktop never reads. `config_path()` is now the single place that
+  decides which platforms vox can register with: `vox desktop install` and
+  `vox desktop uninstall` ask it for a path and report the refusal it returns,
+  instead of running a second `platform.system()` probe that could reach a
+  different verdict. On a platform vox has not verified, both verbs now refuse
+  with a named reason and exit non-zero — before creating the output directory —
+  rather than reporting success over a file that will never be read. Windows is
+  deliberately still unsupported: vox's daemon installs on macOS and Linux only,
+  so no supported host reaches the refusal, and no unverified path is guessed
+  for one that does.
+- **`vox doctor` no longer aborts on a host whose Claude Desktop config
+  location vox cannot name (vox-1gub).** Making `config_path()` refuse instead
+  of guessing turned it into a partial function, and `check_claude_desktop()`
+  still called it bare — so on an unsupported platform the whole doctor run
+  died with an uncaught `ValueError` traceback, taking every later check (output
+  directory writability, the deposited-guide freshness stamp) with it. The
+  refusal is now caught and reported as a single optional row naming the
+  platform, the way `ServiceInstaller.detect_platform()`'s refusal already
+  renders as one clean line. Two further crash paths in the same check are
+  closed: a `claude_desktop_config.json` whose top level is a JSON array or
+  string parses fine and then raised `AttributeError` on the `mcpServers`
+  lookup, and a non-object `mcpServers` value made `"vox" in servers` a
+  substring test that could report an unregistered host as registered. Both
+  now report "could not read config" / "not registered" instead.
+- **A relative `XDG_CONFIG_HOME` no longer sends the Claude Desktop
+  registration into the caller's shell working directory (vox-1gub).** The XDG
+  basedir spec directs an implementation that meets a relative path in these
+  variables to treat it as invalid and ignore it; vox resolved it instead, so
+  `XDG_CONFIG_HOME=config vox desktop install` wrote
+  `./config/Claude/claude_desktop_config.json` under whatever directory the
+  command ran from — a file Claude Desktop never reads, reported as a success.
+  Relative now falls back to `~/.config` alongside unset and empty.
+  Absoluteness is judged after tilde expansion, so `XDG_CONFIG_HOME=~/elsewhere`
+  is still honoured.
+
+### Security
+
+- **`vox desktop install` / `uninstall` no longer risk other MCP servers'
+  entries when rewriting `claude_desktop_config.json` (vox-1gub).** That file
+  is shared: every MCP server the user has registered keeps its own `env`
+  block there, API keys included, and vox rewrote the whole document to change
+  one key of it with a truncate-then-write. A crash, a full disk, or Claude
+  Desktop reading concurrently could see a half-written or empty file — losing
+  *their* entries, not just vox's. The write now goes to a sibling temp file
+  and lands by atomic rename, so a reader sees the old document or the new one
+  and never a partial one; a failed write removes its own temp file and is
+  reported as one error line rather than a traceback. The config is now left
+  mode 0600 and a `Claude/` directory vox creates is 0700, matching what the
+  Claude Desktop app itself writes — previously they took the process umask
+  default, typically 0644/0755, leaving other servers' credentials
+  world-readable.
+- **`vox desktop install` no longer leaves an empty output directory behind
+  when it refuses (vox-1gub).** `install` resolves four prerequisites — uvx,
+  the platform's config location, the provider, and the credentials behind it
+  — and each can decline. The output directory was created *before* the last
+  of them, so `vox desktop install` with no provider credentials in view
+  printed "No TTS provider credentials found" and still left an empty
+  `~/Music/vox` (or `--output-dir`) behind, contradicting the command's own
+  documented promise to create nothing on a refusal. All four refusals now run
+  before anything is written to disk.
+
 ## [5.0.2] - 2026-08-26
 
 ### Changed

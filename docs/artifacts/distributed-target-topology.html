@@ -1,0 +1,634 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vox call · distributed target</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@400;500&display=swap">
+
+<style>
+:root {
+    --paper:      #F5F7F9;
+    --paper-2:    #EBEEF3;
+    --ink:        #171B21;
+    --ink-2:      #303640;
+    --rule:       #D3D9E2;
+    --rule-2:     #B4BCC8;
+    --mute:       #6B7480;
+
+    --client:      #4E6B80;
+    --client-fill: #E4EBF2;
+    --daemon:      #416B4C;
+    --daemon-fill: #E2EEE6;
+    --live:        #6E5A88;
+    --live-fill:   #EAE4F1;
+    --ephem:       #A67340;
+    --ephem-fill:  #F5EADB;
+    --external:    #904030;
+    --external-fill: #F3E1DD;
+    --wan:         #5C6E93;
+    --wan-fill:    #E4E7F0;
+
+    --step-badge:  #17548A;
+
+    --font-serif: "IBM Plex Serif", Georgia, "Times New Roman", serif;
+    --font-sans:  "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --font-mono:  "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --paper:      #12151B;
+        --paper-2:    #1A1F27;
+        --ink:        #E6E9EE;
+        --ink-2:      #B8BFCB;
+        --rule:       #2B323C;
+        --rule-2:     #3D4652;
+        --mute:       #8A93A0;
+
+        --client:      #7EA0BC;
+        --client-fill: #1D2833;
+        --daemon:      #7CB088;
+        --daemon-fill: #1B2820;
+        --live:        #A695C4;
+        --live-fill:   #221D33;
+        --ephem:       #D19E64;
+        --ephem-fill:  #2A2419;
+        --external:    #C97D6B;
+        --external-fill: #2B1D18;
+        --wan:         #8B9BC0;
+        --wan-fill:    #1E2333;
+
+        --step-badge:  #82B4E6;
+    }
+}
+:root[data-theme="dark"] {
+    --paper:      #12151B;
+    --paper-2:    #1A1F27;
+    --ink:        #E6E9EE;
+    --ink-2:      #B8BFCB;
+    --rule:       #2B323C;
+    --rule-2:     #3D4652;
+    --mute:       #8A93A0;
+
+    --client:      #7EA0BC;
+    --client-fill: #1D2833;
+    --daemon:      #7CB088;
+    --daemon-fill: #1B2820;
+    --live:        #A695C4;
+    --live-fill:   #221D33;
+    --ephem:       #D19E64;
+    --ephem-fill:  #2A2419;
+    --external:    #C97D6B;
+    --external-fill: #2B1D18;
+    --wan:         #8B9BC0;
+    --wan-fill:    #1E2333;
+
+    --step-badge:  #82B4E6;
+}
+
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+}
+.page { max-width: 1240px; margin: 0 auto; padding: 32px 24px 64px; }
+@media (max-width: 640px) { .page { padding: 20px 12px 48px; } }
+
+.head { border-bottom: 1px solid var(--rule); padding-bottom: 18px; margin-bottom: 28px; }
+.eyebrow {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--mute);
+    margin-bottom: 8px;
+}
+.title {
+    font-family: var(--font-serif);
+    font-weight: 500;
+    font-size: clamp(24px, 3.6vw, 32px);
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+    margin: 0 0 10px;
+    text-wrap: balance;
+}
+.lede {
+    margin: 0;
+    color: var(--ink-2);
+    font-size: 15px;
+    max-width: 78ch;
+}
+.lede code {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    padding: 1px 5px;
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+}
+
+/* -------- SVG -------- */
+
+.diagram {
+    width: 100%;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 8px;
+    margin-bottom: 28px;
+}
+.diagram svg { display: block; width: 100%; height: auto; }
+
+svg text          { font-family: var(--font-sans); fill: var(--ink); }
+svg .lbl-mono     { font-family: var(--font-mono); }
+svg .band-title   { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; }
+svg .band-title-client   { fill: var(--client); }
+svg .band-title-daemon   { fill: var(--daemon); }
+svg .band-title-external { fill: var(--external); }
+svg .band-title-wan      { fill: var(--wan); }
+
+svg .node-title { font-size: 12px; font-weight: 600; fill: var(--ink); font-family: var(--font-mono); }
+svg .node-sub   { font-size: 10.5px; fill: var(--mute); }
+
+svg .machine-laptop {
+    fill: var(--daemon-fill); stroke: var(--daemon);
+    stroke-width: 1.5; opacity: 1;
+}
+svg .machine-devbox {
+    fill: var(--client-fill); stroke: var(--client);
+    stroke-width: 1.5; opacity: 1;
+}
+svg .wan-band {
+    fill: var(--wan-fill); stroke: var(--wan);
+    stroke-width: 1; stroke-dasharray: 3 3;
+}
+svg .group-external { fill: var(--external-fill); stroke: var(--external); stroke-width: 1; }
+svg .group-ephem    { fill: var(--ephem-fill);    stroke: var(--ephem);    stroke-width: 1.5; stroke-dasharray: 5 3; }
+svg .group-live     { fill: var(--live-fill);     stroke: var(--live);     stroke-width: 1.5; stroke-dasharray: 5 3; }
+
+svg .inner-node        { fill: var(--paper); stroke: var(--rule-2); stroke-width: 1; }
+svg .inner-node-daemon { fill: var(--paper); stroke: var(--daemon); stroke-width: 1; }
+svg .inner-node-client { fill: var(--paper); stroke: var(--client); stroke-width: 1; }
+
+svg .arrow-line   { stroke: var(--client); stroke-width: 1.5; fill: none; }
+svg .arrow-line-daemon { stroke: var(--daemon); stroke-width: 1.5; fill: none; }
+svg .arrow-line-ephem  { stroke: var(--ephem);  stroke-width: 1.5; fill: none; }
+svg .arrow-line-ext    { stroke: var(--external); stroke-width: 1.5; fill: none; }
+svg .arrow-line-live   { stroke: var(--live); stroke-width: 1.2; fill: none; stroke-dasharray: 4 3; }
+svg .arrow-line-wan    { stroke: var(--wan); stroke-width: 1.75; fill: none; }
+svg .arrow-line-mcp    { stroke: var(--client); stroke-width: 1.25; fill: none; stroke-dasharray: 6 3; }
+
+svg .arrow-return-ext    { stroke: var(--external); stroke-width: 1.2; fill: none; stroke-dasharray: 4 3; }
+svg .arrow-return-ephem  { stroke: var(--ephem);  stroke-width: 1.2; fill: none; stroke-dasharray: 4 3; }
+
+svg .arrow-label  { font-family: var(--font-mono); font-size: 10.5px; fill: var(--ink-2); }
+svg .step-badge   { fill: var(--step-badge); }
+svg .step-num     { font-family: var(--font-mono); font-size: 10px; font-weight: 600; fill: var(--paper); text-anchor: middle; }
+
+/* -------- Flow -------- */
+
+.flow {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 10px 22px;
+    margin-bottom: 28px;
+}
+.step {
+    display: grid;
+    grid-template-columns: 26px 1fr;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--rule);
+    font-size: 13px;
+    align-items: baseline;
+}
+.step-n {
+    background: var(--step-badge);
+    color: var(--paper);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    border-radius: 999px;
+    padding: 2px 0;
+    text-align: center;
+    align-self: start;
+    margin-top: 2px;
+}
+.step-body strong {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--ink);
+    font-weight: 500;
+    display: block;
+    margin-bottom: 2px;
+}
+.step-body span { color: var(--ink-2); font-size: 13px; }
+.step-body code { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); background: transparent; }
+
+.step.wan strong::after {
+    content: " · WAN";
+    color: var(--wan);
+    font-weight: 500;
+}
+
+/* -------- Legend + notes -------- */
+
+.two-col {
+    display: grid;
+    grid-template-columns: minmax(280px, 1fr) minmax(360px, 1.3fr);
+    gap: 32px;
+}
+@media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+
+.legend, .notes {
+    padding: 16px 18px;
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+}
+.legend h3, .notes h3 {
+    font-family: var(--font-sans);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--mute);
+    margin: 0 0 12px;
+}
+.legend-row {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 8px; font-size: 13px;
+}
+.legend-row:last-child { margin-bottom: 0; }
+.swatch {
+    display: inline-block; width: 18px; height: 12px;
+    border-radius: 2px; border: 1px solid; flex-shrink: 0;
+}
+.sw-daemon   { background: var(--daemon-fill);   border-color: var(--daemon);   }
+.sw-client   { background: var(--client-fill);   border-color: var(--client);   }
+.sw-wan      { background: var(--wan-fill);      border-color: var(--wan);      border-style: dashed; }
+.sw-ephem    { background: var(--ephem-fill);    border-color: var(--ephem);    border-style: dashed; }
+.sw-live     { background: var(--live-fill);     border-color: var(--live);     border-style: dashed; }
+.sw-external { background: var(--external-fill); border-color: var(--external); }
+
+.notes ul {
+    margin: 0; padding-left: 18px;
+    color: var(--ink-2); font-size: 13px; line-height: 1.55;
+}
+.notes li { margin-bottom: 8px; }
+.notes li:last-child { margin-bottom: 0; }
+.notes code {
+    font-family: var(--font-mono); font-size: 12px;
+    color: var(--ink); background: transparent;
+}
+.notes .win {
+    color: var(--daemon);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-weight: 600;
+    margin-right: 6px;
+}
+
+.foot {
+    margin-top: 28px; padding-top: 14px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--mute); letter-spacing: 0.02em;
+}
+</style>
+
+<div class="page">
+    <header class="head">
+        <span class="eyebrow">Vox call · target · distributed (laptop ↔ dev-box)</span>
+        <h1 class="title">Vox call — target state, distributed topology</h1>
+        <p class="lede">
+            Laptop hosts the audio hardware and <code>voxd</code>. The dev-box hosts Claude Code sessions,
+            <code>mcp-proxy</code>, <code>vox call</code>, and the per-turn bare subprocess. Only text and events cross the WAN — no PCM.
+            External API traffic egresses from whichever machine actually needs it (<code>ElevenLabs</code> from the laptop, <code>Anthropic</code> from the dev-box).
+        </p>
+    </header>
+
+    <div class="diagram">
+        <svg viewBox="0 0 1240 830" role="img" aria-label="Target-state architecture: laptop with voxd owning mic, STT, TTS, and speakers; dev-box with Claude Code, mcp-proxy, and vox call orchestrator; WAN link carrying text and events only.">
+
+            <defs>
+                <marker id="ar-client" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M0 0 L8 4 L0 8 z" fill="var(--client)"/>
+                </marker>
+                <marker id="ar-daemon" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M0 0 L8 4 L0 8 z" fill="var(--daemon)"/>
+                </marker>
+                <marker id="ar-ephem" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M0 0 L8 4 L0 8 z" fill="var(--ephem)"/>
+                </marker>
+                <marker id="ar-ext" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M0 0 L8 4 L0 8 z" fill="var(--external)"/>
+                </marker>
+                <marker id="ar-live" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M0 0 L8 4 L0 8 z" fill="var(--live)"/>
+                </marker>
+                <marker id="ar-wan" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M0 0 L8 4 L0 8 z" fill="var(--wan)"/>
+                </marker>
+            </defs>
+
+            <!-- External API row -->
+            <text x="20" y="26" class="band-title band-title-external">Network · external APIs</text>
+
+            <rect x="60"   y="42" width="200" height="66" rx="3" class="group-external"/>
+            <text x="160"  y="66"  text-anchor="middle" class="node-title">ElevenLabs STT</text>
+            <text x="160"  y="82"  text-anchor="middle" class="node-sub">HTTPS · batch per turn</text>
+            <text x="160"  y="97"  text-anchor="middle" class="node-sub lbl-mono">from laptop</text>
+
+            <rect x="290"  y="42" width="200" height="66" rx="3" class="group-external"/>
+            <text x="390"  y="66"  text-anchor="middle" class="node-title">ElevenLabs TTS</text>
+            <text x="390"  y="82"  text-anchor="middle" class="node-sub">HTTPS · per reply</text>
+            <text x="390"  y="97"  text-anchor="middle" class="node-sub lbl-mono">from laptop</text>
+
+            <rect x="900"  y="42" width="220" height="66" rx="3" class="group-external"/>
+            <text x="1010" y="66"  text-anchor="middle" class="node-title">Anthropic API</text>
+            <text x="1010" y="82"  text-anchor="middle" class="node-sub">bare Claude subprocess</text>
+            <text x="1010" y="97"  text-anchor="middle" class="node-sub lbl-mono">from dev-box</text>
+
+            <!-- Machine bands -->
+            <text x="20"  y="138" class="band-title band-title-daemon">Laptop · audio hardware · <tspan class="lbl-mono">voxd</tspan></text>
+            <text x="700" y="138" class="band-title band-title-client">Dev-box · Claude Code · <tspan class="lbl-mono">mcp-proxy</tspan> · <tspan class="lbl-mono">vox call</tspan></text>
+
+            <!-- Laptop machine box -->
+            <rect x="60"  y="150" width="560" height="600" rx="4" class="machine-laptop"/>
+
+            <!-- Voxd inner components -->
+            <rect x="80"   y="180" width="140" height="66" rx="2" class="inner-node-daemon"/>
+            <text x="150"  y="204" text-anchor="middle" class="node-title">MicAudioSource</text>
+            <text x="150"  y="220" text-anchor="middle" class="node-sub">sounddevice · 16 kHz</text>
+            <text x="150"  y="235" text-anchor="middle" class="node-sub">20 ms mono PCM</text>
+
+            <rect x="240"  y="180" width="140" height="66" rx="2" class="inner-node-daemon"/>
+            <text x="310"  y="204" text-anchor="middle" class="node-title">TurnDetector</text>
+            <text x="310"  y="220" text-anchor="middle" class="node-sub">silence · barge-in</text>
+            <text x="310"  y="235" text-anchor="middle" class="node-sub">emits TurnDetected</text>
+
+            <rect x="400"  y="180" width="200" height="66" rx="2" class="inner-node-daemon"/>
+            <text x="500"  y="204" text-anchor="middle" class="node-title">STT provider</text>
+            <text x="500"  y="220" text-anchor="middle" class="node-sub">batch upload to ElevenLabs</text>
+            <text x="500"  y="235" text-anchor="middle" class="node-sub">→ TranscribedTurn</text>
+
+            <!-- Voxd HTTP surface -->
+            <rect x="80"  y="290" width="220" height="66" rx="2" class="inner-node-daemon"/>
+            <text x="190" y="313" text-anchor="middle" class="node-title">/mcp WebSocket</text>
+            <text x="190" y="329" text-anchor="middle" class="node-sub">MCP JSON-RPC</text>
+            <text x="190" y="344" text-anchor="middle" class="node-sub">dialed by mcp-proxy</text>
+
+            <rect x="320"  y="290" width="280" height="66" rx="2" class="inner-node-daemon"/>
+            <text x="460"  y="313" text-anchor="middle" class="node-title">/call/&lt;id&gt; WebSocket</text>
+            <text x="460"  y="329" text-anchor="middle" class="node-sub">TranscribedTurn · reply_text · playback</text>
+            <text x="460"  y="344" text-anchor="middle" class="node-sub">bidirectional event stream</text>
+
+            <!-- REST -->
+            <rect x="80"  y="380" width="520" height="42" rx="2" class="inner-node-daemon"/>
+            <text x="340" y="401" text-anchor="middle" class="node-title">/v1/* REST · list voices · set vibe · one-shot synthesize</text>
+
+            <!-- Play stage -->
+            <rect x="80"   y="450" width="160" height="66" rx="2" class="inner-node-daemon"/>
+            <text x="160"  y="472" text-anchor="middle" class="node-title">play_handler</text>
+            <text x="160"  y="488" text-anchor="middle" class="node-sub">synthesize call</text>
+            <text x="160"  y="503" text-anchor="middle" class="node-sub">TTS provider</text>
+
+            <rect x="260"  y="450" width="160" height="66" rx="2" class="inner-node-daemon"/>
+            <text x="340"  y="472" text-anchor="middle" class="node-title">playback queue</text>
+            <text x="340"  y="488" text-anchor="middle" class="node-sub">serialisation</text>
+            <text x="340"  y="503" text-anchor="middle" class="node-sub">dedup</text>
+
+            <rect x="440"  y="450" width="160" height="66" rx="2" class="inner-node-daemon"/>
+            <text x="520"  y="472" text-anchor="middle" class="node-title">mpv</text>
+            <text x="520"  y="488" text-anchor="middle" class="node-sub">audio out</text>
+            <text x="520"  y="503" text-anchor="middle" class="node-sub">playback events</text>
+
+            <!-- User hardware -->
+            <rect x="120"  y="680" width="140" height="42" rx="3" fill="none" stroke="var(--daemon)" stroke-dasharray="4 3"/>
+            <text x="190"  y="706" text-anchor="middle" class="node-sub lbl-mono" fill="var(--daemon)">🎙 microphone</text>
+
+            <rect x="380"  y="680" width="140" height="42" rx="3" fill="none" stroke="var(--daemon)" stroke-dasharray="4 3"/>
+            <text x="450"  y="706" text-anchor="middle" class="node-sub lbl-mono" fill="var(--daemon)">🔊 speakers</text>
+
+            <text x="340" y="748" text-anchor="middle" class="node-sub" font-style="italic">User's laptop · audio hardware physically here</text>
+
+            <!-- WAN column -->
+            <text x="640" y="138" class="band-title band-title-wan">WAN</text>
+            <rect x="628" y="150" width="60" height="600" rx="4" class="wan-band"/>
+            <text x="658" y="380" text-anchor="middle" class="node-sub lbl-mono" fill="var(--wan)"
+                  transform="rotate(-90 658 380)">TLS · bearer · text + events · NO PCM</text>
+
+            <!-- Dev-box machine box -->
+            <rect x="700" y="150" width="520" height="600" rx="4" class="machine-devbox"/>
+
+            <!-- Claude Code + mcp-proxy on dev-box -->
+            <rect x="720"  y="180" width="220" height="66" rx="2" class="inner-node-client"/>
+            <text x="830"  y="204" text-anchor="middle" class="node-title">Claude Code (N sessions)</text>
+            <text x="830"  y="220" text-anchor="middle" class="node-sub">MCP host process</text>
+            <text x="830"  y="235" text-anchor="middle" class="node-sub">spawns mcp-proxy per session</text>
+
+            <rect x="960"  y="180" width="220" height="66" rx="2" class="inner-node-client"/>
+            <text x="1070" y="204" text-anchor="middle" class="node-title">mcp-proxy · Go</text>
+            <text x="1070" y="220" text-anchor="middle" class="node-sub">~9 MB per session</text>
+            <text x="1070" y="235" text-anchor="middle" class="node-sub">MCP stdio → WebSocket</text>
+
+            <!-- vox call orchestrator on dev-box -->
+            <rect x="720"  y="290" width="460" height="130" rx="3" fill="var(--paper)" stroke="var(--client)" stroke-width="1"/>
+            <text x="730"  y="309" class="node-sub lbl-mono" fill="var(--client)">vox call · orchestrator · turn state machine</text>
+
+            <rect x="740"  y="325" width="200" height="80" rx="2" class="inner-node-client"/>
+            <text x="840"  y="347" text-anchor="middle" class="node-title">ClaudeSessionAttach</text>
+            <text x="840"  y="364" text-anchor="middle" class="node-sub">spawn bare subprocess</text>
+            <text x="840"  y="379" text-anchor="middle" class="node-sub">reads TranscribedTurn events</text>
+            <text x="840"  y="394" text-anchor="middle" class="node-sub">sends reply_text</text>
+
+            <rect x="960"  y="325" width="200" height="80" rx="2" class="inner-node-client"/>
+            <text x="1060" y="347" text-anchor="middle" class="node-title">/call/&lt;id&gt; subscriber</text>
+            <text x="1060" y="364" text-anchor="middle" class="node-sub">WebSocket client</text>
+            <text x="1060" y="379" text-anchor="middle" class="node-sub">TLS · bearer auth</text>
+            <text x="1060" y="394" text-anchor="middle" class="node-sub">reconnects with backoff</text>
+
+            <!-- Ephemeral bare subprocess -->
+            <rect x="760"  y="450" width="320" height="70" rx="3" class="group-ephem"/>
+            <text x="920"  y="472" text-anchor="middle" class="node-title" fill="var(--ephem)">claude -p --resume &lt;id&gt; --bare</text>
+            <text x="920"  y="490" text-anchor="middle" class="node-sub">per turn · dev-box</text>
+            <text x="920"  y="506" text-anchor="middle" class="node-sub">stdin JSON in · stdout deltas out</text>
+
+            <!-- Live Claude Code session -->
+            <rect x="720"  y="560" width="440" height="72" rx="3" class="group-live"/>
+            <text x="940"  y="583" text-anchor="middle" class="node-title" fill="var(--live)">Live Claude Code session (the one you called from)</text>
+            <text x="940"  y="601" text-anchor="middle" class="node-sub">discovered via <tspan class="lbl-mono">claude agents --json</tspan></text>
+            <text x="940"  y="617" text-anchor="middle" class="node-sub">held via CallLock; not in the AI loop</text>
+
+            <!-- Config note on dev-box -->
+            <rect x="720"  y="660" width="440" height="52" rx="3" fill="none" stroke="var(--rule-2)" stroke-dasharray="4 3"/>
+            <text x="940"  y="681" text-anchor="middle" class="node-sub lbl-mono">~/.punt-labs/vox/profile.toml</text>
+            <text x="940"  y="697" text-anchor="middle" class="node-sub">shared by mcp-proxy AND vox call · URL, bearer, CA cert</text>
+
+            <!-- ==== Flow arrows ==== -->
+
+            <!-- 1: mic → MicAudioSource -->
+            <path d="M190 680 V 246" class="arrow-line-daemon" marker-start="url(#ar-daemon)"/>
+            <circle cx="190" cy="470" r="10" class="step-badge"/>
+            <text x="190" y="473" class="step-num">1</text>
+
+            <!-- 2: MicAudioSource → TurnDetector -->
+            <path d="M220 213 H 240" class="arrow-line-daemon" marker-end="url(#ar-daemon)"/>
+            <circle cx="228" cy="175" r="9" class="step-badge"/>
+            <text x="228" y="178" class="step-num">2</text>
+
+            <!-- 3: TurnDetector → STTProvider -->
+            <path d="M380 213 H 400" class="arrow-line-daemon" marker-end="url(#ar-daemon)"/>
+            <circle cx="390" cy="175" r="9" class="step-badge"/>
+            <text x="390" y="178" class="step-num">3</text>
+
+            <!-- 4: STTProvider ↔ ElevenLabs STT -->
+            <path d="M480 180 V 108" class="arrow-line-ext" marker-end="url(#ar-ext)"/>
+            <path d="M520 108 V 180" class="arrow-return-ext" marker-end="url(#ar-ext)"/>
+            <circle cx="470" cy="140" r="9" class="step-badge"/>
+            <text x="470" y="143" class="step-num">4</text>
+
+            <!-- 5: STTProvider → /call handler -->
+            <path d="M500 246 Q 490 265 470 290" class="arrow-line-daemon" marker-end="url(#ar-daemon)"/>
+            <circle cx="480" cy="265" r="9" class="step-badge"/>
+            <text x="480" y="268" class="step-num">5</text>
+
+            <!-- 6: /call handler → WAN → /call subscriber (dev-box) -->
+            <path d="M600 322 H 960" class="arrow-line-wan" marker-end="url(#ar-wan)"/>
+            <text x="720" y="315" class="arrow-label lbl-mono" fill="var(--wan)">TranscribedTurn event</text>
+            <circle cx="700" cy="322" r="10" class="step-badge"/>
+            <text x="700" y="325" class="step-num">6</text>
+
+            <!-- 7: /call subscriber → ClaudeSessionAttach -->
+            <path d="M960 385 H 940" class="arrow-line" marker-end="url(#ar-client)"/>
+            <circle cx="948" cy="415" r="9" class="step-badge"/>
+            <text x="948" y="418" class="step-num">7</text>
+
+            <!-- 8: ClaudeSessionAttach → spawn bare subprocess -->
+            <path d="M840 405 V 450" class="arrow-line-ephem" marker-end="url(#ar-ephem)"/>
+            <circle cx="840" cy="430" r="9" class="step-badge"/>
+            <text x="840" y="433" class="step-num">8</text>
+
+            <!-- 9: Subprocess ↔ Anthropic -->
+            <path d="M990 450 Q 1000 240 1010 108" class="arrow-line-ext" marker-end="url(#ar-ext)"/>
+            <path d="M1030 108 Q 1020 280 1010 450" class="arrow-return-ext" marker-end="url(#ar-ext)"/>
+            <circle cx="1013" cy="280" r="10" class="step-badge"/>
+            <text x="1013" y="283" class="step-num">9</text>
+
+            <!-- 10: Bare subprocess → ClaudeSessionAttach (deltas) -->
+            <path d="M900 450 Q 890 430 880 405" class="arrow-return-ephem" marker-end="url(#ar-ephem)"/>
+            <circle cx="880" cy="428" r="9" class="step-badge"/>
+            <text x="880" y="431" class="step-num">10</text>
+
+            <!-- 11: ClaudeSessionAttach → /call subscriber (reply_text) -->
+            <path d="M940 375 H 960" class="arrow-line" marker-end="url(#ar-client)"/>
+            <circle cx="950" cy="345" r="9" class="step-badge"/>
+            <text x="950" y="348" class="step-num">11</text>
+
+            <!-- 12: WAN → /call handler (reply_text) -->
+            <path d="M960 340 H 600" class="arrow-line-wan" marker-end="url(#ar-wan)"/>
+            <text x="720" y="333" class="arrow-label lbl-mono" fill="var(--wan)">reply_text</text>
+            <circle cx="720" cy="340" r="10" class="step-badge"/>
+            <text x="720" y="343" class="step-num">12</text>
+
+            <!-- 13: /call handler → play_handler -->
+            <path d="M400 356 Q 250 400 200 450" class="arrow-line-daemon" marker-end="url(#ar-daemon)"/>
+            <circle cx="240" cy="395" r="9" class="step-badge"/>
+            <text x="240" y="398" class="step-num">13</text>
+
+            <!-- 14: play_handler ↔ ElevenLabs TTS -->
+            <path d="M180 450 Q 210 250 370 108" class="arrow-line-ext" marker-end="url(#ar-ext)"/>
+            <path d="M400 108 Q 245 260 210 450" class="arrow-return-ext" marker-end="url(#ar-ext)"/>
+            <circle cx="215" cy="265" r="9" class="step-badge"/>
+            <text x="215" y="268" class="step-num">14</text>
+
+            <!-- 15: play_handler → queue → mpv -->
+            <path d="M240 483 H 260" class="arrow-line-daemon" marker-end="url(#ar-daemon)"/>
+            <path d="M420 483 H 440" class="arrow-line-daemon" marker-end="url(#ar-daemon)"/>
+            <circle cx="430" cy="437" r="9" class="step-badge"/>
+            <text x="430" y="440" class="step-num">15</text>
+
+            <!-- 16: mpv → speakers -->
+            <path d="M470 516 V 680" class="arrow-line-daemon" marker-end="url(#ar-daemon)"/>
+            <circle cx="470" cy="600" r="9" class="step-badge"/>
+            <text x="470" y="603" class="step-num">16</text>
+
+            <!-- 17: playback_ended event → dev-box (mic gate release) -->
+            <path d="M600 302 H 960" class="arrow-line-wan" marker-end="url(#ar-wan)" stroke-dasharray="6 4"/>
+            <text x="820" y="296" text-anchor="middle" class="arrow-label lbl-mono" fill="var(--wan)">playback_ended</text>
+            <circle cx="850" cy="302" r="9" class="step-badge"/>
+            <text x="850" y="305" class="step-num">17</text>
+
+            <!-- MCP side-channel: Claude Code → mcp-proxy → WAN → /mcp WebSocket -->
+            <path d="M940 213 H 960" class="arrow-line-mcp" marker-end="url(#ar-client)"/>
+            <path d="M960 213 Q 700 250 300 290" class="arrow-line-mcp" marker-end="url(#ar-client)"/>
+            <text x="640" y="248" text-anchor="middle" class="arrow-label lbl-mono" fill="var(--client)">MCP JSON-RPC (parallel path — tool calls, not per-turn)</text>
+
+            <!-- Live session dashed connection to vox call -->
+            <path d="M900 550 V 420" class="arrow-line-live" marker-end="url(#ar-live)"/>
+            <text x="910" y="500" class="arrow-label lbl-mono" fill="var(--live)">SessionDiscovery + CallLock</text>
+
+        </svg>
+    </div>
+
+    <!-- ==== Per-turn flow ==== -->
+
+    <section class="flow" aria-label="Per-turn flow">
+        <div class="step"><span class="step-n">1</span><div class="step-body"><strong>Mic → MicAudioSource</strong><span>Laptop-local; 16 kHz 16-bit mono PCM, 20 ms chunks.</span></div></div>
+        <div class="step"><span class="step-n">2</span><div class="step-body"><strong>MicAudioSource → TurnDetector</strong><span>Laptop-local; silence-based turn end, barge-in detection.</span></div></div>
+        <div class="step"><span class="step-n">3</span><div class="step-body"><strong>TurnDetector → STT provider</strong><span>Laptop-local hand-off of accumulated turn audio.</span></div></div>
+        <div class="step"><span class="step-n">4</span><div class="step-body"><strong>STT ↔ ElevenLabs STT</strong><span>Batch HTTPS upload from <em>laptop's</em> egress. Transcript back.</span></div></div>
+        <div class="step"><span class="step-n">5</span><div class="step-body"><strong>STT provider → /call handler</strong><span>Laptop-local: TranscribedTurn goes on the per-call event stream.</span></div></div>
+        <div class="step wan"><span class="step-n">6</span><div class="step-body"><strong>Voxd → dev-box · TranscribedTurn</strong><span>Small JSON event over TLS-secured WebSocket. First WAN hop of the turn.</span></div></div>
+        <div class="step"><span class="step-n">7</span><div class="step-body"><strong>Subscriber → ClaudeSessionAttach</strong><span>Dev-box-local: hand transcript to the subprocess orchestrator.</span></div></div>
+        <div class="step"><span class="step-n">8</span><div class="step-body"><strong>Spawn <code>claude -p --resume &lt;id&gt; --bare</code></strong><span>Dev-box-local: one subprocess per turn, writes user JSON to stdin.</span></div></div>
+        <div class="step"><span class="step-n">9</span><div class="step-body"><strong>Bare Claude ↔ Anthropic API</strong><span>From <em>dev-box's</em> egress. Requires <code>ANTHROPIC_API_KEY</code>; deltas stream back.</span></div></div>
+        <div class="step"><span class="step-n">10</span><div class="step-body"><strong>Subprocess → orchestrator</strong><span>Dev-box-local: stream deltas assembled into ReplyChunks.</span></div></div>
+        <div class="step"><span class="step-n">11</span><div class="step-body"><strong>Orchestrator → /call subscriber</strong><span>Dev-box-local: reply_text queued for WAN send.</span></div></div>
+        <div class="step wan"><span class="step-n">12</span><div class="step-body"><strong>Dev-box → voxd · reply_text</strong><span>Second WAN hop. Small JSON message over the same call WebSocket.</span></div></div>
+        <div class="step"><span class="step-n">13</span><div class="step-body"><strong>/call handler → play_handler</strong><span>Laptop-local dispatch of reply_text into the synthesis pipeline.</span></div></div>
+        <div class="step"><span class="step-n">14</span><div class="step-body"><strong>play_handler ↔ ElevenLabs TTS</strong><span>HTTPS from <em>laptop's</em> egress. Audio bytes back.</span></div></div>
+        <div class="step"><span class="step-n">15</span><div class="step-body"><strong>play_handler → queue → mpv</strong><span>Laptop-local: dedup + serialisation for concurrent-session playback safety.</span></div></div>
+        <div class="step"><span class="step-n">16</span><div class="step-body"><strong>mpv → speakers</strong><span>Laptop-local audio out.</span></div></div>
+        <div class="step wan"><span class="step-n">17</span><div class="step-body"><strong>Voxd → dev-box · playback_ended</strong><span>Signal — not estimated — release the mic-echo gate. Third and final WAN hop of the turn.</span></div></div>
+    </section>
+
+    <div class="two-col">
+        <aside class="legend" aria-label="Legend">
+            <h3>Legend</h3>
+            <div class="legend-row"><span class="swatch sw-daemon"></span>Laptop · voxd, audio hardware, mic + speakers</div>
+            <div class="legend-row"><span class="swatch sw-client"></span>Dev-box · Claude Code, mcp-proxy, vox call</div>
+            <div class="legend-row"><span class="swatch sw-wan"></span>WAN link · TLS + bearer · text and events only</div>
+            <div class="legend-row"><span class="swatch sw-ephem"></span>Ephemeral · bare Claude subprocess, per turn</div>
+            <div class="legend-row"><span class="swatch sw-live"></span>Referenced but not in AI loop · live Claude Code session</div>
+            <div class="legend-row"><span class="swatch sw-external"></span>External · ElevenLabs, Anthropic (network)</div>
+        </aside>
+
+        <aside class="notes" aria-label="What this target buys">
+            <h3>What changes vs today</h3>
+            <ul>
+                <li><span class="win">wins</span>Mic capture, TurnDetector, and STT move into <code>voxd</code>. No PCM crosses the WAN. Bandwidth of a call = a few small JSON messages per turn.</li>
+                <li><span class="win">wins</span>Mic-echo gate is <em>signal-based</em> now — voxd emits <code>playback_ended</code> when mpv actually finishes. The estimated-duration bound goes away.</li>
+                <li><span class="win">wins</span>Barge-in detection is entirely laptop-local: mic and mpv playback both live inside voxd, so both signals are in-process.</li>
+                <li><span class="win">wins</span>MCP path collapses to <code>mcp-proxy</code> on the dev-box: ~9 MB per session instead of ~73 MB for a Python <code>vox mcp</code>. Scales linearly with sessions.</li>
+                <li><span class="win">shape</span><code>~/.punt-labs/vox/profile.toml</code> is shared by <code>mcp-proxy</code> and <code>vox call</code>. One URL, one bearer, one CA-pin — rotate secrets in one place.</li>
+                <li><span class="win">shape</span>URL discovery (Tailscale name, SSH <code>-R</code>, or a reverse tunnel) is a deployment choice, not a code change. <code>mcp-proxy</code> and the streaming client dial whatever the profile says.</li>
+                <li><span class="win">holds</span>Bare-subprocess-per-turn architecture is unchanged. Fixing the hook cascade (via <code>mcp-proxy --hook</code> across the daemon set) is the next lever — could make <code>--bare</code> unnecessary and restore OAuth support for calls.</li>
+            </ul>
+        </aside>
+    </div>
+
+    <footer class="foot">
+        Target described in this session; not yet coded. External-API egress arrows show whichever machine actually needs the round-trip, which is the machine closest to the payload — laptop for STT/TTS (audio local), dev-box for Anthropic (Claude binary + <code>ANTHROPIC_API_KEY</code> local).
+    </footer>
+</div>
