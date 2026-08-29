@@ -1,0 +1,9 @@
+{"ws_connect_ms": 571.7, "t": "2026-08-29T22:58:46.924+00:00", "ms": 941.2, "dir": "note", "type": "ws_open"}
+{"conversation_id": "conv_1801m17vydrbeab9gjcqr5z43drj", "agent_output_audio_format": "pcm_16000", "user_input_audio_format": "pcm_16000", "persistent_session_token": null, "t": "2026-08-29T22:58:46.924+00:00", "ms": 941.6, "dir": "recv", "type": "conversation_initiation_metadata"}
+{"t": "2026-08-29T22:58:47.031+00:00", "ms": 1049.1, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 41952, "event_id": 1, "t": "2026-08-29T22:58:47.244+00:00", "ms": 1262.2, "dir": "recv", "type": "audio"}
+{"bytes_b64": 25824, "event_id": 1, "t": "2026-08-29T22:58:47.467+00:00", "ms": 1484.5, "dir": "recv", "type": "audio"}
+{"text": "Voice agent ready. What do you need?", "t": "2026-08-29T22:58:47.467+00:00", "ms": 1484.7, "dir": "recv", "type": "agent_response"}
+{"ping_ms": null, "t": "2026-08-29T22:58:48.734+00:00", "ms": 2751.7, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:58:48.846+00:00", "ms": 2863.8, "dir": "recv", "type": "agent_response_complete"}
+{"t": "2026-08-29T22:58:49.643+00:00", "ms": 3660.8, "dir": "note", "type": "session_closed"}

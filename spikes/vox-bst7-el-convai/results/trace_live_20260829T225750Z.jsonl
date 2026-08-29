@@ -1,0 +1,30 @@
+{"ws_connect_ms": 524.8, "t": "2026-08-29T22:57:51.617+00:00", "ms": 723.1, "dir": "note", "type": "ws_open"}
+{"conversation_id": "conv_9701m17vwqrpe7183fqb48g1jf42", "agent_output_audio_format": "pcm_16000", "user_input_audio_format": "pcm_16000", "persistent_session_token": null, "t": "2026-08-29T22:57:51.618+00:00", "ms": 723.6, "dir": "recv", "type": "conversation_initiation_metadata"}
+{"t": "2026-08-29T22:57:51.850+00:00", "ms": 955.3, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 41952, "event_id": 1, "t": "2026-08-29T22:57:51.915+00:00", "ms": 1020.3, "dir": "recv", "type": "audio"}
+{"bytes_b64": 32276, "event_id": 1, "t": "2026-08-29T22:57:51.958+00:00", "ms": 1063.5, "dir": "recv", "type": "audio"}
+{"text": "Voice agent ready. What do you need?", "t": "2026-08-29T22:57:51.958+00:00", "ms": 1063.9, "dir": "recv", "type": "agent_response"}
+{"ping_ms": null, "t": "2026-08-29T22:57:53.402+00:00", "ms": 2507.8, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:57:54.015+00:00", "ms": 3120.8, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 120, "t": "2026-08-29T22:57:55.121+00:00", "ms": 4226.4, "dir": "recv", "type": "ping"}
+{"ping_ms": 117, "t": "2026-08-29T22:57:56.817+00:00", "ms": 5923.2, "dir": "recv", "type": "ping"}
+{"ping_ms": 113, "t": "2026-08-29T22:57:58.487+00:00", "ms": 7592.9, "dir": "recv", "type": "ping"}
+{"ping_ms": 97, "t": "2026-08-29T22:58:00.188+00:00", "ms": 9293.9, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:58:01.520+00:00", "ms": 10625.7, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "...", "t": "2026-08-29T22:58:01.655+00:00", "ms": 10760.7, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 38728, "event_id": 55, "t": "2026-08-29T22:58:01.655+00:00", "ms": 10761.1, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T22:58:01.656+00:00", "ms": 10761.2, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 80688, "event_id": 55, "t": "2026-08-29T22:58:01.983+00:00", "ms": 11089.0, "dir": "recv", "type": "audio"}
+{"text": "Are you still there? Please let me know if you need help with anything.", "t": "2026-08-29T22:58:01.983+00:00", "ms": 11089.2, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 89, "t": "2026-08-29T22:58:01.984+00:00", "ms": 11089.3, "dir": "recv", "type": "ping"}
+{"event_id": 66, "t": "2026-08-29T22:58:02.654+00:00", "ms": 11760.0, "dir": "recv", "type": "interruption"}
+{"original_agent_response": "Are you still there? Please let me know if you need help with anything.", "corrected_agent_response": "Are you still there?...", "event_id": 55, "response_id": "17c93988-67aa-4209-8fc6-e2033d050a62", "t": "2026-08-29T22:58:02.655+00:00", "ms": 11760.6, "dir": "recv", "type": "agent_response_correction"}
+{"ping_ms": 89, "t": "2026-08-29T22:58:03.664+00:00", "ms": 12769.7, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:58:03.912+00:00", "ms": 13017.5, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Are you still there?", "t": "2026-08-29T22:58:03.912+00:00", "ms": 13017.8, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 70, "t": "2026-08-29T22:58:03.912+00:00", "ms": 13018.2, "dir": "recv", "type": "audio"}
+{"bytes_b64": 100056, "event_id": 70, "t": "2026-08-29T22:58:04.001+00:00", "ms": 13107.0, "dir": "recv", "type": "audio"}
+{"text": "Yes, I am still here. How can I help you with your coding session today?", "t": "2026-08-29T22:58:04.001+00:00", "ms": 13107.2, "dir": "recv", "type": "agent_response"}
+{"event_id": 79, "t": "2026-08-29T22:58:04.523+00:00", "ms": 13628.5, "dir": "recv", "type": "interruption"}
+{"original_agent_response": "Yes, I am still here. How can I help you with your coding session today?", "corrected_agent_response": "Yes, I am...", "event_id": 70, "response_id": "202b7a60-f1f2-4c05-8926-494dcfb0db88", "t": "2026-08-29T22:58:04.524+00:00", "ms": 13629.7, "dir": "recv", "type": "agent_response_correction"}
+{"t": "2026-08-29T22:58:05.091+00:00", "ms": 14196.9, "dir": "note", "type": "session_closed"}

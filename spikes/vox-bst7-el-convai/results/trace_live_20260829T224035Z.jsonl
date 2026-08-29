@@ -1,0 +1,110 @@
+{"ws_connect_ms": 337.3, "t": "2026-08-29T22:40:36.495+00:00", "ms": 603.8, "dir": "note", "type": "ws_open"}
+{"conversation_id": "conv_5501m17tx4yjffk8cn2xwthpr2h2", "agent_output_audio_format": "pcm_16000", "user_input_audio_format": "pcm_16000", "persistent_session_token": null, "t": "2026-08-29T22:40:36.495+00:00", "ms": 604.0, "dir": "recv", "type": "conversation_initiation_metadata"}
+{"t": "2026-08-29T22:40:36.663+00:00", "ms": 771.8, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 41952, "event_id": 1, "t": "2026-08-29T22:40:36.821+00:00", "ms": 929.5, "dir": "recv", "type": "audio"}
+{"bytes_b64": 38732, "event_id": 1, "t": "2026-08-29T22:40:36.865+00:00", "ms": 973.7, "dir": "recv", "type": "audio"}
+{"text": "Voice agent ready. What do you need?", "t": "2026-08-29T22:40:36.868+00:00", "ms": 976.7, "dir": "recv", "type": "agent_response"}
+{"ping_ms": null, "t": "2026-08-29T22:40:38.372+00:00", "ms": 2480.6, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:40:39.012+00:00", "ms": 3120.9, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 146, "t": "2026-08-29T22:40:40.060+00:00", "ms": 4169.1, "dir": "recv", "type": "ping"}
+{"ping_ms": 109, "t": "2026-08-29T22:40:41.759+00:00", "ms": 5868.0, "dir": "recv", "type": "ping"}
+{"ping_ms": 72, "t": "2026-08-29T22:40:43.533+00:00", "ms": 7642.4, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:40:44.561+00:00", "ms": 8670.2, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Yeah, I wanted to know what the weather is like in Seattle today.", "t": "2026-08-29T22:40:44.662+00:00", "ms": 8770.6, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 42, "t": "2026-08-29T22:40:44.662+00:00", "ms": 8770.9, "dir": "recv", "type": "audio"}
+{"bytes_b64": 90376, "event_id": 42, "t": "2026-08-29T22:40:44.770+00:00", "ms": 8879.1, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T22:40:44.770+00:00", "ms": 8879.4, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 145240, "event_id": 42, "t": "2026-08-29T22:40:44.970+00:00", "ms": 9079.5, "dir": "recv", "type": "audio"}
+{"text": "I do not have access to real time weather information for Seattle. Is there anything else I can help you with, like searching the code or taking a note?", "t": "2026-08-29T22:40:44.971+00:00", "ms": 9079.9, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 72, "t": "2026-08-29T22:40:45.160+00:00", "ms": 9268.6, "dir": "recv", "type": "ping"}
+{"ping_ms": 66, "t": "2026-08-29T22:40:47.075+00:00", "ms": 11183.8, "dir": "recv", "type": "ping"}
+{"ping_ms": 142, "t": "2026-08-29T22:40:48.615+00:00", "ms": 12724.1, "dir": "recv", "type": "ping"}
+{"ping_ms": 129, "t": "2026-08-29T22:40:50.264+00:00", "ms": 14373.3, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:40:51.429+00:00", "ms": 15537.7, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 129, "t": "2026-08-29T22:40:51.963+00:00", "ms": 16072.1, "dir": "recv", "type": "ping"}
+{"ping_ms": 68, "t": "2026-08-29T22:40:53.663+00:00", "ms": 17772.5, "dir": "recv", "type": "ping"}
+{"ping_ms": 59, "t": "2026-08-29T22:40:55.418+00:00", "ms": 19527.1, "dir": "recv", "type": "ping"}
+{"ping_ms": 59, "t": "2026-08-29T22:40:57.102+00:00", "ms": 21211.1, "dir": "recv", "type": "ping"}
+{"ping_ms": 102, "t": "2026-08-29T22:40:58.798+00:00", "ms": 22907.3, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:40:59.000+00:00", "ms": 23109.2, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "...", "t": "2026-08-29T22:40:59.101+00:00", "ms": 23210.0, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 35496, "event_id": 126, "t": "2026-08-29T22:40:59.103+00:00", "ms": 23212.4, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T22:40:59.118+00:00", "ms": 23227.1, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 161380, "event_id": 126, "t": "2026-08-29T22:40:59.350+00:00", "ms": 23458.8, "dir": "recv", "type": "audio"}
+{"text": "Are you still there? Please let me know if you need any help with the code or if you want me to take a note.", "t": "2026-08-29T22:40:59.350+00:00", "ms": 23459.3, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 126, "t": "2026-08-29T22:41:00.471+00:00", "ms": 24580.5, "dir": "recv", "type": "ping"}
+{"event_id": 139, "t": "2026-08-29T22:41:00.588+00:00", "ms": 24697.0, "dir": "recv", "type": "interruption"}
+{"original_agent_response": "Are you still there? Please let me know if you need any help with the code or if you want me to take a note.", "corrected_agent_response": "Are you still there? Please let me...", "event_id": 126, "response_id": "e806635f-e035-4e41-b353-57d2d9ec8b88", "t": "2026-08-29T22:41:00.589+00:00", "ms": 24697.5, "dir": "recv", "type": "agent_response_correction"}
+{"ping_ms": 102, "t": "2026-08-29T22:41:02.170+00:00", "ms": 26279.5, "dir": "recv", "type": "ping"}
+{"ping_ms": 69, "t": "2026-08-29T22:41:03.973+00:00", "ms": 28081.6, "dir": "recv", "type": "ping"}
+{"ping_ms": 69, "t": "2026-08-29T22:41:05.572+00:00", "ms": 29680.7, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:41:06.229+00:00", "ms": 30337.7, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Huh? Yeah, I'm still here. What, what language are we using to write the software?", "t": "2026-08-29T22:41:06.431+00:00", "ms": 30540.3, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 170, "t": "2026-08-29T22:41:06.433+00:00", "ms": 30542.3, "dir": "recv", "type": "audio"}
+{"bytes_b64": 61324, "event_id": 170, "t": "2026-08-29T22:41:06.436+00:00", "ms": 30544.6, "dir": "recv", "type": "audio"}
+{"text": "Let me search the code to see what language we are using.", "t": "2026-08-29T22:41:06.474+00:00", "ms": 30583.1, "dir": "recv", "type": "agent_response"}
+{"tool": "search_code", "tool_call_id": "search_code_b4c7d2ef0b6d4aea9c5f34fc9b478fa5", "t": "2026-08-29T22:41:06.474+00:00", "ms": 30583.3, "dir": "recv", "type": "client_tool_call"}
+{"ping_ms": 62, "t": "2026-08-29T22:41:07.298+00:00", "ms": 31406.9, "dir": "recv", "type": "ping"}
+{"event_id": 181, "t": "2026-08-29T22:41:07.539+00:00", "ms": 31648.4, "dir": "recv", "type": "interruption"}
+{"original_agent_response": "Let me search the code to see what language we are using.", "corrected_agent_response": "Let me search the code to se...", "event_id": 170, "response_id": "fc8b034a-7071-4c4e-8fc7-39d2e586a552", "t": "2026-08-29T22:41:07.540+00:00", "ms": 31649.2, "dir": "recv", "type": "agent_response_correction"}
+{"tool": "search_code", "tool_call_id": "search_code_b4c7d2ef0b6d4aea9c5f34fc9b478fa5", "exec_ms": 2200.6, "is_error": false, "t": "2026-08-29T22:41:08.675+00:00", "ms": 32784.3, "dir": "send", "type": "client_tool_result"}
+{"t": "2026-08-29T22:41:08.745+00:00", "ms": 32854.5, "dir": "recv", "type": "agent_tool_response"}
+{"ping_ms": 262, "t": "2026-08-29T22:41:09.015+00:00", "ms": 33124.1, "dir": "recv", "type": "ping"}
+{"text": "Let me search the code to see.", "t": "2026-08-29T22:41:09.404+00:00", "ms": 33513.3, "dir": "recv", "type": "user_transcript"}
+{"tool": "search_code", "tool_call_id": "search_code_6e06c33e86e3494b828a6848374dfee9", "t": "2026-08-29T22:41:09.405+00:00", "ms": 33513.6, "dir": "recv", "type": "client_tool_call"}
+{"ping_ms": 185, "t": "2026-08-29T22:41:10.733+00:00", "ms": 34841.9, "dir": "recv", "type": "ping"}
+{"ping_ms": 185, "t": "2026-08-29T22:41:12.376+00:00", "ms": 36484.6, "dir": "recv", "type": "ping"}
+{"tool": "search_code", "tool_call_id": "search_code_6e06c33e86e3494b828a6848374dfee9", "exec_ms": 3100.4, "is_error": false, "t": "2026-08-29T22:41:12.505+00:00", "ms": 36614.3, "dir": "send", "type": "client_tool_result"}
+{"t": "2026-08-29T22:41:12.567+00:00", "ms": 36675.9, "dir": "recv", "type": "agent_tool_response"}
+{"t": "2026-08-29T22:41:13.263+00:00", "ms": 37371.6, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 54864, "event_id": 188, "t": "2026-08-29T22:41:13.312+00:00", "ms": 37420.7, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T22:41:13.412+00:00", "ms": 37521.1, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 103284, "event_id": 188, "t": "2026-08-29T22:41:13.598+00:00", "ms": 37706.5, "dir": "recv", "type": "audio"}
+{"text": "Based on the search results, it looks like we are using Python for this software.", "t": "2026-08-29T22:41:13.598+00:00", "ms": 37706.9, "dir": "recv", "type": "agent_response"}
+{"event_id": 222, "t": "2026-08-29T22:41:14.054+00:00", "ms": 38162.8, "dir": "recv", "type": "interruption"}
+{"original_agent_response": "Based on the search results, it looks like we are using Python for this software.", "corrected_agent_response": "Based on the...", "event_id": 188, "response_id": "bad95d36-65cd-4f7a-bf94-10781521e73f", "t": "2026-08-29T22:41:14.055+00:00", "ms": 38163.6, "dir": "recv", "type": "agent_response_correction"}
+{"ping_ms": 127, "t": "2026-08-29T22:41:14.159+00:00", "ms": 38268.2, "dir": "recv", "type": "ping"}
+{"ping_ms": 127, "t": "2026-08-29T22:41:15.778+00:00", "ms": 39886.9, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:41:16.040+00:00", "ms": 40148.9, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Based on the search...", "t": "2026-08-29T22:41:16.164+00:00", "ms": 40273.4, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 229, "t": "2026-08-29T22:41:16.171+00:00", "ms": 40279.6, "dir": "recv", "type": "audio"}
+{"bytes_b64": 93600, "event_id": 229, "t": "2026-08-29T22:41:16.265+00:00", "ms": 40374.0, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T22:41:16.268+00:00", "ms": 40376.6, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 83920, "event_id": 229, "t": "2026-08-29T22:41:16.429+00:00", "ms": 40538.0, "dir": "recv", "type": "audio"}
+{"text": "Based on the search results, we are using Python for this software. Is there anything else you would like me to look up?", "t": "2026-08-29T22:41:16.432+00:00", "ms": 40541.4, "dir": "recv", "type": "agent_response"}
+{"event_id": 238, "t": "2026-08-29T22:41:16.862+00:00", "ms": 40971.2, "dir": "recv", "type": "interruption"}
+{"original_agent_response": "Based on the search results, we are using Python for this software. Is there anything else you would like me to look up?", "corrected_agent_response": "Based on the...", "event_id": 229, "response_id": "945593a0-f99d-430e-8b26-211a5da15130", "t": "2026-08-29T22:41:16.863+00:00", "ms": 40971.7, "dir": "recv", "type": "agent_response_correction"}
+{"ping_ms": 62, "t": "2026-08-29T22:41:17.479+00:00", "ms": 41588.2, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:41:18.933+00:00", "ms": 43041.6, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Based on the search...", "t": "2026-08-29T22:41:18.933+00:00", "ms": 43041.7, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 244, "t": "2026-08-29T22:41:18.934+00:00", "ms": 43043.4, "dir": "recv", "type": "audio"}
+{"bytes_b64": 90376, "event_id": 244, "t": "2026-08-29T22:41:19.001+00:00", "ms": 43110.2, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T22:41:19.001+00:00", "ms": 43110.5, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 87144, "event_id": 244, "t": "2026-08-29T22:41:19.165+00:00", "ms": 43274.4, "dir": "recv", "type": "audio"}
+{"text": "Based on the search results, we are using Python for this software. Is there anything else you would like me to look up?", "t": "2026-08-29T22:41:19.167+00:00", "ms": 43276.3, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 62, "t": "2026-08-29T22:41:19.182+00:00", "ms": 43291.2, "dir": "recv", "type": "ping"}
+{"event_id": 254, "t": "2026-08-29T22:41:19.630+00:00", "ms": 43738.7, "dir": "recv", "type": "interruption"}
+{"original_agent_response": "Based on the search results, we are using Python for this software. Is there anything else you would like me to look up?", "corrected_agent_response": "Based on the...", "event_id": 244, "response_id": "02ce06b1-aa88-4959-b0d9-e60631c7a0b0", "t": "2026-08-29T22:41:19.631+00:00", "ms": 43740.4, "dir": "recv", "type": "agent_response_correction"}
+{"ping_ms": 62, "t": "2026-08-29T22:41:20.880+00:00", "ms": 44989.3, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:41:21.425+00:00", "ms": 45534.2, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Based on the search...", "t": "2026-08-29T22:41:21.564+00:00", "ms": 45673.2, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 262, "t": "2026-08-29T22:41:21.657+00:00", "ms": 45766.4, "dir": "recv", "type": "audio"}
+{"bytes_b64": 83920, "event_id": 262, "t": "2026-08-29T22:41:21.766+00:00", "ms": 45874.7, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T22:41:21.766+00:00", "ms": 45875.0, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 83920, "event_id": 262, "t": "2026-08-29T22:41:21.877+00:00", "ms": 45986.5, "dir": "recv", "type": "audio"}
+{"text": "Based on the search results, the software is written in Python. Is there anything else you would like me to look up?", "t": "2026-08-29T22:41:21.878+00:00", "ms": 45986.6, "dir": "recv", "type": "agent_response"}
+{"event_id": 271, "t": "2026-08-29T22:41:22.413+00:00", "ms": 46522.3, "dir": "recv", "type": "interruption"}
+{"original_agent_response": "Based on the search results, the software is written in Python. Is there anything else you would like me to look up?", "corrected_agent_response": "Based on the search...", "event_id": 262, "response_id": "3d702883-4b81-427d-b2e4-78fd2d8bf9b3", "t": "2026-08-29T22:41:22.414+00:00", "ms": 46523.3, "dir": "recv", "type": "agent_response_correction"}
+{"ping_ms": 66, "t": "2026-08-29T22:41:22.581+00:00", "ms": 46689.6, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:41:24.374+00:00", "ms": 48483.4, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"ping_ms": 66, "t": "2026-08-29T22:41:24.375+00:00", "ms": 48483.5, "dir": "recv", "type": "ping"}
+{"text": "Based on the search...", "t": "2026-08-29T22:41:24.375+00:00", "ms": 48483.6, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 48408, "event_id": 278, "t": "2026-08-29T22:41:24.376+00:00", "ms": 48485.5, "dir": "recv", "type": "audio"}
+{"text": "Based on the search...", "t": "2026-08-29T22:41:24.377+00:00", "ms": 48485.7, "dir": "recv", "type": "agent_response"}
+{"event_id": 288, "t": "2026-08-29T22:41:25.157+00:00", "ms": 49265.6, "dir": "recv", "type": "interruption"}
+{"original_agent_response": "Based on the search...", "corrected_agent_response": "Based on the...", "event_id": 278, "response_id": "2ea39d93-3ab1-4015-a9a6-fced4652a670", "t": "2026-08-29T22:41:25.157+00:00", "ms": 49266.2, "dir": "recv", "type": "agent_response_correction"}
+{"ping_ms": 66, "t": "2026-08-29T22:41:25.982+00:00", "ms": 50091.4, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:41:26.522+00:00", "ms": 50630.6, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Based on the search.", "t": "2026-08-29T22:41:26.635+00:00", "ms": 50743.6, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 293, "t": "2026-08-29T22:41:26.642+00:00", "ms": 50750.6, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T22:41:26.700+00:00", "ms": 50808.8, "dir": "note", "type": "session_closed"}
