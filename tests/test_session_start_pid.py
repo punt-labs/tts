@@ -1,0 +1,163 @@
+"""Behavioral tests for the PID resolution in plugin/hooks/session-start.sh.
+
+Claude Code invokes SessionStart hooks through a short-lived ``sh`` wrapper:
+the hook's own ``$PPID`` names that wrapper, not the long-running ``claude``
+process that actually owns the session. Every ``vox-panel-*.log`` under
+``~/.punt-labs/vox/logs`` contained exactly one line -- "session <pid> has
+gone; the applet is leaving" -- because the panel was spawned watching
+``$PPID`` directly, so its own liveness check saw the wrapper vanish within
+seconds and left before ever reaching the Hub to register in the Lux menu
+(vox-nkn8).
+
+These tests drive the real hook script as a subprocess at the bottom of a
+real three-level process tree -- a stand-in ``claude`` process, a wrapper
+that forks it away, and the hook script itself -- and assert it resolves the
+*grandparent* pid, verified by an exact command-name match, rather than the
+wrapper it was directly forked from. A fixture ``vox-panel`` stub on ``PATH``
+captures the ``--session-pid`` argument the script actually passed, so this
+is an outside-in check: nothing here reads the script's internals, only what
+it does.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import stat
+import subprocess
+from pathlib import Path
+
+import pytest
+
+_SCRIPT = (
+    Path(__file__).resolve().parent.parent / "plugin" / "hooks" / "session-start.sh"
+)
+
+pytestmark = [
+    pytest.mark.subprocess,
+    pytest.mark.skipif(shutil.which("jq") is None, reason="requires jq"),
+    pytest.mark.skipif(shutil.which("ps") is None, reason="requires ps"),
+    pytest.mark.skipif(shutil.which("pgrep") is None, reason="requires pgrep"),
+]
+
+_RELAY_SH = """#!/usr/bin/env bash
+# Forks "$@" as a genuine child (backgrounding always forks) and waits for it,
+# so each level in the tree is a distinct process with the expected parent.
+if [[ -n "${RELAY_TRACE_FILE:-}" ]]; then
+  echo "$$" >> "$RELAY_TRACE_FILE"
+fi
+"$@" &
+wait
+"""
+
+
+def _make_executable(path: Path) -> None:
+    path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+def _make_named_binary(tmp_path: Path, name: str) -> Path:
+    """Copy the real `bash` binary to *name* so its `ps` comm matches *name*.
+
+    `/proc/[pid]/comm` reflects the basename of the execve'd file, not a
+    script's shebang target -- invoking `bash script.sh` always reports comm
+    `bash`. Renaming the binary itself is the only way to control comm.
+    """
+    bash_path = shutil.which("bash")
+    assert bash_path is not None, "bash must be on PATH to build the fixture"
+    dest = tmp_path / name
+    shutil.copy(bash_path, dest)
+    _make_executable(dest)
+    return dest
+
+
+def _system_path() -> str:
+    return os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+
+
+def _run_tree(tmp_path: Path, *, claude_comm: str) -> tuple[int, int, int]:
+    """Spawn claude(comm=claude_comm) -> wrapper -> session-start.sh.
+
+    Returns (claude_pid, wrapper_pid, resolved_session_pid).
+    """
+    relay_sh = tmp_path / "relay.sh"
+    relay_sh.write_text(_RELAY_SH, encoding="utf-8")
+    _make_executable(relay_sh)
+
+    claude_bin = _make_named_binary(tmp_path, claude_comm)
+
+    stub_bin = tmp_path / "stubbin"
+    stub_bin.mkdir()
+    stub_out = tmp_path / "stub_out.txt"
+    (stub_bin / "vox-panel").write_text(
+        f'#!/usr/bin/env bash\nprintf \'%s\\n\' "$@" > "{stub_out}"\n',
+        encoding="utf-8",
+    )
+    _make_executable(stub_bin / "vox-panel")
+
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    repo_dir = tmp_path / "repo"
+    (repo_dir / ".punt-labs" / "vox").mkdir(parents=True)
+    (repo_dir / ".punt-labs" / "vox" / "enabled").touch()
+    trace_file = tmp_path / "relay_trace.txt"
+
+    env = dict(os.environ)
+    env["HOME"] = str(fake_home)
+    env["PATH"] = f"{stub_bin}:{_system_path()}"
+    env["RELAY_TRACE_FILE"] = str(trace_file)
+
+    proc = subprocess.Popen(
+        [str(claude_bin), str(relay_sh), "bash", str(relay_sh), "bash", str(_SCRIPT)],
+        env=env,
+        stdin=subprocess.PIPE,
+        text=True,
+    )
+    claude_pid = proc.pid
+    proc.communicate(input=json.dumps({"cwd": str(repo_dir)}), timeout=15)
+    assert proc.returncode == 0
+
+    trace_lines = trace_file.read_text(encoding="utf-8").split()
+    assert len(trace_lines) == 2, trace_lines
+    wrapper_pid = int(trace_lines[1])
+
+    assert stub_out.exists(), "vox-panel stub was never invoked"
+    stub_args = stub_out.read_text(encoding="utf-8").split()
+    assert stub_args[:1] == ["--session-pid"], stub_args
+    resolved_session_pid = int(stub_args[1])
+
+    return claude_pid, wrapper_pid, resolved_session_pid
+
+
+class TestResolvesTheRealSessionAcrossTheWrapper:
+    def test_watches_the_grandparent_when_it_looks_like_claude(
+        self, tmp_path: Path
+    ) -> None:
+        claude_pid, wrapper_pid, resolved = _run_tree(tmp_path, claude_comm="claude")
+        assert resolved == claude_pid
+        assert resolved != wrapper_pid
+
+    def test_falls_back_to_the_wrapper_when_the_grandparent_is_unrecognized(
+        self, tmp_path: Path
+    ) -> None:
+        claude_pid, wrapper_pid, resolved = _run_tree(
+            tmp_path, claude_comm="not-recognized"
+        )
+        assert resolved == wrapper_pid
+        assert resolved != claude_pid
+
+    def test_rejects_a_near_miss_name_that_merely_contains_claude(
+        self, tmp_path: Path
+    ) -> None:
+        """A substring match (`*claude*`) would wrongly trust this ancestor.
+
+        `not-claude` contains the literal string "claude" but is not the real
+        Claude Code process, so the exact-match check must reject it and fall
+        back to the wrapper -- the same fail-safe outcome as any other
+        unrecognized ancestor.
+        """
+        claude_pid, wrapper_pid, resolved = _run_tree(
+            tmp_path, claude_comm="not-claude"
+        )
+        assert resolved == wrapper_pid
+        assert resolved != claude_pid
