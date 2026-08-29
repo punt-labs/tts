@@ -10,3 +10,6 @@ extend = "../../pyproject.toml"
 "teardown_agent.py" = ["T20"]
 "run_automated.py" = ["T20"]
 "run_live.py" = ["T20", "S603", "S607"]
+"speech.py" = ["S603", "S607"]
+"dry_run_barge_in.py" = ["T20"]
+"run_barge_in.py" = ["T20"]
