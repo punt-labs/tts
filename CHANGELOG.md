@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.3] - 2026-08-29
+
 ### Fixed
 
 - **The Vox Control Panel applet now survives long enough to register in the
