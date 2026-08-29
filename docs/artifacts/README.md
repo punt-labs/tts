@@ -16,7 +16,7 @@ Origin: these were authored as claude.ai Artifacts during design work and captur
 
 These pages were written for claude.ai's artifact host, which stamps a `data-theme` attribute on the document root for its light/dark toggle. In a plain browser the `data-theme` markers are absent, so the page uses whatever the viewer's OS `prefers-color-scheme` selects — light by default. Layout, typography, and diagrams render identically.
 
-Every asset is inline (SVG, CSS, Google Fonts CDN link). No JavaScript. No external images.
+SVG diagrams and CSS are inline. The one external asset is the Google Fonts stylesheet (IBM Plex family) fetched via `<link>`; the CSS declares system-font fallback stacks, so pages remain legible if that fetch fails. No JavaScript. No external images.
 
 ## Status
 
