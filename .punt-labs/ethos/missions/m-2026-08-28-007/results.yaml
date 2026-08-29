@@ -1,0 +1,120 @@
+results:
+    - mission: m-2026-08-28-007
+      round: 1
+      created_at: "2026-08-28T12:37:43Z"
+      author: edt
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: docs/vox-h777-lux-widget-refresh.md
+          added: 621
+          removed: 0
+      evidence:
+        - name: markdownlint-cli2 0.22.1 on docs/vox-h777-lux-widget-refresh.md
+          status: pass
+        - name: audit — all 8 .manifest reads reachable from the scene classified live vs durable
+          status: pass
+        - name: audit — punt_lux 0.28.0 update() constraints read from installed source with file:line
+          status: pass
+        - name: audit — every element field named in the patch tables has a _set_ method in 0.28.0
+          status: pass
+        - name: criterion — live track/album-count design, plus same-mistake sweep of other fields
+          status: pass
+        - name: criterion — show()/update() split with exact element ids, fields, and prev-vs-current state
+          status: pass
+        - name: criterion — OO/Python standards; extraction decision made with module sizes
+          status: pass
+        - name: criterion — no line-level diffs prescribed; write set handed back
+          status: pass
+        - name: criterion — no migration/compat/shim element in the design
+          status: pass
+      prose: |
+        Design note at docs/vox-h777-lux-widget-refresh.md. Both defects are the
+        same failure at different scales: the widget reports state it captured once
+        instead of state as it stands.
+
+        DEFECT 1. Root cause confirmed at album_display.py:47 — len(album.manifest.parts)
+        against Album's own docstring (catalog.py:33-42), which states the snapshot's
+        parts are never consulted for playback state. Swept every .manifest read
+        reachable from the scene (8 sites): track_count is the sole frozen one;
+        genre, display_title, tags.name, created, prompt_fingerprint, and locator are
+        all durable creation-time metadata and correct as they stand.
+
+        I REJECTED the one-line ready_parts() swap, with three cited reasons: it puts
+        a stat + O_NOFOLLOW read + JSON parse per row (filesystem_store.py:130-146)
+        inside a projection the code documents as I/O-free (scene.py:1-12), on the
+        control-channel single-writer thread the code documents as never-blocked
+        (player.py:46-53), and it adds a LookupError raise path to the render. The
+        design instead has AlbumDisplay HOLD the count (tracks field + read()
+        classmethod) and a new AlbumRoster perform the read once per projection at
+        the daemon seam in MusicPlayer._submit. LookupError drops the row; OSError
+        propagates, so a permission blip cannot silently vanish an album. The fix
+        buys a named invariant — the Tracks cell equals the M in "N of M", since
+        NowPlaying.of derives from the same ready_parts() set (status_views.py:34,
+        voxd/programs/service.py:287) — specified as the regression test.
+
+        SCOPE CORRECTION. The contract's context says panel/applet.py builds the
+        element tree. It does not; it is 125 lines of wiring. There are two scenes
+        with two independent push paths (music_player/scene.py + lux_scene_publisher.py:74,
+        and panel/panel_scene.py + panel/service.py:113). Both carry defect 2 —
+        every radio click re-raises the panel frame exactly as every track change
+        re-raises the music frame. I put both in scope; the panel's roster is
+        already invariant, so it is the cheapest instance of the same fix.
+
+        DEFECT 2. The reframe that decides the design: show()'s frame-raise is a
+        FEATURE, not the bug. Two user gestures depend on it (lux_subscription.py:227
+        Music menu; panel/service.py:94 acknowledge). One call is serving two
+        intents — "put this window in front of me" and "the numbers in the window
+        you are already looking at changed". The fix separates them; it does not
+        replace show() with update(). Per-trigger verb table covers all 10 call
+        sites across both scenes: 2 show sites per scene, everything else patches.
+
+        Read 8 constraints out of punt_lux 0.28.0 with file:line, not assumed. The
+        binding one: a patch cannot ADD an element (patch_batch.py:33-36). That
+        forces two consequences. (a) The vox.music now-playing block emits a
+        different id set per mode, so idle-to-playing — the single most consequential
+        refresh — would still fall back to show() and still raise the window, i.e.
+        the reported bug unfixed. It becomes a two-slot invariant roster and
+        music.now is deleted. I argued this on information-design grounds too: a
+        fixed slot at a fixed position and type scale is scannable, and the
+        empty-line cost is a trade this codebase already made twice for the same
+        reason (music.status, vox.panel.status). (b) AlbumTable._selection returns {}
+        when idle, so a differ over present fields would leave a stale row
+        highlighted; it must always emit selected_row_ids.
+
+        Specified the exact patch surface: 11 addressable elements in vox.music and
+        11 in vox.panel, each with the fields the differ may emit and the trigger
+        that changes them. Verified every named field has a _set_ method in 0.28.0 —
+        including button._set_publish, which the play/pause topic flip depends on.
+        Pinned the ordering hazard: setters run in dict order (element_abc.py:202-226)
+        and table._set_selected_row_ids intersects against LIVE rows at setter time
+        (table.py:219-234), so rows must precede selected_row_ids or the new
+        selection is silently dropped. Mandated as an explicit wire-list assertion,
+        and noted the combo asymmetry (post-patch validation) so it is not
+        "simplified" away later.
+
+        State machine is one field (_previous: RenderRequest | None) with a 7-row
+        transition table, including a no-change/NoPush row (zero bytes on the wire
+        for the many change signals that alter nothing) and an OpError-to-show
+        fallback that self-corrects a luxd restart with no special handling, because
+        a rejected batch mutates nothing (scene_writer.py:75-104).
+
+        EXTRACTION DECISION (the contract asked for a call): yes, three classes, in
+        the existing src/punt_vox/lux_common/ package, which already exists for
+        exactly this ("Shared building blocks used by Lux surfaces (panel, music
+        player)"). ScenePatchSet (the value), a ScenePush command trio
+        InstallScene/PatchScene/NoPush (NoPush is a genuine Null Object trigger, and
+        the branches are asymmetric — PatchScene completes itself by falling back to
+        show), and LiveScene (holds _previous, plans the push). This leaves
+        LuxScenePublisher._publish with no conditional at all. Three explicit
+        do-not-extract calls recorded, including a patchable-field allowlist —
+        rejected because it is a second source of truth that drifts from lux.
+
+        Also: 16 required tests, a 7-step operator verification playbook (neither
+        defect is visible to make check), and one adjacent inconsistency flagged as
+        noted-not-fixed and deliberately kept out of the write set
+        (playback_notice.py:49 names albums differently from the table row).
+
+        WRITE SET for the implementation mission: 8 new files, 13 modified, 10 test
+        files updated, one CHANGELOG entry, one DESIGN.md ADR. punt_lux is untouched
+        — every capability required ships in 0.28.0.

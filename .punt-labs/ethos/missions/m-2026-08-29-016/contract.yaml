@@ -1,0 +1,62 @@
+mission_id: m-2026-08-29-016
+status: closed
+type: implement
+created_at: "2026-08-29T16:38:44Z"
+updated_at: "2026-08-29T20:56:36Z"
+closed_at: "2026-08-29T20:56:36Z"
+leader: claude
+worker: rmh
+evaluator:
+    handle: gvr
+    pinned_at: "2026-08-29T16:38:44Z"
+    hash: 484686a91dca1727f80404fe4fc8f873e0996955d47f5003e3ce767020c64a45
+inputs:
+    ticket: vox-bst7
+    files:
+        - DESIGN.md
+        - src/punt_vox/providers/elevenlabs.py
+write_set:
+    - spikes/vox-bst7-el-convai/
+success_criteria:
+    - 'Build a spike harness under spikes/vox-bst7-el-convai/ that validates ElevenLabs Conversational AI as the E+ voice-agent LLM host per DES-069 (DESIGN.md ~line 3431) and bead vox-bst7. This is throwaway spike code: it must NOT touch src/, tests/, pyproject.toml, or uv.lock. Prefer self-contained PEP 723 uv scripts (inline dependencies) so the punt-vox package and make check are untouched. Spike code still gets full type annotations and ruff-clean style, but no OO-ratchet ceremony and no test suite is required for the harness itself.'
+    - 'Client tools (criterion a): register exactly 3 client tools on an EL Conv AI agent session via the WebSocket client-tools primitive (tool schemas declared at session start; client_tool_call events answered with client_tool_result on the same socket, per DES-069): (1) a fast tool that returns in <50ms locally (e.g. echo/clock), (2) a slow tool that takes 2-5s locally (simulating search_code against a large tree), (3) a write_note-style tool that persists its argument to a file in the spike dir and returns an ack.'
+    - 'Conversation + latency (criteria b, c): drive at least one 5-turn conversation in an automated mode that needs no human audio (text input or pre-synthesized utterances), eliciting at least 20 tool invocations total across the 3 tools over the run(s). Measure per-invocation tool round-trip (client_tool_call received -> client_tool_result acknowledged/next agent event) and report p50/p95/max per tool and overall, as both a machine-readable metrics JSON and a human-readable table. The acceptance gate is overall p95 < 1.5s under real WAN conditions from this laptop to EL cloud.'
+    - 'Seed push (criterion f): parameterize the agent system prompt / conversation seed size and run at least 3 sizes (roughly 1KB, 10KB, 50KB of realistic session-context text) recording per-size: session-start latency, first-response latency, and a brief qualitative note on response quality/degradation. Record where (if anywhere) EL rejects or truncates the seed.'
+    - 'Live mode (criteria d, e — harness only, not the live run): provide a live-mic entry point that the operator can run from a terminal (real microphone + speaker audio) for barge-in-during-tool-call and turn-taking tests. Instrument it to log a timestamped event trace (turn boundaries, tool call start/end, interruption events, conversation state before/after barge-in) so the live session with the operator produces machine evidence, not just impressions. Document exact run instructions in the spike README. The live run itself happens after this mission closes, driven by the leader with the operator — do not attempt to test barge-in without a human.'
+    - 'Report: write spikes/vox-bst7-el-convai/REPORT.md containing the measured p50/p95/max latency tables, the seed-size findings, environment notes (network, EL model/agent config used), and an explicit verdict line for each of the two kill criteria from DES-069: "p95 tool round-trip < 1.5s: PASS/FAIL (measured X)" and "barge-in mid-tool-call preserves state: PENDING LIVE TEST" with the event-trace instructions for filling it in.'
+    - 'Secrets: read the ElevenLabs API key from the environment (it is provided by the repo .envrc). Fail fast with a clear one-line error if it is absent. Never print, log, or write the key. Conv AI usage costs real credits: keep automated runs to the minimum that yields >=20 tool invocations and 3 seed sizes; do not loop unbounded.'
+    - Commit incrementally -- one commit per logical step (file group, single concern, or single PR-equivalent slice). Each commit must pass `make check`. Do not accumulate more than 30 minutes of uncommitted changes.
+    - Do not open a PR, create branches, or push. Work on the existing branch spike/vox-bst7-el-convai in the worktree named in context. Submit your result via `ethos mission result` when the harness runs end-to-end in automated mode and REPORT.md carries real measured numbers, citing the metrics JSON path and REPORT.md.
+budget:
+    rounds: 2
+    reflection_after_each: true
+current_round: 2
+context: |
+    Foundation spike for the E+ voice architecture (DES-068 umbrella,
+    DES-069 LLM turn loop -- read both in DESIGN.md before writing code).
+    E+ hosts a voice agent inside voxd via ElevenLabs Conversational AI,
+    with the agent's tool surface implemented as EL client tools answered
+    locally over the same WebSocket as the audio. DES-069 records two open
+    risks this spike exists to retire: (1) client-tool round-trip latency
+    under real WAN conditions is unmeasured -- kill criterion p95 >= 1.5s;
+    (2) barge-in behavior mid-tool-call is unspecified in EL's public docs
+    -- if it corrupts conversation state, E+ needs redesign toward a
+    self-hosted turn loop. If either fails, the outcome of this spike is
+    an escalation, not a workaround: report honestly and stop.
+
+    This is a spike, not a feature. Nothing here ships. Optimize for
+    signal per hour: real EL Conv AI sessions, real network, real
+    measurements, minimal ceremony. The elevenlabs Python SDK is already
+    a dependency of punt-vox (src/punt_vox/providers/elevenlabs.py shows
+    the auth convention); the Conv AI surface may need a newer SDK or raw
+    websockets -- your call, keep it inside the spike dir via PEP 723
+    inline deps.
+
+    Working directory: the dedicated worktree at
+    /home/jfreeman/Coding/punt-labs/vox/.claude/worktrees/vox-bst7-el-convai-spike
+    on branch spike/vox-bst7-el-convai (branched from origin/main today).
+    Do not touch the main checkout at ~/Coding/punt-labs/vox -- another
+    agent is active there.
+
+    Bead: vox-bst7 (P1, claimed, in_progress). Labels: e-plus, spike,
+    voice-arch.

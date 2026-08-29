@@ -1,0 +1,334 @@
+results:
+    - mission: m-2026-08-28-009
+      round: 1
+      created_at: "2026-08-28T14:30:03Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.9
+      files_changed:
+        - path: src/punt_vox/lux_common/scene_patch.py
+          added: 179
+          removed: 0
+        - path: src/punt_vox/lux_common/scene_push.py
+          added: 135
+          removed: 0
+        - path: src/punt_vox/lux_common/live_scene.py
+          added: 96
+          removed: 0
+        - path: src/punt_vox/lux_common/__init__.py
+          added: 3
+          removed: 1
+        - path: src/punt_vox/voxd/music_player/album_roster.py
+          added: 80
+          removed: 0
+        - path: src/punt_vox/voxd/music_player/album_display.py
+          added: 18
+          removed: 6
+        - path: src/punt_vox/voxd/music_player/album_table.py
+          added: 26
+          removed: 16
+        - path: src/punt_vox/voxd/music_player/scene.py
+          added: 14
+          removed: 12
+        - path: src/punt_vox/voxd/music_player/player.py
+          added: 38
+          removed: 4
+        - path: src/punt_vox/voxd/music_player/now_playing_block.py
+          added: 36
+          removed: 31
+        - path: src/punt_vox/voxd/music_player/lux_scene_publisher.py
+          added: 52
+          removed: 21
+        - path: src/punt_vox/voxd/music_player/scene_mailbox.py
+          added: 40
+          removed: 8
+        - path: src/punt_vox/voxd/music_player/ports.py
+          added: 12
+          removed: 2
+        - path: src/punt_vox/voxd/music_player/presenter_ports.py
+          added: 16
+          removed: 4
+        - path: src/punt_vox/voxd/music_player/lux_subscription.py
+          added: 15
+          removed: 7
+        - path: src/punt_vox/panel/service.py
+          added: 29
+          removed: 10
+        - path: src/punt_vox/panel/panel_guard.py
+          added: 11
+          removed: 1
+        - path: tests/music_player/test_album_roster.py
+          added: 70
+          removed: 0
+        - path: tests/music_player/test_album_display.py
+          added: 26
+          removed: 3
+        - path: tests/music_player/test_album_table.py
+          added: 33
+          removed: 7
+        - path: tests/music_player/test_scene.py
+          added: 180
+          removed: 24
+        - path: tests/music_player/test_player.py
+          added: 87
+          removed: 3
+        - path: tests/music_player/test_lux_scene_publisher.py
+          added: 138
+          removed: 11
+        - path: tests/music_player/test_lux_subscription.py
+          added: 20
+          removed: 5
+        - path: tests/music_player/test_scene_mailbox.py
+          added: 42
+          removed: 6
+        - path: tests/panel/test_service.py
+          added: 135
+          removed: 2
+        - path: tests/panel/test_panel_guard.py
+          added: 5
+          removed: 2
+        - path: tests/panel/test_panel_runner.py
+          added: 15
+          removed: 0
+        - path: DESIGN.md
+          added: 79
+          removed: 0
+      evidence:
+        - name: make check (lint, type, docs, test, check-oo, check-coupling, check-suppressions)
+          status: pass
+        - name: uv run pytest tests/ -m "" (4792 passed, 3 skipped)
+          status: pass
+        - name: defect 1 -- AlbumDisplay.read counts ready Parts, not the manifest snapshot
+          status: pass
+        - name: defect 1 -- AlbumRoster drops a LookupError album, propagates OSError
+          status: pass
+        - name: defect 1 -- coherence -- the Tracks cell equals the M in "N of M"
+          status: pass
+        - name: defect 1 -- AlbumListScene renders against a store that raises on every read
+          status: pass
+        - name: defect 2 -- identical renders push nothing; a track change patches only music.now.position
+          status: pass
+        - name: defect 2 -- idle-to-playing patches; play-to-pause patches label, tooltip and publish
+          status: pass
+        - name: defect 2 -- a table patch orders rows before selected_row_ids on the emitted wire list
+          status: pass
+        - name: defect 2 -- active-to-idle emits selected_row_ids [] rather than dropping the key
+          status: pass
+        - name: defect 2 -- an OpError from update falls back to show; HubUnavailableError disarms
+          status: pass
+        - name: defect 2 -- panel acknowledge installs; service and repush patch
+          status: pass
+        - name: defect 2 -- a provider change patches vox.panel.model items and selected in one batch
+          status: pass
+      open_questions:
+        - 'Write-set additions: src/punt_vox/panel/panel_push.py, tests/panel/test_panel_push.py, tests/test_lux_common/{test_scene_patch,test_scene_push,test_live_scene}.py, tests/music_player/conftest.py, tests/music_player/test_composition.py. Each is explained in the prose below.'
+        - VoxPanelService is still 405 lines after the PanelPush extraction. The residual debt is the _commit_provider/_commit_model cascade pair, entangled with the service's lock discipline. Worth a bead; deliberately not refactored here.
+        - docs/vox-h777-lux-widget-refresh.md was committed unformatted at d716662 and failed `ruff format --check` (it formats Python inside markdown fences). Fixed in the first commit -- two lines, comment placement only, no prose changed.
+      prose: |
+        Both defects fixed, both scenes covered, all 16 tests from the design's
+        section 4 present and passing plus the ten existing test files it lists.
+        Five commits, each green on `make check`.
+
+        DESIGN NOTE FOLLOWED AS WRITTEN, with three implementation-level additions
+        I judged necessary rather than a redesign:
+
+        1. `scene_patch.py` carries a third class, `SceneTree`, alongside
+           `ElementPatch` and `ScenePatchSet`. The design's `plan` pseudocode
+           flattens both trees and compares their id sets; that flatten-and-diff has
+           to live on an object, and putting it on `LiveScene` would have made it a
+           method in disguise on data `LiveScene` does not own (PY-OO-7). Three
+           classes, one abstraction, still under every threshold.
+
+        2. Two strengthenings of the diff, both fail-toward-install:
+           - Element ids are compared as an *ordered tuple*, not a set. Same ids in
+             a different order would patch correctly but leave the visual order
+             wrong, since the Hub keeps the installed order.
+           - A node with no string `id` (a tab wrapper, or a non-dict in a
+             container) makes the whole tree unpatchable rather than being silently
+             skipped. vox's own scenes give every element an id, so this never fires
+             for them; it exists so a scene that grows an unaddressable element
+             re-installs instead of quietly dropping it from the comparison.
+
+        3. `ScenePush.apply` returns `OpError | None` and carries a `summary`
+           property, and `HubUnavailableError` propagates out of it. The design's
+           `result = await push.apply(...)` snippet left the return type open; this
+           shape keeps each surface's own log prefix (`[lux]` for music,
+           `vox-panel:` for the panel) intact instead of moving those lines into
+           `lux_common`, and it keeps client ownership -- and therefore the decision
+           to drop the client -- with the caller that has it.
+
+        WRITE-SET ADDITIONS, each with its reason:
+
+        - `src/punt_vox/panel/panel_push.py` + `tests/panel/test_panel_push.py`.
+          The design says not to extract anything from `VoxPanelService` because
+          the *decision logic* belongs in `lux_common`. It does, and it is there.
+          But the feature pushed that module from 389 to 432 lines when it is
+          already the largest in `panel/` and well over PY-OO-2's 300, and the OO
+          ratchet policy is explicit that a touched file must be left meaningfully
+          cleaner rather than nudged. Talking to luxd is a different job from
+          holding a session's settings, so it moved to `PanelPush` -- the panel's
+          counterpart to the music player's `LuxScenePublisher`. That paid back 27
+          of the 43 added lines, and `avg_params` and `avg_complexity` both
+          improved on `service.py`.
+
+        - `tests/test_lux_common/{test_scene_patch,test_scene_push,test_live_scene}.py`
+          rather than `tests/lux_common/`. The repo's existing convention is
+          `tests/test_lux_common/`, which already holds `test_hub_outage_log.py`
+          and `test_notice.py`; a second sibling directory would have split one
+          package's tests across two.
+
+        - `tests/music_player/conftest.py`. Unavoidable: `make_album` built every
+          Album on a `_NullStore` whose `open()` raises `LookupError`, so once the
+          roster reads live Parts, every album in every music-player test would
+          have been dropped as deleted. The factory now takes `on_disk` (live
+          ready-Part count, distinct from the `tracks` snapshot -- the two differ
+          in life, which is the whole defect) and `fails_with` (a store fault to
+          raise), and its store returns a real `PartStore`.
+
+        - `tests/music_player/test_composition.py`. Its end-to-end test asserted
+          that a change signal produces a second `show`; under the fix it produces
+          a patch, or nothing at all when the change altered no cell. Rewritten to
+          assert install-once-then-patch, plus a second test pinning the
+          zero-bytes-on-the-wire case. I also hoisted three inline
+          `from punt_lux import SceneShown` imports to module scope while in the
+          file (PY-CS-10).
+
+        RATCHET ACCOUNTING. Genuine improvements this change earned:
+        `now_playing_block.avg_params` (the mode branch dissolved),
+        `lux_scene_publisher.avg_complexity` (the push branch left the module),
+        `scene_mailbox.avg_complexity`, `presenter_ports.avg_params`,
+        `service.avg_params` and `service.avg_complexity`, plus `album_table` and
+        `album_display` LCOM and `album_table` efferent coupling on the coupling
+        side. Scoped `--relax` entries were recorded with per-file justifications
+        for module_size and coupling growth that carries real feature substance --
+        never by compressing prose. No blanket rebaseline.
+
+        NOT DONE, deliberately: the design's section 6 ride-along (naming a failed
+        album through `AlbumNames.friendly` in `playback_notice.py`) is a separate
+        defect the note explicitly leaves optional, and it would have added a
+        seventh relaxation to an already large change. Flagging it rather than
+        taking it.
+
+        PHASE 3 IS THE LEADER'S. `make check` cannot see either defect. The
+        verification playbook in the design's section 5 needs `make install`,
+        `vox daemon restart`, and an operator watching the frame -- specifically:
+        the Tracks cell climbing as the fill lands, a buried frame *not* coming
+        forward across two track changes, the Music menu click still bringing it
+        forward, and a buried panel not raising on a Notifications change.
+    - mission: m-2026-08-28-009
+      round: 2
+      created_at: "2026-08-28T15:12:33Z"
+      author: rmh
+      verdict: pass
+      confidence: 0.95
+      files_changed:
+        - path: src/punt_vox/panel/panel_push.py
+          added: 29
+          removed: 6
+        - path: src/punt_vox/lux_common/scene_patch.py
+          added: 12
+          removed: 1
+        - path: src/punt_vox/lux_common/scene_push.py
+          added: 8
+          removed: 3
+        - path: src/punt_vox/voxd/music_player/album_roster.py
+          added: 7
+          removed: 2
+        - path: src/punt_vox/voxd/music_player/album_table.py
+          added: 5
+          removed: 5
+        - path: src/punt_vox/voxd/music_player/scene_mailbox.py
+          added: 7
+          removed: 0
+      evidence:
+        - name: reproduced the race by removing the lock -- regression test failed with ['show', 'update']
+          status: pass
+        - name: regression test passes with the lock -- the second push makes zero client calls while the first is in flight
+          status: pass
+        - name: second test -- ordering is show-then-update, the patch diffed against what actually landed
+          status: pass
+        - name: audited the music side -- one LuxScenePublisher, one run() task in the TaskGroup, only _publish touches _live
+          status: pass
+        - name: duplicate-id guard test -- a repeated id now fails toward install
+          status: pass
+        - name: make check (lint, type, docs, test, check-oo, check-coupling, check-suppressions)
+          status: pass
+        - name: uv run pytest tests/ (full suite green)
+          status: pass
+      open_questions:
+        - 'Noted, not fixed: two concurrent panel pushes can still land a stale *render* if the later-read scene acquires the lock first. This is pre-existing (the old show-only code had the same interleaving), it is transient, and it is self-correcting -- see the prose for why the lock makes it benign where the diff corruption was not.'
+      prose: |
+        All six findings addressed. The must-fix was real; I reproduced it before
+        fixing it and the regression test fails on the unlocked code.
+
+        THE RACE, CONFIRMED AND CHARACTERISED. I read both sides rather than taking
+        it on report. `PanelPush.install`/`refresh` mutated `LiveScene._previous`
+        synchronously and then awaited `push.apply` separately, and
+        `VoxPanelLeg._start` (leg.py:132) hands every menu click (`_on_callback`,
+        :126) and every control event (`_on_event`, :130) to a bare
+        `asyncio.create_task` with no ordering. Two pushes therefore interleave.
+
+        The reviewers described a stale read; the consequence is worse than that,
+        and worth recording because it is what makes the fix non-optional. If the
+        second push's `update` reached luxd before the first's `show`, luxd rejected
+        the patch (unknown scene), the fallback installed v2, and then the first
+        push's `show` landed v1. The screen then held v1 while `PanelPush` believed
+        v2 was installed -- and every later diff was computed against v2. A field
+        differing between v1 and v2 but not between v2 and v3 would never be sent
+        again. Nothing heals it, because each subsequent push is locally consistent.
+        The old `show`-on-every-push code could not exhibit this at all: it
+        repainted the whole tree every time, so any divergence lasted one event.
+
+        FIX. An `asyncio.Lock` spans plan-and-apply in both verbs -- deliberately not
+        merely around the plan, since the window is the await between claiming a
+        render and landing it. I corrected the module docstring, which asserted the
+        opposite ("needs no lock: every push runs on the panel leg's event loop").
+        One event loop is not one at a time, and that sentence would have talked the
+        next reader out of the lock.
+
+        I chose the lock over the generation-counter alternative: a counter detects
+        the stale plan after the fact and still has to decide what to do about it,
+        whereas the lock makes the stale plan unrepresentable. Deadlock is not
+        reachable -- nothing inside `_complete` re-enters `PanelPush`, and
+        `PatchScene`'s install fallback constructs a fresh `InstallScene` rather than
+        calling back through this object.
+
+        REGRESSION TEST, FALSIFIED FIRST. A gated client parks the first push inside
+        its `show`. The assertion is that while it is parked the second push has
+        touched the client *not at all*. I removed the lock and confirmed the test
+        fails with `['show', 'update']` -- the second push's diff going out against a
+        scene luxd had never seen -- then restored it. A second test pins the
+        resulting order (show, then a patch carrying the field that actually differs
+        from the render that landed).
+
+        AUDITED THE MUSIC SIDE RATHER THAN ASSUMING IT. I assert in the new docstring
+        that `LuxScenePublisher` needs no such lock, so I checked: `composition.py`
+        builds one publisher and spawns one `run()` task inside the TaskGroup;
+        `run()` awaits `_publish` to completion before the next `get()`; and
+        `_live` is touched only from `_publish`. The subscription's task reaches the
+        publisher only through `submit`/`reinstall`, which are synchronous and touch
+        the mailbox alone. Serialized by construction, confirmed.
+
+        STILL PRESENT, DELIBERATELY: two concurrent pushes can land a stale *render*
+        -- task A reads settings v1, task B reads v2, B takes the lock first, so the
+        screen ends on v1. Three reasons I left it. It is pre-existing (the old
+        show-only path had the identical interleaving). It is self-correcting, and
+        provably so now: because plan-and-apply are atomic under the lock,
+        `_previous` always equals what landed last, so the next push diffs correctly
+        and converges -- which is exactly the invariant that was broken before. And
+        the only fix is to move the render inside the lock, which means handing
+        `PanelPush` a `Callable[[], RenderRequest]` and coupling it to the service's
+        rendering. Worse shape for a transient one-frame staleness the next control
+        event corrects.
+
+        THE FIVE CHEAP ONES. Comment moved to the line that actually establishes the
+        table's field ordering (the spread, not `rows`), and it now says what breaks
+        if it moves. `runtime_checkable` dropped from `ScenePush`, with the reason it
+        was wrong rather than merely unused recorded so it does not come back.
+        Duplicate element ids now fail toward install like the neighbouring
+        unaddressable-element guard, with a test. `AlbumRoster.albums` derived once
+        in the constructor. `SceneMailbox.get` records the cross-module invariant it
+        depends on.
+
+        Skipped item 8 (the PY-TS-14 nit) per your ruling, and left CHANGELOG.md
+        alone. Two commits, `make check` green on both, full suite green.

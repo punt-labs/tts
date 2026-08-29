@@ -1,0 +1,14 @@
+reflections:
+    - mission: m-2026-08-28-005
+      round: 1
+      created_at: "2026-08-28T12:58:30Z"
+      author: claude
+      converging: false
+      signals:
+        - djb (evaluator) independently re-ran make check (green, 4434 tests) and confirmed the Linux path is correct against the live install on this host, no PL-PP-4 secret regression, and platform dispatch genuinely consolidated in cli_desktop.py.
+        - 'CRITICAL: config_path() (desktop_install.py:99-110) changed from total (always returns a path) to partial (raises ValueError on unsupported platform), but two callers outside the write_set were never updated: doctor.py:291 check_claude_desktop() and __main__.py:744 _desktop_registration() (reached by vox status). djb reproduced both raising an uncaught ValueError/traceback on a simulated unsupported platform where they previously degraded gracefully. This falsifies the desktop_install.py:93-96 docstring claim that "no host vox supports reaches the refusal" and the mission criterion that doctor.py checks "derive from the same answer" -- doctor.py does not consume the new raise at all.'
+        - 'MEDIUM: XDG_CONFIG_HOME handling (desktop_install.py:121) does not reject relative paths per the XDG basedir spec ("if an implementation encounters a relative path... it should consider the path invalid and ignore it"). A relative XDG_CONFIG_HOME resolves against the process cwd, writes a stray config nothing reads, and reports success.'
+        - 'LOW: cli_desktop.py _write_config does a non-atomic whole-file truncate+rewrite of a config shared with other MCP servers'' secrets; djb recommends a temp-file + os.replace() swap given the line was just extracted into its own method. Also flags 0755/0644 creation perms vs the real app''s 0700/0600.'
+        - Test quality otherwise good and non-trivial (djb verified test_unsupported_platform_refuses_and_writes_nothing would fail pre-fix), but zero coverage of vox doctor / vox status on an unsupported platform -- the gap that let the CRITICAL finding ship.
+      recommendation: escalate
+      reason: Round 1's write_set (desktop_install.py, cli_desktop.py, their tests, CHANGELOG.md) did not include doctor.py or __main__.py, but the change to config_path()'s contract (total -> partial) has real callers there that now crash. This needs a write_set expansion, not another round under the same contract -- closing this mission as escalated and opening a follow-up with the corrected write_set covering src/punt_vox/doctor.py, src/punt_vox/__main__.py, tests/test_doctor.py, and tests/test_cli.py, plus the XDG relative-path and non-atomic-write fixes.

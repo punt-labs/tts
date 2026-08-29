@@ -1,0 +1,77 @@
+results:
+    - mission: m-2026-08-28-005
+      round: 1
+      created_at: "2026-08-28T12:46:10Z"
+      author: adb
+      verdict: pass
+      confidence: 0.95
+      files_changed:
+        - path: src/punt_vox/desktop_install.py
+          added: 44
+          removed: 8
+        - path: src/punt_vox/cli_desktop.py
+          added: 61
+          removed: 41
+        - path: tests/test_desktop_install.py
+          added: 76
+          removed: 0
+        - path: tests/test_cli_desktop.py
+          added: 272
+          removed: 0
+        - path: CHANGELOG.md
+          added: 20
+          removed: 0
+      evidence:
+        - name: make check (lint, mypy+pyright, markdownlint, 4434 tests, OO/coupling/suppression ratchets)
+          status: pass
+        - name: authoritative path check -- live Claude Desktop install writes ~/.config/Claude/claude_desktop_config.json on this host
+          status: pass
+        - name: real entry point -- vox desktop install/uninstall driven as a subprocess against a scratch XDG_CONFIG_HOME
+          status: pass
+        - name: DesktopInstaller.config_path() resolves to the host's real live config file, unpatched
+          status: pass
+        - name: coupling ratchet -- avg_lcom regression found and fixed by design change, not waived
+          status: pass
+      open_questions:
+        - doctor.py:291 and __main__.py:744 call config_path() unguarded; both are outside the write set. Harmless on macOS/Linux, but an uncaught ValueError on an unsupported host.
+        - Windows left unsupported per contract -- no verified path, and vox's daemon is macOS/Linux only.
+      prose: |
+        config_path() (desktop_install.py:71-113) is now the single platform
+        dispatch: macOS keeps ~/Library/Application Support, Linux resolves
+        Electron's userData root via _xdg_config_home() (desktop_install.py:115-123,
+        honouring XDG_CONFIG_HOME with a ~/.config fallback), and anything else
+        raises ValueError rather than returning a path Claude Desktop will not read.
+
+        The Linux path is verified, not assumed: this host has a live Claude Desktop
+        install at ~/.config/Claude/claude_desktop_config.json, and the unpatched
+        config_path() resolves to exactly that file.
+
+        cli_desktop.py's rival platform.system() probe is gone. Both verbs go through
+        _resolve_config_path() (cli_desktop.py:100-112), which asks DesktopInstaller
+        and reports the refusal. install() also sheds uvx and provider resolution
+        into named methods: max_complexity 7 to 4, avg_complexity 3.4 to 2.33,
+        avg_params 2.8 to 2.11, method_ratio 0.80 to 0.889.
+
+        Two behaviour changes worth review. (1) An unsupported platform now exits 1
+        with a named reason instead of warning and writing a macOS-shaped path; the
+        refusal lands before the output directory is created. (2) Every refusal in
+        the group now routes through OutputFormatter, so --json callers get an
+        {"error": ...} object instead of a blank stdout with an unexplained non-zero
+        status -- previously only _load_config did this.
+
+        On the ratchets: an intermediate design consolidated all refusals into one
+        _fail() helper. That pushed cli_desktop.py's avg_lcom to 0.786, past the
+        absolute 0.5 target, because the coupling tool excludes self.helper()
+        dispatch from data cohesion by design (tools/coupling/metrics.py:127-132).
+        It was fixed by restructuring -- each helper reports through self._formatter
+        directly, the file's existing idiom -- not by relaxing the baseline; coupling
+        is back to unchanged. Three module_size/avg_complexity entries are relaxed
+        with per-entry justification (docstring prose and a three-branch dispatch);
+        every improved metric is left at its old baseline. .oo-audit.jsonl carries a
+        superseded cli_desktop.py waiver from the abandoned _fail design; the log is
+        append-only, so the later entry supersedes it and says so.
+
+        Observation, not changed: the config file and its parent directory are
+        created with default modes (0644/0755) while Claude Desktop's own file on
+        this host is 0600. The file carries no secret by design (PL-PP-4), so this
+        is a parity note for the evaluator rather than a defect.
