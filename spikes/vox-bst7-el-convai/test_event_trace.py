@@ -109,6 +109,8 @@ class TestEventTrace:
     def test_summarize_ignores_type_substrings_in_text(self, tmp_path: Path) -> None:
         # Only the line's own type field counts; an agent/user text payload
         # that happens to quote an event shape must not inflate the tallies.
+        # (JSON escapes the quotes inside a string, so this case is safe by
+        # serialization; the test keeps it that way.)
         path = tmp_path / "trace.jsonl"
         trace = EventTrace(path)
         quoted = (
@@ -117,4 +119,14 @@ class TestEventTrace:
         )
         trace.record("recv", "agent_response", {"text": quoted})
         trace.record("recv", "interruption", {})
+        assert _summarize(path) == "tool calls: 0, interruptions: 1, corrections: 0"
+
+    def test_summarize_ignores_types_nested_in_details(self, tmp_path: Path) -> None:
+        # Event bodies recorded verbatim can nest mappings; a nested
+        # {"type": "client_tool_call"} serializes UNescaped, so a substring
+        # counter would tally it. Only the line's own type may count.
+        path = tmp_path / "trace.jsonl"
+        trace = EventTrace(path)
+        nested: dict[str, object] = {"reason": {"type": "client_tool_call"}}
+        trace.record("recv", "interruption", nested)
         assert _summarize(path) == "tool calls: 0, interruptions: 1, corrections: 0"

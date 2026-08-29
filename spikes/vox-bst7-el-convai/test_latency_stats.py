@@ -11,14 +11,24 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from run_automated import LatencyStats, MetricsReport
+from control_plane import AgentHandle, ControlPlane
+from convai import ConvAISession, EventTrace
+from run_automated import LatencyStats, MetricsReport, SeedRun
+from spike_tools import ToolBelt
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    import pytest
+
 
 def _invocation(
-    tool: str, handling: float, total: float, overhead: float
+    tool: str,
+    handling: float,
+    total: float,
+    overhead: float,
+    *,
+    is_clean: bool = True,
 ) -> dict[str, object]:
     """Build one invocation record shaped like the per-run metrics output."""
     return {
@@ -29,6 +39,7 @@ def _invocation(
         "total_ms": total,
         "overhead_ms": overhead,
         "is_error": False,
+        "is_clean": is_clean,
     }
 
 
@@ -118,6 +129,24 @@ class TestGateVerdict:
         report = MetricsReport([_run_record([])])
         assert ": FAIL (" in report.gate_verdict()
 
+    def test_unclean_samples_excluded_from_the_gate_metric(self) -> None:
+        # An invocation co-scheduled with another tool measures our own
+        # sleep, not EL: it must leave overhead_ms but stay in the
+        # handling/total tables. A huge dirty overhead must not flip a
+        # clean run to FAIL.
+        clean = _invocation("clock", 50.0, 400.0, 350.0)
+        dirty = _invocation("clock", 50.0, 5000.0, 4950.0, is_clean=False)
+        report = MetricsReport([_run_record([clean, dirty])])
+        assert ": PASS (" in report.gate_verdict()
+
+    def test_all_unclean_run_cannot_pass_the_gate(self) -> None:
+        # If every sample was contaminated by co-scheduling, there is no
+        # EL-attributable evidence at all: n == 0 must FAIL, not pass on
+        # the zero sentinel.
+        dirty = _invocation("clock", 50.0, 400.0, 350.0, is_clean=False)
+        report = MetricsReport([_run_record([dirty])])
+        assert ": FAIL (" in report.gate_verdict()
+
     def test_single_outlier_fails_a_small_run(self) -> None:
         invocations = [
             _invocation("clock", 50.0, 150.0, 100.0),
@@ -152,9 +181,70 @@ class TestAggregation:
         assert per_tool["clock"]["overhead_ms"]["n"] == 2
         assert per_tool["search_code"]["total_ms"]["max_ms"] == 3400.0
 
+    def test_unclean_samples_stay_in_handling_and_total(self, tmp_path: Path) -> None:
+        clean = _invocation("clock", 50.0, 400.0, 350.0)
+        dirty = _invocation("clock", 60.0, 5000.0, 4950.0, is_clean=False)
+        report = MetricsReport([_run_record([clean, dirty])])
+        out = tmp_path / "metrics.json"
+        report.save(out)
+        overall = json.loads(out.read_text(encoding="utf-8"))["aggregate"]["overall"]
+        assert overall["handling_ms"]["n"] == 2  # dirty sample still described
+        assert overall["total_ms"]["n"] == 2
+        assert overall["overhead_ms"]["n"] == 1  # but excluded from the gate metric
+        assert overall["overhead_ms"]["max_ms"] == 350.0
+
     def test_table_lists_every_metric_row(self) -> None:
         report = MetricsReport([_run_record([_invocation("clock", 1.0, 2.0, 1.0)])])
         table = report.table()
         for metric in ("handling_ms", "total_ms", "overhead_ms"):
             assert f"overall {metric}" in table
             assert f"clock {metric}" in table
+
+
+class TestCollectRecord:
+    """The per-run record fields that ride into the metrics JSON."""
+
+    @staticmethod
+    def _collect_record(
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        turn_response_ms: list[float],
+    ) -> dict[str, object]:
+        """Collect a run record from a never-opened session, fully offline."""
+        monkeypatch.setenv("ELEVENLABS_API_KEY", "offline-test-key")
+        plane = ControlPlane()  # constructs an HTTP client; no request is made
+        try:
+            run = SeedRun(
+                plane=plane,
+                handle=AgentHandle(agent_id="agent-test", tool_ids=()),
+                seed_bytes=1024,
+                turns=(),
+                tag="collect-test",
+            )
+            session = ConvAISession(
+                url="ws://unused.invalid",
+                toolbelt=ToolBelt(tmp_path / "notes.txt"),
+                trace=EventTrace(tmp_path / "trace.jsonl"),
+                overrides={},
+            )
+            session.metrics.turn_response_ms.extend(turn_response_ms)
+            # The record shape is the seam under test; there is no public
+            # entry that reaches it without a live EL conversation.
+            return run._collect(session)
+        finally:
+            plane.close()
+
+    def test_zero_first_response_survives_as_zero(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # 0.0 is a measurement, not absence: truthiness must not turn a
+        # legitimate instant first response into a missing sample.
+        record = self._collect_record(tmp_path, monkeypatch, [0.0])
+        assert record["first_response_ms"] == 0.0
+
+    def test_no_turns_reports_first_response_as_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Absence stays None only when the run truly produced no turn.
+        record = self._collect_record(tmp_path, monkeypatch, [])
+        assert record["first_response_ms"] is None
