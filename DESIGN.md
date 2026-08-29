@@ -3389,3 +3389,145 @@ The `calls_dir()` retention policy (does every call leave a summary
 file forever, or is there a cleanup/rotation policy analogous to
 `recordings_dir()`'s) is not decided here — a small implementation
 detail for `vox-hobl.2`'s mission, not an architectural fork.
+---
+
+## DES-068: E+ Umbrella — Voice Agent Hosted in `voxd` via ElevenLabs Conversational AI
+
+**Status:** PROPOSED (2026-08-29). Reconsiders the voice-agent shape settled in DES-066 given operator assessment that no design in this thread has yet produced ratifyable UX. DES-066's ratification recorded a mechanism spike; DES-067 filled its remaining design gaps; neither has been driven repeatedly by a real user to the standard DES-065's 20-run benchmark set for its predecessor. E+ takes another swing at the same problem with a materially different LLM host and tool model. Validation beads: `vox-bst7`, `vox-73y7`, `vox-juhw`, `vox-6v7f`. Diagram artifact: the E+ architecture drawing (Mode A / Mode B, same-host-launch v1 default) captured for handoff.
+
+### Context
+
+Every voice-over-active-Claude-Code-session design in this repo runs into two structural constraints of Claude Code itself, worth naming explicitly since they collapse the option space to two shapes:
+
+- **Wall 1 — no foreground command spans turns.** A slash command or tool call is bound by the session's turn model; the moment the LLM finishes its reply, the command has exited. Rules out multi-turn *and* barge-in as a foreground shape.
+- **Wall 2 — no background process can inject.** Claude Code exposes no channel by which an external process hands a new user turn in. Hooks are reactive; the interactive loop is TTY-driven. Rules out any "run mic loop out-of-band, push transcript in" shape.
+
+Every survivable design either (a) collapses the multi-turn voice conversation into a single Claude Code turn, so Wall 1 doesn't apply because there's only one turn; or (b) runs the voice conversation in a *peer process* against the primary session, so Wall 2 doesn't apply because there's no injection. DES-064 was (b) with per-turn spawn. DES-066 is (b) with a persistent peer. E+ is (a).
+
+### Proposed decision
+
+`/vox:talk` is one blocking Claude Code tool call. Multi-turn voice conversation happens inside `voxd`, hosted by **ElevenLabs Conversational AI** (DES-069). `voxd` maintains per-session context via a **snapshot seed** the primary session hands over at call time — retaining DES-067 Decision 1's "primary session authors the seed" insight verbatim — plus a **rolling context store** fed by the hook fanout that already delivers TTS chimes (DES-070). The voice agent's tool surface — `search_code`, `read_recent_conversation`, `read_older_conversation`, `write_note`, `launch_session` — is exposed as ElevenLabs **client tools** implemented by `voxd`. At call end, the transcript plus any `write_note` outputs are returned as the `/vox:talk` tool call's value, so the primary session resumes with them in view — a plain tool return in place of DES-067 Decision 3's file-read handshake.
+
+A second entry point, **Mode B voice-first** (DES-071), lets the user speak to `voxd` before any coding session exists; `voxd` then launches a fresh `claude`, `pi`, or `opencode` session same-host by default, remote via SSH optionally.
+
+E+ preserves DES-066's essential move — the call agent operates read-mostly against the codebase; only the primary session (or a Mode-B-spawned session) applies writes afterward — but shifts the LLM host, the turn-taking authority, and the tool model. The four decisions that constitute E+ are recorded separately in DES-069, DES-070, DES-071. This entry is the umbrella that names the reconsideration and the two-walls framing.
+
+### Rejected alternatives (in this reconsideration)
+
+- **Re-ratify DES-066 as ship-ready and move on.** Rejected: operator assessment is that the UX bar has not yet been met by any design in this thread, and DES-066's own process-supervision layer (`tmux`/`keep` vs. direct `subprocess.Popen`) is still an open item within it. Ratification of a mechanism spike is not the same as a shipping product.
+- **Add EL Conv AI to DES-066 as an STT/TTS front-end only, leaving `pi --mode rpc` as the LLM.** Rejected as a stopping point: DES-065's cost pattern was cold-boot-per-turn; DES-066 solved that by making the agent persistent, at the cost of using `pi`'s general-purpose tool surface as the vehicle for what is fundamentally a voice conversation. Splitting STT/TTS from the LLM leaves the voice conversation talking to a text CLI's `-p`-family protocol rather than a voice-native turn-taking one — the shape that made barge-in hard in the first place.
+- **Wait for `pi` to add streaming voice-native turn control natively.** Rejected as a bet on a roadmap this repo does not own; EL Conv AI ships it today.
+
+### Open items / risks
+
+- Vendor coupling to ElevenLabs Conversational AI is deeper than "just TTS" — the turn loop, tool orchestration, and barge-in behavior become EL's. `vox-bst7` is the foundation spike that either establishes or refutes the bet.
+- The rolling context store's payload sufficiency has not been measured; `vox-73y7` addresses that.
+- Mode B's session-launch semantic introduces a real capability escalation dressed as a tool call; DES-071 records the shape and the permission-profile mitigation.
+- Nothing in E+ invalidates the ~88% of DES-064's implementation that DES-065 identified as retained (mic capture, STT, TTS, playback ordering, turn-timer diagnostics, call lifecycle machinery). E+ is a swap at the `SessionAttach` boundary the earlier design already isolated behind a `Protocol`.
+
+---
+
+## DES-069: Voice-Agent LLM Turn Loop — ElevenLabs Conversational AI, Client Tools Model
+
+**Status:** PROPOSED (2026-08-29). Sub-decision under DES-068. Validation: `vox-bst7` (foundation spike), `vox-6v7f` (optional A/B against DES-066's `pi --mode rpc` shape).
+
+### Context
+
+DES-066 chose `pi --mode rpc --no-session --no-extensions` for the LLM turn loop because `pi`'s ~1.35s bootstrap dominated Claude Code's ~10–20s hook cascade, and `pi`'s minimal-core design principle gave a clean surface for read-only tool enforcement via `--tools read,grep,find,ls`. That reasoning was correct for a persistent-shell shape driving a text CLI's `-p` protocol. It does not extend to a voice-native turn loop, which needs streaming STT+LLM+TTS interleaved with barge-in and turn-taking as first-class concerns, not features grafted on.
+
+### Proposed decision
+
+Use **ElevenLabs Conversational AI** as the LLM host inside `voxd` for the duration of a call. Register the voice agent's tool surface (DES-068) via EL's **client tools** primitive:
+
+- Tool schemas declared in the WebSocket handshake at session start.
+- `client_tool_call` events processed by `voxd`; results returned via `client_tool_result` events on the same socket.
+- No separate HTTP callback surface on `voxd`; no MCP inside the call agent (preserving DES-067's "do not bloat pi" operator ruling by analogy — the voice agent's tools are `voxd`-implemented and closed-world, not MCP-mediated).
+
+Rationale:
+
+- EL Conv AI's turn-taking, VAD, and barge-in are first-class, streaming, and voice-native.
+- Client tools give `voxd` full authority over what the voice agent can do (each tool implemented locally in Python) without depending on `pi`'s general tool surface or Claude Code's hook/plugin ecosystem.
+- Tool round-trips ride the same WebSocket as audio — no extra hop, no extra auth.
+
+### Rejected alternatives
+
+- **`pi --mode rpc` per DES-066.** Rejected here because the LLM host chosen must own voice-native turn-taking, not just streaming text. See Context.
+- **Self-hosted turn loop atop the Anthropic Messages API with a homegrown VAD/barge-in state machine.** Rejected on scope: reimplementing what EL Conv AI already ships is a quarter of work per DES-065's precedent for underestimating cold-boot and integration costs.
+- **OpenAI Realtime API or Google Gemini Live.** Not explored in this ADR; may be revisited if `vox-bst7` finds EL Conv AI unfit. The client-tools shape generalizes to either.
+
+### Open items / risks
+
+- Client-tool round-trip latency under real WAN conditions is unmeasured; kill criterion is p95 < 1.5s (`vox-bst7`).
+- Barge-in behavior mid-tool-call is unspecified in EL Conv AI's public docs; also in `vox-bst7`'s scope. If barge-in during a tool call produces confused conversation state, E+ needs redesign.
+- Vendor coupling: switching LLM host in future means re-doing this ADR and the client-tools implementations, though the tool surface itself (DES-068) is transport-agnostic and would carry over.
+
+---
+
+## DES-070: Voice-Agent Context — `/vox:talk` Seed + Hook Fanout Rolling Store, Extending DES-067
+
+**Status:** PROPOSED (2026-08-29). Sub-decision under DES-068. Validation: `vox-73y7`.
+
+### Context
+
+DES-067 Decision 1 established that the primary Claude Code session authors the call agent's opening context snapshot itself, folding in `quarry --json find` hits and any needed docs before the call agent spawns. That insight is correct and load-bearing; E+ retains it as the *seed* mechanism.
+
+What DES-067 did not address, because DES-066's call agent was a persistent peer with its own read tools, is *how the voice agent stays current across a longer conversation*. Under E+'s "one Claude Code turn wraps N voice turns" shape (DES-068), the primary session is blocked in `/vox:talk` for the whole call and cannot itself update anything mid-conversation. Either the seed is sufficient at call start and stays static, or context has to arrive some other way.
+
+### Proposed decision
+
+Two-layer context feed:
+
+**Layer 1 — `/vox:talk` seed.** The primary session constructs and passes a snapshot at call start, per DES-067 Decision 1 verbatim. Same authorship pattern, same quarry/context7 upstream fold-in. This is the load-bearing layer; if it is rich enough, Layer 2 becomes optional.
+
+**Layer 2 — hook fanout as continuous context.** `voxd` retains payloads from every Claude Code hook that reaches it via `mcp-proxy --hook` for chime purposes (`SessionStart`, `PromptSubmit`, `PostToolUse`, `Stop`, `Notification`). It stamps a monotonic per-session sequence and stores the last N raw turns plus a running summary in an in-`voxd` rolling context store, keyed by session. The voice agent can consult this store via a `read_recent_conversation` client tool (DES-068's tool surface) mid-call.
+
+For the primary session that just fired `/vox:talk` and is now blocked, Layer 2 is not adding new information *from that session* — the blocked session isn't firing hooks. But if the user has other Claude Code sessions active elsewhere (a common case on a distributed dev-box topology, and always the case in Mode B voice-first — DES-071), Layer 2 lets the voice agent see across them.
+
+### Rejected alternatives
+
+- **Seed-only, no rolling store.** Rejected as too rigid for calls longer than a few turns, and for Mode B voice-first entry (DES-071) where no primary session has yet run a `/vox:talk` seed. Retained as a fallback if `vox-73y7` finds hook payloads too thin to be worth retaining.
+- **Live snapshot on demand — voice agent asks primary session for updated context via a tool call.** Rejected because the primary session is blocked in `/vox:talk` and cannot respond to tool calls during that turn.
+- **Push updates from primary session into `voxd` via a side channel (not hooks).** Rejected as duplicating the hook fanout that already exists.
+
+### Open items / risks
+
+- Hook payload sufficiency (do `PostToolUse` payloads carry actionable state, or only metadata?) is unmeasured; `vox-73y7` addresses it directly.
+- Sequence-gap detection under WAN drops is a real distributed-systems problem; kill criterion is that either gap-detection catches drops or `/vox:talk` seed alone is rich enough that Layer 2 is decorative.
+- Cross-session context (voice agent seeing turns from a *different* primary session than the one that fired `/vox:talk`) may or may not be desirable — treated as opt-in, defaulting off, per privacy and confusion concerns.
+
+---
+
+## DES-071: Mode B Voice-First Entry — User Talks First, `voxd` Launches a Fresh Session Same-Host by Default
+
+**Status:** PROPOSED (2026-08-29). Sub-decision under DES-068, extending it with a second entry point. Validation: `vox-juhw`.
+
+### Context
+
+DES-068's default entry is Mode A — an existing primary Claude Code session invokes `/vox:talk`. That covers the "I'm in the middle of something and want to think out loud" case. It does not cover the "I want to start working on X, by voice, from scratch" case, where the user opens the mic before any coding session exists — increasingly plausible on the distributed dev-box topology where the user is often not in a terminal at all when they decide to start work.
+
+The natural shape: the user speaks to `voxd` directly (wake word, `vox call` from a terminal, hotkey). `voxd` opens an EL Conv AI session cold — no seed from a primary session that doesn't exist — and the voice agent, mid-conversation, decides (or the user asks) to spin up a coding session. That launch is a tool call.
+
+### Proposed decision
+
+`voxd` exposes `launch_session(agent, task, host?, permissions_profile?)` as a client tool to the voice agent:
+
+- `agent` — one of `"claude"`, `"pi"`, `"opencode"`.
+- `task` — an initial prompt derived from the voice conversation up to that point.
+- `host` — optional. If omitted, `voxd` forks the agent locally as a `subprocess.Popen` inside a detached `tmux` session on its own host; that is **v1**. If supplied, `voxd` resolves it against a registered-hosts config and `ssh`-execs the same shape onto the named host; that is **v2**.
+- `permissions_profile` — names a curated set of allowed tools, MCP server subset, and permission mode that the spawned session inherits. The launch is not a capability handoff to a fully-empowered fresh agent unless the profile says so.
+
+v1 needs no SSH, no host registry, no auth. Loopback hook fanout from the spawned session's own `mcp-proxy --hook` reaches `voxd` without WAN or credentials, feeding DES-070's rolling context store in real time. v2 uses the same TLS+bearer path Mode A uses for its hooks.
+
+At call end, the transcript (and any `write_note` outputs) return as the `/vox:talk`-equivalent tool call's value — same handshake as Mode A. If the spawned session is still running, it stays alive under `tmux`; the user attaches with `tmux attach -t <name>` when convenient.
+
+### Rejected alternatives
+
+- **Mode A only; require the user to open a Claude Code session first, then call `/vox:talk`.** Rejected as failing the "start work by voice" case, which is real for the distributed dev-box topology.
+- **SSH-remote as v1 default, same-host as fallback.** Rejected on complexity: v2's registered-hosts config and SSH-agent story is real ceremony; getting v1 right first (voxd forks locally) settles the tool signature so v2 is an implementation add-on, not an API change.
+- **No launch capability; voice agent only takes notes and the user starts the session by hand afterward.** The most conservative shape. Rejected because it makes voice-first mode a research/planning tool only, not a way to kick off work — losing most of Mode B's leverage.
+
+### Open items / risks
+
+- `tmux attach` UX for the spawned session mid-run is untested end-to-end; `vox-juhw` verifies the fork → configure → attach → hook-loopback chain.
+- The concrete shape of `permissions_profile` (what named profiles ship, how they compose, how they surface to the voice agent for informed selection) is not fully specified here; it inherits from Claude Code's own permission model and gets worked out in the implementation mission.
+- v1's "user's project must live on the laptop" limitation is real: `voxd` on the laptop forks locally, so the spawned session sees the laptop's filesystem. For distributed dev-box users, v2 becomes non-optional. Documented as a known Mode B v1 scope, not a bug.
