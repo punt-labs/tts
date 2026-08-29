@@ -1,23 +1,23 @@
-{"ws_connect_ms": 1.5, "t": "2026-08-29T22:58:58.708+00:00", "ms": 1.8, "dir": "note", "type": "ws_open"}
-{"conversation_id": "dry-run-barge-in", "agent_output_audio_format": "pcm_16000", "user_input_audio_format": "pcm_16000", "t": "2026-08-29T22:58:58.708+00:00", "ms": 2.4, "dir": "recv", "type": "conversation_initiation_metadata"}
-{"text": "Hi! How can I help?", "t": "2026-08-29T22:58:58.708+00:00", "ms": 2.4, "dir": "recv", "type": "agent_response"}
-{"bytes_b64": 4268, "event_id": 1, "t": "2026-08-29T22:58:58.708+00:00", "ms": 2.5, "dir": "recv", "type": "audio"}
-{"step": "trigger_search", "text": "Please search the code for the playback queue.", "t": "2026-08-29T22:58:58.708+00:00", "ms": 2.5, "dir": "note", "type": "barge_in_step"}
-{"text": "Please search the code for the playback queue.", "t": "2026-08-29T22:59:02.083+00:00", "ms": 3377.4, "dir": "recv", "type": "user_transcript"}
-{"tool": "search_code", "tool_call_id": "call-1", "t": "2026-08-29T22:59:02.083+00:00", "ms": 3377.5, "dir": "recv", "type": "client_tool_call"}
-{"step": "interrupt", "text": "Wait, wait, stop, hold on one moment, wait, hold on, stop for a second", "t": "2026-08-29T22:59:02.309+00:00", "ms": 3602.7, "dir": "note", "type": "barge_in_step"}
-{"event_id": 2, "t": "2026-08-29T22:59:02.342+00:00", "ms": 3636.1, "dir": "recv", "type": "interruption"}
-{"original_agent_response": "Searching the code now.", "corrected_agent_response": "Searching the co...", "t": "2026-08-29T22:59:02.342+00:00", "ms": 3636.3, "dir": "recv", "type": "agent_response_correction"}
-{"tool": "search_code", "tool_call_id": "call-1", "exec_ms": 2200.9, "is_error": false, "t": "2026-08-29T22:59:04.284+00:00", "ms": 5578.5, "dir": "send", "type": "client_tool_result"}
-{"text": "I found 3 matches in the code.", "t": "2026-08-29T22:59:04.285+00:00", "ms": 5578.7, "dir": "recv", "type": "agent_response"}
-{"interrupted": true, "count": 1, "t": "2026-08-29T22:59:09.309+00:00", "ms": 10603.1, "dir": "note", "type": "interrupt_observed"}
-{"text": "Wait, wait, stop, hold on one moment, wait, hold on, stop for a second", "t": "2026-08-29T22:59:09.606+00:00", "ms": 10900.0, "dir": "recv", "type": "user_transcript"}
-{"step": "probe_recall", "text": "What did you just find?", "t": "2026-08-29T22:59:11.809+00:00", "ms": 13103.6, "dir": "note", "type": "barge_in_step"}
-{"text": "What did you just find?", "t": "2026-08-29T22:59:14.132+00:00", "ms": 15425.8, "dir": "recv", "type": "user_transcript"}
-{"text": "The search found 3 matches: the voxd daemon dispatch, the playback queue append, and the provider registry.", "t": "2026-08-29T22:59:14.132+00:00", "ms": 15425.9, "dir": "recv", "type": "agent_response"}
-{"step": "note_roundtrip", "text": "Please write a note that says barge in state check.", "t": "2026-08-29T22:59:14.157+00:00", "ms": 15451.0, "dir": "note", "type": "barge_in_step"}
-{"text": "Please write a note that says barge in state check.", "t": "2026-08-29T22:59:17.948+00:00", "ms": 19242.3, "dir": "recv", "type": "user_transcript"}
-{"tool": "write_note", "tool_call_id": "call-2", "t": "2026-08-29T22:59:17.948+00:00", "ms": 19242.4, "dir": "recv", "type": "client_tool_call"}
-{"tool": "write_note", "tool_call_id": "call-2", "exec_ms": 1.4, "is_error": false, "t": "2026-08-29T22:59:17.950+00:00", "ms": 19243.9, "dir": "send", "type": "client_tool_result"}
-{"text": "Note saved.", "t": "2026-08-29T22:59:17.950+00:00", "ms": 19244.0, "dir": "recv", "type": "agent_response"}
-{"t": "2026-08-29T22:59:20.488+00:00", "ms": 21782.2, "dir": "note", "type": "session_closed"}
+{"ws_connect_ms": 1.6, "t": "2026-08-29T23:07:21.294+00:00", "ms": 1.9, "dir": "note", "type": "ws_open"}
+{"conversation_id": "dry-run-barge-in", "agent_output_audio_format": "pcm_16000", "user_input_audio_format": "pcm_16000", "t": "2026-08-29T23:07:21.295+00:00", "ms": 2.7, "dir": "recv", "type": "conversation_initiation_metadata"}
+{"text": "Hi! How can I help?", "t": "2026-08-29T23:07:21.295+00:00", "ms": 2.8, "dir": "recv", "type": "agent_response"}
+{"bytes_b64": 4268, "event_id": 1, "t": "2026-08-29T23:07:21.295+00:00", "ms": 2.8, "dir": "recv", "type": "audio"}
+{"step": "trigger_search", "text": "Hey there, hello, please search the code for the playback queue, thank you", "t": "2026-08-29T23:07:24.296+00:00", "ms": 3004.0, "dir": "note", "type": "barge_in_step"}
+{"text": "Hey there, hello, please search the code for the playback queue, thank you", "t": "2026-08-29T23:07:30.251+00:00", "ms": 8958.5, "dir": "recv", "type": "user_transcript"}
+{"tool": "search_code", "tool_call_id": "call-1", "t": "2026-08-29T23:07:30.251+00:00", "ms": 8958.7, "dir": "recv", "type": "client_tool_call"}
+{"step": "interrupt", "text": "Wait, wait, stop, hold on one moment, wait, hold on, stop for a second", "t": "2026-08-29T23:07:30.460+00:00", "ms": 9167.6, "dir": "note", "type": "barge_in_step"}
+{"event_id": 2, "t": "2026-08-29T23:07:30.511+00:00", "ms": 9218.3, "dir": "recv", "type": "interruption"}
+{"original_agent_response": "Searching the code now.", "corrected_agent_response": "Searching the co...", "t": "2026-08-29T23:07:30.511+00:00", "ms": 9218.5, "dir": "recv", "type": "agent_response_correction"}
+{"tool": "search_code", "tool_call_id": "call-1", "exec_ms": 2202.6, "is_error": false, "t": "2026-08-29T23:07:32.454+00:00", "ms": 11162.1, "dir": "send", "type": "client_tool_result"}
+{"text": "I found 3 matches in the code.", "t": "2026-08-29T23:07:32.455+00:00", "ms": 11163.1, "dir": "recv", "type": "agent_response"}
+{"interrupted": true, "count": 1, "t": "2026-08-29T23:07:37.506+00:00", "ms": 16213.8, "dir": "note", "type": "interrupt_observed"}
+{"text": "Wait, wait, stop, hold on one moment, wait, hold on, stop for a second", "t": "2026-08-29T23:07:37.820+00:00", "ms": 16527.9, "dir": "recv", "type": "user_transcript"}
+{"step": "probe_recall", "text": "What did you just find?", "t": "2026-08-29T23:07:40.007+00:00", "ms": 18714.7, "dir": "note", "type": "barge_in_step"}
+{"text": "What did you just find?", "t": "2026-08-29T23:07:42.279+00:00", "ms": 20986.4, "dir": "recv", "type": "user_transcript"}
+{"text": "The search found 3 matches: the voxd daemon dispatch, the playback queue append, and the provider registry.", "t": "2026-08-29T23:07:42.279+00:00", "ms": 20986.5, "dir": "recv", "type": "agent_response"}
+{"step": "note_roundtrip", "text": "Please write a note that says barge in state check.", "t": "2026-08-29T23:07:42.302+00:00", "ms": 21009.7, "dir": "note", "type": "barge_in_step"}
+{"text": "Please write a note that says barge in state check.", "t": "2026-08-29T23:07:46.092+00:00", "ms": 24799.8, "dir": "recv", "type": "user_transcript"}
+{"tool": "write_note", "tool_call_id": "call-2", "t": "2026-08-29T23:07:46.092+00:00", "ms": 24800.1, "dir": "recv", "type": "client_tool_call"}
+{"tool": "write_note", "tool_call_id": "call-2", "exec_ms": 0.4, "is_error": false, "t": "2026-08-29T23:07:46.093+00:00", "ms": 24800.7, "dir": "send", "type": "client_tool_result"}
+{"text": "Note saved.", "t": "2026-08-29T23:07:46.093+00:00", "ms": 24800.9, "dir": "recv", "type": "agent_response"}
+{"t": "2026-08-29T23:07:48.633+00:00", "ms": 27340.4, "dir": "note", "type": "session_closed"}

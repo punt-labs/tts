@@ -38,7 +38,13 @@ _CHUNK_BYTES = 2_048  # bytes of S16LE mono @16k -- 64ms per send
 _CHUNK_SECONDS = _CHUNK_BYTES / (_RATE * 2)
 _SILENCE = bytes(_CHUNK_BYTES)
 
-TRIGGER_TEXT = "Please search the code for the playback queue."
+# The leading words are sacrificial: EL's ASR clips the onset of the
+# first utterance in a session (observed twice: "Please search the code
+# for..." arrived as "The code for..." and "Hold for..."), so the verb
+# that matters must not be first.
+TRIGGER_TEXT = (
+    "Hey there, hello, please search the code for the playback queue, thank you"
+)
 # Deliberately topic-neutral: an interruption that announces a change of
 # subject invites the LLM to abandon the search, which confounds the
 # recall probe -- the test must measure EL's state handling, not the
@@ -185,6 +191,9 @@ class BargeInFlow:
             await self._await_condition(
                 lambda: self._agent_replies() >= 1, 12.0, "greeting"
             )
+            # The agent_response event outruns its audio by ~2s; speaking
+            # over the greeting got the first utterance clipped by ASR.
+            await asyncio.sleep(3.0)
             if not await self._trigger_slow_tool():
                 return  # no tool call: the adjudicator rules INCONCLUSIVE
             await self._interrupt_mid_call()
