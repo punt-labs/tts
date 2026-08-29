@@ -190,6 +190,10 @@ class TestRoundTripPairing:
         assert str(result_by_id["call-b"]["result"]).startswith("Note saved")
         assert all(r["is_error"] is False for r in results)
 
+        # Co-scheduling flag: with two tools in flight, the first result is
+        # sent while the other still executes (not clean), the second is not.
+        assert sorted(inv.is_clean for inv in metrics.invocations) == [False, True]
+
         # Timing invariants every sample in the verdict depends on.
         for inv in metrics.invocations:
             exec_ms = inv.exec_ms
@@ -222,6 +226,41 @@ class TestRoundTripPairing:
         assert metrics.completed_invocations == []  # and cannot reach the stats
         with pytest.raises(ValueError, match="saw no follow-up event"):
             _ = inv.total_ms
+
+    async def test_duplicate_tool_call_id_does_not_corrupt_the_samples(
+        self, tmp_path: Path
+    ) -> None:
+        async def script(
+            ws: ServerConnection, results: list[dict[str, object]]
+        ) -> None:
+            # EL re-delivers the same call id, then the conversation moves on.
+            await ws.send(_tool_call("clock", "dup-1", {}))
+            await ws.send(_tool_call("clock", "dup-1", {}))
+            results.append(dict(json.loads(await ws.recv())))
+            # A second result may or may not arrive depending on how the
+            # session deduplicates; drain briefly without insisting.
+            with contextlib.suppress(TimeoutError):
+                async with asyncio.timeout(0.5):
+                    results.append(dict(json.loads(await ws.recv())))
+            await ws.send(_tool_call("clock", "after-dup", {}))
+            results.append(dict(json.loads(await ws.recv())))
+            await ws.send(json.dumps(_AGENT_PROGRESS))
+
+        def settled(metrics: SessionMetrics) -> bool:
+            done = {inv.tool_call_id for inv in metrics.completed_invocations}
+            return {"dup-1", "after-dup"} <= done
+
+        metrics, results = await _run_session(tmp_path, script, settled)
+
+        # The session survived the duplicate and kept measuring.
+        completed_ids = [inv.tool_call_id for inv in metrics.completed_invocations]
+        assert completed_ids.count("after-dup") == 1
+        assert completed_ids.count("dup-1") == 1
+        assert {str(r["tool_call_id"]) for r in results} == {"dup-1", "after-dup"}
+        # No phantom half-finished record may linger: a dead fire-and-forget
+        # task would leave an invocation that never completes, silently
+        # understating the sample set in the run record.
+        assert len(metrics.invocations) == len(metrics.completed_invocations)
 
     async def test_error_results_still_complete_and_are_flagged(
         self, tmp_path: Path

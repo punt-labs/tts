@@ -105,3 +105,16 @@ class TestEventTrace:
         trace.record("recv", "audio", {"bytes_b64": 128})
         summary = _summarize(path)
         assert summary == "tool calls: 2, interruptions: 1, corrections: 1"
+
+    def test_summarize_ignores_type_substrings_in_text(self, tmp_path: Path) -> None:
+        # Only the line's own type field counts; an agent/user text payload
+        # that happens to quote an event shape must not inflate the tallies.
+        path = tmp_path / "trace.jsonl"
+        trace = EventTrace(path)
+        quoted = (
+            'the log shows "type": "interruption" and '
+            '"type": "client_tool_call" in a reply'
+        )
+        trace.record("recv", "agent_response", {"text": quoted})
+        trace.record("recv", "interruption", {})
+        assert _summarize(path) == "tool calls: 0, interruptions: 1, corrections: 0"

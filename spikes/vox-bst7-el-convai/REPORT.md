@@ -11,10 +11,28 @@ POST /v1/convai/tools -> 401 authentication_error missing_permissions:
 this operation."
 ```
 
-`ELEVENLABS_API_KEY` (from the repo `.envrc` / platform keychain) is
-scoped for TTS only. The spike needs `convai_read` + `convai_write`
-(ElevenLabs dashboard → API keys). Escalated to the leader 2026-08-29;
-every number below fills in from a re-run once the key is rescoped.
+`ELEVENLABS_API_KEY` (from the repo `.envrc` / platform keychain) has
+`convai_read` (GET /v1/convai/agents → 200) but not `convai_write`.
+The fix is one operator action: ElevenLabs dashboard → API keys →
+enable Conversational AI write on this key. Escalated to the leader
+2026-08-29; every number below fills in from a re-run once the key is
+rescoped.
+
+## Offline verification (no API, no credits)
+
+The full client pipeline was verified against a localhost mock speaking
+the EL Conv AI wire protocol (`dry_run.py`), plus 26 pytest cases
+covering round-trip pairing, orphaned calls, error results, trace
+integrity, and percentile math:
+
+- 3 turns, 3 tool invocations (clock, search_code, write_note), all
+  paired by `tool_call_id` and closed by the next agent event.
+- Measured overhead against the mock's known 350ms continuation delay:
+  352-355ms — the clocks measure what they claim to measure.
+- Parallel-call artifact handled: an invocation co-scheduled with our
+  own slow tool is flagged `is_clean: false` and excluded from the
+  gate metric (its next-event gap measures our sleep, not EL).
+- Evidence: `results/trace_dry_run.jsonl`, `results/dry_run_notes.txt`.
 
 ## Verdicts (DES-069 kill criteria)
 
