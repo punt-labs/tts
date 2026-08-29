@@ -39,9 +39,12 @@ _CHUNK_SECONDS = _CHUNK_BYTES / (_RATE * 2)
 _SILENCE = bytes(_CHUNK_BYTES)
 
 TRIGGER_TEXT = "Please search the code for the playback queue."
+# Deliberately topic-neutral: an interruption that announces a change of
+# subject invites the LLM to abandon the search, which confounds the
+# recall probe -- the test must measure EL's state handling, not the
+# agent's obedience to "ask something different".
 INTERRUPT_TEXT = (
-    "Stop, stop, hold on, wait, I want to ask you something "
-    "completely different right now"
+    "Wait, wait, stop, hold on one moment, wait, hold on, stop for a second"
 )
 PROBE_TEXT = "What did you just find?"
 NOTE_TEXT = "Please write a note that says barge in state check."
