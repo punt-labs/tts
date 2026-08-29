@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The Vox Control Panel applet now survives long enough to register in the
+  Lux menu (vox-nkn8).** Every `vox-panel-*.log` under `~/.punt-labs/vox/logs`
+  contained exactly one line, ever — "session `<pid>` has gone; the applet is
+  leaving" — because `plugin/hooks/session-start.sh` passed `$PPID` to
+  `vox-panel --session-pid`, believing it named the Claude Code process that
+  ran the hook. It doesn't: Claude Code invokes SessionStart hooks through a
+  short-lived `sh` wrapper that exits within seconds of the hook script
+  finishing, so the panel's own liveness check saw its watched process vanish
+  almost immediately and left before it ever reached the Hub. The hook now
+  resolves the wrapper's parent (the genuinely persistent `claude` process),
+  verified by an exact — not substring/glob — match on its command name, and
+  falls back to the old `$PPID` behavior for any process tree that doesn't
+  match, so an unexpected shape fails safe (an applet that exits too early,
+  same as before) rather than watching an unrelated long-lived ancestor
+  forever. Both `ps` lookups are guarded so a vanished target can't abort the
+  whole hook under `set -e`.
 - **`vox desktop install` now knows where Claude Desktop keeps its config on
   Linux (vox-1gub).** Claude Desktop ships for Linux, where its Electron shell
   keeps `userData` under `$XDG_CONFIG_HOME` (default `~/.config`) — verified
