@@ -8,18 +8,23 @@ cli.md §Subcommand naming; ``install-desktop`` was retired for this form).
 non-secret ``env`` map, and formats via the shared :class:`OutputFormatter`.
 ``install`` and ``uninstall`` are symmetric so nothing the CLI can register
 requires manual editing of ``claude_desktop_config.json`` to undo.
+
+Which platforms can be registered is not a question this module answers. It
+asks :meth:`DesktopInstaller.config_path` for a path and reports the refusal
+it gets back; the installer owns the per-platform location, so the CLI's
+verdict and doctor's read-back cannot disagree about where the file lives.
 """
 
 from __future__ import annotations
 
 import json
-import platform
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Self, cast, final
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Self, cast, final
 
 import typer
 
+from punt_vox.atomic_file import AtomicFile
 from punt_vox.desktop_install import DesktopInstaller
 from punt_vox.dirs import default_output_dir
 
@@ -54,10 +59,22 @@ _ProviderOpt = Annotated[
 class DesktopCli:
     """The ``vox desktop`` verbs bound onto a nested typer group."""
 
-    __slots__ = ("_flags", "_formatter")
+    __slots__ = ("_config_path", "_flags", "_formatter")
 
     _formatter: OutputFormatter
     _flags: OutputFlags
+    # The document the current verb is operating on, set by
+    # :meth:`_resolve_config_path` before any helper below reads it.
+    _config_path: Path
+
+    # What the Claude Desktop app itself writes, and what a file holding other
+    # MCP servers' credentials should be: owner-only, on the file and on the
+    # directory vox creates when the app has not run yet.
+    _CONFIG_MODE: ClassVar[int] = 0o600
+    _CONFIG_DIR_MODE: ClassVar[int] = 0o700
+    # The audio directory holds no secrets: ``Path.mkdir``'s own default, which
+    # the caller's umask narrows the way it does for any directory they make.
+    _OUTPUT_DIR_MODE: ClassVar[int] = 0o777
 
     def __new__(cls, formatter: OutputFormatter, flags: OutputFlags) -> Self:
         self = super().__new__(cls)
@@ -65,31 +82,144 @@ class DesktopCli:
         self._flags = flags
         return self
 
-    def _load_config(self, config_path: Path) -> dict[str, Any]:
+    def _load_config(self) -> dict[str, Any]:
         """Read a Claude Desktop config JSON object, or ``{}`` if absent.
 
         A non-object top level (list/string) would crash deep inside the
         caller's ``setdefault`` merge; rejected here with a clean Typer error.
-        Errors route through :class:`OutputFormatter` so ``--json`` callers get
-        an ``{"error": ...}`` envelope rather than plain-text stderr.
+        Bytes that are not UTF-8 fail in ``read_text`` rather than in
+        ``json.loads``, so ``UnicodeDecodeError`` is caught alongside the
+        parse and I/O failures -- it is the same "unreadable config" verdict.
         """
+        config_path = self._config_path
         if not config_path.exists():
             return {}
         try:
             parsed = json.loads(config_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
-            self._formatter.error(
-                f"Could not read {config_path}: {exc}",
-                f"Error: Could not read {config_path}: {exc}",
-            )
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
+            detail = f"Could not read {config_path}: {exc}"
+            self._formatter.error(detail, f"Error: {detail}")
             raise typer.Exit(code=1) from exc
         if not isinstance(parsed, dict):
-            self._formatter.error(
-                f"{config_path} must be a JSON object.",
-                f"Error: {config_path} must be a JSON object.",
-            )
+            detail = f"{config_path} must be a JSON object."
+            self._formatter.error(detail, f"Error: {detail}")
             raise typer.Exit(code=1)
         return cast("dict[str, Any]", parsed)
+
+    def _server_map(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Return the config's ``mcpServers`` object, creating it when absent.
+
+        A non-object value under that key is the case that bites silently:
+        ``"vox" in servers`` against a string is a *substring* test, so a
+        hand-edited ``"mcpServers": "vox"`` reads as an existing registration
+        and the assignment right after it raises. Rejected here with the same
+        clean Typer error a non-object top level gets.
+        """
+        servers = data.setdefault("mcpServers", {})
+        if not isinstance(servers, dict):
+            detail = f'{self._config_path} must have a JSON object under "mcpServers".'
+            self._formatter.error(detail, f"Error: {detail}")
+            raise typer.Exit(code=1)
+        return cast("dict[str, Any]", servers)
+
+    def _write_config(self, data: dict[str, Any]) -> None:
+        """Replace the config atomically, or refuse with a clean error.
+
+        ``claude_desktop_config.json`` is not vox's file: every other MCP
+        server keeps its own ``env`` block there, secrets included, and vox
+        rewrites the whole document to change one key of it. A
+        truncate-then-write that dies mid-stream would destroy *their* entries,
+        so the rewrite goes through :class:`AtomicFile` -- rename over a
+        fully-written, ``fsync``-ed sibling temp, written *through* a symlinked
+        config rather than clobbering the link. ``_CONFIG_MODE`` is forced so
+        an existing world-readable config is narrowed to owner-only, matching
+        what the Claude Desktop app itself writes.
+
+        Symmetric with :meth:`_load_config`: a filesystem failure at this
+        boundary becomes one Typer error line, not a traceback. Text that
+        cannot be encoded to UTF-8 fails in the write rather than in
+        ``json.dumps``, so ``UnicodeError`` is caught alongside the I/O
+        failures -- it is the same "unwritable config" verdict.
+        """
+        config_path = self._config_path
+        try:
+            AtomicFile(config_path).replace(
+                json.dumps(data, indent=2) + "\n", mode=self._CONFIG_MODE
+            )
+        except (OSError, UnicodeError) as exc:
+            detail = f"Could not write {config_path}: {exc}"
+            self._formatter.error(detail, f"Error: {detail}")
+            raise typer.Exit(code=1) from exc
+
+    def _resolve_config_path(self) -> Path:
+        """Resolve and remember this host's config path, or refuse.
+
+        The path is held on the instance because every helper above operates
+        on the same document for the length of one verb; threading it through
+        four signatures only gave them room to disagree about which file they
+        meant.
+
+        The platform question is asked once, of :class:`DesktopInstaller`,
+        which owns the per-platform location. A second ``platform.system()``
+        probe here would be a rival verdict that drifts the moment Claude
+        Desktop reaches another platform.
+        """
+        try:
+            self._config_path = DesktopInstaller.config_path()
+        except ValueError as exc:
+            self._formatter.error(str(exc), f"Error: {exc}")
+            raise typer.Exit(code=1) from exc
+        return self._config_path
+
+    def _resolve_uvx(self, uvx_path: str | None) -> str:
+        """Return the ``uvx`` binary Claude Desktop will launch, or refuse."""
+        uvx = uvx_path or shutil.which("uvx")
+        if not uvx:
+            detail = "uvx not found. Install uv (https://docs.astral.sh/uv/) first."
+            self._formatter.error(detail, f"Error: {detail}")
+            raise typer.Exit(code=1)
+        return uvx
+
+    def _resolve_installer(
+        self, provider: str | None, audio_dir: Path
+    ) -> DesktopInstaller:
+        """Build the installer for *provider*, or refuse when none is ready.
+
+        ``detect(None, ...)`` raises when no provider credentials are in view
+        of the installer: a fresh install with nothing to route to has no
+        sensible default to write.
+        """
+        try:
+            return DesktopInstaller.detect(provider, audio_dir)
+        except ValueError as exc:
+            self._formatter.error(str(exc), f"Error: {exc}")
+            raise typer.Exit(code=1) from exc
+
+    def _make_dir(self, path: Path, mode: int) -> None:
+        """Create *path* and its parents at *mode*, or refuse with a clean error.
+
+        A directory the CLI cannot create -- no write permission on the parent,
+        a regular file already sitting at the path, a full disk -- is the same
+        refusal as an unreadable config and reports the same way: one error
+        line through :class:`OutputFormatter`. An unguarded ``mkdir`` raised
+        past the formatter, so a ``--json`` caller got a traceback and no
+        envelope at all.
+        """
+        try:
+            path.mkdir(parents=True, exist_ok=True, mode=mode)
+        except OSError as exc:
+            detail = f"Could not create {path}: {exc}"
+            self._formatter.error(detail, f"Error: {detail}")
+            raise typer.Exit(code=1) from exc
+
+    def _report_nothing_to_do(self, reason: str, message: str) -> None:
+        """Report an idempotent no-op: nothing was unregistered, and that is fine.
+
+        ``uninstall`` declines two ways -- no config at all, or a config with no
+        vox entry -- and neither is a failure, so both leave ``unregistered``
+        false and exit 0 rather than taking the error path.
+        """
+        self._formatter.emit({"unregistered": False, "reason": reason}, message)
 
     def install(
         self,
@@ -107,49 +237,31 @@ class DesktopCli:
         to ``claude_desktop_config.json``. The provider API key never
         appears there; the daemon reads its key from ``keys.env`` at
         startup (PL-PP-4).
+
+        Every prerequisite is resolved before anything is created on disk, so
+        a host vox cannot register with leaves no output directory behind.
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
-        if platform.system() != "Darwin":
-            typer.echo(
-                "Warning: Claude Desktop config path is only known for macOS. "
-                "You may need to configure manually on this platform.",
-                err=True,
-            )
 
-        uvx = uvx_path or shutil.which("uvx")
-        if not uvx:
-            typer.echo(
-                "Error: uvx not found. Install uv (https://docs.astral.sh/uv/) first.",
-                err=True,
-            )
-            raise typer.Exit(code=1)
-
+        # Every refusal comes first: each _resolve_* raises Exit(1), so the
+        # mkdirs below run only once nothing can decline. _resolve_installer
+        # merely records audio_dir; it does not need the directory to exist.
+        uvx = self._resolve_uvx(uvx_path)
+        config_path = self._resolve_config_path()
         audio_dir = output_dir or default_output_dir()
-        audio_dir.mkdir(parents=True, exist_ok=True)
+        installer = self._resolve_installer(install_provider, audio_dir)
 
-        # ``detect(None, ...)`` raises ``ValueError`` when no provider
-        # credentials are in view of the installer -- catch it and route
-        # through the same ``typer.echo(err) + typer.Exit(1)`` convention
-        # the rest of :class:`DesktopCli` uses for user-facing failures,
-        # rather than letting a bare traceback reach the terminal.
-        try:
-            installer = DesktopInstaller.detect(install_provider, audio_dir)
-        except ValueError as exc:
-            typer.echo(f"Error: {exc}", err=True)
-            raise typer.Exit(code=1) from exc
-
-        config_path = DesktopInstaller.config_path()
-        config_path.parent.mkdir(parents=True, exist_ok=True)
-
-        data = self._load_config(config_path)
-        servers = data.setdefault("mcpServers", {})
+        self._make_dir(audio_dir, self._OUTPUT_DIR_MODE)
+        self._make_dir(config_path.parent, self._CONFIG_DIR_MODE)
+        data = self._load_config()
+        servers = self._server_map(data)
         overwriting = "vox" in servers
         servers["vox"] = {
             "command": uvx,
             "args": ["--from", "punt-vox", "vox", "mcp"],
             "env": installer.server_env(),
         }
-        config_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        self._write_config(data)
 
         payload: dict[str, object] = {
             "registered": True,
@@ -188,25 +300,24 @@ class DesktopCli:
         """
         self._flags.apply(json_output=json_output, verbose=verbose, quiet=quiet)
 
-        config_path = DesktopInstaller.config_path()
+        config_path = self._resolve_config_path()
         if not config_path.exists():
-            self._formatter.emit(
-                {"unregistered": False, "reason": "config_absent"},
+            self._report_nothing_to_do(
+                "config_absent",
                 f"Claude Desktop config not found at {config_path}; nothing to do.",
             )
             return
 
-        data = self._load_config(config_path)
+        data = self._load_config()
         servers = data.get("mcpServers")
         if not isinstance(servers, dict) or "vox" not in servers:
-            self._formatter.emit(
-                {"unregistered": False, "reason": "vox_absent"},
-                "vox MCP server not registered; nothing to do.",
+            self._report_nothing_to_do(
+                "vox_absent", "vox MCP server not registered; nothing to do."
             )
             return
 
         del servers["vox"]
-        config_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        self._write_config(data)
         self._formatter.emit(
             {"unregistered": True, "config": str(config_path)},
             f"Removed vox MCP server from {config_path}.\n"
