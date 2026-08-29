@@ -3389,6 +3389,7 @@ The `calls_dir()` retention policy (does every call leave a summary
 file forever, or is there a cleanup/rotation policy analogous to
 `recordings_dir()`'s) is not decided here — a small implementation
 detail for `vox-hobl.2`'s mission, not an architectural fork.
+
 ---
 
 ## DES-068: E+ Umbrella — Voice Agent Hosted in `voxd` via ElevenLabs Conversational AI
