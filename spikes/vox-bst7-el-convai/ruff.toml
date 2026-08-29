@@ -1,0 +1,10 @@
+# Spike-local ruff config. Extends the repo config so line length, rule
+# selection, and formatting stay identical; relaxes only what a terminal
+# harness legitimately needs (print output, subprocess audio I/O).
+extend = "../../pyproject.toml"
+
+[lint.per-file-ignores]
+"setup_agent.py" = ["T20"]
+"teardown_agent.py" = ["T20"]
+"run_automated.py" = ["T20"]
+"run_live.py" = ["T20", "S603", "S607"]
