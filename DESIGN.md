@@ -3394,7 +3394,7 @@ detail for `vox-hobl.2`'s mission, not an architectural fork.
 
 ## DES-068: E+ Umbrella — Voice Agent Hosted in `voxd` via ElevenLabs Conversational AI
 
-**Status:** PROPOSED (2026-08-29). Reconsiders the voice-agent shape settled in DES-066 given operator assessment that no design in this thread has yet produced ratifyable UX. DES-066's ratification recorded a mechanism spike; DES-067 filled its remaining design gaps; neither has been driven repeatedly by a real user to the standard DES-065's 20-run benchmark set for its predecessor. E+ takes another swing at the same problem with a materially different LLM host and tool model. Validation beads: `vox-bst7`, `vox-73y7`, `vox-juhw`, `vox-6v7f`. Diagram artifact: the E+ architecture drawing (Mode A / Mode B, same-host-launch v1 default) captured for handoff.
+**Status:** PROPOSED (2026-08-29). Reconsiders the voice-agent shape settled in DES-066 given operator assessment that no design in this thread has yet produced ratifiable UX. DES-066's ratification recorded a mechanism spike; DES-067 filled its remaining design gaps; neither has been driven repeatedly by a real user to the standard DES-065's 20-run benchmark set for its predecessor. E+ takes another swing at the same problem with a materially different LLM host and tool model. Validation beads: `vox-bst7`, `vox-73y7`, `vox-juhw`, `vox-6v7f`. Diagram artifact: the E+ architecture drawing (Mode A / Mode B, same-host-launch v1 default) captured for handoff.
 
 ### Context
 
@@ -3458,7 +3458,7 @@ Rationale:
 
 ### Open items / risks
 
-- Client-tool round-trip latency under real WAN conditions is unmeasured; kill criterion is p95 < 1.5s (`vox-bst7`).
+- Client-tool round-trip latency under real WAN conditions is unmeasured. Kill criterion: p95 tool round-trip ≥ 1.5s under production-like conditions (`vox-bst7`).
 - Barge-in behavior mid-tool-call is unspecified in EL Conv AI's public docs; also in `vox-bst7`'s scope. If barge-in during a tool call produces confused conversation state, E+ needs redesign.
 - Vendor coupling: switching LLM host in future means re-doing this ADR and the client-tools implementations, though the tool surface itself (DES-068) is transport-agnostic and would carry over.
 
@@ -3493,7 +3493,7 @@ For the primary session that just fired `/vox:talk` and is now blocked, Layer 2 
 ### Open items / risks
 
 - Hook payload sufficiency (do `PostToolUse` payloads carry actionable state, or only metadata?) is unmeasured; `vox-73y7` addresses it directly.
-- Sequence-gap detection under WAN drops is a real distributed-systems problem; kill criterion is that either gap-detection catches drops or `/vox:talk` seed alone is rich enough that Layer 2 is decorative.
+- Sequence-gap detection under WAN drops is a real distributed-systems problem. Kill criterion: gap-detection fails to reliably catch drops **and** `/vox:talk` seed alone is not rich enough to make Layer 2 decorative — that is, the design is killed only when *neither* mitigation holds.
 - Cross-session context (voice agent seeing turns from a *different* primary session than the one that fired `/vox:talk`) may or may not be desirable — treated as opt-in, defaulting off, per privacy and confusion concerns.
 
 ---
