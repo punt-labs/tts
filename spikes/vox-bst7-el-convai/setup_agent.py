@@ -50,7 +50,7 @@ def main() -> None:
         return
     plane = ControlPlane()
     try:
-        belt = ToolBelt(_HERE / "notes.md")
+        belt = ToolBelt(_HERE / "notes.txt")
         tool_ids = tuple(plane.create_tool(spec) for spec in belt.specs)
         print(f"created {len(tool_ids)} client tools: {', '.join(tool_ids)}")
         agent_id = plane.create_agent(

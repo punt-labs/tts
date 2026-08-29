@@ -110,6 +110,10 @@ class ToolInvocation:
     t_result: float | None = None
     t_next_event: float | None = None
     is_error: bool = False
+    # False when another tool was still executing at result time: the
+    # agent then waits on THAT tool, so this invocation's next-event gap
+    # measures co-scheduling with our own tools, not EL overhead.
+    is_clean: bool = True
 
     @property
     def handling_ms(self) -> float:
@@ -148,6 +152,7 @@ class ToolInvocation:
             "total_ms": round(self.total_ms, 1),
             "overhead_ms": round(self.overhead_ms, 1),
             "is_error": self.is_error,
+            "is_clean": self.is_clean,
         }
 
 
@@ -410,6 +415,7 @@ class ConvAISession:
         )
         invocation.t_result = time.monotonic()
         del self._executing[invocation.tool_call_id]
+        invocation.is_clean = not self._executing
         self._awaiting_next[invocation.tool_call_id] = invocation
         self._trace.record(
             "send",

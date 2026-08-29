@@ -16,7 +16,7 @@ so sibling imports resolve.
 
 | File | Role |
 |------|------|
-| `spike_tools.py` | The 3 client tools: `clock` (fast, <50ms), `search_code` (slow, 2-5s simulated), `write_note` (persists to `notes.md`) |
+| `spike_tools.py` | The 3 client tools: `clock` (fast, <50ms), `search_code` (slow, 2-5s simulated), `write_note` (persists to `notes.txt`) |
 | `control_plane.py` | REST client: create/delete tools + agent, signed URL |
 | `convai.py` | Data plane: WebSocket session, tool dispatch, event trace, latency records |
 | `seed.py` | Deterministic session-context seed text generator |
@@ -62,7 +62,11 @@ Per invocation, from the client's clock:
 - `overhead_ms` — `total_ms − exec_ms`: the EL-attributable round trip
   (WAN + orchestrator + LLM continuation). **The 1.5s gate applies to
   this** — the raw `total_ms` of the slow tool contains our own 2-5s
-  sleep by design.
+  sleep by design. Aggregated over *clean* invocations only (ones whose
+  result was the last the agent waited on); when the agent runs two of
+  our tools in parallel, the faster tool's next-event gap measures our
+  own slow tool, not EL, and is excluded (`is_clean: false` in the
+  metrics JSON).
 
 ## Live run (operator + leader, after the mission closes)
 
@@ -81,7 +85,7 @@ Playbook, one step per test:
    talking before the agent answers. Then ask "what did you just find?"
    The follow-up answer is the state-integrity check: if the agent has
    lost or mangled the tool context, barge-in corrupted state.
-3. **Note round trip**: ask it to write a note; verify `notes.md` gained
+3. **Note round trip**: ask it to write a note; verify `notes.txt` gained
    the line.
 
 Ctrl-C hangs up and prints trace counts (tool calls, interruptions,

@@ -74,6 +74,25 @@ class TestEventTrace:
         EventTrace(nested).record("note", "x", {})
         assert nested.exists()  # parents created on demand
 
+    def test_detail_keys_cannot_overwrite_trace_stamps(self, tmp_path: Path) -> None:
+        # Handlers record server event bodies verbatim; a body carrying
+        # t/ms/dir/type must not clobber the trace's own stamps, or the
+        # evidence line lies about what happened and when.
+        path = tmp_path / "trace.jsonl"
+        trace = EventTrace(path)
+        trace.record(
+            "recv",
+            "interruption",
+            {"type": "spoofed", "dir": "send", "ms": -1.0, "t": "junk", "event_id": 7},
+        )
+        line = _lines(path)[0]
+        assert line["type"] == "interruption"
+        assert line["dir"] == "recv"
+        assert float(str(line["ms"])) >= 0.0
+        # The timestamp stamp survived (would raise on the "junk" spoof).
+        assert datetime.fromisoformat(str(line["t"])).tzinfo is not None
+        assert line["event_id"] == 7  # genuine detail still merges
+
     def test_summarize_counts_the_barge_in_evidence(self, tmp_path: Path) -> None:
         # run_live._summarize counts trace lines by the '"type": "<name>"'
         # substring; this pins the serializer to that contract.

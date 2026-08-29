@@ -152,7 +152,7 @@ class SeedRun:
             record["signed_url_ms"] = round((time.monotonic() - t0) * 1000.0, 1)
             session = ConvAISession(
                 url=url,
-                toolbelt=ToolBelt(_HERE / "notes.md"),
+                toolbelt=ToolBelt(_HERE / "notes.txt"),
                 trace=trace,
                 overrides={
                     "agent": {"prompt": {"prompt": prompt}},
@@ -272,10 +272,18 @@ class MetricsReport:
 
     @staticmethod
     def _stats_for(invocations: list[dict[str, object]]) -> dict[str, LatencyStats]:
-        return {
+        # overhead_ms is EL-attributable only for "clean" invocations --
+        # ones whose result was the last thing the agent waited on. A tool
+        # co-scheduled with our own slow tool measures that tool, not EL.
+        clean = [inv for inv in invocations if inv.get("is_clean", True)]
+        stats = {
             metric: LatencyStats.of([float(str(inv[metric])) for inv in invocations])
-            for metric in ("handling_ms", "total_ms", "overhead_ms")
+            for metric in ("handling_ms", "total_ms")
         }
+        stats["overhead_ms"] = LatencyStats.of(
+            [float(str(inv["overhead_ms"])) for inv in clean]
+        )
+        return stats
 
 
 def main() -> None:

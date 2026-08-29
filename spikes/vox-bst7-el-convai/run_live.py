@@ -178,7 +178,7 @@ async def _run() -> Path:
     audio = AlsaAudio()
     session = ConvAISession(
         url=url,
-        toolbelt=ToolBelt(_HERE / "notes.md"),
+        toolbelt=ToolBelt(_HERE / "notes.txt"),
         trace=trace,
         overrides={},
         sink=audio,
