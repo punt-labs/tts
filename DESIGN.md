@@ -3423,7 +3423,7 @@ E+ preserves DES-066's essential move — the call agent operates read-mostly ag
 
 - Vendor coupling to ElevenLabs Conversational AI is deeper than "just TTS" — the turn loop, tool orchestration, and barge-in behavior become EL's. `vox-bst7` is the foundation spike that either establishes or refutes the bet.
 - The rolling context store's payload sufficiency has not been measured; `vox-73y7` addresses that.
-- Mode B's session-launch semantic introduces a real capability escalation dressed as a tool call; DES-071 records the shape and the permission-profile mitigation.
+- Mode B's session-launch semantics introduce a real capability escalation dressed as a tool call; DES-071 records the shape and the permission-profile mitigation.
 - Nothing in E+ invalidates the ~88% of DES-064's implementation that DES-065 identified as retained (mic capture, STT, TTS, playback ordering, turn-timer diagnostics, call lifecycle machinery). E+ is a swap at the `SessionAttach` boundary the earlier design already isolated behind a `Protocol`.
 
 ---
