@@ -21,7 +21,7 @@ rescoped.
 ## Offline verification (no API, no credits)
 
 The full client pipeline was verified against a localhost mock speaking
-the EL Conv AI wire protocol (`dry_run.py`), plus 26 pytest cases
+the EL Conv AI wire protocol (`dry_run.py`), plus 35 pytest cases
 covering round-trip pairing, orphaned calls, error results, trace
 integrity, and percentile math:
 

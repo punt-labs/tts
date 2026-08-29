@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import shutil
 import subprocess
 import time
@@ -155,9 +156,11 @@ def _summarize(trace_path: Path) -> str:
     """Count the barge-in evidence lines in the trace."""
     counts = {"client_tool_call": 0, "interruption": 0, "agent_response_correction": 0}
     for line in trace_path.read_text(encoding="utf-8").splitlines():
-        for key in counts:
-            if f'"type": "{key}"' in line:
-                counts[key] += 1
+        # Each line is one JSON object; only ITS type counts. A substring
+        # match would tally event shapes nested inside recorded bodies.
+        event_type = str(json.loads(line).get("type", ""))
+        if event_type in counts:
+            counts[event_type] += 1
     return (
         f"tool calls: {counts['client_tool_call']}, "
         f"interruptions: {counts['interruption']}, "

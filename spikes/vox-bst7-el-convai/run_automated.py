@@ -193,7 +193,7 @@ class SeedRun:
             "ws_connect_ms": round(metrics.ws_connect_ms, 1),
             "init_metadata_ms": round(metrics.init_metadata_ms, 1),
             "session_start_ms": round(session_start_ms, 1),
-            "first_response_ms": round(first_ms, 1) if first_ms else None,
+            "first_response_ms": round(first_ms, 1) if first_ms is not None else None,
             "turn_response_ms": [round(v, 1) for v in metrics.turn_response_ms],
             "ping_ms": metrics.ping_ms,
             "invocations": [inv.as_dict() for inv in completed],

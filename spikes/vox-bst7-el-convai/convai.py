@@ -83,12 +83,14 @@ class EventTrace:
         self, direction: str, event_type: str, detail: Mapping[str, object]
     ) -> None:
         """Write one trace line; ``direction`` is recv, send, or note."""
+        # detail spreads FIRST: server bodies are recorded verbatim, and a
+        # body carrying t/ms/dir/type must not clobber the trace's stamps.
         line = {
+            **detail,
             "t": datetime.now(tz=UTC).isoformat(timespec="milliseconds"),
             "ms": round((time.monotonic() - self._t0) * 1000.0, 1),
             "dir": direction,
             "type": event_type,
-            **detail,
         }
         with self._path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(line, ensure_ascii=False) + "\n")
@@ -168,13 +170,6 @@ class SessionMetrics:
     transcript: list[dict[str, str]] = field(default_factory=list)
 
     @property
-    def first_response_ms(self) -> float:
-        if not self.turn_response_ms:
-            msg = "no turns completed; first_response_ms is undefined"
-            raise ValueError(msg)
-        return self.turn_response_ms[0]
-
-    @property
     def completed_invocations(self) -> list[ToolInvocation]:
         return [inv for inv in self.invocations if inv.is_complete]
 
@@ -204,6 +199,7 @@ class ConvAISession:
     _last_progress: float
     _conversation_id: str
     _init_metadata: dict[str, object]
+    _seen_call_ids: set[str]
     _closed_reason: str | None  # None while the socket is open
     _handlers: dict[str, Callable[[dict[str, object]], Coroutine[None, None, None]]]
     metrics: SessionMetrics
@@ -235,6 +231,7 @@ class ConvAISession:
         self._last_progress = 0.0
         self._conversation_id = ""
         self._init_metadata = {}
+        self._seen_call_ids = set()
         self._closed_reason = None
         self._handlers = {
             "conversation_initiation_metadata": self._on_init_metadata,
@@ -376,6 +373,15 @@ class ConvAISession:
         event = self._event_body(message, "client_tool_call")
         name = str(event.get("tool_name", ""))
         call_id = str(event.get("tool_call_id", ""))
+        if call_id in self._seen_call_ids:
+            # A re-delivered id must not spawn a second invocation: the
+            # duplicate would overwrite the executing record and leave a
+            # phantom incomplete sample understating the run.
+            self._trace.record(
+                "note", "duplicate_tool_call_ignored", {"tool_call_id": call_id}
+            )
+            return
+        self._seen_call_ids.add(call_id)
         params = event.get("parameters")
         params_map: Mapping[str, object] = params if isinstance(params, dict) else {}
         invocation = ToolInvocation(
