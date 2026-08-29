@@ -26,6 +26,8 @@ import os
 import shutil
 import stat
 import subprocess
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -50,6 +52,31 @@ fi
 "$@" &
 wait
 """
+
+
+def _poll_until(predicate: Callable[[], bool], *, timeout: float = 10.0) -> None:
+    """Poll *predicate* until it's true -- the panel stub is spawned via
+    ``nohup ... & disown`` (fire-and-forget), so it can still be writing its
+    output file after the hook script -- and this test's ``subprocess.Popen``
+    call -- has already returned. An immediate check races that write; a
+    blind ``sleep`` only narrows the window without closing it.
+
+    10s matches the equivalent poll in ``test_hook_gate.py``: a 15-run
+    isolated rerun of that poll (no concurrent load) still missed a 2s
+    deadline once, so 2s is not a safe bound for OS scheduling of an
+    already-disowned background process even at rest. The predicate
+    resolves in milliseconds on the happy path -- this loop returns as soon
+    as it's true -- so the generous ceiling costs nothing when the spawn is
+    prompt and only matters on the rare slow tail.
+    """
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() > deadline:
+            msg = (
+                "timed out waiting for the backgrounded vox-panel stub to write output"
+            )
+            raise AssertionError(msg)
+        time.sleep(0.02)
 
 
 def _make_executable(path: Path) -> None:
@@ -121,7 +148,7 @@ def _run_tree(tmp_path: Path, *, claude_comm: str) -> tuple[int, int, int]:
     assert len(trace_lines) == 2, trace_lines
     wrapper_pid = int(trace_lines[1])
 
-    assert stub_out.exists(), "vox-panel stub was never invoked"
+    _poll_until(stub_out.exists)
     stub_args = stub_out.read_text(encoding="utf-8").split()
     assert stub_args[:1] == ["--session-pid"], stub_args
     resolved_session_pid = int(stub_args[1])
