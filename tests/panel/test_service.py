@@ -218,6 +218,20 @@ def _openai_index() -> int:
     return PROVIDER_NAMES.index("openai")
 
 
+def _selected(request: RenderRequest, element_id: str) -> object:
+    """Return ``element_id``'s ``selected`` field from a full render, or raise.
+
+    A full :class:`~punt_lux.RenderRequest` always carries every element, so a
+    missing id is a test-setup bug, not a legitimate absence -- raise rather
+    than return ``None`` and let a typo read as a false failure two lines away.
+    """
+    for element in request.elements:
+        if element.get("id") == element_id:
+            return element["selected"]
+    msg = f"no {element_id!r} element in the render"
+    raise AssertionError(msg)
+
+
 class TestPrefetch:
     def test_reads_settings_into_held_state(self) -> None:
         service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
@@ -780,6 +794,79 @@ class TestInstallScene:
         # DES-072 addendum: ``show`` alone does not reliably raise a frame the
         # scene is not new to -- ``install_scene`` must ALSO raise explicitly.
         assert rest.frame.raised == ["vox.panel"]
+
+
+class TestCorrectScene:
+    """vox-h777 regression: a failure snap-back must reassert the control field.
+
+    ``push_scene`` (the diff-based refresh) computes its patch against the
+    last render this session successfully pushed -- which, after any of
+    these failures, is exactly what the corrective render says again, save
+    for the notice (or, in the malformed-payload case, not even that). A
+    diff sees nothing changed and skips the control's field entirely, so
+    the optimistic value the widget already applied client-side never gets
+    corrected. ``correct_scene`` must disarm and reinstall in full instead.
+    """
+
+    async def test_a_write_failure_snap_back_reasserts_the_control_on_the_wire(
+        self,
+    ) -> None:
+        class _AlwaysFailsToWrite:
+            def read(self) -> VoxConfig:
+                return _config()
+
+            def write_field(self, key: str, value: str) -> None:
+                msg = "disk full"
+                raise OSError(msg)
+
+            def write_fields(self, updates: dict[str, str]) -> None:
+                msg = "disk full"
+                raise OSError(msg)
+
+        service = VoxPanelService(_FakeDaemonClient(), _AlwaysFailsToWrite())
+        service.refresh()
+        rest = _FakeRest()
+
+        # notify="y" is index 1 in NOTIFY_SPEC's codes ("n", "y", "c").
+        await service.push_scene(cast("LuxClient", rest))
+        assert _selected(rest.rendered[0], "vox.panel.notify") == 1
+
+        # The user clicks "Continuous" (index 2); the widget applies that
+        # optimistically the instant it fires. The write to disk then fails,
+        # so vox's own model never moves off "y"/index 1.
+        with pytest.raises(OSError, match="disk full"):
+            service.apply_event(PanelTopic.NOTIFY, {"value": 2})
+        service.recover_from_write_failure("notify")
+
+        await service.correct_scene(cast("LuxClient", rest))
+
+        # A full reinstall, not a patch: the corrective render is otherwise
+        # byte-identical to the one already pushed -- only the notice moved
+        # -- so a diff-based push would find no reason to touch "selected"
+        # at all. Only a full install unconditionally reasserts it, snapping
+        # the widget back from the "Continuous" it never really landed.
+        assert len(rest.rendered) == 2
+        assert rest.patched == []
+        assert _selected(rest.rendered[1], "vox.panel.notify") == 1
+
+    async def test_a_correction_reinstalls_even_when_nothing_at_all_changed(
+        self,
+    ) -> None:
+        # The malformed-event branch sets no notice and touches no state, so
+        # the corrective render is not merely unpatchable -- it is byte-
+        # identical to the last one pushed. A diff-based push would plan a
+        # ``NoPush`` and put nothing at all on the wire; a correction must
+        # still reinstall, because the widget's own guess is still wrong.
+        service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
+        service.refresh()
+        rest = _FakeRest()
+
+        await service.push_scene(cast("LuxClient", rest))
+        await service.correct_scene(cast("LuxClient", rest))
+
+        assert len(rest.rendered) == 2
+        assert rest.patched == []
+        assert _selected(rest.rendered[1], "vox.panel.notify") == 1
 
 
 class TestRefreshAndRecover:

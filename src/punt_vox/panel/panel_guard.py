@@ -86,6 +86,25 @@ class PanelGuard:
             self._note(exc, what)
             await self.repush()
 
+    @asynccontextmanager
+    async def control_rejection(self, what: str) -> AsyncGenerator[None]:
+        """Swallow voxd refusing *what*, one control widget's change, and snap it back.
+
+        The control-change twin of :meth:`rejection`: the same real failure, but
+        the caller is a widget that already applied *what* optimistically on
+        the client the instant it fired, before this refusal came back. A
+        diff-based re-push (:meth:`repush`) compares against the last render
+        this session successfully landed -- the still-true value the widget was
+        supposed to keep showing -- so it patches only the notice and leaves the
+        widget's wrong guess on screen. :meth:`correct` reinstalls in full
+        instead, which is what actually reasserts the control's field.
+        """
+        try:
+            yield
+        except VoxdProtocolError as exc:
+            self._note(exc, what)
+            await self.correct()
+
     @contextmanager
     def offscreen_rejection(self, what: str) -> Generator[None]:
         """Swallow voxd refusing *what* with no scene up yet: note it, push nothing.
@@ -105,10 +124,11 @@ class PanelGuard:
     async def repush(self) -> None:
         """Refresh the held scene in place, letting an absent luxd drop it.
 
-        This is the re-push behind a control change, so the user is mid-interaction
-        with a panel that is already on screen: it takes the patch path, which
-        leaves the frame's stacking order alone. Showing here instead is what made
-        every radio click raise the window.
+        Reached behind a genuine control change and behind a click's confirming
+        read, so the user is mid-interaction with a panel that is already on
+        screen: it takes the patch path, which leaves the frame's stacking order
+        alone. Showing here instead is what made every radio click raise the
+        window.
 
         A fresh REST client per push is safe for that: luxd derives the connection
         id from the declared identity rather than the socket, so this client
@@ -116,6 +136,20 @@ class PanelGuard:
         """
         with self.outage("luxd unavailable; dropped the panel re-push"):
             await self._service.push_scene(self._rest_factory())
+
+    async def correct(self) -> None:
+        """Reinstall the held scene in full, letting an absent luxd drop it.
+
+        Reached only behind a control-change failure: the widget already
+        applied its change optimistically before voxd answered, so
+        :meth:`repush`'s diff -- computed against the last render this session
+        successfully landed -- would see nothing to patch and leave the
+        widget's wrong guess on screen. A full reinstall reasserts every field,
+        the control's included, with no frame raise (see
+        :meth:`~punt_vox.panel.panel_push.PanelPush.correct`).
+        """
+        with self.outage("luxd unavailable; dropped the panel correction"):
+            await self._service.correct_scene(self._rest_factory())
 
     def _note(self, exc: VoxdProtocolError, what: str) -> None:
         """Log voxd's refusal of *what* loud, and carry its reason into the scene."""

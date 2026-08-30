@@ -134,6 +134,16 @@ class VoxPanelService:
         """Refresh the installed scene with the currently-held one."""
         await self._push.refresh(client, self.scene().render_request())
 
+    async def correct_scene(self, client: LuxClient) -> None:
+        """Reinstall the held scene in full, snapping back an optimistic widget.
+
+        Reached only after a control-change failure that a widget already
+        applied client-side before voxd answered -- see
+        :meth:`~punt_vox.panel.panel_push.PanelPush.correct` for why a diff-based
+        refresh cannot express this correction.
+        """
+        await self._push.correct(client, self.scene().render_request())
+
     def refresh(self) -> None:
         """Re-read settings from disk and voxd; note staleness if voxd is down."""
         self._resync(

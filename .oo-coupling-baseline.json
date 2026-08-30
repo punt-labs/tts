@@ -612,8 +612,8 @@
     "efferent_coupling": 2.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.714,
-    "avg_lcom": 0.714
+    "max_lcom": 0.75,
+    "avg_lcom": 0.75
   },
   "src/punt_vox/panel/panel_notice.py": {
     "efferent_coupling": 1.0,
@@ -630,7 +630,7 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/panel/panel_runner.py": {
-    "efferent_coupling": 2.0,
+    "efferent_coupling": 3.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.143,
@@ -675,8 +675,8 @@
     "efferent_coupling": 15.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.701,
-    "avg_lcom": 0.701
+    "max_lcom": 0.715,
+    "avg_lcom": 0.715
   },
   "src/punt_vox/panel/state.py": {
     "efferent_coupling": 1.0,

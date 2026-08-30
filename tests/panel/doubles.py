@@ -216,6 +216,7 @@ class FakeService:
         self.apply_returns = True
         self.pushed = 0
         self.installed = 0
+        self.corrected = 0
         self.recovered: list[str] = []
         self.rejections: list[str] = []
         # The order the leg's two verbs actually ran in for one click -- proof
@@ -274,6 +275,9 @@ class FakeService:
 
     async def install_scene(self, client: object) -> None:
         self.installed += 1
+
+    async def correct_scene(self, client: object) -> None:
+        self.corrected += 1
 
     def recover_from_write_failure(self, field: str) -> None:
         self.recovered.append(field)

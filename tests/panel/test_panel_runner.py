@@ -175,13 +175,18 @@ class TestChanged:
     async def test_a_write_failure_is_caught_distinctly_and_corrects_the_scene(
         self, build_runner: Callable[..., PanelRunner]
     ) -> None:
+        # The widget already shows the change optimistically; a diff-based
+        # re-push (``pushed``) would see the last-successful render as still
+        # true and skip it, so the correction must go through the full-reinstall
+        # path (``corrected``) instead.
         rest = FakeRest()
         service = FakeService(raise_on="write")
         await build_runner(service, lambda: rest).changed(
             PanelTopic.NOTIFY.value, {"value": 0}
         )  # must not raise
         assert service.recovered == ["notify"]
-        assert service.pushed == 1
+        assert service.corrected == 1
+        assert service.pushed == 0
 
     async def test_a_refused_value_is_corrected_like_a_write_that_would_not_land(
         self, build_runner: Callable[..., PanelRunner]
@@ -198,7 +203,8 @@ class TestChanged:
             PanelTopic.VOICE.value, {"value": 0}
         )  # must not raise
         assert service.recovered == ["voice"]
-        assert service.pushed == 1
+        assert service.corrected == 1
+        assert service.pushed == 0
 
     async def test_a_refused_value_is_logged_at_error_with_a_traceback(
         self,
@@ -214,14 +220,19 @@ class TestChanged:
         assert panel_records(caplog)[0].exc_info is not None
         assert "voice" in panel_records(caplog)[0].getMessage()
 
-    async def test_a_rejected_payload_re_pushes_but_does_not_recover(
+    async def test_a_rejected_payload_corrects_but_does_not_recover(
         self, build_runner: Callable[..., PanelRunner]
     ) -> None:
+        # The malformed-event path sets no notice at all, so a diff-based
+        # re-push (``pushed``) would find the corrective render byte-identical
+        # to the last one this session landed and push nothing -- the widget's
+        # wrongly-set field would never get reasserted on the wire.
         rest = FakeRest()
         service = FakeService(raise_on="apply")
         await build_runner(service, lambda: rest).changed(PanelTopic.NOTIFY.value, {})
         assert service.recovered == []
-        assert service.pushed == 1
+        assert service.corrected == 1
+        assert service.pushed == 0
 
     async def test_an_unexpected_change_failure_is_logged_at_error(
         self,
@@ -253,16 +264,21 @@ class TestVoxdRejection:
     log line nobody reads.
     """
 
-    async def test_a_refused_preview_shows_a_notice_and_re_pushes(
+    async def test_a_refused_preview_shows_a_notice_and_corrects_the_scene(
         self, build_runner: Callable[..., PanelRunner]
     ) -> None:
+        # The preview button already shows its optimistic state client-side, so
+        # this refusal must snap it back with a full reinstall (``corrected``),
+        # not the diff-based re-push (``pushed``) that would find nothing to
+        # patch and leave the widget's guess on screen.
         rest = FakeRest()
         service = FakeService(raise_on="preview")
         await build_runner(service, lambda: rest).changed(
             PanelTopic.VOICE_PREVIEW.value, {}
         )  # must not raise
         assert service.rejections == [service.refusal]
-        assert service.pushed == 1
+        assert service.corrected == 1
+        assert service.pushed == 0
 
     async def test_a_refused_preview_is_logged_at_error_with_a_traceback(
         self,

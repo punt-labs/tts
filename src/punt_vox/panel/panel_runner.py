@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_lux.applets import ClickLatency
 
+from punt_vox.panel.control_push import ControlPush
 from punt_vox.panel.topics import PanelTopic
 from punt_vox.types_errors import ConfigValueError
 
@@ -110,33 +111,43 @@ class PanelRunner:
         latency.report()
 
     async def _apply(self, topic: str, payload: Mapping[str, object]) -> None:
-        async with self._guard.rejection(f"a control change on {topic}"):
-            if await asyncio.to_thread(self._applied, topic, payload):
-                await self._guard.repush()
+        async with self._guard.control_rejection(f"a control change on {topic}"):
+            match await asyncio.to_thread(self._applied, topic, payload):
+                case ControlPush.REFRESH:
+                    await self._guard.repush()
+                case ControlPush.CORRECT:
+                    await self._guard.correct()
+                case ControlPush.NONE:
+                    pass
 
-    def _applied(self, topic: str, payload: Mapping[str, object]) -> bool:
-        """Apply one control event; answer whether the scene needs a re-push.
+    def _applied(self, topic: str, payload: Mapping[str, object]) -> ControlPush:
+        """Apply one control event; answer what kind of re-push it needs.
 
-        Every failure handled here answers yes: the widget already shows the
-        change optimistically, so the still-true held scene has to go back
-        out to snap it back. A refusal from voxd is deliberately not handled
-        here -- the :class:`~punt_vox.panel.panel_guard.PanelGuard` rejection
-        guard around the caller owns that one.
+        Every failure handled here answers :attr:`~ControlPush.CORRECT`: the
+        widget already shows the change optimistically, and a diff against the
+        last render this session successfully pushed sees nothing to fix --
+        only a full reinstall (see
+        :meth:`~punt_vox.panel.panel_push.PanelPush.correct`) snaps it back. A
+        refusal from voxd is deliberately not handled here -- the
+        :class:`~punt_vox.panel.panel_guard.PanelGuard` rejection guard around
+        the caller owns that one, and answers the same way.
 
         Order matters between the two buckets: ``ConfigValueError`` is a
         ``ValueError``, so catching it second would file a change the user
         really chose as a malformed event and revert it with no notice.
         """
         try:
-            return self._service.apply_event(topic, payload)
+            changed = self._service.apply_event(topic, payload)
         except (ConfigValueError, OSError):
             field = PanelTopic(topic).field_name
             self._logger.exception(
                 "vox-panel: the %s change did not stick; correcting the scene", field
             )
             self._service.recover_from_write_failure(field)
+            return ControlPush.CORRECT
         except (TypeError, ValueError):
             self._logger.exception(
                 "vox-panel: rejected control event on %s: %r", topic, payload
             )
-        return True
+            return ControlPush.CORRECT
+        return ControlPush.REFRESH if changed else ControlPush.NONE

@@ -1,6 +1,6 @@
 """``PanelPush`` -- how the panel's held scene reaches luxd, and with what intent.
 
-Two verbs, because a push carries an intent as well as a tree. :meth:`install`
+Three verbs, because a push carries an intent as well as a tree. :meth:`install`
 shows the scene and then EXPLICITLY raises its frame, and is the answer to the
 ``Vox`` menu click -- the user asked to see the panel, so bringing it forward is
 the point. The explicit raise matters because ``scene.show`` only
@@ -12,6 +12,23 @@ changed fields onto the installed scene and touches frame, focus, and tab state
 not at all, which is what the confirm push behind a click and every
 control-change re-push want: the panel is already on screen, and where the user
 put it is where it should stay.
+
+:meth:`correct` is the third verb, and it exists because ``refresh``'s diff is
+computed against the wrong tree for a failure snap-back. A control widget
+applies its change optimistically client-side the instant it fires, before
+voxd has answered -- so when voxd's answer is a write failure, a rejection, or
+a malformed event, the display already shows the guessed value and only luxd
+knows it. ``refresh`` diffs the corrective render against ``_live``'s last
+*successfully pushed* tree, which is the still-true value the widget was
+supposed to keep showing -- so if the correction is otherwise identical to
+that last push (the common case: only the notice text differs, or nothing at
+all in the malformed-event path), the diff finds nothing to patch and the
+widget never gets snapped back. :meth:`correct` disarms ``_live`` first, so
+the plan has no ``_previous`` to diff against and falls back to a full
+reinstall that reasserts every field, control included. It must NOT raise the
+frame the way :meth:`install` does: a snap-back corrects what the display
+shows, it is not a "bring this window to me" gesture, and stealing focus for
+one would be its own regression of the bug ``refresh`` was written to fix.
 
 Talking to luxd is a different job from holding the session's settings, so it
 lives here rather than on :class:`~punt_vox.panel.service.VoxPanelService` --
@@ -97,6 +114,21 @@ class PanelPush:
         changed and no patch could express it.
         """
         async with self._lock:
+            await self._complete(client, self._live.plan(request))
+
+    async def correct(self, client: LuxClient, request: RenderRequest) -> None:
+        """Reinstall ``request`` in full to snap the display back after a failure.
+
+        Disarms ``_live`` before planning, so the plan has no ``_previous`` of
+        its own to diff against and falls back to a full install unconditionally
+        -- ``refresh``'s diff would otherwise compare against the last render
+        this object successfully pushed, which is the value a failure snap-back
+        needs reasserted, not skipped as unchanged. No frame raise: unlike
+        :meth:`install`, a snap-back corrects what is already on screen, it does
+        not ask to be brought forward.
+        """
+        async with self._lock:
+            self._live.disarm()
             await self._complete(client, self._live.plan(request))
 
     async def _complete(self, client: LuxClient, push: ScenePush) -> bool:
