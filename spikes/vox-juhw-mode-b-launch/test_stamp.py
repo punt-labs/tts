@@ -70,6 +70,57 @@ class TestSequenceStamper:
         assert record.payload["MY_API_KEY"] == "[redacted]"
         assert record.payload["cwd"] == "/proj"
 
+    def test_redaction_is_recursive_into_nested_dicts(self) -> None:
+        # The ledger is a committed run artifact; tool_input/tool_response
+        # nest arbitrary structures, so masking must reach every depth.
+        record = SequenceStamper().stamp(
+            "PostToolUse",
+            {
+                "session_id": "a",
+                "tool_input": {
+                    "file_path": "/proj/x.py",
+                    "auth": {"api_key": "k-123", "region": "us"},
+                },
+            },
+        )
+        tool_input = record.payload["tool_input"]
+        assert isinstance(tool_input, dict)
+        auth = tool_input["auth"]
+        assert isinstance(auth, dict)
+        assert auth["api_key"] == "[redacted]"
+        assert auth["region"] == "us"
+        assert tool_input["file_path"] == "/proj/x.py"
+
+    def test_redaction_reaches_dicts_inside_lists(self) -> None:
+        record = SequenceStamper().stamp(
+            "PostToolUse",
+            {
+                "session_id": "a",
+                "tool_response": {
+                    "results": [
+                        {"name": "ok", "value": 1},
+                        {"secret": "s3cr3t", "value": 2},
+                    ]
+                },
+            },
+        )
+        response = record.payload["tool_response"]
+        assert isinstance(response, dict)
+        results = response["results"]
+        assert isinstance(results, list)
+        assert results[0] == {"name": "ok", "value": 1}
+        assert results[1] == {"secret": "[redacted]", "value": 2}
+
+    def test_none_values_survive_redaction_as_none(self) -> None:
+        record = SequenceStamper().stamp(
+            "PostToolUse",
+            {"session_id": "a", "tool_response": None, "extras": {"note": None}},
+        )
+        assert record.payload["tool_response"] is None
+        extras = record.payload["extras"]
+        assert isinstance(extras, dict)
+        assert extras["note"] is None
+
 
 class TestHookRecordRoundTrip:
     """JSONL serialization survives a parse round trip; bad lines raise."""

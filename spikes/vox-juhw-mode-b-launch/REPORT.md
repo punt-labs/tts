@@ -141,21 +141,25 @@ v1 scope. Itemized honestly:
    surface credential health before offering `launch_session`.
 8. **Credential-read surface.** A voice-launched fork can read the
    seeded OAuth credentials file (and the user's `~/.claude/`) with its
-   allowed tools, because reads are not path-confined in v1. Egress is
-   bounded — Bash, WebFetch, WebSearch, and Task are denied — so the
-   fork has no channel to exfiltrate what it reads, but the read itself
-   is open. Mitigation is settings-side path-scoped permission rules
-   (e.g. deny reads outside the project) written by the launcher —
-   launcher work, no Claude Code change; quarter-trigger unaffected.
+   allowed tools, because reads are not path-confined in v1. Egress via
+   Bash, WebFetch, WebSearch, and Task is denied — but the hook relay
+   itself is a data channel: PostToolUse is wired with matcher `*` and
+   the store persists tool bodies, so what the fork reads can land in
+   the (committed) ledger. The stamper's recursive credential-key
+   redaction narrows that channel; it does not close the underlying
+   exposure, which is exactly this rough edge. Mitigation is
+   settings-side path-scoped permission rules (e.g. deny reads outside
+   the project) written by the launcher — launcher work, no Claude Code
+   change; quarter-trigger unaffected.
 
 ## Design notes to carry forward (evaluator, security review)
 
 - **Recursive redaction for DES-070.** The spike's ledger redaction is
-  top-level-key only (`stamp.py` `_redacted`): a credential-shaped key
-  nested inside `tool_input` / `tool_response` payload objects would
-  persist verbatim. Sufficient for this harness's payloads; the real
-  voxd rolling context store must redact recursively before retaining
-  hook payloads.
+  recursive (`stamp.py` `_redacted`/`_masked`/`_scrubbed`): a
+  credential-shaped key at any depth inside `tool_input` /
+  `tool_response` structures is masked before persistence. The real
+  voxd rolling context store must retain (at least) this property when
+  it retains hook payloads.
 - **Scratch placement must be a capability invariant, not a harness
   convention.** Here the throwaway project root is pinned by the
   harness (`run_validation.py` `_SCRATCH_ROOT`). The real

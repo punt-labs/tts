@@ -106,8 +106,12 @@ class HookStore:
         return self
 
     def process(self, raw: str) -> str | None:
-        """Handle one wire message; return the response, or None for
-        notifications and unparseable frames-without-ids."""
+        """Handle one wire message.
+
+        Returns the response to send, or None for notifications (which
+        expect no reply). An unparseable frame gets a JSON-RPC parse-error
+        response with a null id -- the sender's id is unknowable.
+        """
         try:
             frame = JsonRpcFrame(raw)
         except (json.JSONDecodeError, ValueError) as exc:

@@ -125,10 +125,25 @@ class SequenceStamper:
         return UNATTRIBUTED
 
     def _redacted(self, payload: WirePayload) -> WirePayload:
-        return {
-            key: _REDACTED if self._is_credential_key(key) else value
-            for key, value in payload.items()
-        }
+        # Recursive: hook payloads nest arbitrary structures under
+        # tool_input / tool_response, and the ledger is a committed run
+        # artifact -- a credential-shaped key at any depth must be masked
+        # before persistence, not just at the top level.
+        return {key: self._masked(key, value) for key, value in payload.items()}
+
+    def _masked(self, key: str, value: object) -> object:
+        if self._is_credential_key(key):
+            return _REDACTED
+        return self._scrubbed(value)
+
+    def _scrubbed(self, value: object) -> object:
+        if isinstance(value, dict):
+            return {
+                str(key): self._masked(str(key), item) for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [self._scrubbed(item) for item in value]
+        return value
 
     def _is_credential_key(self, key: str) -> bool:
         lowered = key.lower()
