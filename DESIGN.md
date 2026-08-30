@@ -3483,6 +3483,15 @@ traces/metrics.
   and 10KB seeds answered crisply, a 50KB seed degraded the agent to
   pre-tool narration; EL agent deletion propagates lazily (teardown must
   force-delete, 404-idempotent).
+- **Security copy-forward constraints for the `voxd` port** (from the
+  spike's security review): the event-trace sink must redact
+  token-shaped fields (`persistent_session_token`, `signed_url`,
+  `*token*`, `*secret*`) before persisting any verbatim server body;
+  signed conversation URLs are bearer credentials and must never appear
+  in logs, traces, or exception text; the WebSocket client must cap
+  `max_size` (the spike's unbounded setting is acceptable only against
+  trusted EL in a local harness); live-session transcripts are not
+  committed unscrubbed.
 - Operator confirmed quality by ear: voice, latency, and turn-taking
   "incredibly better than what we did in earlier spikes."
 
