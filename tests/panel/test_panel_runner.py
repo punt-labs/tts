@@ -103,17 +103,20 @@ class TestClicked:
         assert service.acknowledged == 1
         assert service.serviced == 1
 
-    async def test_a_click_installs_first_then_refreshes_behind_it(
+    async def test_a_click_acknowledges_before_it_services(
         self, build_runner: Callable[..., PanelRunner]
     ) -> None:
         # The click's two halves have opposite intents. acknowledge answers the
         # gesture -- the user asked to see the panel, so it shows and the frame
         # comes forward. service lands milliseconds later onto the window that
-        # just came forward, so it refreshes rather than raising it again.
+        # just came forward, so it refreshes rather than raising it again. That
+        # ordering is what the runner itself guarantees -- the call log is the
+        # only witness to it: acknowledged/serviced counts, or installed/pushed
+        # counts, would read the same at (1, 1) whichever order the two ran in.
         rest = FakeRest()
         service = FakeService()
         await build_runner(service, lambda: rest).clicked()
-        assert (service.installed, service.pushed) == (1, 1)
+        assert service.calls == ["acknowledge", "service"]
 
     async def test_an_unexpected_click_failure_is_logged_at_error(
         self,

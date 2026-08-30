@@ -218,6 +218,11 @@ class FakeService:
         self.installed = 0
         self.recovered: list[str] = []
         self.rejections: list[str] = []
+        # The order the leg's two verbs actually ran in for one click -- proof
+        # of sequence, which counts alone (``acknowledged``, ``serviced``)
+        # cannot give: both land at 1 whether the runner calls them in order
+        # or swapped.
+        self.calls: list[str] = []
         self._raise_on = raise_on
 
     def prefetch(self) -> None:
@@ -231,6 +236,7 @@ class FakeService:
         self.prefetch_called = True
 
     async def acknowledge(self, client: object, latency: object) -> None:
+        self.calls.append("acknowledge")
         self.acknowledged += 1
         await self.install_scene(client)
 
@@ -239,6 +245,7 @@ class FakeService:
             raise VoxdProtocolError(self.refusal)
         if self._raise_on == "unexpected":
             raise RuntimeError(_BUG)
+        self.calls.append("service")
         self.serviced += 1
         await self.push_scene(client)
 
