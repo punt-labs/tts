@@ -14,6 +14,7 @@ from punt_vox.client_errors import (
     VoxdProtocolError,
     VoxdRejectionError,
 )
+from punt_vox.panel.control_push import ControlPush
 from punt_vox.panel.panel_notice import PanelNotice
 from punt_vox.panel.service import VoxPanelService
 from punt_vox.panel.state import PanelState
@@ -284,7 +285,7 @@ class TestApplyEvent:
     def test_notify_writes_the_code_and_updates_state(self) -> None:
         service = VoxPanelService(_FakeDaemonClient(), (store := _FakeStore(_config())))
         changed = service.apply_event(PanelTopic.NOTIFY, {"value": 2})
-        assert changed is True
+        assert changed is ControlPush.REFRESH
         assert store.written["notify"] == "c"
         assert service.scene().notify == "c"
 
@@ -306,7 +307,7 @@ class TestApplyEvent:
         service = VoxPanelService(client, _FakeStore(_config()))
         service.prefetch()
         changed = service.apply_event(PanelTopic.VOICE_PREVIEW, {})
-        assert changed is False
+        assert changed is ControlPush.NONE
         # The preview spec now fills provider from state through SessionSpec,
         # so the wire message carries the configured provider alongside the
         # candidate voice -- previously the preview sent no provider at all
@@ -330,7 +331,7 @@ class TestApplyEvent:
         service.prefetch()
         # Must not raise -- a preview failure is logged, never propagated.
         changed = service.apply_event(PanelTopic.VOICE_PREVIEW, {})
-        assert changed is True
+        assert changed is ControlPush.REFRESH
         assert service.scene().notice == PanelNotice.voxd_unavailable()
 
     def test_provider_writes_the_name_and_cascades_model_and_voice(self) -> None:
@@ -517,7 +518,12 @@ class TestApplyEvent:
             (store := _FakeStore(_config(voice="benno", provider="elevenlabs"))),
         )
         service.prefetch()
-        service.apply_event(PanelTopic.PROVIDER, {"value": 4})  # espeak
+        changed = service.apply_event(PanelTopic.PROVIDER, {"value": 4})  # espeak
+        # The widget already applied "espeak" optimistically the instant the
+        # click fired; ``_state`` never moved, so only a full reinstall
+        # (``ControlPush.CORRECT``) snaps it back -- a ``REFRESH`` diff
+        # against the last confirmed render has nothing to patch.
+        assert changed is ControlPush.CORRECT
         assert "provider" not in store.written
         assert "voice" not in store.written
         assert service.scene().notice == PanelNotice.voxd_unavailable()
@@ -564,7 +570,14 @@ class TestApplyEvent:
         )
         ref.append(service)
         service.prefetch()
-        service.apply_event(PanelTopic.PROVIDER, {"value": 4})  # ask for espeak
+        changed = service.apply_event(
+            PanelTopic.PROVIDER, {"value": 4}
+        )  # ask for espeak
+        # The widget already shows "espeak"; ``_state`` landed on "openai"
+        # instead, via the race, so a diff against the last confirmed render
+        # would find "espeak" already there and skip it. Only a full
+        # reinstall (``ControlPush.CORRECT``) snaps the widget back.
+        assert changed is ControlPush.CORRECT
         # The racing "openai" write happened during our roster RPC. We must
         # NOT write espeak on top of it.
         assert "provider" not in store.written
@@ -580,6 +593,61 @@ class TestApplyEvent:
         service.apply_event(PanelTopic.MODEL, {"value": 1})  # tts-1-hd
         assert store.written["model"] == "tts-1-hd"
         assert service.scene().model == "tts-1-hd"
+
+    def test_model_click_with_no_provider_selected_corrects(self) -> None:
+        """A model commit dispatched before any provider is chosen is abandoned.
+
+        ``apply_event``'s own ``_model_for`` guard already refuses a MODEL
+        click with no provider selected (an empty model list makes
+        ``ModelControl`` raise before ``_commit_model`` runs), so this drives
+        ``_commit_model`` directly -- the same private entry point the
+        mid-fetch race tests below reach into -- to prove its own no-provider
+        guard also answers :attr:`~ControlPush.CORRECT`: the widget already
+        applied the pick optimistically and ``_state`` never moves, so only a
+        full reinstall snaps it back.
+        """
+        service = VoxPanelService(
+            _FakeDaemonClient(), (store := _FakeStore(_config(provider=None)))
+        )
+        service.prefetch()
+        changed = service._commit_model("tts-1")
+        assert changed is ControlPush.CORRECT
+        assert "model" not in store.written
+        assert "voice" not in store.written
+
+    def test_model_roster_fetch_error_aborts_the_write(self) -> None:
+        """VoxdConnectionError on the model-switch roster fetch aborts the commit.
+
+        Mirrors ``test_provider_roster_fetch_error_aborts_the_write``: the
+        disk must never land a model whose companion voice we could not
+        read, and the widget's optimistic pick needs a full reinstall
+        (``ControlPush.CORRECT``), not a diff that finds nothing changed.
+        """
+
+        class _RosterFailingClient:
+            call_count = 0
+
+            def voices(self, provider: str | None = None) -> list[str]:
+                self.call_count += 1
+                if self.call_count > 1:  # first call is the prefetch
+                    msg = "voxd unreachable"
+                    raise VoxdConnectionError(msg)
+                return ["benno", "aria"]
+
+            def synthesize(self, *args: object, **kwargs: object) -> object:
+                raise NotImplementedError
+
+        client = _RosterFailingClient()
+        service = VoxPanelService(
+            client,  # type: ignore[arg-type]
+            (store := _FakeStore(_config(provider="openai"))),
+        )
+        service.prefetch()
+        changed = service.apply_event(PanelTopic.MODEL, {"value": 1})  # tts-1-hd
+        assert changed is ControlPush.CORRECT
+        assert "model" not in store.written
+        assert "voice" not in store.written
+        assert service.scene().notice == PanelNotice.voxd_unavailable()
 
     def test_model_yields_when_provider_changed_mid_fetch(self) -> None:
         """A mid-flight competing provider commit wins; this model commit gives up.
@@ -618,7 +686,13 @@ class TestApplyEvent:
         )
         ref.append(service)
         service.prefetch()
-        service.apply_event(PanelTopic.MODEL, {"value": 1})  # tts-1-hd (arbitrary)
+        changed = service.apply_event(
+            PanelTopic.MODEL, {"value": 1}
+        )  # tts-1-hd (arbitrary)
+        # The widget already shows "tts-1-hd"; ``_state`` landed on "espeak"
+        # instead, via the race, so only a full reinstall
+        # (``ControlPush.CORRECT``) snaps the widget back.
+        assert changed is ControlPush.CORRECT
         # The racing "espeak" write happened mid-fetch. We MUST NOT write
         # a model + old-provider voice on top of it.
         assert "model" not in store.written
@@ -686,7 +760,7 @@ class TestApplyEvent:
 
     def test_unknown_topic_is_ignored(self) -> None:
         service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
-        assert service.apply_event("vox.unknown", {}) is False
+        assert service.apply_event("vox.unknown", {}) is ControlPush.NONE
 
     @pytest.mark.parametrize("payload", [{}, {"value": "not-an-int"}, {"value": True}])
     def test_missing_or_wrong_typed_value_raises(

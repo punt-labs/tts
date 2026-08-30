@@ -21,7 +21,7 @@ would split one story across two.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Self, assert_never, final
 
 from punt_lux.applets import ClickLatency
 
@@ -119,6 +119,11 @@ class PanelRunner:
                     await self._guard.correct()
                 case ControlPush.NONE:
                     pass
+                case _ as unreachable:
+                    # A future ControlPush member with no case above must
+                    # fail loudly here rather than silently no-op -- the
+                    # match is exhaustive over today's three members only.
+                    assert_never(unreachable)
 
     def _applied(self, topic: str, payload: Mapping[str, object]) -> ControlPush:
         """Apply one control event; answer what kind of re-push it needs.
