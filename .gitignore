@@ -166,3 +166,7 @@ MagicMock/
 .punt-labs/ethos/missions/**/*.lock
 # ethos: machine-local files (.local.*) — may hold secrets, never track
 .punt-labs/**/*.local.*
+
+# vox-bst7 spike: the live EL agent handle is account-scoped identity —
+# recreate with setup_agent.py, never commit
+spikes/vox-bst7-el-convai/agent.json

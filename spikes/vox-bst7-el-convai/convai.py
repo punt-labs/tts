@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol, Self, final
+from urllib.parse import urlsplit
 
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, WebSocketException
@@ -21,7 +22,7 @@ from spike_tools import ToolBelt
 class AudioSink(Protocol):
     """Where agent audio goes; live mode plays it, text mode discards it."""
 
-    async def play(self, pcm: bytes) -> None:
+    async def play(self, pcm: bytes, /) -> None:
         """Queue one PCM chunk for playback."""
         ...
 
@@ -39,7 +40,7 @@ class NullAudioSink:
     def __new__(cls) -> Self:
         return super().__new__(cls)
 
-    async def play(self, pcm: bytes) -> None:  # noqa: ARG002 -- Null Object, PY-DP-9
+    async def play(self, _pcm: bytes, /) -> None:
         return
 
     async def flush(self) -> None:
@@ -62,6 +63,11 @@ _AGENT_PROGRESS_TYPES: frozenset[str] = frozenset(
 
 # Quiet period after the turn condition holds before `say` returns.
 _TURN_GRACE_S = 1.5
+
+# Key fragments that mark credential-shaped fields in server bodies.
+# Traces are committed evidence in a public repo: anything token-like
+# recorded verbatim is a latent leak.
+_SENSITIVE_KEY_PARTS: tuple[str, ...] = ("token", "secret", "signed_url", "api_key")
 
 
 @final
@@ -263,9 +269,10 @@ class ConvAISession:
         except WebSocketException as exc:
             # Typed rejection: a refused upgrade (e.g. oversized or
             # disallowed override) must land in the run record, not
-            # crash the harness mid-batch.
-            msg = f"websocket connect rejected: {exc}"
-            raise RuntimeError(msg) from exc
+            # crash the harness mid-batch. The message is rebuilt from
+            # scratch: the library's text can embed the full signed URL
+            # (a bearer credential), and run records are committed.
+            raise self._connect_error(exc) from exc
         self.metrics.ws_connect_ms = (time.monotonic() - t0) * 1000.0
         self._trace.record(
             "note", "ws_open", {"ws_connect_ms": round(self.metrics.ws_connect_ms, 1)}
@@ -365,7 +372,9 @@ class ConvAISession:
         event = self._event_body(message, "conversation_initiation_metadata_event")
         self._conversation_id = str(event.get("conversation_id", ""))
         self._init_metadata = event
-        self._trace.record("recv", "conversation_initiation_metadata", event)
+        self._trace.record(
+            "recv", "conversation_initiation_metadata", self._redacted(event)
+        )
         self._init_event.set()
 
     async def _on_ping(self, message: dict[str, object]) -> None:
@@ -483,12 +492,12 @@ class ConvAISession:
 
     async def _on_interruption(self, message: dict[str, object]) -> None:
         event = self._event_body(message, "interruption_event")
-        self._trace.record("recv", "interruption", event)
+        self._trace.record("recv", "interruption", self._redacted(event))
         await self._sink.flush()
 
     async def _on_correction(self, message: dict[str, object]) -> None:
         event = self._event_body(message, "agent_response_correction_event")
-        self._trace.record("recv", "agent_response_correction", event)
+        self._trace.record("recv", "agent_response_correction", self._redacted(event))
 
     # -- Internals ---------------------------------------------------------
 
@@ -514,3 +523,24 @@ class ConvAISession:
     def _event_body(message: dict[str, object], key: str) -> dict[str, object]:
         body = message.get(key)
         return dict(body) if isinstance(body, dict) else {}
+
+    @staticmethod
+    def _redacted(event: Mapping[str, object]) -> dict[str, object]:
+        """Mask credential-shaped fields in a server body before tracing.
+
+        Shallow by design: the EL bodies recorded verbatim are flat.
+        None stays None -- "the server sent no token" is itself evidence.
+        """
+        return {
+            key: "[redacted]"
+            if value is not None
+            and any(part in key.lower() for part in _SENSITIVE_KEY_PARTS)
+            else value
+            for key, value in event.items()
+        }
+
+    def _connect_error(self, exc: WebSocketException) -> RuntimeError:
+        """Build a connect-failure error naming the host, never the URL."""
+        host = urlsplit(self._url).netloc
+        msg = f"websocket connect to {host} rejected: {type(exc).__name__}"
+        return RuntimeError(msg)

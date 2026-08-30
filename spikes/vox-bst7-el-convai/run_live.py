@@ -92,9 +92,12 @@ class AlsaAudio:
             "raw",
             stdout=asyncio.subprocess.PIPE,
         )
-        assert self._capture.stdout is not None  # noqa: S101 -- PIPE guarantees a stream; internal invariant
+        stdout = self._capture.stdout
+        if stdout is None:
+            msg = "arecord spawned without a stdout pipe"
+            raise RuntimeError(msg)
         while True:
-            chunk = await self._capture.stdout.read(_CAPTURE_CHUNK)
+            chunk = await stdout.read(_CAPTURE_CHUNK)
             if not chunk:
                 break
             await session.send_audio_chunk(chunk)
@@ -120,11 +123,16 @@ class AlsaAudio:
     async def stop(self) -> None:
         if self._writer is not None:
             self._writer.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._writer
+            self._writer = None
         if self._capture is not None:
             with contextlib.suppress(ProcessLookupError):
                 self._capture.kill()
+            self._capture = None
         if self._playback is not None:
             self._playback.kill()
+            self._playback = None
 
     @staticmethod
     def _spawn_playback() -> subprocess.Popen[bytes]:

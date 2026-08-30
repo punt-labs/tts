@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from websockets.asyncio.server import serve
+from websockets.exceptions import WebSocketException
 
 from convai import ConvAISession, EventTrace
 from spike_tools import ToolBelt
@@ -29,9 +30,14 @@ if TYPE_CHECKING:
 
     type ServerScript = Callable[[ServerConnection], Awaitable[None]]
 
+# The init body deliberately carries a credential-shaped field: every
+# test's trace doubles as a redaction check, and one test pins it.
 _INIT_EVENT: dict[str, object] = {
     "type": "conversation_initiation_metadata",
-    "conversation_initiation_metadata_event": {"conversation_id": "conv-fail"},
+    "conversation_initiation_metadata_event": {
+        "conversation_id": "conv-fail",
+        "persistent_session_token": "tok-LEAKME",
+    },
 }
 
 
@@ -131,6 +137,54 @@ class TestToolExceptionBoundary:
         assert inv.is_error is True
         assert inv.t_result is not None  # the invocation completed, not stuck
         assert "client_tool_result" in _trace_types(trace_path)
+
+
+class TestTraceRedaction:
+    """Credential-shaped fields never reach the committed trace verbatim."""
+
+    def test_token_shaped_fields_are_masked(self) -> None:
+        masked = "[redacted]"
+        event: dict[str, object] = {
+            "conversation_id": "conv-1",
+            "persistent_session_token": "tok-abc123",
+            "signed_url": "wss://api.example/ws?tok=abc",
+            "client_api_key": "sk-xyz",
+        }
+        redacted = ConvAISession._redacted(event)
+        assert redacted["conversation_id"] == "conv-1"
+        assert [redacted[key] for key in event if key != "conversation_id"] == [
+            masked,
+            masked,
+            masked,
+        ]
+
+    def test_absent_token_stays_none(self) -> None:
+        # "the server sent no token" is evidence; a masked None would
+        # erase the distinction between absent and present-but-hidden.
+        redacted = ConvAISession._redacted({"persistent_session_token": None})
+        assert redacted["persistent_session_token"] is None
+
+    async def test_init_metadata_trace_line_is_redacted(self, tmp_path: Path) -> None:
+        # _INIT_EVENT carries a token below; the recorded line must not.
+        async def script(_ws: ServerConnection) -> None:
+            await asyncio.sleep(1.0)
+
+        session, trace_path = await _open_session(tmp_path, script)
+        await session.close()
+        raw = trace_path.read_text(encoding="utf-8")
+        assert "tok-LEAKME" not in raw
+        assert "[redacted]" in raw
+
+    async def test_connect_error_names_host_only(self, tmp_path: Path) -> None:
+        session = ConvAISession(
+            url="wss://api.example.io/v1/convai?tok=SECRET-BEARER",
+            toolbelt=ToolBelt(tmp_path / "notes.md"),
+            trace=EventTrace(tmp_path / "trace.jsonl"),
+            overrides={},
+        )
+        error = session._connect_error(WebSocketException("boom SECRET-BEARER"))
+        assert "api.example.io" in str(error)
+        assert "SECRET-BEARER" not in str(error)
 
 
 class TestToolTaskCrashNote:

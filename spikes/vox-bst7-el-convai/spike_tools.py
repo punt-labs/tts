@@ -54,7 +54,7 @@ class SpikeTool(Protocol):
         """Declaration registered with the EL agent."""
         ...
 
-    def __call__(self, params: ToolParams) -> str:
+    def __call__(self, params: ToolParams, /) -> str:
         """Execute the tool and return the result string for the LLM."""
         ...
 
@@ -79,7 +79,7 @@ class ClockTool:
             parameters={"type": "object", "properties": {}, "required": []},
         )
 
-    def __call__(self, params: ToolParams) -> str:  # noqa: ARG002 -- protocol signature; clock takes no arguments
+    def __call__(self, _params: ToolParams, /) -> str:
         now = datetime.now(tz=UTC)
         return f"Current time: {now.isoformat(timespec='seconds')}"
 
