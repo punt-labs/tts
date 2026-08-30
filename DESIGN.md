@@ -3479,10 +3479,14 @@ traces/metrics.
   so a post-interruption re-invocation is instant.
 - **New requirements surfaced for DES-068:** the live capture leg needs
   acoustic echo cancellation (open speakers without AEC produce a
-  self-interruption feedback loop); seed size sweet spot is ~10KB — 1KB
-  and 10KB seeds answered crisply, a 50KB seed degraded the agent to
-  pre-tool narration; EL agent deletion propagates lazily (teardown must
-  force-delete, 404-idempotent).
+  self-interruption feedback loop); seeds of 1KB/10KB/50KB were all
+  accepted with no rejection, truncation, or connect penalty, and 1KB
+  and 10KB answered crisply — but the observed 50KB response-quality
+  degradation is CONFOUNDED by a harness turn-end bug (Bugbot, PR #481:
+  the turn closed before slow-tool answers were delivered), so
+  seed-quality limits need a clean re-test under DES-070's own
+  validation (`vox-73y7`); EL agent deletion propagates lazily
+  (teardown must force-delete, 404-idempotent).
 - **Security copy-forward constraints for the `voxd` port** (from the
   spike's security review): the event-trace sink must redact
   token-shaped fields (`persistent_session_token`, `signed_url`,
