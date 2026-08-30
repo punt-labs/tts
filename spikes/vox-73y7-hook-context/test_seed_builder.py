@@ -61,7 +61,7 @@ class TestBudget:
             for tool in ("Read", "Edit", "Bash")  # receipt order: Read oldest
         )
         seed = SeedBuilder(records, cutoff_recv_seq=3).build()
-        assert len(seed.last_tool_results) < 3
+        assert 0 < len(seed.last_tool_results) < 3
         assert seed.last_tool_results[-1].startswith("Bash:")
         assert all(not r.startswith("Read:") for r in seed.last_tool_results)
 

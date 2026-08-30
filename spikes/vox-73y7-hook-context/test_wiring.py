@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import cast
 
 from wiring import (
     CONTEXT_CAPTURE_V1,
@@ -21,6 +22,15 @@ from wiring import (
 
 _SCRIPT = Path("/opt/harness/relay with space.sh")
 
+# The settings block is a wire shape (json.dumps consumes it); tests narrow
+# it back to the nested dict/list form the Claude Code schema requires.
+type _Entry = dict[str, object]
+
+
+def _entries(event: str) -> list[_Entry]:
+    settings = HookWiring(_SCRIPT).to_settings()
+    return cast("list[_Entry]", settings[event])
+
 
 class TestHookWiring:
     """Every event wired, matchers only where Claude Code accepts them."""
@@ -28,13 +38,11 @@ class TestHookWiring:
     def test_every_relayed_event_has_exactly_one_entry(self) -> None:
         settings = HookWiring(_SCRIPT).to_settings()
         assert set(settings) == set(RELAYED_EVENTS)
-        assert all(len(entries) == 1 for entries in settings.values())
+        assert all(len(_entries(event)) == 1 for event in RELAYED_EVENTS)
 
     def test_tool_events_carry_a_wildcard_matcher_and_others_do_not(self) -> None:
-        settings = HookWiring(_SCRIPT).to_settings()
-        for event, entries in settings.items():
-            entry = entries[0]
-            assert isinstance(entry, dict)
+        for event in RELAYED_EVENTS:
+            entry = _entries(event)[0]
             if event in ("PreToolUse", "PostToolUse"):
                 assert entry["matcher"] == "*"
             else:
@@ -46,16 +54,11 @@ class TestHookWiring:
 
     def test_every_hook_has_a_timeout(self) -> None:
         # A dead store must not stall the captured session indefinitely.
-        settings = HookWiring(_SCRIPT).to_settings()
-        for entries in settings.values():
-            entry = entries[0]
-            assert isinstance(entry, dict)
-            hooks = entry["hooks"]
-            assert isinstance(hooks, list)
-            hook = hooks[0]
-            assert isinstance(hook, dict)
-            assert isinstance(hook["timeout"], int)
-            assert hook["timeout"] > 0
+        for event in RELAYED_EVENTS:
+            hooks = cast("list[dict[str, object]]", _entries(event)[0]["hooks"])
+            timeout = hooks[0]["timeout"]
+            assert isinstance(timeout, int)
+            assert timeout > 0
 
 
 class TestRelayScript:
@@ -92,16 +95,15 @@ class TestSettingsDocument:
 
     def test_renders_valid_json_with_permissions_and_hooks(self) -> None:
         document = SettingsDocument(CONTEXT_CAPTURE_V1, HookWiring(_SCRIPT))
-        parsed = json.loads(document.render())
+        parsed = cast("dict[str, object]", json.loads(document.render()))
         assert set(parsed) == {"permissions", "hooks"}
-        assert set(parsed["hooks"]) == set(RELAYED_EVENTS)
+        hooks = cast("dict[str, object]", parsed["hooks"])
+        assert set(hooks) == set(RELAYED_EVENTS)
 
     def test_profile_allows_the_work_loop_and_denies_egress(self) -> None:
         permissions = CONTEXT_CAPTURE_V1.to_settings()
-        allow = permissions["allow"]
-        deny = permissions["deny"]
-        assert isinstance(allow, list)
-        assert isinstance(deny, list)
+        allow = cast("list[str]", permissions["allow"])
+        deny = cast("list[str]", permissions["deny"])
         assert "Bash" in allow  # the test loop needs a shell
         for tool in ("WebFetch", "WebSearch", "Task"):
             assert tool in deny

@@ -21,7 +21,6 @@ Run:  uv run reconstructor.py --ledger <path> --cutoff <recv_seq> [--n 15]
 from __future__ import annotations
 
 import argparse
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self, final
@@ -53,11 +52,33 @@ _MAX_FILES = 8
 
 
 def response_text(record: HookRecord) -> str:
-    """The tool response of a PostToolUse record flattened to text."""
+    """The tool response of a PostToolUse record flattened to text.
+
+    Claude Code wraps Bash output as ``{"stdout": ..., "stderr": ...}``;
+    a ``json.dumps`` of that escapes the newlines the failure/success
+    markers key on (``\\nOK``), so string LEAVES are collected instead
+    and joined with real newlines.
+    """
     raw = record.payload.get("tool_response")
     if raw is None:
         return ""
-    return raw if isinstance(raw, str) else json.dumps(raw)
+    if isinstance(raw, str):
+        return raw
+    leaves: list[str] = []
+    _collect_strings(raw, leaves)
+    return "\n".join(leaves)
+
+
+def _collect_strings(value: object, into: list[str]) -> None:
+    if isinstance(value, str):
+        if value:
+            into.append(value)
+    elif isinstance(value, dict):
+        for item in value.values():
+            _collect_strings(item, into)
+    elif isinstance(value, list):
+        for item in value:
+            _collect_strings(item, into)
 
 
 def has_failure(text: str) -> bool:

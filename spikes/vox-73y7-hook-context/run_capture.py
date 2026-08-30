@@ -78,6 +78,10 @@ _FIRST_HOOK_WAIT_S = 240
 _POLL_INTERVAL_S = 3.0
 # How long the store stays dead mid-session (the loss window).
 _GAP_WINDOW_S = 60
+# Fallback: run the loss window this long into the session even if the
+# post-fix trigger has not fired, so the gap evidence cannot be lost to a
+# fork that dodges the seeded failure.
+_GAP_FALLBACK_S = 420
 
 # Committed artifacts are path-sanitized at persist time.
 _HOST_SANITIZER = Sanitizer.for_host(_SCRATCH_ROOT)
@@ -378,8 +382,9 @@ class CaptureRun:
         self, store: StoreProcess, session: TmuxSession, sampler: TimepointSampler
     ) -> bool:
         ledger = HookLedger(store.ledger_path)
-        deadline = time.monotonic() + _RUN_DEADLINE_S
-        first_hook_deadline = time.monotonic() + _FIRST_HOOK_WAIT_S
+        started = time.monotonic()
+        deadline = started + _RUN_DEADLINE_S
+        first_hook_deadline = started + _FIRST_HOOK_WAIT_S
         gap_done = False
         while time.monotonic() < deadline:
             self._nudge_dialogs(session)
@@ -388,9 +393,16 @@ class CaptureRun:
                 self._note("no hooks arrived in the first-hook window; aborting")
                 return False
             fired = sampler.observe(records)
-            if "post-fix" in fired and not gap_done:
-                # The loss window: kill the store while the fork keeps
-                # working on the feature step, then bring it back.
+            # The loss window: kill the store while the fork keeps
+            # working, then bring it back. Preferred trigger is the
+            # post-fix sample (the fork is mid-feature-work after it);
+            # the elapsed-time fallback guarantees the gap evidence even
+            # if a trigger misfires, as long as the session is producing.
+            gap_due = "post-fix" in fired or (
+                "early" in sampler.samples
+                and time.monotonic() - started > _GAP_FALLBACK_S
+            )
+            if gap_due and not gap_done and session.alive():
                 self._gap(store)
                 gap_done = True
             if sampler.done():
