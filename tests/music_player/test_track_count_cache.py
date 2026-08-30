@@ -49,7 +49,7 @@ class TestRefresh:
         cache = TrackCountCache()
 
         cache._generation += 1
-        cache._refresh((one, two))
+        cache._refresh((one, two), cache._generation)
 
         assert cache.get(one.id) == 5
         assert cache.get(two.id) == 12
@@ -60,12 +60,12 @@ class TestRefresh:
         album = album_of("aa11bb", tracks=0, on_disk=3)
         cache = TrackCountCache()
         cache._generation += 1
-        cache._refresh((album,))
+        cache._refresh((album,), cache._generation)
         assert cache.get(album.id) == 3
 
         grown = album_of("aa11bb", tracks=0, on_disk=7)
         cache._generation += 1
-        cache._refresh((grown,))
+        cache._refresh((grown,), cache._generation)
         assert cache.get(album.id) == 7
 
     def test_a_deleted_album_drops_out_of_the_refreshed_set(
@@ -76,7 +76,7 @@ class TestRefresh:
         cache = TrackCountCache()
 
         cache._generation += 1
-        cache._refresh((kept, gone))
+        cache._refresh((kept, gone), cache._generation)
 
         assert cache.get(kept.id) == 4
         assert cache.get(gone.id) == 0  # never cached, not a real zero
@@ -91,13 +91,13 @@ class TestRefresh:
         first_pass = album_of("cc22dd", name="Gone", tracks=0, on_disk=2)
         cache = TrackCountCache()
         cache._generation += 1
-        cache._refresh((kept, first_pass))
+        cache._refresh((kept, first_pass), cache._generation)
         assert cache.get(kept.id) == 4
         assert cache.get(first_pass.id) == 2
 
         gone = album_of("cc22dd", name="Gone", fails_with=LookupError("deleted"))
         cache._generation += 1
-        cache._refresh((kept, gone))
+        cache._refresh((kept, gone), cache._generation)
 
         assert cache.get(kept.id) == 4
         assert cache.get(gone.id) == 0
@@ -109,7 +109,7 @@ class TestRefresh:
         cache = TrackCountCache()
         cache._generation += 1
         with pytest.raises(OSError, match="EMFILE"):
-            cache._refresh((album,))
+            cache._refresh((album,), cache._generation)
 
 
 class TestGenerationGatedWrite:
@@ -129,18 +129,17 @@ class TestGenerationGatedWrite:
         cache = TrackCountCache()
 
         # The newer refresh (generation 2) lands first.
-        cache._generation = 2
-        cache._refresh((fresh,))
+        cache._refresh((fresh,), 2)
         assert cache.get(fresh.id) == 9
 
         # An older refresh (generation 1), simulating one whose caller already
         # gave up and moved on, finally gets to write -- its generation is no
-        # longer the newest, so the write is a no-op. Setting ``_generation``
-        # back down to 1 directly (rather than via the ``+=`` production
-        # path) is how this whitebox test recreates "a call that captured its
-        # generation before a later one ran" without needing two real threads.
-        cache._generation = 1
-        cache._refresh((stale,))
+        # longer the newest, so the write is a no-op. Passing the smaller
+        # generation directly as the argument (rather than mutating
+        # ``cache._generation``) is how this whitebox test recreates "a call
+        # that captured its generation before a later one ran" without
+        # needing two real threads.
+        cache._refresh((stale,), 1)
 
         assert cache.get(fresh.id) == 9  # unchanged
         assert cache.get(stale.id) == 0  # never actually written
@@ -150,13 +149,11 @@ class TestGenerationGatedWrite:
     ) -> None:
         album = album_of("aa11bb", tracks=0, on_disk=4)
         cache = TrackCountCache()
-        cache._generation += 1
-        cache._refresh((album,))
+        cache._refresh((album,), 1)
         assert cache.get(album.id) == 4
 
         grown = album_of("aa11bb", tracks=0, on_disk=8)
-        cache._generation += 1
-        cache._refresh((grown,))
+        cache._refresh((grown,), 2)
         assert cache.get(album.id) == 8
 
 
@@ -217,14 +214,16 @@ class TestSerializedRefresh:
         max_in_flight = 0
         real_refresh = TrackCountCache._refresh
 
-        def _slow_refresh(self: TrackCountCache, albums: tuple[Album, ...]) -> None:
+        def _slow_refresh(
+            self: TrackCountCache, albums: tuple[Album, ...], generation: int
+        ) -> None:
             nonlocal in_flight, max_in_flight
             with guard:
                 in_flight += 1
                 max_in_flight = max(max_in_flight, in_flight)
             time.sleep(0.05)
             try:
-                real_refresh(self, albums)
+                real_refresh(self, albums, generation)
             finally:
                 with guard:
                     in_flight -= 1
@@ -256,7 +255,9 @@ class TestSerializedRefreshTimeout:
     ) -> None:
         monkeypatch.setattr(track_count_cache_module, "_REFRESH_TIMEOUT_SECONDS", 0.05)
 
-        def _stuck_refresh(self: TrackCountCache, albums: tuple[Album, ...]) -> None:
+        def _stuck_refresh(
+            self: TrackCountCache, albums: tuple[Album, ...], generation: int
+        ) -> None:
             time.sleep(0.3)  # much longer than the monkeypatched timeout
 
         monkeypatch.setattr(TrackCountCache, "_refresh", _stuck_refresh)
@@ -279,7 +280,9 @@ class TestSerializedRefreshTimeout:
             track_count_cache_module, "_REFRESH_TIMEOUT_SECONDS", timeout
         )
 
-        def _stuck_refresh(self: TrackCountCache, albums: tuple[Album, ...]) -> None:
+        def _stuck_refresh(
+            self: TrackCountCache, albums: tuple[Album, ...], generation: int
+        ) -> None:
             time.sleep(0.3)
 
         monkeypatch.setattr(TrackCountCache, "_refresh", _stuck_refresh)
@@ -306,16 +309,16 @@ class TestSerializedRefreshTimeout:
         done_writing = threading.Event()
         real_refresh = TrackCountCache._refresh
 
-        def _blocking_refresh(self: TrackCountCache, albums: tuple[Album, ...]) -> None:
-            # Read _generation the same way the real _refresh does -- as the
-            # first thing this call does once its worker thread starts -- so
-            # it captures its OWN dispatch's generation (1) even though the
-            # second call bumps _generation to 2 while this one is still
-            # blocked below.
-            generation = self._generation
+        def _blocking_refresh(
+            self: TrackCountCache, albums: tuple[Album, ...], generation: int
+        ) -> None:
+            # ``generation`` here is the value the caller captured at ITS OWN
+            # dispatch time and handed in as a parameter -- the second call
+            # bumping ``self._generation`` to 2 while this one is still
+            # blocked below has no effect on it.
             if generation == 1:
                 release.wait(timeout=2.0)
-            real_refresh(self, albums)
+            real_refresh(self, albums, generation)
             if generation == 1:
                 done_writing.set()
 
@@ -352,3 +355,79 @@ class TestSerializedRefreshTimeout:
         album = album_of("aa11bb", fails_with=TimeoutError("ETIMEDOUT"))
         with pytest.raises(TimeoutError, match="ETIMEDOUT"):
             await TrackCountCache().serialized_refresh((album,))
+
+
+class TestConcurrentDispatchCapturesItsOwnGeneration:
+    """The interleaving that a caller-supplied generation closes and an
+    internally-``self._generation``-read reopens -- reachable via two
+    ordinary, fully-successful, correctly-serialized calls, no timeout
+    required.
+
+    Caller A dispatches first (generation 1) and holds :attr:`_lock` the
+    whole time :meth:`_locked_refresh` awaits its own ``to_thread`` call.
+    Its worker thread is slow to actually start running (real thread-pool
+    contention). While it is parked, caller B dispatches (generation 2) --
+    its own ``serialized_refresh`` bumps ``_generation`` to 2 immediately,
+    then blocks trying to acquire the still-held lock; B's own worker thread
+    cannot start yet. A's worker finally runs and commits, releasing the
+    lock; only then does B's worker get to run.
+
+    If :meth:`~punt_vox.voxd.music_player.track_count_cache.TrackCountCache.
+    _refresh` read ``self._generation`` itself instead of being handed the
+    value captured at ITS OWN dispatch, A's late-starting worker would read
+    2 (B's bump, not A's own 1), commit A's STALE data labelled generation
+    2, and permanently block B's genuinely FRESHER, later-dispatched write
+    (``2 > 2`` is ``False``) -- silently, with no log line. This is the
+    scenario both round-5 reviewers (silent-failure-hunter,
+    type-design-analyzer) independently reproduced.
+    """
+
+    async def test_a_slow_to_start_first_dispatch_still_loses_to_a_later_one(
+        self, album_of: AlbumFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stale = album_of("aa11bb", name="Stale", tracks=0, on_disk=1)
+        fresh = album_of("cc22dd", name="Fresh", tracks=0, on_disk=9)
+        cache = TrackCountCache()
+        real_refresh = TrackCountCache._refresh
+        worker_a_started = threading.Event()
+        release_worker_a = threading.Event()
+
+        def _slow_first_worker(
+            self: TrackCountCache, albums: tuple[Album, ...], generation: int
+        ) -> None:
+            if generation == 1:
+                # The worker thread for the FIRST dispatch is slow to
+                # actually start running its body -- realistic thread-pool
+                # contention, not an orphaned/timed-out caller. It signals
+                # that it has started, then parks until told to continue.
+                worker_a_started.set()
+                release_worker_a.wait(timeout=2.0)
+            real_refresh(self, albums, generation)
+
+        monkeypatch.setattr(TrackCountCache, "_refresh", _slow_first_worker)
+
+        # A dispatches first (generation 1). Its worker thread starts (and
+        # signals worker_a_started) then blocks -- still holding cache._lock
+        # the entire time, since _locked_refresh's `async with self._lock`
+        # spans the whole `to_thread` call.
+        task_a = asyncio.create_task(cache.serialized_refresh((stale,)))
+        await asyncio.to_thread(worker_a_started.wait, 2.0)
+
+        # B dispatches second (generation 2) while A's worker is parked. B's
+        # own serialized_refresh bumps _generation to 2 immediately, then
+        # blocks trying to acquire the lock A still holds -- it cannot get
+        # its own worker thread running yet.
+        task_b = asyncio.create_task(cache.serialized_refresh((fresh,)))
+        await asyncio.sleep(0.01)
+        await asyncio.sleep(0.01)
+        assert cache._generation == 2  # B's dispatch has definitely bumped it
+        assert cache.get(fresh.id) == 0  # B's worker has not run yet
+
+        # Let A's parked worker finally proceed and commit, releasing the
+        # lock so B's queued dispatch can, in turn, actually run.
+        release_worker_a.set()
+        await task_a
+        await task_b
+
+        assert cache.get(fresh.id) == 9  # B's later, fresher write must win
+        assert cache.get(stale.id) == 0  # A's earlier, now-stale write must lose
