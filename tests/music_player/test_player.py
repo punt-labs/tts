@@ -18,6 +18,8 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, final
 
+import pytest
+
 from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.voxd.music_player.player import MusicPlayer
 from punt_vox.voxd.music_player.track_count_cache import TrackCountCache
@@ -26,7 +28,6 @@ from punt_vox.voxd.programs.album_id import AlbumId
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    import pytest
     from punt_lux import RenderRequest
 
     from punt_vox.voxd.programs.catalog import Album
@@ -244,6 +245,25 @@ class TestInstallSurvivesARefreshFailure:
         await player.install()  # must not raise
 
         assert len(publisher.installed) == 1
+
+    async def test_a_real_bug_propagates_instead_of_being_caught_as_a_refresh_fault(
+        self, album_of: AlbumFactory
+    ) -> None:
+        # The converse of the two tests above: _try_refresh_cache narrows its
+        # except clause to (OSError, ValueError) on purpose, because those two
+        # name a store-side data condition, not a programmer bug. An
+        # AttributeError names neither -- it must blow up install() rather
+        # than being logged and swallowed under the same line as store
+        # corruption, or a real bug in the read path would look identical to
+        # routine disk pressure in the log.
+        album = album_of("aa11bb", name="Techno Mix", fails_with=AttributeError("boom"))
+        publisher = _CapturingPublisher()
+        player = MusicPlayer(_FakeService(ProgramStatus.idle(), (album,)), publisher)
+
+        with pytest.raises(AttributeError, match="boom"):
+            await player.install()
+
+        assert publisher.installed == []  # never reached the render/install step
 
     async def test_a_warning_install_clears_is_not_resurrected_by_a_refresh_in_flight(
         self, album_of: AlbumFactory
