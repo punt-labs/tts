@@ -42,7 +42,7 @@ from websockets.asyncio.client import connect
 from launcher import SESSION_PREFIX, SessionLauncher, TmuxSession
 from profiles import VOICE_LAUNCH_V1, HookWiring, SettingsDocument
 from scratch import IsolatedConfig, ScratchProject
-from stamp import HookLedger, Sanitizer
+from stamp import UNATTRIBUTED, HookLedger, Sanitizer
 from teardown import Teardown
 from transcript import TaskSeed
 
@@ -223,7 +223,10 @@ class StoreProcess:
                     await conn.send(frame)
                     await asyncio.wait_for(conn.recv(), timeout=5)
                     return
-            except OSError:
+            except (TimeoutError, OSError):
+                # TimeoutError named explicitly for the wait_for path: a
+                # slow first response must retry until the deadline, not
+                # abort startup.
                 await asyncio.sleep(0.5)
         msg = "hook store never became healthy"
         raise RuntimeError(msg)
@@ -337,9 +340,11 @@ class ValidationRun:
 
         Completeness is judged on a FRESH ledger read, never on the poll
         loop's last snapshot: an event landing in the final poll gap would
-        otherwise make the verdict contradict the on-disk evidence.
+        otherwise make the verdict contradict the on-disk evidence. The
+        read is the tolerant snapshot because the store is still serving
+        at judgment time and may be mid-append.
         """
-        seen = {record.event for record in ledger.records()}
+        seen = {record.event for record in ledger.records_snapshot()}
         missing = _REQUIRED_EVENTS - seen
         if missing:
             note = f"hooks incomplete at timeout; missing: {sorted(missing)}"
@@ -385,12 +390,13 @@ class ValidationRun:
                 return
 
     def _judge_ledger(self, ledger: HookLedger) -> bool:
-        records = ledger.records()
+        # Snapshot read: the store is still serving during this judgment.
+        records = ledger.records_snapshot()
         if not records:
             return False
         recv = [r.recv_seq for r in records]
         globally_ordered = recv == sorted(recv) and len(set(recv)) == len(recv)
-        attributed = all(r.session_id != "unattributed" for r in records)
+        attributed = all(r.session_id != UNATTRIBUTED for r in records)
         per_session_ok = True
         counters: dict[str, int] = {}
         for record in records:
@@ -451,7 +457,11 @@ class ValidationRun:
         second = Teardown(_SCRATCH_ROOT).run()
         gone = not session.alive() and not _SCRATCH_ROOT.exists()
         log = ["-- first pass --", *first.log, "-- second pass --", *second.log]
-        (self._results_dir / "teardown.log").write_text("\n".join(log), "utf-8")
+        # Teardown lines embed the absolute scratch root; sanitize at
+        # persist time like every other committed artifact.
+        (self._results_dir / "teardown.log").write_text(
+            _HOST_SANITIZER.scrub("\n".join(log)), "utf-8"
+        )
         return first.clean and second.clean and gone
 
     def _teardown_safety_net(self) -> None:
@@ -461,8 +471,9 @@ class ValidationRun:
         outcome = Teardown(_SCRATCH_ROOT).run()
         if not outcome.clean:
             for line in outcome.log:
-                self._notes.append(f"safety-net teardown: {line}")
-                print(f"    safety-net teardown: {line}", file=sys.stderr)
+                note = f"safety-net teardown: {_HOST_SANITIZER.scrub(line)}"
+                self._notes.append(note)
+                print(f"    {note}", file=sys.stderr)
 
     def _write_verdict(self) -> int:
         overall = bool(self._verdicts) and all(self._verdicts.values())

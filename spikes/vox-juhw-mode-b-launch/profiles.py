@@ -12,6 +12,7 @@ and its `hooks` block routes every relayed event through the real
 from __future__ import annotations
 
 import json
+import shlex
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self, final
 
@@ -86,8 +87,13 @@ class HookWiring:
         return self
 
     def command_for(self, event: str) -> str:
-        """The exact shell command Claude Code runs for one hook event."""
-        return f"{self._proxy} {self._url} --hook {event}"
+        """The exact shell command Claude Code runs for one hook event.
+
+        Every interpolated piece is shell-quoted: the proxy path in
+        particular is host-controlled and may contain spaces.
+        """
+        proxy = shlex.quote(str(self._proxy))
+        return f"{proxy} {shlex.quote(self._url)} --hook {shlex.quote(event)}"
 
     def to_settings(self) -> dict[str, object]:
         """Return the `hooks` block for `.claude/settings.json`."""

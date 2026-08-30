@@ -104,6 +104,20 @@ class TestStoreEdges:
         assert response is not None
         assert json.loads(response)["result"] == {"status": "ok", "records": 1}
 
+    def test_health_tolerates_an_in_flight_final_line(self, tmp_path: Path) -> None:
+        # A health probe can land while another connection's hook append
+        # is mid-write; the count must skip the unterminated tail, never
+        # raise.
+        store, ledger = _store(tmp_path)
+        store.process(_sync_hook("Stop", "s"))
+        with ledger.path.open("a", encoding="utf-8") as handle:
+            handle.write('{"torn')  # no newline
+        response = store.process(
+            json.dumps({"jsonrpc": "2.0", "id": 10, "method": "store/health"})
+        )
+        assert response is not None
+        assert json.loads(response)["result"]["records"] == 1
+
     def test_invalid_json_yields_parse_error(self, tmp_path: Path) -> None:
         store, ledger = _store(tmp_path)
         response = store.process("{not json")

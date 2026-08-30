@@ -140,7 +140,9 @@ class HookStore:
         return frame.result({"ok": True, "recv_seq": record.recv_seq})
 
     def _count(self) -> int:
-        return len(self._ledger.records())
+        # Snapshot read: a health probe can land while another connection's
+        # hook append is mid-write; health must count, not crash.
+        return len(self._ledger.records_snapshot())
 
 
 async def _serve(port: int, store: HookStore) -> None:

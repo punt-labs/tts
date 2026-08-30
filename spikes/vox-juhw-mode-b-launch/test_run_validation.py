@@ -9,7 +9,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from run_validation import _SURVIVAL_MARKER, _SURVIVAL_PROMPT, ValidationRun
+from run_validation import (
+    _HOST_SANITIZER,
+    _SCRATCH_ROOT,
+    _SURVIVAL_MARKER,
+    _SURVIVAL_PROMPT,
+    ValidationRun,
+)
 from stamp import HookLedger, SequenceStamper
 
 if TYPE_CHECKING:
@@ -70,6 +76,20 @@ class TestJudgeHooksCompleteness:
         assert run._judge_hooks(ledger) is False
         assert any("missing" in note and "PostToolUse" in note for note in run._notes)
 
+    def test_judgment_tolerates_an_in_flight_final_line(self, tmp_path: Path) -> None:
+        # The store is still serving at judgment time; a hook append can
+        # be mid-write during the judge's fresh read. The complete records
+        # are judged; the unterminated tail is a write in progress, not
+        # corruption.
+        run = ValidationRun()
+        ledger = _ledger_with(
+            tmp_path, ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"]
+        )
+        with ledger.path.open("a", encoding="utf-8") as handle:
+            handle.write('{"recv_seq": 5, "sess')  # torn, no newline
+        assert run._judge_hooks(ledger) is True
+        assert run._notes == []
+
     def test_event_landing_after_the_last_poll_still_counts(
         self, tmp_path: Path
     ) -> None:
@@ -105,6 +125,20 @@ class TestJudgePane:
     def test_pane_showing_the_seeded_task_passes(self) -> None:
         pane = "> create greeting.py defining greet\n* Write(greeting.py)"
         assert ValidationRun()._judge_pane(pane) is True
+
+
+class TestTeardownLogSanitization:
+    """Teardown log lines carry the scratch root; the persisted form
+    must not -- the exact substitution the runner applies at write time."""
+
+    def test_teardown_line_with_scratch_root_is_scrubbed(self) -> None:
+        raw = f"removed scratch root: {_SCRATCH_ROOT}"
+        assert _HOST_SANITIZER.scrub(raw) == "removed scratch root: <scratch>"
+
+    def test_failed_line_with_scratch_root_is_scrubbed(self) -> None:
+        raw = f"FAILED to remove scratch root: {_SCRATCH_ROOT}/x"
+        scrubbed = _HOST_SANITIZER.scrub(raw)
+        assert scrubbed == "FAILED to remove scratch root: <scratch>/x"
 
 
 class TestSurvivalMarkerNotEchoable:
