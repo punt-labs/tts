@@ -79,8 +79,19 @@ class IsolatedConfig:
         return self._root
 
     def env(self) -> dict[str, str]:
-        """Environment entries the fork is launched with."""
-        return {"CLAUDE_CONFIG_DIR": str(self._root)}
+        """Environment entries the fork is launched with.
+
+        Besides pointing at the fresh config dir, the launcher's own API
+        credentials are blanked: a fork inheriting the launching process's
+        ``ANTHROPIC_API_KEY`` would both bill the wrong account and trip an
+        interactive "use this API key?" dialog before any work starts. The
+        fork authenticates with the seeded credentials file only.
+        """
+        return {
+            "CLAUDE_CONFIG_DIR": str(self._root),
+            "ANTHROPIC_API_KEY": "",
+            "ANTHROPIC_AUTH_TOKEN": "",
+        }
 
     def create(self, project_path: Path, credentials_source: Path) -> None:
         """Materialize the config dir; seed credentials + minimal state."""

@@ -24,7 +24,9 @@ Run from this directory:  uv run run_validation.py
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import os
 import shutil
 import signal
 import socket
@@ -48,8 +50,19 @@ _SPIKE_DIR = Path(__file__).parent
 _SCRATCH_ROOT = _SPIKE_DIR / ".tmp"
 
 # Interactive-UI chrome the fork may show before working; the poller answers
-# each with Enter and logs the nudge as a rough edge.
-_DIALOG_MARKERS = ("Do you trust", "Choose the text style", "Press Enter to")
+# each once, with the keystrokes listed, and logs the nudge as a rough edge.
+# The workspace-trust dialog appears despite the pre-seeded
+# hasTrustDialogAccepted because the deposited settings.json pre-approves
+# tools, which triggers a stronger variant whose default is "No, exit" --
+# hence Down + Enter to select "Yes, I trust this folder".
+_DIALOG_MARKERS: dict[str, tuple[str, ...]] = {
+    "Yes, I trust this folder": ("Down", "Enter"),
+    "Choose the text style": ("Enter",),
+    "Press Enter to": ("Enter",),
+    # Fallback only: the fork's env blanks ANTHROPIC_API_KEY, but if a key
+    # still leaks through, accept the recommended "No" default.
+    "Detected a custom API key": ("Enter",),
+}
 
 # How long the run waits for the spawned session's hooks to arrive.
 _HOOK_WAIT_S = 240
@@ -84,8 +97,16 @@ class StoreProcess:
         """Loopback WebSocket URL the relays dial."""
         return f"ws://127.0.0.1:{self._port}"
 
+    @property
+    def ledger_path(self) -> Path:
+        """Where the store's JSONL ledger lives."""
+        return self._ledger_path
+
     def start(self) -> None:
         """Launch the store and wait for it to answer store/health."""
+        # start_new_session puts the `uv run` wrapper AND its python child
+        # in one process group: killing only the wrapper's pid would orphan
+        # the actual store and fake the survival evidence.
         self._process = subprocess.Popen(
             [
                 "uv",
@@ -97,22 +118,34 @@ class StoreProcess:
                 str(self._ledger_path),
             ],
             cwd=_SPIKE_DIR,
+            start_new_session=True,
         )
         asyncio.run(self._await_health())
 
     def sigkill(self) -> None:
-        """SIGKILL the store -- the survival test's hard failure mode."""
+        """SIGKILL the store's whole process group -- the hard failure mode."""
         if self._process is None:
             msg = "store was never started"
             raise RuntimeError(msg)
-        self._process.send_signal(signal.SIGKILL)
+        os.killpg(os.getpgid(self._process.pid), signal.SIGKILL)
         self._process.wait(timeout=10)
 
     def stop_if_running(self) -> None:
-        """Terminate gently at cleanup time; fine if already dead."""
+        """Kill the group at cleanup time; fine if already dead."""
         if self._process is not None and self._process.poll() is None:
-            self._process.terminate()
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(os.getpgid(self._process.pid), signal.SIGTERM)
             self._process.wait(timeout=10)
+
+    def confirmed_dead(self) -> bool:
+        """True when the loopback port no longer answers a connection."""
+        with socket.socket() as probe:
+            probe.settimeout(2)
+            try:
+                probe.connect(("127.0.0.1", self._port))
+            except OSError:
+                return True
+            return False
 
     async def _await_health(self) -> None:
         deadline = time.monotonic() + 30
@@ -216,11 +249,18 @@ class ValidationRun:
     def _nudge_dialogs(self, session: TmuxSession) -> None:
         if not session.alive():
             return
-        pane = session.capture()
-        for marker in _DIALOG_MARKERS:
-            if marker in pane:
-                session.send_line("")
-                note = f"nudged dialog: {marker!r}"
+        try:
+            pane = session.capture()
+        except subprocess.CalledProcessError:
+            # The pane vanished between the alive check and the capture --
+            # the session is dying; the ledger poll will surface that.
+            return
+        for marker, keys in _DIALOG_MARKERS.items():
+            note = f"nudged dialog: {marker!r} with {keys}"
+            if marker in pane and note not in self._nudges:
+                for key in keys:
+                    session.send_key(key)
+                    time.sleep(0.5)
                 self._nudges.append(note)
                 print(f"    {note}")
                 return
@@ -242,8 +282,11 @@ class ValidationRun:
 
     def _survival_test(self, store: StoreProcess, session: TmuxSession) -> bool:
         log: list[str] = []
+        records_before = len(HookLedger(store.ledger_path).records())
         store.sigkill()
-        log.append("store SIGKILLed")
+        log.append("store process group SIGKILLed")
+        store_dead = store.confirmed_dead()
+        log.append(f"store port refuses connections: {store_dead}")
         time.sleep(5)
         alive_after = session.alive()
         log.append(f"tmux session alive after kill: {alive_after}")
@@ -257,8 +300,14 @@ class ValidationRun:
                 session.capture(), "utf-8"
             )
         log.append(f"fork answered a post-kill turn: {responded}")
+        records_after = len(HookLedger(store.ledger_path).records())
+        log.append(
+            f"ledger records before kill: {records_before}, "
+            f"after post-kill turn: {records_after} "
+            "(no growth proves the fork's relays failed harmlessly)"
+        )
         (self._results_dir / "survival.log").write_text("\n".join(log), "utf-8")
-        return alive_after and responded
+        return store_dead and alive_after and responded
 
     def _await_pane_marker(
         self, session: TmuxSession, marker: str, timeout_s: int

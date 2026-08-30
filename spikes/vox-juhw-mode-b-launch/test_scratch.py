@@ -35,7 +35,12 @@ class TestIsolatedConfig:
 
     def test_env_points_at_the_config_dir(self, tmp_path: Path) -> None:
         config = IsolatedConfig(tmp_path / "cfg")
-        assert config.env() == {"CLAUDE_CONFIG_DIR": str(tmp_path / "cfg")}
+        assert config.env()["CLAUDE_CONFIG_DIR"] == str(tmp_path / "cfg")
+
+    def test_env_blanks_the_launchers_api_credentials(self, tmp_path: Path) -> None:
+        env = IsolatedConfig(tmp_path / "cfg").env()
+        assert env["ANTHROPIC_API_KEY"] == ""
+        assert env["ANTHROPIC_AUTH_TOKEN"] == ""
 
     def test_credentials_are_copied_with_owner_only_mode(self, tmp_path: Path) -> None:
         source = tmp_path / "creds.json"

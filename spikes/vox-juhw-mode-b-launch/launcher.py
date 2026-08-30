@@ -95,8 +95,10 @@ class TmuxSession:
 
     def capture(self) -> str:
         """The current pane contents -- the non-interactive `tmux attach`."""
+        # Pane-targeted commands take `name:` (session's active window/pane);
+        # the `=name` exact form only resolves for session-targeted commands.
         captured = subprocess.run(
-            ["tmux", "capture-pane", "-p", "-t", f"={self._name}"],
+            ["tmux", "capture-pane", "-p", "-t", f"{self._name}:"],
             check=True,
             capture_output=True,
             text=True,
@@ -106,7 +108,15 @@ class TmuxSession:
     def send_line(self, text: str) -> None:
         """Type one line into the session and press Enter."""
         subprocess.run(
-            ["tmux", "send-keys", "-t", f"={self._name}", text, "Enter"],
+            ["tmux", "send-keys", "-t", f"{self._name}:", text, "Enter"],
+            check=True,
+            capture_output=True,
+        )
+
+    def send_key(self, key: str) -> None:
+        """Send one named key (e.g. ``Down``, ``Enter``) to the pane."""
+        subprocess.run(
+            ["tmux", "send-keys", "-t", f"{self._name}:", key],
             check=True,
             capture_output=True,
         )
