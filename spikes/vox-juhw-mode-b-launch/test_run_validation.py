@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from run_validation import ValidationRun
+from run_validation import _SURVIVAL_MARKER, _SURVIVAL_PROMPT, ValidationRun
 from stamp import HookLedger, SequenceStamper
 
 if TYPE_CHECKING:
@@ -78,3 +78,24 @@ class TestJudgePane:
     def test_pane_showing_the_seeded_task_passes(self) -> None:
         pane = "> create greeting.py defining greet\n* Write(greeting.py)"
         assert ValidationRun()._judge_pane(pane) is True
+
+
+class TestSurvivalMarkerNotEchoable:
+    """The liveness reply cannot be satisfied by the prompt's own echo.
+
+    send-keys echoes the typed prompt into the pane immediately, so a
+    hung fork's pane contains the full prompt text. The marker must
+    therefore never be a substring of the prompt -- only a fork that
+    actually answered can put it on screen.
+    """
+
+    def test_marker_is_absent_from_the_sent_prompt(self) -> None:
+        assert _SURVIVAL_MARKER not in _SURVIVAL_PROMPT
+
+    def test_pane_with_only_the_echoed_prompt_does_not_match(self) -> None:
+        hung_fork_pane = f"> {_SURVIVAL_PROMPT}\n\n(esc to interrupt)"
+        assert _SURVIVAL_MARKER not in hung_fork_pane
+
+    def test_pane_with_a_real_reply_matches(self) -> None:
+        answered_pane = f"> {_SURVIVAL_PROMPT}\n\n* ALIVE\n"
+        assert _SURVIVAL_MARKER in answered_pane

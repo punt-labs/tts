@@ -78,6 +78,17 @@ _REQUIRED_EVENTS = frozenset({"SessionStart", "UserPromptSubmit", "Stop"})
 # non-empty pane (stalled UI, error screen) is not a usable session.
 _PANE_TASK_MARKER = "greeting.py"
 
+# Post-kill liveness probe. The typed prompt ECHOES into the pane the moment
+# send-keys lands, so the expected reply must be a string the prompt itself
+# never contains -- the fork has to assemble it. Matching a marker that
+# appears verbatim in the sent text would go true on the echo alone, even
+# for a hung fork.
+_SURVIVAL_PROMPT = (
+    "Reply with the two fragments ALI and VE joined into one uppercase "
+    "word, no space, and nothing else."
+)
+_SURVIVAL_MARKER = "ALIVE"
+
 
 def _free_port() -> int:
     with socket.socket() as probe:
@@ -141,10 +152,21 @@ class StoreProcess:
         self._process.wait(timeout=10)
 
     def stop_if_running(self) -> None:
-        """Kill the group at cleanup time; fine if already dead."""
-        if self._process is not None and self._process.poll() is None:
+        """Kill the group at cleanup time; fine if already dead.
+
+        Must not raise from a ``finally`` block: a stuck store escalates
+        SIGTERM -> SIGKILL rather than letting ``TimeoutExpired`` propagate
+        and mask the original exception.
+        """
+        if self._process is None or self._process.poll() is not None:
+            return
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(os.getpgid(self._process.pid), signal.SIGTERM)
+        try:
+            self._process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
             with contextlib.suppress(ProcessLookupError):
-                os.killpg(os.getpgid(self._process.pid), signal.SIGTERM)
+                os.killpg(os.getpgid(self._process.pid), signal.SIGKILL)
             self._process.wait(timeout=10)
 
     def confirmed_dead(self) -> bool:
@@ -204,8 +226,11 @@ class ValidationRun:
         try:
             self._drive(store, ledger_path)
         finally:
-            store.stop_if_running()
+            # Safety net first: the fork and the credentials copy are the
+            # dangerous leftovers -- they must go even if the store stop
+            # misbehaves.
             self._teardown_safety_net()
+            store.stop_if_running()
         return self._write_verdict()
 
     def _drive(self, store: StoreProcess, ledger_path: Path) -> None:
@@ -221,6 +246,13 @@ class ValidationRun:
         project.create(settings.render())
         config = IsolatedConfig(_SCRATCH_ROOT / session_name / "claude-config")
         config.create(project.path, Path.home() / ".claude" / ".credentials.json")
+        if not config.credentials_seeded:
+            note = (
+                "no file-based credentials found to seed; the fork will "
+                "demand /login and the hooks wait will time out"
+            )
+            self._notes.append(note)
+            print(f"    {note}")
 
         print("[4] forking claude in a detached tmux session")
         claude = Path(shutil.which("claude") or "claude")
@@ -331,8 +363,13 @@ class ValidationRun:
         (self._results_dir / "capture_after_store_kill.txt").write_text(after, "utf-8")
         responded = False
         if alive_after:
-            session.send_line("Reply with the single word ALIVE and nothing else.")
-            responded = self._await_pane_marker(session, "ALIVE", timeout_s=120)
+            if _SURVIVAL_MARKER in _SURVIVAL_PROMPT:
+                msg = "survival marker must not appear in the sent prompt"
+                raise RuntimeError(msg)
+            session.send_line(_SURVIVAL_PROMPT)
+            responded = self._await_pane_marker(
+                session, _SURVIVAL_MARKER, timeout_s=120
+            )
             (self._results_dir / "capture_post_kill_turn.txt").write_text(
                 session.capture(), "utf-8"
             )
@@ -360,9 +397,9 @@ class ValidationRun:
         first = Teardown(_SCRATCH_ROOT).run()
         second = Teardown(_SCRATCH_ROOT).run()
         gone = not session.alive() and not _SCRATCH_ROOT.exists()
-        log = ["-- first pass --", *first, "-- second pass --", *second]
+        log = ["-- first pass --", *first.log, "-- second pass --", *second.log]
         (self._results_dir / "teardown.log").write_text("\n".join(log), "utf-8")
-        return gone
+        return first.clean and second.clean and gone
 
     def _teardown_safety_net(self) -> None:
         # Never leave a fork running, whatever failed above.

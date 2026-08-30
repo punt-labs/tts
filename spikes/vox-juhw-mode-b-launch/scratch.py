@@ -64,19 +64,26 @@ class ScratchProject:
 class IsolatedConfig:
     """A fresh ``CLAUDE_CONFIG_DIR`` so the fork sees no user-level state."""
 
-    __slots__ = ("_root",)
+    __slots__ = ("_credentials_seeded", "_root")
 
+    _credentials_seeded: bool
     _root: Path
 
     def __new__(cls, root: Path) -> Self:
         self = super().__new__(cls)
         self._root = root
+        self._credentials_seeded = False
         return self
 
     @property
     def path(self) -> Path:
         """The config directory."""
         return self._root
+
+    @property
+    def credentials_seeded(self) -> bool:
+        """True once a credentials file was actually copied in."""
+        return self._credentials_seeded
 
     def env(self) -> dict[str, str]:
         """Environment entries the fork is launched with.
@@ -105,14 +112,17 @@ class IsolatedConfig:
 
     def _seed_credentials(self, source: Path) -> None:
         if not source.exists():
-            # No file-based credentials on this host (e.g. keychain storage);
-            # the fork will demand login. Recorded by the runner as a rough
-            # edge rather than failing here -- the launch chain itself is
-            # still exercisable up to the login prompt.
+            # No file-based credentials on this host (e.g. keychain
+            # storage); the fork will demand login. Not a failure here --
+            # the launch chain is still exercisable up to the login prompt
+            # -- but the skip is exposed via ``credentials_seeded`` so the
+            # runner can record it at seed time instead of surfacing as an
+            # unexplained hooks timeout minutes later.
             return
         target = self._root / ".credentials.json"
         shutil.copyfile(source, target)
         target.chmod(0o600)
+        self._credentials_seeded = True
 
     def _seed_state(self, project_path: Path) -> None:
         state = {

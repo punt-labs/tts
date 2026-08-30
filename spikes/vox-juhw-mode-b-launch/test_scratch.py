@@ -50,11 +50,17 @@ class TestIsolatedConfig:
         copied = config.path / ".credentials.json"
         assert copied.read_text(encoding="utf-8") == '{"oauth": "x"}'
         assert copied.stat().st_mode & 0o777 == 0o600
+        assert config.credentials_seeded is True
 
-    def test_missing_credentials_source_is_tolerated(self, tmp_path: Path) -> None:
+    def test_missing_credentials_source_is_tolerated_and_reported(
+        self, tmp_path: Path
+    ) -> None:
         config = IsolatedConfig(tmp_path / "cfg")
         config.create(tmp_path / "proj", tmp_path / "absent.json")
         assert not (config.path / ".credentials.json").exists()
+        # The skip must be queryable so the runner can record it at seed
+        # time instead of failing 240s later on an unexplained timeout.
+        assert config.credentials_seeded is False
 
     def test_state_preaccepts_trust_for_exactly_the_project(
         self, tmp_path: Path
