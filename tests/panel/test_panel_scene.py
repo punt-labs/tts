@@ -100,8 +100,13 @@ class TestElements:
         # OpenAI's models: tts-1, tts-1-hd, gpt-4o-mini-tts.
         request = _scene(provider="openai", model="tts-1-hd").render_request()
         model_combo = next(e for e in request.elements if e["id"] == "vox.panel.model")
-        assert model_combo["items"] == ["tts-1", "tts-1-hd", "gpt-4o-mini-tts"]
-        assert model_combo["selected"] == 1
+        assert model_combo["items"] == [
+            "(none)",
+            "tts-1",
+            "tts-1-hd",
+            "gpt-4o-mini-tts",
+        ]
+        assert model_combo["selected"] == 2
 
     def test_modelless_provider_renders_the_sentinel(self) -> None:
         # Polly has no user-selectable model.
@@ -110,11 +115,36 @@ class TestElements:
         assert model_combo["items"] == ["(no models)"]
         assert "handlers" not in model_combo
 
-    def test_missing_provider_defaults_to_elevenlabs_models(self) -> None:
-        # No provider chosen yet -- the model list must still be non-empty
-        # so the panel shows a valid Voice engine trio out of the gate.
+    def test_a_fresh_repo_claims_no_provider_and_no_voice(self) -> None:
+        """The panel must not assert settings the daemon does not hold.
+
+        A repo with nothing configured used to render "elevenlabs" as the
+        selected provider and the first roster entry as the selected voice,
+        neither of which was in the config. Re-picking an already-selected
+        combo entry fires no ``changed`` event, so the user could not even
+        confirm the claim into truth.
+        """
+        request = _scene(provider=None, model=None).render_request()
+        provider_combo = next(
+            e for e in request.elements if e["id"] == "vox.panel.provider"
+        )
+        items = provider_combo["items"]
+        assert isinstance(items, list)
+        assert items[0] == "(none)"
+        assert provider_combo["selected"] == 0
+
+    def test_missing_provider_renders_the_sentinel_and_no_handlers(self) -> None:
+        """No provider chosen means no model list -- and nothing to click.
+
+        The combo used to fall back to ElevenLabs' models here, so a session
+        that had picked no provider was shown a live, clickable list
+        belonging to one it never chose. Every such click was then refused
+        by ``ClickTarget.model`` (which offers no models without a
+        provider), logging a traceback and snapping the widget back. The
+        render now agrees with the click: an inert sentinel, no handlers,
+        nothing to click in the first place.
+        """
         request = _scene(provider=None, model=None).render_request()
         model_combo = next(e for e in request.elements if e["id"] == "vox.panel.model")
-        items = model_combo["items"]
-        assert isinstance(items, list)
-        assert "eleven_v3" in items
+        assert model_combo["items"] == ["(no models)"]
+        assert "handlers" not in model_combo

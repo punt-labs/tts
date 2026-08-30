@@ -11,12 +11,20 @@ the whole catalog to serve as a resolvable key cell, so it -- and the inverse
 name-to-album resolution -- lives on :class:`AlbumNames`, which is built once from
 the full catalog. ``AlbumDisplay`` needs only the single album; ``AlbumNames``
 needs them all.
+
+The track count is *held*, not fetched. ``genre`` and ``id`` read durable metadata
+that is fixed at creation, but an album's Parts grow on disk as the background
+fill lands, so the count has to be read live -- and a live read belongs at the
+player's seam, not inside a render. :meth:`AlbumDisplay.read` is that read;
+:class:`~punt_vox.voxd.music_player.track_count_cache.TrackCountCache` is where
+it happens, off the hot path via ``asyncio.to_thread``, never inline in a
+projection.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, final
+from typing import TYPE_CHECKING, Self, final
 
 if TYPE_CHECKING:
     from punt_vox.voxd.programs.catalog import Album
@@ -30,6 +38,24 @@ class AlbumDisplay:
     """The per-album display projection: the genre and track-count cells, and the id."""
 
     album: Album
+    tracks: int  # ready Parts as of this projection -- never the frozen snapshot
+
+    @classmethod
+    def read(cls, album: Album) -> Self:
+        """Pair ``album`` with its ready-Part count, read live from the store.
+
+        Raises ``LookupError`` when the store no longer holds the album;
+        :meth:`~punt_vox.voxd.music_player.track_count_cache.TrackCountCache.
+        _refresh`, the sole caller, catches that and excludes the album from
+        the refreshed counts. That is not the same as dropping its row: an
+        album this cache has never refreshed (or has just dropped from a
+        refresh) still renders, at a zero track count
+        (:class:`~punt_vox.voxd.music_player.album_roster.AlbumRoster`'s own
+        docstring documents that). What actually removes a row is the album
+        leaving the catalog entirely, which happens synchronously elsewhere,
+        well before this method would ever see it again.
+        """
+        return cls(album, len(album.ready_parts()))
 
     @property
     def id(self) -> str:
@@ -40,8 +66,3 @@ class AlbumDisplay:
     def genre(self) -> str:
         """Return the album's style tag -- the Genre column cell."""
         return self.album.manifest.tags.style
-
-    @property
-    def track_count(self) -> int:
-        """Return the number of manifest parts -- the Tracks column cell."""
-        return len(self.album.manifest.parts)

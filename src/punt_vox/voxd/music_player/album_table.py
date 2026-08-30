@@ -39,12 +39,12 @@ from typing import TYPE_CHECKING, Final, final
 
 from punt_lux import TextElement
 
-from punt_vox.voxd.music_player.album_display import AlbumDisplay
 from punt_vox.voxd.music_player.album_names import AlbumNames
+from punt_vox.voxd.music_player.album_roster import AlbumRoster
 from punt_vox.voxd.music_player.wire import MusicTopic
-from punt_vox.voxd.programs.catalog import Album
 
 if TYPE_CHECKING:
+    from punt_vox.voxd.music_player.album_display import AlbumDisplay
     from punt_vox.voxd.programs.album_id import AlbumId
 
 __all__ = ["AlbumTable"]
@@ -68,7 +68,7 @@ class AlbumTable:
     radio): its row is pre-selected so lux highlights it as the now-playing cue.
     """
 
-    albums: tuple[Album, ...]
+    roster: AlbumRoster
     playing: AlbumId | None = None
 
     def elements(self) -> list[dict[str, object]]:
@@ -81,7 +81,7 @@ class AlbumTable:
 
     def _label(self) -> str:
         """Return the count label carrying the album count (``Albums · 18 albums``)."""
-        count = len(self.albums)
+        count = len(self.roster.displays)
         noun = "album" if count == 1 else "albums"
         return f"Albums · {count} {noun}"
 
@@ -95,36 +95,46 @@ class AlbumTable:
         name; voxd resolves it to an id catalogue-side. ``flags`` turns on the
         Display-local column sort while keeping the default borders/row-backgrounds.
         """
-        names = AlbumNames(self.albums)
+        names = AlbumNames(self.roster.albums)
         return {
             "kind": "table",
             "id": _TABLE_ID,
             "columns": list(_COLUMNS),
-            "rows": [self._row(album, names) for album in self.albums],
+            "rows": [self._row(display, names) for display in self.roster.displays],
             "key_column": _KEY_COLUMN,
             "selection_mode": "single",
             "flags": list(_FLAGS),
             "handlers": [{"event": _ROW_EVENT, "publish": [MusicTopic.PLAY.value]}],
+            # The selection is spread LAST, and must stay last: on a patch lux
+            # runs the setters in the order the fields arrive, and
+            # ``_set_selected_row_ids`` intersects the ids against the rows *as
+            # they stand at setter time*. A selection written before ``rows``
+            # would name ids the old row set lacks and be silently dropped.
             **self._selection(names),
         }
 
     def _selection(self, names: AlbumNames) -> dict[str, object]:
-        """Return the now-playing selection wire fragment: one row id, or empty.
+        """Return the now-playing selection wire fragment: one row id, or none.
 
         Selecting the playing album's row is how the scene marks now-playing --
-        lux highlights the selected row. Empty when idle or when the active source
-        is a radio the catalog names to no single row (``friendly_for_id`` returns
-        ``None``), so no row is highlighted.
+        lux highlights the selected row. The list is empty when idle or when the
+        active source is a radio the catalog names to no single row
+        (``friendly_for_id`` returns ``None``), so no row is highlighted.
+
+        The key is always present, empty list and all. A field that appears in one
+        render and vanishes from the next is a shape change no patch can express:
+        the differ would emit nothing and the stale highlight would survive on a
+        row that stopped playing.
         """
         selected = names.friendly_for_id(self.playing)
-        return {} if selected is None else {"selected_row_ids": [selected]}
+        return {"selected_row_ids": [] if selected is None else [selected]}
 
-    def _row(self, album: Album, names: AlbumNames) -> list[object]:
+    @staticmethod
+    def _row(display: AlbumDisplay, names: AlbumNames) -> list[object]:
         """Return one album's row: its friendly name, its genre, its track count.
 
         The name cell comes from the catalogue-wide ``names`` map (unique, no
-        marker); the genre and track count from the album's own
-        :class:`AlbumDisplay`.
+        marker); the genre and the live track count come from the display the
+        roster already read.
         """
-        display = AlbumDisplay(album)
-        return [names.friendly(album), display.genre, display.track_count]
+        return [names.friendly(display.album), display.genre, display.tracks]

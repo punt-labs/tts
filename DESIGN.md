@@ -3392,6 +3392,114 @@ detail for `vox-hobl.2`'s mission, not an architectural fork.
 
 ---
 
+## DES-072: Widget Refresh Patches an Installed Scene; `show` Is Reserved for Install and for "Bring This Window to Me"
+
+**Status:** decided (2026-08-28). Implements `vox-h777`.
+
+### Context
+
+Both of vox's lux surfaces — `vox.music` in `voxd`, `vox.panel` in the
+`vox-panel` applet — pushed every scene through `client.scene.show`. On
+the Hub side `show` installs the tree *and* raises and unminimizes the
+frame whenever the scene looks new to it. Every track change, every
+generated part, every catalog add, every radio click therefore dragged
+the window to the front of the user's stack, seconds apart, unprompted.
+
+The obvious fix — replace `show` with `update` everywhere — breaks the
+feature the menu entries exist for. Clicking **Music**, or **Vox**, is a
+request to *see* that window; raising it is the correct answer, not a
+side effect.
+
+### Decision
+
+One call was serving two intents, and they are now two verbs.
+
+**Refresh** is the default. The surface holds a `LiveScene` carrying the
+last render it put out, and each new render is diffed against it: an
+identical tree pushes nothing at all, moved values become a
+`ScenePatchSet` sent through `scene.update`, and only a changed element
+roster or frame shell falls back to `show`, because no patch can express
+those. `update` reaches the Hub's scene writer and touches frame, focus,
+and tab state not at all.
+
+**Install** is reserved for four call sites, two per scene, and each is
+either "nothing is on this connection yet" or an explicit user gesture:
+
+| Scene | Site | Why it installs |
+|---|---|---|
+| `vox.music` | hub handshake (`LuxSubscription.on_connect`) | the connection carries nothing to patch |
+| `vox.music` | **Music** menu click (`on_callback`) | the user asked for the window |
+| `vox.panel` | **Vox** menu click (`VoxPanelService.acknowledge`) | the user asked for the window |
+| `vox.panel` | *(the first push on a connection, via the same `LiveScene`)* | nothing installed yet |
+
+Two constraints of the patch seam shaped the rest of the change, and both
+are properties of the *scene*, not of the diff:
+
+- **A patch cannot add an element.** So `NowPlayingBlock` stopped
+  emitting one element when idle and two when active; it emits two
+  always, and idle changes their content rather than their number.
+  Without that, pressing play — the single most consequential refresh
+  there is — would have fallen back to `show` and raised the window.
+- **A field that vanishes between renders is invisible to a differ.** So
+  `AlbumTable._selection` always emits `selected_row_ids`, empty list
+  included; omitting it when idle would have stranded the now-playing
+  highlight on the row that stopped playing.
+
+A refused patch, a refused install, and an absent luxd all *disarm* the
+`LiveScene`, so the next push installs rather than patching a tree luxd
+never accepted. That also covers a luxd restart with no special handling:
+the first patch after it meets an unknown scene, is rejected whole
+(nothing mutated), and the fallback installs. One wasted round-trip, no
+stale state.
+
+### Rejected Alternatives
+
+- **Replace every `show` with `update`.** Rejected: it breaks the menu
+  entries, which exist precisely to bring a buried window forward. The
+  defect was never that `show` raises the frame — that is the feature —
+  but that one call was carrying both meanings.
+- **An allowlist of patchable field names per element kind.** Tempting,
+  because luxd rejects a field with no `_set_<field>` method. Rejected:
+  a hand-copied list of another package's setters is a second source of
+  truth that drifts silently. A rejected batch mutates nothing, so the
+  install fallback already handles an unpatchable field. Self-correcting
+  beats synchronized.
+- **Reading back the Hub's own tree to diff against.** Rejected: a
+  read-back races the replicator. The surfaces diff their own two wire
+  trees — the previous `RenderRequest` and the new one — which is
+  authoritative for what *they* sent and needs no round-trip.
+
+### Addendum (2026-08-29): `show` does not reliably raise the frame
+
+The Context and Decision above assumed `client.scene.show` always raises
+and unminimizes the frame it targets. It does not. The Hub's
+`upsert_scene_in_frame` (`punt_lux.display.replica.scene_replica`) only
+clears `frame.minimized` and grabs focus when the scene is *new* to the
+frame (`is_new`, keyed on `msg.id not in frame.scenes`); a scene already
+registered in the frame gets its content replaced in place and none of
+that attention. Because `vox.music` and `vox.panel` both stay
+permanently installed on their `LiveScene` once the first connection
+lands, the scene is never new by the time a real menu click fires — so
+`show`'s raise silently stopped firing on every "bring this window to
+me" gesture after the very first one. Live-reproduced: minimize the
+Music widget, click Clients → voxd → Music, confirm via `vox.log`
+("Music menu clicked; installing the scene" / "installed vox.music
+scene") that `install()` ran, and watch the window stay minimized.
+
+The four install call sites in the table above did not change. What
+changed is that each of them now *also* calls the Hub's `raise_frame`
+operation (`client.frame.raise_`) explicitly, immediately after its
+`show`/reinstall push lands, instead of trusting `show` to raise on its
+own: `LuxScenePublisher` raises for every `SceneDelivery` whose `install`
+flag is set (both `vox.music` sites), and `PanelPush.install` raises for
+`vox.panel`'s one site. `show` still carries the content; raising the
+frame is now a second, explicit step the same caller takes right after.
+The decision to keep two verbs (refresh vs. install) stands unchanged —
+only the assumption that install's raise came for free from `show` was
+wrong.
+
+---
+
 ## DES-068: E+ Umbrella — Voice Agent Hosted in `voxd` via ElevenLabs Conversational AI
 
 **Status:** PROPOSED (2026-08-29). Reconsiders the voice-agent shape settled in DES-066 given operator assessment that no design in this thread has yet produced ratifiable UX. DES-066's ratification recorded a mechanism spike; DES-067 filled its remaining design gaps; neither has been driven repeatedly by a real user to the standard DES-065's 20-run benchmark set for its predecessor. E+ takes another swing at the same problem with a materially different LLM host and tool model. Validation beads: `vox-bst7`, `vox-73y7`, `vox-juhw`, `vox-6v7f`. Diagram artifacts under [`docs/artifacts/`](docs/artifacts/): [`e-plus-voice-architecture.html`](docs/artifacts/e-plus-voice-architecture.html) (final E+ shape, Mode A + Mode B, same-host-launch v1 default), [`e-plus-adr-revision.html`](docs/artifacts/e-plus-adr-revision.html) (two-walls framing and D vs E+ bridge document), and [`distributed-target-topology.html`](docs/artifacts/distributed-target-topology.html) (companion to DES-069 and DES-071).

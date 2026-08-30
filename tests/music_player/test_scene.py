@@ -12,22 +12,55 @@ the other leg.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
+from punt_vox.lux_common import LiveScene
+from punt_vox.lux_common.scene_push import PatchScene
 from punt_vox.types_programs.status import ProgramStatus
+from punt_vox.voxd.music_player.album_display import AlbumDisplay
+from punt_vox.voxd.music_player.album_roster import AlbumRoster
 from punt_vox.voxd.music_player.now_playing_block import MarkdownText
 from punt_vox.voxd.music_player.playback_notice import PlaybackNotice
 from punt_vox.voxd.music_player.player_view import PlayerView
 from punt_vox.voxd.music_player.scene import AlbumListScene
+from punt_vox.voxd.music_player.track_count_cache import TrackCountCache
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
+
+    from punt_lux import RenderRequest
 
     from punt_vox.voxd.programs.catalog import Album
 
     type AlbumFactory = Callable[..., Album]
     type PlayingFactory = Callable[[Album, int, int], ProgramStatus]
+
+
+def _primed_cache(albums: tuple[Album, ...]) -> TrackCountCache:
+    """Return a cache holding ``albums``' live counts, read synchronously.
+
+    Drives the real, public refresh -- ``asyncio.run`` supplies the loop it
+    needs -- rather than a test-only entry point on the cache itself, so
+    what these fixtures exercise is what ships.
+    """
+    cache = TrackCountCache()
+    asyncio.run(cache.serialized_refresh(albums))
+    return cache
+
+
+def _scene(
+    albums: tuple[Album, ...],
+    view: PlayerView,
+    notice: PlaybackNotice | None = None,
+) -> AlbumListScene:
+    """Build the scene the way the player does: from a cache refreshed live."""
+    cache = _primed_cache(albums)
+    roster = AlbumRoster.from_cache(albums, cache)
+    if notice is None:
+        return AlbumListScene(roster, view)
+    return AlbumListScene(roster, view, notice)
 
 
 def _by_id(elements: list[dict[str, object]], elem_id: str) -> dict[str, object]:
@@ -53,13 +86,16 @@ def _paused(status: ProgramStatus) -> ProgramStatus:
 
 
 def test_scene_region_order_when_idle(album_of: AlbumFactory) -> None:
-    request = AlbumListScene((album_of("aa11bb"),), PlayerView.idle()).render_request()
+    # The idle roster is the active roster: same ids, same order, same count. That
+    # is what lets pressing play refresh the widget instead of re-installing it.
+    request = _scene((album_of("aa11bb"),), PlayerView.idle()).render_request()
 
     assert request.scene_id == "vox.music"
     assert request.title == "Music"
     # No "music.header": the lux frame is already titled "Music".
     assert [element["id"] for element in request.elements] == [
-        "music.now",
+        "music.now.album",
+        "music.now.position",
         "music.status",
         "music.transport",
         "music.sep",
@@ -74,7 +110,7 @@ def test_now_playing_block_shows_album_and_track_position(
     album = album_of("aa11bb", name="Techno Mix")
     view = PlayerView.from_status(playing_of(album, 1, 3), (album,))
 
-    elements = AlbumListScene((album,), view).render_request().elements
+    elements = _scene((album,), view).render_request().elements
 
     assert _by_id(elements, "music.now.album") == {
         "kind": "markdown",
@@ -102,7 +138,7 @@ def test_now_playing_album_name_is_markdown_escaped(
     album = album_of("aa11bb", name="Pwn *x* #h [a](b)")
     view = PlayerView.from_status(playing_of(album, 1, 3), (album,))
 
-    elements = AlbumListScene((album,), view).render_request().elements
+    elements = _scene((album,), view).render_request().elements
 
     content = _by_id(elements, "music.now.album")["content"]
     assert content == "### Pwn \\*x\\* \\#h \\[a\\]\\(b\\)"
@@ -134,7 +170,7 @@ def test_playing_transport_shows_the_pause_glyph_and_topic(
     album = album_of("aa11bb", name="Techno Mix")
     view = PlayerView.from_status(playing_of(album, 1, 3), (album,))
 
-    elements = AlbumListScene((album,), view).render_request().elements
+    elements = _scene((album,), view).render_request().elements
     play_pause = _children(_by_id(elements, "music.transport"))[1]
 
     assert play_pause["label"] == "⏸"  # playing -> press to pause
@@ -149,7 +185,7 @@ def test_paused_transport_shows_the_play_glyph_and_topic(
     album = album_of("aa11bb", name="Techno Mix")
     view = PlayerView.from_status(_paused(playing_of(album, 1, 3)), (album,))
 
-    elements = AlbumListScene((album,), view).render_request().elements
+    elements = _scene((album,), view).render_request().elements
     play_pause = _children(_by_id(elements, "music.transport"))[1]
 
     assert play_pause["label"] == "⏵"  # paused -> press to resume
@@ -159,9 +195,12 @@ def test_paused_transport_shows_the_play_glyph_and_topic(
 def test_idle_reads_nothing_playing_and_greys_the_transport(
     album_of: AlbumFactory,
 ) -> None:
-    request = AlbumListScene((album_of("aa11bb"),), PlayerView.idle()).render_request()
+    request = _scene((album_of("aa11bb"),), PlayerView.idle()).render_request()
 
-    assert _by_id(request.elements, "music.now")["content"] == "Nothing playing"
+    assert (
+        _by_id(request.elements, "music.now.album")["content"] == "### Nothing playing"
+    )
+    assert _by_id(request.elements, "music.now.position")["content"] == ""
     transport = _children(_by_id(request.elements, "music.transport"))
     assert all(child["disabled"] is True for child in transport)
 
@@ -170,7 +209,7 @@ def test_album_table_columns_key_column_and_play_publish(
     album_of: AlbumFactory,
 ) -> None:
     albums = (album_of("aa11bb", name="Techno Mix"), album_of("cc22dd", name="Ambient"))
-    table = _table(AlbumListScene(albums, PlayerView.idle()).render_request().elements)
+    table = _table(_scene(albums, PlayerView.idle()).render_request().elements)
 
     assert table["kind"] == "table"
     assert table["columns"] == ["Album", "Genre", "Tracks"]  # no id column
@@ -188,9 +227,7 @@ def test_album_table_is_sortable(album_of: AlbumFactory) -> None:
     # The sortable flag turns on ImGui's Display-local column sort; the default
     # borders/row-backgrounds ride alongside it.
     table = _table(
-        AlbumListScene((album_of("aa11bb"),), PlayerView.idle())
-        .render_request()
-        .elements
+        _scene((album_of("aa11bb"),), PlayerView.idle()).render_request().elements
     )
     assert table["flags"] == ["borders", "row_bg", "sortable"]
 
@@ -199,10 +236,40 @@ def test_album_table_rows_carry_name_genre_and_track_count(
     album_of: AlbumFactory,
 ) -> None:
     album = album_of("aa11bb", name="Techno Mix", tracks=7)
-    scene = AlbumListScene((album,), PlayerView.idle())
+    scene = _scene((album,), PlayerView.idle())
     table = _table(scene.render_request().elements)
 
     assert table["rows"] == [["Techno Mix", "techno", 7]]
+
+
+def test_the_tracks_cell_agrees_with_the_position_line(
+    album_of: AlbumFactory, playing_of: PlayingFactory
+) -> None:
+    # The coherence invariant, and the reported bug's regression test: for the
+    # playing album, the Tracks cell IS the M in "N of M". Both count the same live
+    # ready-Part set, so a widget showing 0 next to "3 of 12" is the frozen
+    # creation-time snapshot leaking into a cell that must be live.
+    album = album_of("aa11bb", name="Techno Mix", tracks=0, on_disk=12)
+    view = PlayerView.from_status(playing_of(album, 3, 12), (album,))
+    elements = _scene((album,), view).render_request().elements
+
+    rows = _table(elements)["rows"]
+    assert isinstance(rows, list)
+    assert _by_id(elements, "music.now.position")["content"] == "3 of 12"
+    assert rows[0][2] == 12
+
+
+def test_the_projection_reads_the_store_not_at_all(album_of: AlbumFactory) -> None:
+    # The gate's projection carve-out: AlbumListScene is a pure function of what it
+    # is handed. Every album here has a store that raises on any read, and the
+    # roster is built without one -- so a render that reaches for the disk fails
+    # loudly instead of quietly costing a stat per album per repaint.
+    album = album_of("aa11bb", name="Techno Mix", fails_with=OSError("no store reads"))
+    roster = AlbumRoster((AlbumDisplay(album, 12),))
+
+    request = AlbumListScene(roster, PlayerView.idle()).render_request()
+
+    assert _table(request.elements)["rows"] == [["Techno Mix", "techno", 12]]
 
 
 def test_album_table_leaves_the_playing_row_name_unmarked(
@@ -215,7 +282,7 @@ def test_album_table_leaves_the_playing_row_name_unmarked(
     second = album_of("cc22dd", name="Ambient Drift")
     view = PlayerView.from_status(playing_of(first, 2, 3), (first, second))
 
-    table = _table(AlbumListScene((first, second), view).render_request().elements)
+    table = _table(_scene((first, second), view).render_request().elements)
     rows = table["rows"]
     assert isinstance(rows, list)
 
@@ -233,27 +300,28 @@ def test_playing_album_row_is_selected(
     second = album_of("cc22dd", name="Ambient Drift")
     view = PlayerView.from_status(playing_of(second, 2, 3), (first, second))
 
-    table = _table(AlbumListScene((first, second), view).render_request().elements)
+    table = _table(_scene((first, second), view).render_request().elements)
 
     assert table["selection_mode"] == "single"
     assert table["selected_row_ids"] == ["Ambient Drift"]
 
 
 def test_idle_scene_selects_no_row(album_of: AlbumFactory) -> None:
-    # Idle leaves the selection empty -- no highlighted row -- so the encoder omits
-    # ``selected_row_ids`` entirely (a terse display-only selection).
+    # Idle highlights no row -- but the key is still emitted, empty. A field that
+    # vanishes between renders is a shape change no patch can express, so an
+    # omitted selection would strand the highlight on the row that stopped playing.
     table = _table(
-        AlbumListScene((album_of("aa11bb", name="Techno Mix"),), PlayerView.idle())
+        _scene((album_of("aa11bb", name="Techno Mix"),), PlayerView.idle())
         .render_request()
         .elements
     )
 
-    assert "selected_row_ids" not in table
+    assert table["selected_row_ids"] == []
 
 
 def test_unnamed_album_row_titles_as_album(album_of: AlbumFactory) -> None:
     table = _table(
-        AlbumListScene((album_of("aa11bb", name=None),), PlayerView.idle())
+        _scene((album_of("aa11bb", name=None),), PlayerView.idle())
         .render_request()
         .elements
     )
@@ -264,7 +332,7 @@ def test_unnamed_album_row_titles_as_album(album_of: AlbumFactory) -> None:
 
 def test_album_count_label_sits_above_the_table(album_of: AlbumFactory) -> None:
     albums = (album_of("aa11bb"), album_of("cc22dd"), album_of("ee33ff"))
-    elements = AlbumListScene(albums, PlayerView.idle()).render_request().elements
+    elements = _scene(albums, PlayerView.idle()).render_request().elements
 
     assert _by_id(elements, "music.albums.label") == {
         "kind": "text",
@@ -278,7 +346,7 @@ def test_warning_notice_renders_the_status_line(album_of: AlbumFactory) -> None:
     # a click that could not be applied is visible in the scene, not only the log.
     album = album_of("aa11bb", name="Techno Mix")
     warning = "⚠ couldn't play Techno Mix — it has no tracks yet"
-    scene = AlbumListScene((album,), PlayerView.idle(), PlaybackNotice.warning(warning))
+    scene = _scene((album,), PlayerView.idle(), PlaybackNotice.warning(warning))
 
     assert _by_id(scene.render_request().elements, "music.status") == {
         "kind": "text",
@@ -290,6 +358,109 @@ def test_warning_notice_renders_the_status_line(album_of: AlbumFactory) -> None:
 def test_silent_notice_leaves_the_status_line_empty(album_of: AlbumFactory) -> None:
     # The default silent notice keeps the slot present but empty -- the same scene
     # shape as a warning, so a later silent re-push clears a prior warning in place.
-    scene = AlbumListScene((album_of("aa11bb"),), PlayerView.idle())
+    scene = _scene((album_of("aa11bb"),), PlayerView.idle())
 
     assert _by_id(scene.render_request().elements, "music.status")["content"] == ""
+
+
+class TestSuccessiveRendersArePatchable:
+    """What two real vox.music renders ask the differ for, transition by transition.
+
+    These are the properties the reported bug turns on: every playback transition
+    has to be expressible as a field patch, or the push falls back to a full
+    install and the frame comes forward on its own.
+    """
+
+    @staticmethod
+    def _patched(
+        before: RenderRequest, after: RenderRequest
+    ) -> dict[str, Mapping[str, object]]:
+        """Return the patch the differ emits for ``before`` -> ``after``, by id."""
+        live = LiveScene()
+        live.plan(before)
+        push = live.plan(after)
+        assert isinstance(push, PatchScene)
+        return {patch.element_id: patch.fields for patch in push.patches.patches}
+
+    def test_a_track_change_patches_only_the_position_line(
+        self, album_of: AlbumFactory, playing_of: PlayingFactory
+    ) -> None:
+        # Mid-pool, so no transport boundary flips with it: the whole widget's
+        # answer to advancing a track is one content string.
+        album = album_of("aa11bb", name="Techno Mix", tracks=12)
+        second = _scene(
+            (album,), PlayerView.from_status(playing_of(album, 2, 12), (album,))
+        )
+        third = _scene(
+            (album,), PlayerView.from_status(playing_of(album, 3, 12), (album,))
+        )
+
+        patched = self._patched(second.render_request(), third.render_request())
+
+        assert patched == {"music.now.position": {"content": "3 of 12"}}
+
+    def test_reaching_the_first_track_also_enables_the_prev_button(
+        self, album_of: AlbumFactory, playing_of: PlayingFactory
+    ) -> None:
+        # The boundary case of the above: leaving track 1 un-greys prev, so that
+        # change rides the same patch rather than forcing a re-install.
+        album = album_of("aa11bb", name="Techno Mix", tracks=12)
+        first = _scene(
+            (album,), PlayerView.from_status(playing_of(album, 1, 12), (album,))
+        )
+        second = _scene(
+            (album,), PlayerView.from_status(playing_of(album, 2, 12), (album,))
+        )
+
+        patched = self._patched(first.render_request(), second.render_request())
+
+        assert patched["music.transport.prev"] == {"disabled": False}
+
+    def test_idle_to_playing_patches_rather_than_installing(
+        self, album_of: AlbumFactory, playing_of: PlayingFactory
+    ) -> None:
+        # The most consequential refresh there is: the user just pressed play. An
+        # install here would raise the frame at exactly the wrong moment.
+        album = album_of("aa11bb", name="Techno Mix", tracks=12)
+        idle = _scene((album,), PlayerView.idle())
+        playing = _scene(
+            (album,), PlayerView.from_status(playing_of(album, 1, 12), (album,))
+        )
+
+        patched = self._patched(idle.render_request(), playing.render_request())
+
+        assert "music.now.album" in patched  # the heading, not a new element
+
+    def test_play_to_pause_patches_the_buttons_label_tooltip_and_topic(
+        self, album_of: AlbumFactory, playing_of: PlayingFactory
+    ) -> None:
+        # The play/pause button flips its glyph, its tooltip, AND the topic it
+        # publishes, so ``publish`` having a setter in lux is load-bearing here.
+        album = album_of("aa11bb", name="Techno Mix", tracks=12)
+        status = playing_of(album, 1, 12)
+        playing = _scene((album,), PlayerView.from_status(status, (album,)))
+        paused = _scene((album,), PlayerView.from_status(_paused(status), (album,)))
+
+        patched = self._patched(playing.render_request(), paused.render_request())
+
+        assert set(patched["music.transport.playpause"]) == {
+            "label",
+            "tooltip",
+            "publish",
+        }
+        assert "music.transport" not in patched  # the group is descended, never patched
+
+    def test_active_to_idle_empties_the_row_selection(
+        self, album_of: AlbumFactory, playing_of: PlayingFactory
+    ) -> None:
+        # The vanishing-field guard: stopping playback must actively clear the
+        # highlight, not silently leave it on the row that stopped.
+        album = album_of("aa11bb", name="Techno Mix", tracks=12)
+        playing = _scene(
+            (album,), PlayerView.from_status(playing_of(album, 1, 12), (album,))
+        )
+        idle = _scene((album,), PlayerView.idle())
+
+        patched = self._patched(playing.render_request(), idle.render_request())
+
+        assert patched["music.albums"] == {"selected_row_ids": []}

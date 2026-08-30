@@ -16,7 +16,8 @@ import logging
 import time
 from typing import TYPE_CHECKING, cast, final
 
-from punt_lux.operations import Ok
+from punt_lux import OpError, SceneShown
+from punt_lux.operations import FrameRaise, Ok
 
 from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.voxd.music_player import composition
@@ -31,11 +32,10 @@ if TYPE_CHECKING:
         CallbackHandler,
         EventHandler,
         LuxClient,
-        OpError,
         RenderRequest,
-        SceneShown,
     )
     from punt_lux.hub_client import ConnectHandler
+    from punt_lux.operations import UpdateRequest
 
     from punt_vox.voxd.music_player.hub_ports import HubListener
     from punt_vox.voxd.music_player.lux_scene_publisher import LuxScenePublisher
@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from punt_vox.voxd.programs.catalog import Album
 
     type AlbumFactory = Callable[..., Album]
+    type PlayingFactory = Callable[[Album, int, int], ProgramStatus]
 
 
 @final
@@ -58,6 +59,10 @@ class _FakeService:
 
     def status(self) -> ProgramStatus:
         return self._status
+
+    def set_status(self, status: ProgramStatus) -> None:
+        """Move the daemon's state, as playback advancing a track would."""
+        self._status = status
 
     def catalog_albums(self) -> tuple[Album, ...]:
         return self._albums
@@ -125,10 +130,15 @@ class _FakeSceneAccessor:
         self._outer = outer
 
     async def show(self, request: RenderRequest) -> SceneShown | OpError:
-        from punt_lux import SceneShown
-
         self._outer.rendered.append(request)
         return SceneShown(scene_id=request.scene_id)
+
+    async def update(
+        self, scene_id: str, request: UpdateRequest | OpError
+    ) -> SceneShown | OpError:
+        assert not isinstance(request, OpError)
+        self._outer.patched.append(request.to_wire())
+        return SceneShown(scene_id=scene_id)
 
 
 @final
@@ -142,21 +152,34 @@ class _FakeCallbackAccessor:
 
 
 @final
+class _FakeFrameAccessor:
+    """Records every ``raise_`` call, answering each with a successful raise."""
+
+    def __init__(self, outer: _FakeClient) -> None:
+        self._outer = outer
+
+    async def raise_(self, frame_id: str) -> FrameRaise | OpError:
+        self._outer.raised.append(frame_id)
+        return FrameRaise(frame_id=frame_id, raised=True)
+
+
+@final
 class _FakeClient:
     """A LuxClient stand-in: records rendered scenes and menu registrations."""
 
     def __init__(self) -> None:
         self.rendered: list[RenderRequest] = []
+        self.patched: list[list[dict[str, object]]] = []
         self.menus: list[tuple[str, str]] = []
+        self.raised: list[str] = []
         self.scene = _FakeSceneAccessor(self)
         self.callback = _FakeCallbackAccessor(self)
+        self.frame = _FakeFrameAccessor(self)
 
 
 @final
 class _BlockingSceneAccessor:
     async def show(self, request: RenderRequest) -> SceneShown | OpError:
-        from punt_lux import SceneShown
-
         await asyncio.sleep(5.0)
         return SceneShown(scene_id=request.scene_id)
 
@@ -168,12 +191,19 @@ class _BlockingCallbackAccessor:
 
 
 @final
+class _BlockingFrameAccessor:
+    async def raise_(self, frame_id: str) -> FrameRaise | OpError:
+        return FrameRaise(frame_id=frame_id, raised=True)
+
+
+@final
 class _BlockingClient:
     """A LuxClient stand-in whose show blocks, to prove the writer never waits."""
 
     def __init__(self) -> None:
         self.scene = _BlockingSceneAccessor()
         self.callback = _BlockingCallbackAccessor()
+        self.frame = _BlockingFrameAccessor()
 
 
 @final
@@ -283,11 +313,19 @@ async def _stop(task: asyncio.Task[None]) -> None:
     await asyncio.gather(task, return_exceptions=True)
 
 
-async def test_run_pushes_the_initial_scene_then_re_pushes_on_change(
+async def test_run_installs_the_initial_scene_then_patches_it_on_change(
     album_of: AlbumFactory,
+    playing_of: PlayingFactory,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    service = _FakeService(ProgramStatus.idle(), (album_of("aa11bb", name="Mix"),))
+    # End to end through the real subsystem: the handshake installs the scene, and
+    # a subsequent state change writes onto the installed tree instead of
+    # re-installing it -- which is what keeps the frame where the user left it.
+    # on_disk=0 matches the track-count cache's own pre-refresh default (also
+    # zero), so install()'s own background correction refresh is a no-op patch
+    # here -- this test is about the STATE-CHANGE patch below, not that one.
+    album = album_of("aa11bb", name="Mix", on_disk=0)
+    service = _FakeService(ProgramStatus.idle(), (album,))
     changes = ChangeSignal()
     client = _FakeClient()
     sub = MusicPlayerSubsystem(service, changes, _FakeClients(client))
@@ -295,10 +333,16 @@ async def test_run_pushes_the_initial_scene_then_re_pushes_on_change(
     with caplog.at_level(logging.INFO):
         task = await _run(sub, settle=0.1)
         assert len(client.rendered) == 1  # the initial vox.music scene
+        # DES-072 addendum: the handshake's install ALSO makes an explicit
+        # frame raise -- ``show`` alone would not reliably raise it.
+        assert client.raised == ["vox.music"]
 
+        service.set_status(playing_of(album, 1, 3))
         changes.emit()  # a state change, as the control channel / catalog fires it
         await asyncio.sleep(0.1)
-        assert len(client.rendered) == 2  # re-pushed on the change
+        assert len(client.rendered) == 1  # NOT re-installed
+        assert len(client.patched) == 1  # patched in place instead
+        assert client.raised == ["vox.music"]  # a patch-only change never raises
         assert client.menus == [("music", "Music")]  # the receive leg registered
 
         await _stop(task)
@@ -307,6 +351,30 @@ async def test_run_pushes_the_initial_scene_then_re_pushes_on_change(
         "[lux]" in r.getMessage() and "starting both lux legs" in r.getMessage()
         for r in caplog.records
     )
+
+
+async def test_a_change_that_alters_nothing_costs_nothing_on_the_wire(
+    album_of: AlbumFactory,
+) -> None:
+    # The change signal fires on every generated part and every catalog touch, and
+    # many of those alter nothing the widget shows. Each used to be a full tree
+    # re-install; now it is zero bytes. on_disk=0 matches the track-count
+    # cache's own pre-refresh default, so install()'s background correction
+    # refresh has nothing to correct here.
+    service = _FakeService(
+        ProgramStatus.idle(), (album_of("aa11bb", name="Mix", on_disk=0),)
+    )
+    changes = ChangeSignal()
+    client = _FakeClient()
+    sub = MusicPlayerSubsystem(service, changes, _FakeClients(client))
+
+    task = await _run(sub, settle=0.1)
+    changes.emit()
+    await asyncio.sleep(0.1)
+    await _stop(task)
+
+    assert len(client.rendered) == 1
+    assert client.patched == []
 
 
 async def test_emit_returns_at_once_even_when_lux_is_slow(

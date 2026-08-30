@@ -43,6 +43,24 @@ class PanelNotice(LuxNotice):
         return cls(f"⚠ voxd rejected the request -- {detail}")
 
     @classmethod
+    def control_rejected(cls, control: str) -> Self:
+        """Return the warning shown when a control change could not be applied.
+
+        *control* is a human name (``"provider"``, ``"voice preview"``), not
+        a wire topic. Deliberately vague about the cause: this covers a
+        malformed payload and an out-of-range index alike, neither of which
+        the caller can act on. What the caller *can* see is the setting
+        snapping back, and this line exists so that revert is not the
+        panel's only explanation.
+        """
+        return cls(f"⚠ that {control} change could not be applied -- reverted")
+
+    @classmethod
+    def no_voice_selected(cls) -> Self:
+        """Return the warning shown when a preview has no voice to play."""
+        return cls("⚠ pick a voice first -- there is nothing to preview yet")
+
+    @classmethod
     def write_failed(cls, field: str) -> Self:
         """Return the warning shown when persisting *field* could not be saved."""
         return cls(f"⚠ couldn't save {field} -- reverted to the last saved value")

@@ -62,9 +62,23 @@ class FailurePresenter(Protocol):
 
 @runtime_checkable
 class ScenePresenter(ChangeListener, FailurePresenter, Protocol):
-    """The receive leg's full scene sink: a quiet re-push, or a failure warning.
+    """The receive leg's full scene sink: repaint, install, or warn.
 
-    It unites the :class:`ChangeListener` re-push (a menu open, a reconnect) with the
-    :class:`FailurePresenter` warnings, so the subscription holds one object that both
-    repaints on demand and surfaces a click that could not be applied.
+    It unites the :class:`ChangeListener` quiet repaint with the
+    :class:`FailurePresenter` warnings, so the subscription holds one object that
+    both refreshes on demand and surfaces a click that could not be applied --
+    plus :meth:`install`, the verb for the two moments that mean "put this window
+    in front of the user" rather than "the numbers in it changed".
     """
+
+    async def install(self) -> None:
+        """Project the scene and install it, raising its frame.
+
+        The Music menu was clicked, or a hub handshake reports a connection with
+        nothing on it. Both want the frame shown; every other trigger deliberately
+        does not, because raising a window the user parked behind another one is
+        the defect this verb exists to keep out of the refresh path. Async only to
+        satisfy this Protocol -- the concrete presenter never awaits here, so a
+        session lease is never held up by an inline disk read.
+        """
+        ...
