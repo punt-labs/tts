@@ -11,6 +11,7 @@ dropped.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from punt_vox.voxd.music_player.album_roster import AlbumRoster
@@ -24,6 +25,18 @@ if TYPE_CHECKING:
     type AlbumFactory = Callable[..., Album]
 
 
+def _primed_cache(albums: tuple[Album, ...]) -> TrackCountCache:
+    """Return a cache holding ``albums``' live counts, read synchronously.
+
+    Drives the real, public refresh -- ``asyncio.run`` supplies the loop it
+    needs -- rather than a test-only entry point on the cache itself, so
+    what these fixtures exercise is what ships.
+    """
+    cache = TrackCountCache()
+    asyncio.run(cache.serialized_refresh(albums))
+    return cache
+
+
 class TestFromCache:
     def test_each_display_carries_its_cached_track_count(
         self, album_of: AlbumFactory
@@ -34,7 +47,7 @@ class TestFromCache:
         # ``from_cache`` actually fails here.
         one = album_of("aa11bb", name="One", on_disk=3)
         two = album_of("cc22dd", name="Two", on_disk=5)
-        cache = TrackCountCache.for_testing((one, two))
+        cache = _primed_cache((one, two))
 
         roster = AlbumRoster.from_cache((one, two), cache)
 

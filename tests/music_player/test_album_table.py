@@ -13,6 +13,7 @@ something forced a full re-install.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from punt_vox.voxd.music_player.album_roster import AlbumRoster
@@ -33,10 +34,22 @@ def _table(elements: list[dict[str, object]]) -> dict[str, object]:
     return next(element for element in elements if element["id"] == "music.albums")
 
 
+def _primed_cache(albums: tuple[Album, ...]) -> TrackCountCache:
+    """Return a cache holding ``albums``' live counts, read synchronously.
+
+    Drives the real, public refresh -- ``asyncio.run`` supplies the loop it
+    needs -- rather than a test-only entry point on the cache itself, so
+    what these fixtures exercise is what ships.
+    """
+    cache = TrackCountCache()
+    asyncio.run(cache.serialized_refresh(albums))
+    return cache
+
+
 def _elements(
     albums: tuple[Album, ...], playing: AlbumId | None = None
 ) -> dict[str, object]:
-    cache = TrackCountCache.for_testing(albums)
+    cache = _primed_cache(albums)
     roster = AlbumRoster.from_cache(albums, cache)
     return _table(AlbumTable(roster, playing).elements())
 

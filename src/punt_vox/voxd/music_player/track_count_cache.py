@@ -23,13 +23,8 @@ Concretely: a timed-out :meth:`serialized_refresh` call's orphaned dispatch
 caller gave up, so the NEXT call from that very same single-flighted caller
 must still wait its turn behind it rather than race it; without the lock,
 each would independently read its own ``fresh`` dict and unconditionally
-overwrite :attr:`_counts` -- whichever finishes LAST wins, not whichever
-started most recently. :meth:`for_testing` is the cache's other entry point --
-synchronous, and reaching :meth:`_refresh` directly rather than through the
-lock -- so a cache primed there and later driven through a real
-:meth:`serialized_refresh` call is a second source of concurrent access to
-the same generation-stamped write path (see below for why that still commits
-safely). Every render reads :meth:`get` instead -- an in-memory dict lookup,
+overwrite the counts -- whichever finishes LAST wins, not whichever started
+most recently. Every render reads :meth:`get` instead -- an in-memory dict lookup,
 never disk.
 
 :meth:`serialized_refresh` is bounded by :data:`_REFRESH_TIMEOUT_SECONDS`: a
@@ -39,67 +34,81 @@ loop today, but an unbounded wait would still leave :class:`~punt_vox.voxd.
 music_player.single_flight.SingleFlightRefresh` permanently wedged, since its
 guard only clears when the scheduled work returns -- every future
 ``notify_changed`` or menu click would schedule a refresh that silently never
-runs, with no error or log to explain why. Timing out closes that: the
-``asyncio.Lock`` below is released the moment ``asyncio.wait_for`` gives up
-(the cancellation propagates through the ``async with`` block), so the next
-caller is never blocked by one that timed out.
+runs, with no error or log to explain why. Timing out closes that: the wait
+is abandoned, the caller is answered with whatever the store already held,
+and :meth:`serialized_refresh` returns.
 
-A timeout does not stop the underlying OS thread -- ``asyncio.to_thread``
-dispatches to a thread pool, and cancelling the awaiting coroutine does not
-cancel the thread itself, which keeps running :meth:`_refresh` to completion
-(or forever) in the background. That orphaned thread can still finish and try
-to write :attr:`_counts` after a newer, faster refresh has already landed a
-better answer -- reintroducing the exact "last to FINISH wins" race the lock
-exists to close, just narrowed to the timeout window. :attr:`_generation` and
-:attr:`_written_generation` close that window: each :meth:`serialized_refresh`
-call is stamped with a generation number, bumped only on the event loop before
-dispatch (so it needs no lock of its own), and threaded explicitly into
-:meth:`_refresh` as a plain parameter, captured at dispatch time -- not read
-back off :attr:`_generation` when the worker thread finally runs, because two
-overlapping dispatches share that one counter and a slow-to-start worker
-could otherwise read a LATER call's bump instead of its own. :meth:`_refresh`
--- which may run on an orphaned thread well after its caller gave up --
-commits its write under :attr:`_write_lock` only when the generation it was
-handed is still newer than the last write that actually landed in
-:attr:`_counts` -- not newer than every generation any caller has ever
-attempted. Those are different: a dispatch can and does legitimately commit
-even while a newer generation is still in flight elsewhere, because "in
-flight" is not "landed." Gating on "newest attempted" instead would be
-stricter and wrong -- it would drop a perfectly valid write whenever some
-later-dispatched attempt never completes (its own timeout, say), wedging the
-cache against a write that would otherwise have succeeded. A late write from
-an abandoned refresh is thus a safe no-op only once a newer one has actually
-landed, never merely attempted.
-
-An album this cache has never seen reads as zero, matching a genuinely fresh
-album before its first Part lands, so an unrefreshed row looks identical to a
-real empty one rather than some other placeholder (PY-TS-14: the *absence* of a
-cached count and a *genuine* zero count are meant to render the same way; there
-is no third state a caller could distinguish them by, nor would one be useful
-here). An album the store no longer holds is simply dropped from a refresh
-(:meth:`_refresh` catches its ``LookupError`` and excludes it) -- the catalog
-itself, not this cache, is what stops a deleted album from being rendered at
-all, since deletion removes it from the catalog synchronously in the same call
-that removes it from disk (:meth:`~punt_vox.voxd.programs.library.Library.
-remove`), well before any render sees it again.
+Abandoning the wait is not abandoning the result. Cancelling the awaiting
+coroutine releases the lock at once, so the next caller is never blocked by
+one that timed out -- but it cannot stop the worker thread, which goes on
+reading. Every committed write therefore announces itself through
+:meth:`_announce_landing`, which repaints if the counts eventually land --
+otherwise the worker thread would finish, commit real counts under the
+generation guard, and nothing would ever re-render them: the caller has
+already repainted from the stale cache by then, so the live counts would sit
+in memory, correct and invisible, until some unrelated change happened to
+schedule another refresh. On an idle catalog that is never.
+``asyncio.to_thread`` dispatches to a thread pool, so the thread keeps
+running :meth:`_refresh` to completion (or forever) in the background
+whatever its caller does. That orphaned thread can still finish and try
+to write after a newer, faster refresh has already landed a better answer --
+reintroducing the exact "last to FINISH wins" race the lock exists to close,
+just narrowed to the timeout window. :class:`~punt_vox.voxd.music_player.
+count_store.CountStore` closes it, and owns that rule along with the counts
+themselves. This module's part is the generation number: each
+:meth:`serialized_refresh` call is stamped with one, bumped only on the event
+loop before dispatch (so it needs no lock of its own), and threaded
+explicitly into :meth:`_refresh` as a plain parameter captured at dispatch
+time -- never read back off :attr:`_generation` when the worker thread
+finally runs, because two overlapping dispatches share that counter and a
+slow-to-start worker could otherwise read a LATER call's bump instead of its
+own.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 from typing import TYPE_CHECKING, Self, final
 
-from punt_vox.voxd.music_player.album_display import AlbumDisplay
+from punt_vox.voxd.music_player.count_reader import CountReader
+from punt_vox.voxd.music_player.count_store import CountStore
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from punt_vox.voxd.programs.album_id import AlbumId
     from punt_vox.voxd.programs.catalog import Album
 
 __all__ = ["TrackCountCache"]
 
 logger = logging.getLogger(__name__)
+
+# Stateless: one shared instance rather than a new one per refresh.
+_READER: CountReader = CountReader()
+
+
+@final
+class _NoObserver:
+    """Null Object (PY-DP-9): the observer of a cache nobody is watching.
+
+    A cache built without one -- every test that only reads counts back --
+    still has to answer the same call when a write lands. Doing nothing is
+    the honest answer there, and a stand-in that answers it keeps the notify
+    path free of an is-there-an-observer branch only tests would ever take.
+    """
+
+    __slots__ = ()
+
+    def __new__(cls) -> Self:
+        return super().__new__(cls)
+
+    def __call__(self) -> None:
+        """Absorb the repaint request; there is nobody to pass it to."""
+
+
+# Stateless, so one shared instance stands in for every unwatched cache.
+_NOBODY: _NoObserver = _NoObserver()
 
 # A disk read across a real catalog should never legitimately take this long;
 # past this, the caller treats the worker thread as stuck rather than block on
@@ -117,8 +126,8 @@ class TrackCountCache:
     instance can still call :meth:`_refresh` directly, generation argument and
     all, if it chooses to ignore the convention. That is not a gap this class
     tries to close structurally -- a caller determined to corrupt
-    :attr:`_written_generation` could just as easily set :attr:`_generation`
-    directly, whether or not :meth:`_refresh` takes a parameter. The
+    the stored counts could just as easily set :attr:`_generation` directly,
+    whether or not :meth:`_refresh` takes a parameter. The
     generation is threaded through :meth:`_refresh` as a plain parameter, not
     read back off :attr:`_generation` at execution time, because that is what
     correctness actually requires here: it must be the value captured at
@@ -130,45 +139,89 @@ class TrackCountCache:
     """
 
     __slots__ = (
-        "_counts",
         "_generation",
         "_lock",
-        "_write_lock",
-        "_written_generation",
+        "_loop",
+        "_on_late_landing",
+        "_store",
     )
-    _counts: dict[AlbumId, int]
+    # The counts and the rule for replacing them. Held rather than inherited
+    # so this class keeps one job -- deciding when to read disk -- and the
+    # generation ordering that guards a late write lives with the data it
+    # guards. See :mod:`punt_vox.voxd.music_player.count_store`.
+    _store: CountStore
     # Guards :meth:`serialized_refresh` so overlapping callers run one at a
-    # time instead of racing to overwrite :attr:`_counts` with whichever
-    # thread happens to finish last. Released early by a timeout -- see
-    # module docstring.
+    # time instead of racing to overwrite the store with whichever thread
+    # happens to finish last. Released early by a timeout -- see module
+    # docstring.
     _lock: asyncio.Lock
-    # Bumped by ``+= 1`` in exactly two places -- :meth:`serialized_refresh`
-    # (the real, async path, on the event loop) and :meth:`for_testing` (a
-    # synchronous, loop-independent test fixture) -- never concurrently with
-    # each other. Each bump captures the new value into a local variable in
-    # the same statement and threads it explicitly into :meth:`_refresh` as a
-    # parameter; :meth:`_refresh` itself never reads or writes this attribute.
+    # The loop a refresh was dispatched from, captured at dispatch so a write
+    # committed on a worker thread can post its repaint back. ``None`` until
+    # the first async refresh, and a loop that has since closed once the
+    # daemon is stopping.
+    _loop: asyncio.AbstractEventLoop | None
+    # How the cache asks for a repaint when a write lands; a Null Object when
+    # nobody is watching (see ``__new__``).
+    _on_late_landing: Callable[[], None]
+    # Bumped by ``+= 1`` in :meth:`serialized_refresh` only, on the event
+    # loop. Each bump captures the new value into a local variable in the
+    # same statement and threads it explicitly into :meth:`_refresh` as a
+    # parameter; :meth:`_refresh` itself never reads or writes this
+    # attribute.
     _generation: int
-    # A plain ``threading.Lock``, not an ``asyncio.Lock``: the write it guards
-    # runs inside :meth:`_refresh`, on a worker thread, and an orphaned thread
-    # from a timed-out caller can still reach it well after that caller's
-    # event-loop task has moved on.
-    _write_lock: threading.Lock
-    # The generation of the last write that actually landed in :attr:`_counts`.
-    _written_generation: int
 
-    def __new__(cls) -> Self:
+    def __new__(cls, on_late_landing: Callable[[], None] = _NOBODY) -> Self:
+        """Build the cache; *on_late_landing* is how it asks for a repaint.
+
+        Called on the event loop when a refresh the caller had already given
+        up waiting for finally lands its counts -- see
+        :meth:`_announce_landing`. It defaults to a Null Object (PY-DP-9) so
+        a cache built with no observer, as every test that only reads counts
+        does, simply has nobody to tell.
+        """
         self = super().__new__(cls)
-        self._counts = {}
+        self._store = CountStore()
         self._lock = asyncio.Lock()
-        self._write_lock = threading.Lock()
         self._generation = 0
-        self._written_generation = 0
+        self._on_late_landing = on_late_landing
+        self._loop = None
         return self
+
+    def _announce_landing(self) -> None:
+        """Ask for a repaint from whichever thread just committed a write.
+
+        Called after the store has released its own lock, never under it:
+        the observer renders, and holding a lock across a caller's work is
+        how a cache ends up owning something it should not.
+
+        The write may have happened on a worker thread whose caller gave up
+        waiting for it seconds ago. That is the case this exists for -- the
+        caller has already repainted from the stale cache, so without a
+        signal here the live counts sit in memory, correct and invisible,
+        until some unrelated change happens to schedule another refresh. On
+        an idle catalog that is never.
+
+        Every committed write announces, not only a late one, because the
+        cache cannot tell which is which: whether a caller is still waiting
+        is the caller's state, not this cache's. Announcing on a write whose
+        caller is about to repaint anyway costs one extra render that the
+        scene diff answers with no push at all -- the cheap half of a trade
+        whose expensive half is a count that never appears.
+
+        The hop back through the loop is what makes this safe to call from a
+        worker thread. A loop already closed (the daemon is shutting down)
+        raises, and there is nothing left to repaint by then.
+        """
+        if self._loop is None:
+            return  # no refresh has been dispatched yet; nothing to post to
+        try:
+            self._loop.call_soon_threadsafe(self._on_late_landing)
+        except RuntimeError:
+            logger.debug("music: no live loop to repaint on; the daemon is stopping")
 
     def get(self, album_id: AlbumId) -> int:
         """Return the last-known ready-track count for ``album_id``, or zero."""
-        return self._counts.get(album_id, 0)
+        return self._store.get(album_id)
 
     async def serialized_refresh(self, albums: tuple[Album, ...]) -> None:
         """Refresh off the event loop via :meth:`_refresh`, one caller at a time.
@@ -182,8 +235,8 @@ class TrackCountCache:
         that same single-flighted caller still has to wait its turn behind it
         rather than race it. Without serialization, both would independently
         build a ``fresh`` dict from their own snapshot and unconditionally
-        overwrite :attr:`_counts` -- whichever thread happens to finish LAST
-        wins, not whichever started most recently. The lock is acquired here,
+        overwrite the store -- whichever thread happens to finish LAST wins,
+        not whichever started most recently. The lock is acquired here,
         on the event loop, before the thread dispatch -- never inside
         :meth:`_refresh` itself, which runs in a worker thread once dispatched
         and cannot await an ``asyncio.Lock`` there -- so a caller that arrives
@@ -192,10 +245,13 @@ class TrackCountCache:
 
         Bounded by :data:`_REFRESH_TIMEOUT_SECONDS`: a stuck disk read gives up
         the wait rather than blocking this caller (and everyone serialized
-        behind it) forever. A timeout is logged and swallowed here -- the
-        caller gets whatever the cache already held, same as any other refresh
-        fault -- while :attr:`_generation` protects against the abandoned
-        worker thread landing a stale write later (see module docstring).
+        behind it) forever. The caller is answered with whatever the cache
+        already held, while the abandoned worker thread goes on reading. Its
+        write, if it ever lands, announces itself through
+        :meth:`_announce_landing` so those counts reach the display rather
+        than sitting in memory correct and invisible; :attr:`_generation`
+        keeps it from clobbering a newer write that beat it home (see module
+        docstring).
 
         Only OUR deadline is swallowed. A real disk-level timeout (``OSError``
         with ``errno.ETIMEDOUT``, e.g. a hung NFS mount) is also a
@@ -207,16 +263,11 @@ class TrackCountCache:
         task when ITS OWN deadline elapses, so checking ``task.cancelled()``
         distinguishes the two: cancelled means the deadline fired and this is
         our timeout; not cancelled means the task ran to completion and raised
-        that ``TimeoutError`` itself, which is re-raised unchanged. One
-        acknowledged, razor-thin edge: CPython's ``Task.cancel()``/``__step``
-        machinery has a same-event-loop-tick window where a genuine fault
-        completing in the exact tick the deadline fires can be misreported as
-        our own cancellation, discarding the real exception's diagnostic
-        content in favor of the generic timeout warning below -- an inherent
-        scheduling limitation, not a defect in this discrimination.
+        that ``TimeoutError`` itself, which is re-raised unchanged.
         """
         self._generation += 1
         generation = self._generation
+        self._loop = asyncio.get_running_loop()
         task = asyncio.ensure_future(self._locked_refresh(albums, generation))
         try:
             await asyncio.wait_for(task, timeout=_REFRESH_TIMEOUT_SECONDS)
@@ -225,8 +276,7 @@ class TrackCountCache:
                 raise  # a genuine fault from the read itself, not our deadline
             logger.warning(
                 "music: track-count refresh for %d albums exceeded %.1fs; "
-                "abandoning the wait (a late write, if any, will be ignored "
-                "once a newer refresh has actually landed, not merely attempted)",
+                "abandoning the wait (its counts repaint if and when they land)",
                 len(albums),
                 _REFRESH_TIMEOUT_SECONDS,
             )
@@ -263,62 +313,12 @@ class TrackCountCache:
         to prevent, reachable via two ordinary, fully-successful calls with no
         timeout involved at all.
 
-        The write is gated on ``generation`` under :attr:`_write_lock`: this
-        method may run on a worker thread orphaned by a caller that already
-        timed out (see module docstring), so a late write here must never
-        clobber a newer refresh's result. It commits only when ``generation``
-        is still newer than :attr:`_written_generation` -- the last write
-        that actually landed, not the newest one any caller has ever
-        attempted. A dispatch can commit even while a newer generation is
-        still in flight elsewhere; gating on "newest attempted" instead would
-        be stricter and wrong, since it would drop a legitimate write
-        whenever some later-dispatched attempt never completes (its own
-        timeout, say).
+        The write is handed to :class:`~punt_vox.voxd.music_player.
+        count_store.CountStore`, which takes it only when ``generation``
+        beats the last write that actually landed -- this method may run on a
+        worker thread orphaned by a caller that already timed out, so a late
+        write must never clobber a newer result. The store answers whether it
+        took the write, and only a write that was taken announces itself.
         """
-        fresh: dict[AlbumId, int] = {}
-        for album in albums:
-            try:
-                fresh[album.id] = AlbumDisplay.read(album).tracks
-            except LookupError:
-                logger.debug(
-                    "album %s is no longer on disk; dropping its cached count",
-                    album.id,
-                )
-        with self._write_lock:
-            if generation > self._written_generation:
-                self._counts = fresh
-                self._written_generation = generation
-
-    @classmethod
-    def for_testing(cls, albums: tuple[Album, ...]) -> Self:
-        """Return a cache pre-populated with ``albums``' live counts; tests only.
-
-        Synchronous by design -- production code always reaches the disk read
-        through :meth:`serialized_refresh`, off the event loop. This exists so
-        fixtures for :class:`~punt_vox.voxd.music_player.album_roster.
-        AlbumRoster`, :class:`~punt_vox.voxd.music_player.album_table.
-        AlbumTable`, and :class:`~punt_vox.voxd.music_player.scene.
-        AlbumListScene` can populate a cache without going through the async
-        ``serialized_refresh`` path, which needs a running event loop these
-        fixtures don't have.
-
-        Bumps :attr:`_generation` the same ``+= 1`` way :meth:`serialized_refresh`
-        does, rather than setting it to a literal value -- a cache built here
-        that a test later drives through a real :meth:`serialized_refresh`
-        must still be able to write: that call bumps ``_generation`` to 2
-        starting from 1, which stays ``> _written_generation``. Setting
-        ``_generation`` to a literal ``1`` here would look identical for a
-        fresh cache (``0 + 1 == 1``), but the ``+=`` is what keeps the "only
-        these two places ever bump ``_generation``" comment on the attribute
-        honest. Captures the bumped value into a local, exactly like
-        :meth:`serialized_refresh` does, and threads it into :meth:`_refresh`
-        explicitly -- this method is synchronous, loop-independent test
-        fixture code, not a worker thread, so there is no execution-time delay
-        between the bump and the call for a later bump to race against, but
-        the shape stays identical to the real dispatch path on purpose.
-        """
-        self = cls()
-        self._generation += 1
-        generation = self._generation
-        self._refresh(albums, generation)
-        return self
+        if self._store.commit(_READER.read(albums), generation):
+            self._announce_landing()

@@ -158,32 +158,6 @@ class TestGenerationGatedWrite:
         assert cache.get(album.id) == 8
 
 
-class TestForTesting:
-    def test_pre_populates_the_cache_synchronously(
-        self, album_of: AlbumFactory
-    ) -> None:
-        album = album_of("aa11bb", tracks=0, on_disk=6)
-        cache = TrackCountCache.for_testing((album,))
-        assert cache.get(album.id) == 6
-
-    async def test_a_later_real_refresh_can_still_write(
-        self, album_of: AlbumFactory
-    ) -> None:
-        # Regression: for_testing wrote _written_generation to 1 via _refresh
-        # but used to leave _generation at its default 0. The next real
-        # serialized_refresh call would then bump _generation to only 1,
-        # which fails the strict ">" gate against a _written_generation
-        # already at 1 -- silently discarding a legitimate write.
-        album = album_of("aa11bb", tracks=0, on_disk=3)
-        cache = TrackCountCache.for_testing((album,))
-        assert cache.get(album.id) == 3
-
-        grown = album_of("aa11bb", tracks=0, on_disk=9)
-        await cache.serialized_refresh((grown,))
-
-        assert cache.get(album.id) == 9
-
-
 class TestSerializedRefresh:
     """The entry point every real caller uses: off the event loop, one at a time.
 
@@ -296,6 +270,52 @@ class TestSerializedRefreshTimeout:
         expected = f"exceeded {timeout:.1f}s"
         assert any(expected in r.getMessage() for r in caplog.records)
         await asyncio.sleep(0.3)  # let the orphaned worker thread finish quietly
+
+    async def test_a_write_that_lands_after_the_wait_was_abandoned_repaints(
+        self, album_of: AlbumFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The counts a caller stopped waiting for must still reach the screen.
+
+        The caller repaints from the stale cache the moment it gives up, so
+        if the slow read's counts land in silence they are correct and
+        invisible: on an idle catalog nothing else ever schedules another
+        refresh, and the Tracks column stays at 0 for good. This is the
+        held-vs-displayed miss the whole change exists to close, reached
+        through the one door that outlives its caller.
+        """
+        monkeypatch.setattr(track_count_cache_module, "_REFRESH_TIMEOUT_SECONDS", 0.05)
+        real_refresh = TrackCountCache._refresh
+
+        def _slow_refresh(
+            self: TrackCountCache, albums: tuple[Album, ...], generation: int
+        ) -> None:
+            time.sleep(0.2)  # outlives the deadline above
+            real_refresh(self, albums, generation)
+
+        monkeypatch.setattr(TrackCountCache, "_refresh", _slow_refresh)
+        album = album_of("aa11bb", name="Slow", tracks=0, on_disk=7)
+        repaints: list[int] = []
+        cache = TrackCountCache(lambda: repaints.append(cache.get(album.id)))
+
+        await asyncio.wait_for(cache.serialized_refresh((album,)), timeout=1.0)
+        assert cache.get(album.id) == 0  # gave up; still stale
+        assert repaints == []
+
+        await asyncio.sleep(0.4)  # the abandoned read finishes and commits
+
+        assert cache.get(album.id) == 7
+        assert repaints == [7], "the late write must ask for a repaint"
+
+    async def test_a_write_nobody_is_watching_lands_without_complaint(
+        self, album_of: AlbumFactory
+    ) -> None:
+        """A cache built with no observer still answers the same call."""
+        album = album_of("aa11bb", tracks=0, on_disk=3)
+        cache = TrackCountCache()
+
+        await cache.serialized_refresh((album,))
+
+        assert cache.get(album.id) == 3
 
     async def test_a_late_orphaned_write_never_clobbers_a_newer_refresh(
         self, album_of: AlbumFactory, monkeypatch: pytest.MonkeyPatch

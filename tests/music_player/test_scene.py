@@ -12,6 +12,7 @@ the other leg.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -37,13 +38,25 @@ if TYPE_CHECKING:
     type PlayingFactory = Callable[[Album, int, int], ProgramStatus]
 
 
+def _primed_cache(albums: tuple[Album, ...]) -> TrackCountCache:
+    """Return a cache holding ``albums``' live counts, read synchronously.
+
+    Drives the real, public refresh -- ``asyncio.run`` supplies the loop it
+    needs -- rather than a test-only entry point on the cache itself, so
+    what these fixtures exercise is what ships.
+    """
+    cache = TrackCountCache()
+    asyncio.run(cache.serialized_refresh(albums))
+    return cache
+
+
 def _scene(
     albums: tuple[Album, ...],
     view: PlayerView,
     notice: PlaybackNotice | None = None,
 ) -> AlbumListScene:
     """Build the scene the way the player does: from a cache refreshed live."""
-    cache = TrackCountCache.for_testing(albums)
+    cache = _primed_cache(albums)
     roster = AlbumRoster.from_cache(albums, cache)
     if notice is None:
         return AlbumListScene(roster, view)

@@ -72,7 +72,7 @@ class MusicPlayer:
         self = super().__new__(cls)
         self._service = service
         self._publisher = publisher
-        self._cache = TrackCountCache()
+        self._cache = TrackCountCache(self._repaint_from_cache)
         self._refresher = SingleFlightRefresh()
         self._latest_notice = PlaybackNotice.silent()
         return self
@@ -209,6 +209,24 @@ class MusicPlayer:
         if not await self._try_refresh_cache(albums):
             return
         self._publisher.submit(self._render(albums, self._latest_notice))
+
+    def _repaint_from_cache(self) -> None:
+        """Re-render from the cache after a refresh we had given up on landed.
+
+        Handed to :class:`~punt_vox.voxd.music_player.track_count_cache.
+        TrackCountCache` at construction and called back on the event loop
+        when a dispatch that outran its deadline finally commits its counts.
+        Without it those counts are correct and invisible: the caller that
+        timed out has already repainted from the stale cache, and on an idle
+        catalog nothing else ever schedules another refresh.
+
+        Reads the catalog and the notice fresh, like every other projection
+        here, rather than reusing anything captured when the refresh was
+        dispatched -- that dispatch may be many seconds old by now.
+        """
+        self._publisher.submit(
+            self._render(self._service.catalog_albums(), self._latest_notice)
+        )
 
     async def _try_refresh_cache(self, albums: tuple[Album, ...]) -> bool:
         """Refresh :attr:`_cache`; log and report failure rather than raise.
