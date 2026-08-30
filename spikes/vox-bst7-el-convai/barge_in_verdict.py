@@ -34,14 +34,28 @@ _INTERRUPT_TYPES: frozenset[str] = frozenset(
 
 # Vocabulary distinctive of the search_code RESULT (spike_tools fake
 # matches), deliberately excluding "playback"/"queue", which appear in
-# the user's own request -- an echo of the question must not pass.
+# the user's own request -- an echo of the question must not pass. No
+# bare "match" either: "I didn't find any matches" must not count, so
+# only the count-bearing forms the tool actually returns qualify.
 _RESULT_MARKERS: tuple[str, ...] = (
-    "match",
+    "3 matches",
+    "three matches",
     "daemon",
     "dispatch",
     "registry",
     "voxd",
     "provider",
+)
+
+# A negated answer is not grounded in the result even when it happens
+# to name one of the markers ("I did not find the daemon dispatch").
+_NEGATION_MARKERS: tuple[str, ...] = (
+    "did not find",
+    "didn't find",
+    "found nothing",
+    "no matches",
+    "was not able to find",
+    "wasn't able to find",
 )
 
 _END_OF_TRACE = 1 << 62  # sentinel seq: "after every recorded event"
@@ -237,7 +251,15 @@ class BargeInAdjudicator:
                 evidence="no agent_response after the recall probe",
             )
         text = str(answer.body.get("text", ""))
-        hit = next((m for m in self._markers if m in text.lower()), None)
+        lowered = text.lower()
+        negation = next((n for n in _NEGATION_MARKERS if n in lowered), None)
+        if negation is not None:
+            return CriterionResult(
+                name=name,
+                passed=False,
+                evidence=f"negated answer ({negation!r}): {text!r}",
+            )
+        hit = next((m for m in self._markers if m in lowered), None)
         if hit is None:
             return CriterionResult(
                 name=name,

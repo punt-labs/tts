@@ -30,6 +30,7 @@ class TestFlushOrdering:
         monkeypatch.setattr("run_live.shutil.which", lambda _binary: "/bin/true")
         audio = AlsaAudio(EventTrace(tmp_path / "trace.jsonl"))
         reassigned_first: list[bool] = []
+        reap_timeouts: list[float] = []
 
         @final
         class _Probe:
@@ -42,6 +43,10 @@ class TestFlushOrdering:
                 # about this attribute's ordering vs the kill.)
                 reassigned_first.append(audio._playback is not self)
 
+            def wait(self, timeout: float) -> int:
+                reap_timeouts.append(timeout)  # the kill was also reaped
+                return 0
+
         spawned = iter((_Probe(), _Probe()))
         monkeypatch.setattr(
             AlsaAudio, "_spawn_playback", staticmethod(lambda: next(spawned))
@@ -49,3 +54,4 @@ class TestFlushOrdering:
         await audio.flush()  # no old process yet: installs the first probe
         await audio.flush()  # must reassign to the second BEFORE killing the first
         assert reassigned_first == [True]
+        assert len(reap_timeouts) == 1  # the killed probe was reaped, no zombie

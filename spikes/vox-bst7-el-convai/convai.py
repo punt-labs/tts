@@ -69,6 +69,12 @@ _TURN_GRACE_S = 1.5
 # recorded verbatim is a latent leak.
 _SENSITIVE_KEY_PARTS: tuple[str, ...] = ("token", "secret", "signed_url", "api_key")
 
+# Generous finite frame cap: the largest observed EL frame (a base64
+# audio event) is well under 1MiB, so 16MiB is headroom, not a limit --
+# while an unbounded frame from a compromised peer could exhaust memory.
+# The production voxd port should size this to its own audio format.
+_WS_MAX_FRAME_BYTES = 16 * 1024 * 1024
+
 
 @final
 class EventTrace:
@@ -265,7 +271,7 @@ class ConvAISession:
         t0 = time.monotonic()
         try:
             async with asyncio.timeout(timeout_s):
-                self._ws = await connect(self._url, max_size=None)
+                self._ws = await connect(self._url, max_size=_WS_MAX_FRAME_BYTES)
         except WebSocketException as exc:
             # Typed rejection: a refused upgrade (e.g. oversized or
             # disallowed override) must land in the run record, not

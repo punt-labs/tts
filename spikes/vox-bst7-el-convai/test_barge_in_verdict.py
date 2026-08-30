@@ -150,6 +150,54 @@ class TestCriterionFailures:
         verdict = BargeInAdjudicator(events).adjudicate()
         assert verdict.criteria[2].passed is False
 
+    def test_didnt_find_any_matches_does_not_pass_recall(self) -> None:
+        # A bare "match" marker would false-positive on this exact
+        # answer; only the count-bearing forms the tool returns count.
+        events = [
+            e
+            if e.ms != 7000
+            else _event(
+                7000,
+                "recv",
+                "agent_response",
+                text="I didn't find any matches.",
+            )
+            for e in _happy_events()
+        ]
+        verdict = BargeInAdjudicator(events).adjudicate()
+        assert verdict.criteria[2].passed is False
+
+    def test_negated_answer_naming_a_marker_does_not_pass_recall(self) -> None:
+        events = [
+            e
+            if e.ms != 7000
+            else _event(
+                7000,
+                "recv",
+                "agent_response",
+                text="I did not find the voxd daemon dispatch you mentioned.",
+            )
+            for e in _happy_events()
+        ]
+        verdict = BargeInAdjudicator(events).adjudicate()
+        assert verdict.criteria[2].passed is False
+        assert "negated" in verdict.criteria[2].evidence
+
+    def test_count_bearing_answer_passes_recall(self) -> None:
+        events = [
+            e
+            if e.ms != 7000
+            else _event(
+                7000,
+                "recv",
+                "agent_response",
+                text="I found 3 matches for the playback queue.",
+            )
+            for e in _happy_events()
+        ]
+        verdict = BargeInAdjudicator(events).adjudicate()
+        assert verdict.criteria[2].passed is True
+
     def test_missing_probe_answer_fails_recall(self) -> None:
         events = [e for e in _happy_events() if e.ms not in (7000, 9500)]
         verdict = BargeInAdjudicator(events).adjudicate()

@@ -118,7 +118,7 @@ class AlsaAudio:
         old = self._playback
         self._playback = self._spawn_playback()
         if old is not None:
-            old.kill()
+            self._reap(old, "aplay (flushed)")
 
     async def stop(self) -> None:
         if self._writer is not None:
@@ -129,10 +129,28 @@ class AlsaAudio:
         if self._capture is not None:
             with contextlib.suppress(ProcessLookupError):
                 self._capture.kill()
+            try:
+                async with asyncio.timeout(2.0):
+                    await self._capture.wait()
+            except TimeoutError:
+                print("arecord refused to die after kill", file=sys.stderr)
             self._capture = None
         if self._playback is not None:
-            self._playback.kill()
+            self._reap(self._playback, "aplay")
             self._playback = None
+
+    @staticmethod
+    def _reap(playback: subprocess.Popen[bytes], name: str) -> None:
+        """Kill and wait so the child is reaped; loud if it hangs on.
+
+        SIGKILL death is near-immediate, so the blocking wait resolves in
+        milliseconds -- without it every kill leaves a zombie until exit.
+        """
+        playback.kill()
+        try:
+            playback.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            print(f"{name} refused to die after kill", file=sys.stderr)
 
     @staticmethod
     def _spawn_playback() -> subprocess.Popen[bytes]:
