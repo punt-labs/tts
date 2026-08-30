@@ -41,7 +41,7 @@ dependencies = [
     # callback listener (client.listener) with per-handshake on_connect for
     # register-fresh. 0.28.0 retires LuxRestClient/LuxHubClient from the public
     # surface in favour of the noun-grouped LuxClient facade with async accessors.
-    "punt-lux>=0.28.0",
+    "punt-lux>=0.31.1",
 ]
 
 [project.optional-dependencies]
