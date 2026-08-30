@@ -6,8 +6,15 @@ that must never await disk I/O itself. A burst of triggers -- one per completed
 Part -- must not queue an unbounded pile of overlapping background reads, so
 this holds the single-flight guard and the task's strong reference (asyncio
 only weakly tracks a fire-and-forget task, and a collected one can vanish
-mid-flight with a "Task was destroyed" warning) as its own small concern,
-reusable anywhere the same fire-and-coalesce shape is needed.
+mid-flight with a "Task was destroyed" warning) as its own small concern.
+
+This is a drop-the-call guard, not a coalescing one: a :meth:`schedule` call
+that arrives while a run is in flight is discarded outright -- not queued,
+not merged with the run already executing. Reusing this class elsewhere is
+only safe when the caller's ``work()`` re-reads whatever state it needs at
+execution time rather than closing over a snapshot captured when
+:meth:`schedule` was called -- see :meth:`schedule` for what that requires of
+a caller.
 """
 
 from __future__ import annotations
@@ -46,9 +53,16 @@ class SingleFlightRefresh:
     def schedule(self, work: Callable[[], Coroutine[object, object, None]]) -> None:
         """Fire ``work()`` as a background task, unless one is already running.
 
-        Never blocks the caller: this only creates the task and returns. Later
-        calls while it runs coalesce onto it -- the in-flight run will see
-        whatever is true by the time its own work actually executes.
+        Never blocks the caller: this only creates the task and returns. A
+        ``schedule()`` call while one is already in flight is dropped outright
+        -- not queued, not merged -- so a caller relying on the in-flight run
+        to "see" a dropped call's effect must ensure its ``work()`` re-reads
+        live state at execution time rather than closing over a snapshot
+        captured when ``schedule()`` was called. The current (and only)
+        caller, :meth:`~punt_vox.voxd.music_player.player.MusicPlayer.
+        _refresh_track_counts`, satisfies this because its resubmit reads
+        ``self._latest_notice`` and the live catalog fresh at execution time --
+        but that safety is a property of the caller, not of this class.
         """
         if self._running:
             return
