@@ -106,9 +106,16 @@ class AlsaAudio:
         """Cut playback now: drop the queue and restart aplay."""
         while not self._queue.empty():
             self._queue.get_nowait()
-        if self._playback is not None:
-            self._playback.kill()
+        # Reassign BEFORE kill -- _write_chunk's death-check disambiguation
+        # depends on it. A kill-induced BrokenPipeError must only be
+        # observable after `self._playback is not playback` holds, or a
+        # concurrent writer classifies a normal barge-in as aplay dying
+        # (false aplay_died in the trace) and respawns a second aplay,
+        # orphaning whichever Popen loses the assignment race.
+        old = self._playback
         self._playback = self._spawn_playback()
+        if old is not None:
+            old.kill()
 
     async def stop(self) -> None:
         if self._writer is not None:
