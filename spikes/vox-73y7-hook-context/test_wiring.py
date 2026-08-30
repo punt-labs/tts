@@ -1,0 +1,108 @@
+"""Pins for the fork's hook wiring and permissions rendering.
+
+The field inventory is only complete if EVERY hook event relays; a missing
+entry in the settings document is a silent hole in the evidence. These
+tests pin the full-event wiring, the matcher placement, and the relay
+script's stamp-then-relay pipeline.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from wiring import (
+    CONTEXT_CAPTURE_V1,
+    RELAYED_EVENTS,
+    HookWiring,
+    RelayScript,
+    SettingsDocument,
+)
+
+_SCRIPT = Path("/opt/harness/relay with space.sh")
+
+
+class TestHookWiring:
+    """Every event wired, matchers only where Claude Code accepts them."""
+
+    def test_every_relayed_event_has_exactly_one_entry(self) -> None:
+        settings = HookWiring(_SCRIPT).to_settings()
+        assert set(settings) == set(RELAYED_EVENTS)
+        assert all(len(entries) == 1 for entries in settings.values())
+
+    def test_tool_events_carry_a_wildcard_matcher_and_others_do_not(self) -> None:
+        settings = HookWiring(_SCRIPT).to_settings()
+        for event, entries in settings.items():
+            entry = entries[0]
+            assert isinstance(entry, dict)
+            if event in ("PreToolUse", "PostToolUse"):
+                assert entry["matcher"] == "*"
+            else:
+                assert "matcher" not in entry
+
+    def test_command_quotes_the_script_path_and_passes_the_event(self) -> None:
+        command = HookWiring(_SCRIPT).command_for("PostToolUse")
+        assert command == "'/opt/harness/relay with space.sh' PostToolUse"
+
+    def test_every_hook_has_a_timeout(self) -> None:
+        # A dead store must not stall the captured session indefinitely.
+        settings = HookWiring(_SCRIPT).to_settings()
+        for entries in settings.values():
+            entry = entries[0]
+            assert isinstance(entry, dict)
+            hooks = entry["hooks"]
+            assert isinstance(hooks, list)
+            hook = hooks[0]
+            assert isinstance(hook, dict)
+            assert isinstance(hook["timeout"], int)
+            assert hook["timeout"] > 0
+
+
+class TestRelayScript:
+    """The rendered wrapper stamps sender-side, then relays."""
+
+    def test_pipeline_captures_start_then_stamps_then_relays(self) -> None:
+        body = RelayScript(
+            proxy=Path("/usr/bin/mcp-proxy"),
+            url="ws://127.0.0.1:9000",
+            stamper=Path("/opt/harness/relay_stamp.py"),
+            counter_dir=Path("/opt/harness/counters"),
+        ).render()
+        assert body.startswith("#!/bin/sh\n")
+        assert "start_ns=$(date +%s%N)" in body
+        stamp_pos = body.index("relay_stamp.py")
+        proxy_pos = body.index("mcp-proxy")
+        assert stamp_pos < proxy_pos  # stamp BEFORE relay, or latency is a lie
+        assert '--hook "$1"' in body
+
+    def test_paths_with_spaces_are_quoted(self) -> None:
+        body = RelayScript(
+            proxy=Path("/opt/my tools/mcp-proxy"),
+            url="ws://127.0.0.1:9000",
+            stamper=Path("/opt/my tools/relay_stamp.py"),
+            counter_dir=Path("/opt/my tools/counters"),
+        ).render()
+        assert "'/opt/my tools/mcp-proxy'" in body
+        assert "'/opt/my tools/relay_stamp.py'" in body
+        assert "'/opt/my tools/counters'" in body
+
+
+class TestSettingsDocument:
+    """The deposited settings.json is valid and carries both blocks."""
+
+    def test_renders_valid_json_with_permissions_and_hooks(self) -> None:
+        document = SettingsDocument(CONTEXT_CAPTURE_V1, HookWiring(_SCRIPT))
+        parsed = json.loads(document.render())
+        assert set(parsed) == {"permissions", "hooks"}
+        assert set(parsed["hooks"]) == set(RELAYED_EVENTS)
+
+    def test_profile_allows_the_work_loop_and_denies_egress(self) -> None:
+        permissions = CONTEXT_CAPTURE_V1.to_settings()
+        allow = permissions["allow"]
+        deny = permissions["deny"]
+        assert isinstance(allow, list)
+        assert isinstance(deny, list)
+        assert "Bash" in allow  # the test loop needs a shell
+        for tool in ("WebFetch", "WebSearch", "Task"):
+            assert tool in deny
+        assert not set(allow) & set(deny)  # no tool both allowed and denied
