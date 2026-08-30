@@ -44,8 +44,6 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Self, final
 
-from punt_lux import HubUnavailableError
-
 from punt_vox.lux_common import FrameRaiser, LiveScene
 
 if TYPE_CHECKING:
@@ -106,13 +104,17 @@ class PanelPush:
 
         A refusal disarms the live scene: luxd kept whatever it had, so what we
         believe is installed is now a guess and the next push must install afresh
-        rather than patch a tree that was never accepted. An absent luxd disarms
-        for the same reason and propagates, because the caller's outage guard owns
-        the throttled reporting of a display that is simply not there.
+        rather than patch a tree that was never accepted. Any exception out of
+        ``push.apply`` -- an absent luxd (``HubUnavailableError``, whose throttled
+        reporting is the caller's outage guard's job) or anything unexpected --
+        disarms for the identical reason: there is no guarantee what, if anything,
+        actually landed. Caught as one clause, not one per exception type, because
+        the action is the same regardless of which fault it was; each then
+        propagates to let its own caller decide what the fault means.
         """
         try:
             refusal = await push.apply(client)
-        except HubUnavailableError:
+        except Exception:
             self._live.disarm()
             raise
         if refusal is not None:

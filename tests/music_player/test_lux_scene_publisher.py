@@ -434,6 +434,60 @@ async def test_a_restarted_luxd_recovers_through_the_patch_refusal() -> None:
     ]
 
 
+async def test_an_unexpected_error_disarms_the_live_scene() -> None:
+    # The publisher's run() loop only catches HubUnavailableError and a scene
+    # refusal inside _publish -- an unrelated bug surfacing from push.apply
+    # must still disarm the live scene, so the next push installs afresh
+    # rather than patch against a tree that may never have landed. Proved
+    # observably: a third submit for the same scene must show() again, not
+    # update() -- if disarm had not run, it would patch instead.
+    @final
+    class _BoomOnceOnUpdateSceneAccessor:
+        def __init__(self) -> None:
+            self.shown = 0
+            self.boom_next_update = False
+
+        async def show(self, request: RenderRequest) -> SceneShown | OpError:
+            self.shown += 1
+            return SceneShown(scene_id=request.scene_id)
+
+        async def update(
+            self, scene_id: str, request: UpdateRequest | OpError
+        ) -> SceneShown | OpError:
+            if self.boom_next_update:
+                self.boom_next_update = False
+                msg = "boom"
+                raise RuntimeError(msg)
+            return SceneShown(scene_id=scene_id)
+
+    @final
+    class _BoomOnceOnUpdateClient:
+        def __init__(self) -> None:
+            self.scene = _BoomOnceOnUpdateSceneAccessor()
+            self.frame = _FakeFrameAccessor()
+
+    client = _BoomOnceOnUpdateClient()
+    publisher = LuxScenePublisher(lambda: _as_client(client))
+    task = asyncio.create_task(publisher.run())
+
+    publisher.submit(_scene("vox.music", "1 of 12"))
+    await asyncio.sleep(0.05)
+    assert client.scene.shown == 1  # the first push installed cleanly
+
+    client.scene.boom_next_update = True
+    publisher.submit(_scene("vox.music", "2 of 12"))  # patch path -> update() raises
+    await asyncio.sleep(0.05)
+
+    # Disarmed by the unexpected failure: the next push must install again
+    # rather than patch against a tree that may never have landed.
+    publisher.submit(_scene("vox.music", "3 of 12"))
+    await asyncio.sleep(0.05)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    assert client.scene.shown == 2  # the original install, plus the recovery install
+
+
 async def test_a_slow_render_does_not_block_the_event_loop() -> None:
     client = _BlockingClient()
     publisher = LuxScenePublisher(lambda: _as_client(client))

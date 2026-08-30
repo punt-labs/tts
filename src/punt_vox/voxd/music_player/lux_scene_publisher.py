@@ -92,6 +92,12 @@ class LuxScenePublisher:
             try:
                 await self._publish(delivery)
             except Exception:
+                # Disarm like the outage and refusal paths inside _publish do:
+                # an unexpected fault here leaves no guarantee about what
+                # actually landed on luxd, so the next push must install
+                # afresh rather than patch against a tree that may never have
+                # been accepted.
+                self._live.disarm()
                 logger.exception(
                     "[lux] scene publisher: unexpected error rendering a scene"
                 )

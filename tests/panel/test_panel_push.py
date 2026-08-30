@@ -125,7 +125,8 @@ class _GatedClient:
         self.scene = _GatedSceneAccessor()
 
 
-def _as_client(fake: _FakeClient | _GatedClient) -> LuxClient:
+def _as_client(fake: object) -> LuxClient:
+    """Cast a duck-typed client stand-in to the LuxClient type the seam wants."""
     return cast("LuxClient", fake)
 
 
@@ -322,3 +323,63 @@ class TestRecovery:
 
         assert len(client.scene.shown) == 1
         assert client.scene.patched == []
+
+    async def test_an_unexpected_error_propagates(self) -> None:
+        # _complete only has answers for HubUnavailableError and a refusal --
+        # an unrelated bug from push.apply must still reach the caller rather
+        # than being silently absorbed.
+        @final
+        class _BoomSceneAccessor:
+            async def show(self, request: RenderRequest) -> SceneShown | OpError:
+                msg = "boom"
+                raise RuntimeError(msg)
+
+            async def update(
+                self, scene_id: str, request: UpdateRequest | OpError
+            ) -> SceneShown | OpError:
+                msg = "boom"
+                raise RuntimeError(msg)
+
+        @final
+        class _BoomClient:
+            def __init__(self) -> None:
+                self.scene = _BoomSceneAccessor()
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await PanelPush().refresh(_as_client(_BoomClient()), _scene())
+
+    async def test_an_unexpected_error_disarms_so_the_next_push_installs(self) -> None:
+        @final
+        class _BoomOnUpdateSceneAccessor:
+            def __init__(self) -> None:
+                self.shown = 0
+
+            async def show(self, request: RenderRequest) -> SceneShown | OpError:
+                self.shown += 1
+                return SceneShown(scene_id=request.scene_id)
+
+            async def update(
+                self, scene_id: str, request: UpdateRequest | OpError
+            ) -> SceneShown | OpError:
+                msg = "boom"
+                raise RuntimeError(msg)
+
+        @final
+        class _BoomOnUpdateClient:
+            def __init__(self) -> None:
+                self.scene = _BoomOnUpdateSceneAccessor()
+                self.frame = _FakeFrameAccessor()
+
+        push = PanelPush()
+        client = _BoomOnUpdateClient()
+        await push.refresh(_as_client(client), _scene())  # installs cleanly
+        assert client.scene.shown == 1
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await push.refresh(_as_client(client), _scene("changed"))  # update boom
+
+        # Disarmed by the unexpected failure: the next push installs again
+        # rather than patching against a tree that may never have landed.
+        await push.refresh(_as_client(client), _scene("changed"))
+
+        assert client.scene.shown == 2
