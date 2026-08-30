@@ -31,6 +31,7 @@ import contextlib
 import json
 import shutil
 import subprocess
+import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -55,17 +56,19 @@ class AlsaAudio:
     playback immediately.
     """
 
+    _trace: EventTrace
     _playback: subprocess.Popen[bytes] | None
     _queue: asyncio.Queue[bytes]
     _writer: asyncio.Task[None] | None
     _capture: asyncio.subprocess.Process | None
 
-    def __new__(cls) -> Self:
+    def __new__(cls, trace: EventTrace) -> Self:
         for binary in ("arecord", "aplay"):
             if shutil.which(binary) is None:
                 msg = f"{binary} not found -- install alsa-utils"
                 raise RuntimeError(msg)
         self = super().__new__(cls)
+        self._trace = trace
         self._playback = None
         self._queue = asyncio.Queue()
         self._writer = None
@@ -148,8 +151,18 @@ class AlsaAudio:
             playback.stdin.write(chunk)
             playback.stdin.flush()
         except (BrokenPipeError, ValueError):
-            # aplay was flushed/killed mid-write (barge-in); drop the chunk.
-            return
+            if self._playback is not playback:
+                # Barge-in flush respawned aplay mid-write; drop the chunk.
+                return
+            if playback.poll() is None:
+                return  # pipe hiccup but the process lives; drop the chunk
+            # aplay died for real: without a respawn every later chunk
+            # drops forever and the operator hears silence, misjudging
+            # the session. Record it and bring playback back.
+            rc = playback.returncode
+            self._trace.record("note", "aplay_died", {"returncode": rc})
+            print(f"aplay died (rc={rc}); respawning", file=sys.stderr)
+            self._playback = self._spawn_playback()
 
 
 def _summarize(trace_path: Path) -> str:
@@ -178,7 +191,7 @@ async def _run() -> Path:
         url = plane.signed_url(handle.agent_id)
     finally:
         plane.close()
-    audio = AlsaAudio()
+    audio = AlsaAudio(trace)
     session = ConvAISession(
         url=url,
         toolbelt=ToolBelt(_HERE / "notes.txt"),

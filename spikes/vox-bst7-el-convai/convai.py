@@ -351,6 +351,13 @@ class ConvAISession:
             self._closed_reason = f"{exc.rcvd or exc.sent or exc}"
             self._trace.record("note", "ws_closed", {"reason": self._closed_reason})
             return
+        except Exception as exc:  # noqa: BLE001 -- top-level event-loop boundary, PY-EH-6
+            # A malformed frame or a handler bug must not kill the recv
+            # task silently: the loop dying unseen turns into 90s turn
+            # timeouts blamed on EL and voids the trace as evidence.
+            self._closed_reason = f"recv loop crashed: {exc!r}"
+            self._trace.record("note", "recv_loop_crashed", {"error": repr(exc)})
+            return
         self._closed_reason = "closed by server (clean)"
         self._trace.record("note", "ws_closed", {"reason": self._closed_reason})
 
@@ -394,7 +401,17 @@ class ConvAISession:
         )
         task = asyncio.create_task(self._run_tool(invocation, params_map))
         self._tool_tasks.add(task)
-        task.add_done_callback(self._tool_tasks.discard)
+        task.add_done_callback(self._on_tool_task_done)
+
+    def _on_tool_task_done(self, task: asyncio.Task[None]) -> None:
+        self._tool_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            # A crashed dispatch task (e.g. the socket died under _send)
+            # must land in the trace, not vanish unretrieved.
+            self._trace.record("note", "tool_task_crashed", {"error": repr(exc)})
 
     async def _run_tool(
         self, invocation: ToolInvocation, params: Mapping[str, object]
@@ -406,8 +423,11 @@ class ConvAISession:
                 None, self._toolbelt.run, invocation.tool_name, params
             )
             is_error = False
-        except (KeyError, ValueError) as exc:
-            result = str(exc)
+        except Exception as exc:  # noqa: BLE001 -- boundary to arbitrary tool code, PY-EH-6
+            # Any tool failure (unknown name, bad params, file I/O) must
+            # come back as an is_error result; an uncaught exception here
+            # would strand the invocation in _executing with no trace line.
+            result = f"{type(exc).__name__}: {exc}"
             is_error = True
         invocation.exec_ms = (time.monotonic() - t0) * 1000.0
         invocation.is_error = is_error

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self, final
@@ -127,9 +128,11 @@ class ControlPlane:
 
     def signed_url(self, agent_id: str) -> str:
         """Return a signed WebSocket URL for one conversation."""
-        response = self._http.get(
-            "/v1/convai/conversation/get-signed-url",
-            params={"agent_id": agent_id},
+        response = self._sent(
+            lambda: self._http.get(
+                "/v1/convai/conversation/get-signed-url",
+                params={"agent_id": agent_id},
+            )
         )
         self._raise_for_status(response)
         return str(response.json()["signed_url"])
@@ -139,17 +142,21 @@ class ControlPlane:
 
         404 counts as success so a partially-failed teardown can re-run.
         """
-        response = self._http.delete(f"/v1/convai/tools/{tool_id}")
+        response = self._sent(lambda: self._http.delete(f"/v1/convai/tools/{tool_id}"))
         if response.status_code == 409:
-            response = self._http.delete(
-                f"/v1/convai/tools/{tool_id}", params={"force": "true"}
+            response = self._sent(
+                lambda: self._http.delete(
+                    f"/v1/convai/tools/{tool_id}", params={"force": "true"}
+                )
             )
         if response.status_code != 404:
             self._raise_for_status(response)
 
     def delete_agent(self, agent_id: str) -> None:
         """Delete the agent; 404 counts as success (idempotent teardown)."""
-        response = self._http.delete(f"/v1/convai/agents/{agent_id}")
+        response = self._sent(
+            lambda: self._http.delete(f"/v1/convai/agents/{agent_id}")
+        )
         if response.status_code != 404:
             self._raise_for_status(response)
 
@@ -157,10 +164,25 @@ class ControlPlane:
         self._http.close()
 
     def _post(self, path: str, body: dict[str, object]) -> dict[str, object]:
-        response = self._http.post(path, json=body)
+        response = self._sent(lambda: self._http.post(path, json=body))
         self._raise_for_status(response)
         # Wire boundary: the response shape is EL's, narrowed by callers.
         return dict(response.json())
+
+    @staticmethod
+    def _sent(request: Callable[[], httpx.Response]) -> httpx.Response:
+        """Run one HTTP call; surface transport failures as RuntimeError.
+
+        httpx.HTTPError does NOT derive from OSError, so an unwrapped
+        ConnectError/ReadTimeout would sail past callers' (TimeoutError,
+        OSError, RuntimeError) nets and crash a batch mid-run, losing the
+        metrics of already-billed sessions.
+        """
+        try:
+            return request()
+        except httpx.HTTPError as exc:
+            msg = f"elevenlabs request failed: {exc!r}"
+            raise RuntimeError(msg) from exc
 
     @staticmethod
     def _raise_for_status(response: httpx.Response) -> None:
