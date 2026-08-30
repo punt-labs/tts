@@ -3462,6 +3462,30 @@ Rationale:
 - Barge-in behavior mid-tool-call is unspecified in EL Conv AI's public docs; also in `vox-bst7`'s scope. If barge-in during a tool call produces confused conversation state, E+ needs redesign.
 - Vendor coupling: switching LLM host in future means re-doing this ADR and the client-tools implementations, though the tool surface itself (DES-068) is transport-agnostic and would carry over.
 
+### Validation outcome (2026-08-29, `vox-bst7`)
+
+Both kill criteria were adjudicated under production-like conditions; the
+full evidence is `spikes/vox-bst7-el-convai/REPORT.md` and its committed
+traces/metrics.
+
+- **Latency: PASS.** p95 EL-attributable tool round-trip overhead 993ms
+  (< 1.5s), n=27 invocations over real WAN; robust even when every
+  fast-tool sample the measurement bias could pollute is discarded.
+- **Barge-in: PASS with caveat (operator-ruled).** Interrupting the agent
+  mid-tool-call never corrupted conversation state — session, memory, and
+  subsequent tools stay intact — but the interrupted call's result is
+  deterministically dropped from the LLM context (recoverable by re-ask).
+  E+ mitigation: idempotent client tools plus a `voxd`-side result cache
+  so a post-interruption re-invocation is instant.
+- **New requirements surfaced for DES-068:** the live capture leg needs
+  acoustic echo cancellation (open speakers without AEC produce a
+  self-interruption feedback loop); seed size sweet spot is ~10KB — 1KB
+  and 10KB seeds answered crisply, a 50KB seed degraded the agent to
+  pre-tool narration; EL agent deletion propagates lazily (teardown must
+  force-delete, 404-idempotent).
+- Operator confirmed quality by ear: voice, latency, and turn-taking
+  "incredibly better than what we did in earlier spikes."
+
 ---
 
 ## DES-070: Voice-Agent Context — `/vox:talk` Seed + Hook Fanout Rolling Store, Extending DES-067
