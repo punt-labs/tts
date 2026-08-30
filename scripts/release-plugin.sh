@@ -63,4 +63,6 @@ else
 fi
 
 git -C "$REPO_ROOT" add "$PLUGIN_JSON"
-git -C "$REPO_ROOT" commit --no-verify -m "chore: prepare plugin for release"
+# The org bans --no-verify; hooks run against the release-prep commit like
+# any other.
+git -C "$REPO_ROOT" commit -m "chore: prepare plugin for release"
