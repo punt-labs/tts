@@ -213,12 +213,18 @@ class MusicPlayer:
     async def _try_refresh_cache(self, albums: tuple[Album, ...]) -> bool:
         """Refresh :attr:`_cache`; log and report failure rather than raise.
 
-        Both callers -- :meth:`install` and :meth:`_refresh_track_counts` --
-        treat a refresh fault as non-fatal: a stale count is a display nit,
-        never a reason to sink a menu click or take down the write path that
-        fired a background refresh. The log line names how many albums this
-        refresh covered, so a persistently failing catalog is diagnosable from
-        the log rather than an unqualified line repeating forever.
+        :meth:`_refresh_track_counts` is the sole caller -- :meth:`install`
+        no longer reaches this method at all. It gets its own non-blocking
+        behavior a different way: it never awaits a refresh inline, full
+        stop, handing the live read to :meth:`_schedule_track_count_refresh`
+        the same background path :meth:`notify_changed` uses, so there is no
+        refresh here for a fault to sink. This method's own contract is
+        narrower: the ONE caller it does have must never see a refresh fault
+        propagate and take down the background task that fired it -- a stale
+        count is a display nit, not a reason to crash the write path. The log
+        line names how many albums this refresh covered, so a persistently
+        failing catalog is diagnosable from the log rather than an
+        unqualified line repeating forever.
 
         Narrowed to ``(OSError, ValueError)`` on purpose, not a bare
         ``Exception``: both name a store-side data condition rather than a

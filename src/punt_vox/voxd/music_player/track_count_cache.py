@@ -11,28 +11,38 @@ blocking disk read must never run: the writer serializes every playback
 mutation behind it, and the listener holds the session's lease keepalive.
 
 This cache is the fix: :meth:`_refresh` is the one place that still does the
-disk read. Every caller reaches it through :meth:`serialized_refresh`, which
-dispatches it off the hot path via ``asyncio.to_thread`` AND serializes
-overlapping callers behind a lock -- :meth:`~punt_vox.voxd.music_player.player.
-MusicPlayer.install` (the lux listener's event loop) and
-:meth:`~punt_vox.voxd.music_player.player.MusicPlayer._refresh_track_counts`
-(the control-channel writer's event loop) can both reach this cache at once,
-and without the lock each would independently read its own ``fresh`` dict and
-unconditionally overwrite :attr:`_counts` -- whichever finishes LAST wins,
-not whichever started most recently. Every render reads :meth:`get` instead --
-an in-memory dict lookup, never disk.
+disk read. The real, async path always reaches it through
+:meth:`serialized_refresh`, which dispatches it off the hot path via
+``asyncio.to_thread`` AND serializes overlapping callers behind a lock. The
+one production caller today,
+:meth:`~punt_vox.voxd.music_player.player.MusicPlayer._refresh_track_counts`,
+is itself single-flighted -- but that guarantee belongs to the caller, not to
+this cache, and this class has to stay correct on its own terms regardless.
+Concretely: a timed-out :meth:`serialized_refresh` call's orphaned dispatch
+(see below) keeps running -- and keeps holding the lock -- well after its
+caller gave up, so the NEXT call from that very same single-flighted caller
+must still wait its turn behind it rather than race it; without the lock,
+each would independently read its own ``fresh`` dict and unconditionally
+overwrite :attr:`_counts` -- whichever finishes LAST wins, not whichever
+started most recently. :meth:`for_testing` is the cache's other entry point --
+synchronous, and reaching :meth:`_refresh` directly rather than through the
+lock -- so a cache primed there and later driven through a real
+:meth:`serialized_refresh` call is a second source of concurrent access to
+the same generation-stamped write path (see below for why that still commits
+safely). Every render reads :meth:`get` instead -- an in-memory dict lookup,
+never disk.
 
 :meth:`serialized_refresh` is bounded by :data:`_REFRESH_TIMEOUT_SECONDS`: a
 genuinely stuck disk read (a hung mount, a sleeping disk) must never block its
-caller forever. :meth:`install` runs inline in the lux listener's event loop,
-so an unbounded wait there would freeze the whole connection's event
-delivery -- every future menu click and hub handshake -- with no error or log
-to explain why, and would also leave :class:`~punt_vox.voxd.music_player.
-single_flight.SingleFlightRefresh` permanently wedged, since its guard only
-clears when the scheduled work returns. Timing out closes both: the ``asyncio.
-Lock`` below is released the moment ``asyncio.wait_for`` gives up (the
-cancellation propagates through the ``async with`` block), so the next caller
-is never blocked by one that timed out.
+caller forever. Nothing here awaits the refresh inline on a connection's event
+loop today, but an unbounded wait would still leave :class:`~punt_vox.voxd.
+music_player.single_flight.SingleFlightRefresh` permanently wedged, since its
+guard only clears when the scheduled work returns -- every future
+``notify_changed`` or menu click would schedule a refresh that silently never
+runs, with no error or log to explain why. Timing out closes that: the
+``asyncio.Lock`` below is released the moment ``asyncio.wait_for`` gives up
+(the cancellation propagates through the ``async with`` block), so the next
+caller is never blocked by one that timed out.
 
 A timeout does not stop the underlying OS thread -- ``asyncio.to_thread``
 dispatches to a thread pool, and cancelling the awaiting coroutine does not
@@ -163,18 +173,22 @@ class TrackCountCache:
     async def serialized_refresh(self, albums: tuple[Album, ...]) -> None:
         """Refresh off the event loop via :meth:`_refresh`, one caller at a time.
 
-        This is the entry point every caller must use -- :meth:`install` (the
-        lux listener's event loop) and the single-flighted background repaint
-        (the control-channel writer's event loop) can both reach this cache at
-        once, a menu click landing while a Part-completion refresh is
-        mid-flight. Without serialization, both would independently build a
-        ``fresh`` dict from their own snapshot and unconditionally overwrite
-        :attr:`_counts` -- whichever thread happens to finish LAST wins, not
-        whichever started most recently. The lock is acquired here, on the
-        event loop, before the thread dispatch -- never inside :meth:`_refresh`
-        itself, which runs in a worker thread once dispatched and cannot await
-        an ``asyncio.Lock`` there -- so a caller that arrives mid-refresh
-        simply waits its turn instead of racing the one already running.
+        This is the entry point the real, async path always uses. The one
+        production caller today, the single-flighted background repaint, only
+        ever has one logical refresh in flight at a time -- but that guarantee
+        is the caller's, not this method's: a timed-out call's orphaned
+        dispatch (see module docstring) keeps running and keeps holding the
+        lock well after its own caller gave up, so the very next call from
+        that same single-flighted caller still has to wait its turn behind it
+        rather than race it. Without serialization, both would independently
+        build a ``fresh`` dict from their own snapshot and unconditionally
+        overwrite :attr:`_counts` -- whichever thread happens to finish LAST
+        wins, not whichever started most recently. The lock is acquired here,
+        on the event loop, before the thread dispatch -- never inside
+        :meth:`_refresh` itself, which runs in a worker thread once dispatched
+        and cannot await an ``asyncio.Lock`` there -- so a caller that arrives
+        while the orphan is still running simply waits its turn instead of
+        racing it.
 
         Bounded by :data:`_REFRESH_TIMEOUT_SECONDS`: a stuck disk read gives up
         the wait rather than blocking this caller (and everyone serialized
