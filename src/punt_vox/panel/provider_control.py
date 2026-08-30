@@ -51,7 +51,7 @@ class ProviderControl:
 
     def provider_for_index(self, index: int) -> str:
         """Return the provider name a clicked ``index`` selects, or raise if invalid."""
-        return self._choices().name_for_index(index, noun="providers")
+        return self._choices().name_for_index(index, noun="provider")
 
     def _choices(self) -> ChoiceList:
         return ChoiceList(

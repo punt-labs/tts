@@ -106,8 +106,24 @@ class TestNothingToChooseFrom:
 
 class TestRefusalMessage:
     def test_the_refusal_speaks_the_caller_s_noun(self) -> None:
-        with pytest.raises(ValueError, match="voices combo"):
-            _choices("beta").name_for_index(9, noun="voices")
+        with pytest.raises(ValueError, match="voice combo"):
+            _choices("beta").name_for_index(9, noun="voice")
+
+    def test_the_count_agrees_with_its_noun(self) -> None:
+        """A list of one reads "1 voice", not "1 voices"."""
+        one = ChoiceList(items=("only",), current=None, empty_label="(nothing)")
+        with pytest.raises(ValueError, match=r"\b1 voice\b"):
+            one.name_for_index(7, noun="voice")
+
+    @pytest.mark.parametrize("count", [0, 2, 3])
+    def test_every_other_count_takes_the_plural(self, count: int) -> None:
+        many = ChoiceList(
+            items=tuple(f"item{n}" for n in range(count)),
+            current=None,
+            empty_label="(nothing)",
+        )
+        with pytest.raises(ValueError, match=rf"\b{count} voices\b"):
+            many.name_for_index(99, noun="voice")
 
 
 class TestRenderAndResolveAgree:

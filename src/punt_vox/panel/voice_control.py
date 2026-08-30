@@ -48,7 +48,7 @@ class VoiceControl:
 
     def voice_for_index(self, index: int) -> str:
         """Return the roster name a clicked ``index`` selects, or raise if invalid."""
-        return self._choices().name_for_index(index, noun="voices")
+        return self._choices().name_for_index(index, noun="voice")
 
     def _choices(self) -> ChoiceList:
         return ChoiceList(

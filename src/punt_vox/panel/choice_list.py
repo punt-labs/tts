@@ -99,13 +99,15 @@ class ChoiceList:
         way to unset a provider, model or voice, so a click there is
         refused rather than quietly treated as the first real entry.
 
-        *noun* is the plural the caller's message uses (``"voices"``), so a
-        refusal reads in the caller's own vocabulary rather than this
-        type's.
+        *noun* is the caller's own singular word for one entry
+        (``"voice"``), so a refusal reads in the caller's vocabulary rather
+        than this type's, and agrees with its own count -- a list of one
+        reads "1 voice", not "1 voices".
         """
         position = index - 1 if not self.is_empty else index
         if not 0 <= position < len(self.items):
             count = len(self.items)
-            msg = f"{noun} combo: index {index} out of range for {count} {noun}"
+            plural = noun if count == 1 else f"{noun}s"
+            msg = f"{noun} combo: index {index} out of range for {count} {plural}"
             raise ValueError(msg)
         return self.items[position]

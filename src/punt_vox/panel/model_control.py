@@ -55,7 +55,7 @@ class ModelControl:
 
     def model_for_index(self, index: int) -> str:
         """Return the model name a clicked ``index`` selects, or raise if invalid."""
-        return self._choices().name_for_index(index, noun="models")
+        return self._choices().name_for_index(index, noun="model")
 
     def _choices(self) -> ChoiceList:
         return ChoiceList(
