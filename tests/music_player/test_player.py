@@ -393,19 +393,19 @@ class TestTrackCountsNeverBlockTheHotPath:
         # scheduled by notify_changed, not by the failure that followed it.
         assert _by_id(elements, "music.albums")["rows"] == [["Techno Mix", "techno", 9]]
 
-    async def test_a_burst_of_changes_schedules_only_one_refresh(
+    async def test_a_burst_of_changes_collapses_to_one_run_plus_one_follow_up(
         self, album_of: AlbumFactory, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # One per completed Part could mean many notify_changed calls in a
-        # row; every one after the first must be dropped outright while a
-        # refresh is already in flight, rather than queueing an unbounded
-        # pile of disk reads. ``_refresher.running`` flips True then False
-        # whether one refresh ran or three -- SingleFlightRefresh's own
-        # drop-when-busy guard is what has to hold, so only a spy on the
-        # scheduled work itself (see
-        # test_notify_changed_schedules_a_background_cache_refresh above for
-        # why this patches TrackCountCache.serialized_refresh) can tell one
-        # dispatch from three.
+        # row; every one after the first coalesces into a single pending
+        # follow-up while a refresh is already in flight, rather than
+        # queueing an unbounded pile of disk reads. Three calls in a row
+        # (the first starts a run, the second and third coalesce into one
+        # pending flag) settle to exactly TWO scheduled refreshes -- the
+        # run in flight, then its one follow-up -- never three, and never
+        # just one (see test_single_flight.py for SingleFlightRefresh's own
+        # coalescing guarantee; only a spy on the scheduled work itself, as
+        # here, can tell two dispatches from three).
         calls: list[tuple[Album, ...]] = []
         real_refresh = TrackCountCache.serialized_refresh
 
@@ -425,7 +425,7 @@ class TestTrackCountsNeverBlockTheHotPath:
         player.notify_changed()
         await _settle()
 
-        assert len(calls) == 1
+        assert len(calls) == 2
 
     async def test_an_album_added_during_an_in_flight_refresh_is_not_stuck_at_zero(
         self, album_of: AlbumFactory
@@ -455,6 +455,54 @@ class TestTrackCountsNeverBlockTheHotPath:
         assert _by_id(publisher.submitted[-1].elements, "music.albums")["rows"] == [
             ["Kept", "techno", 3],
             ["Added", "techno", 5],  # not stuck at 0
+        ]
+
+    async def test_an_album_added_mid_refresh_is_not_left_stale_by_a_coalesced_call(
+        self, album_of: AlbumFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Round 10 finding 4: the drop window that matters isn't just the gap
+        # between notify_changed calls -- it spans the ENTIRE in-flight run,
+        # including while _try_refresh_cache is awaiting the (here, slowed)
+        # disk read. Sequence: notify_changed schedules a refresh over catalog
+        # {kept} and its disk read starts (blocked on slow_event); ``added``
+        # joins the catalog while that read is still in flight; a second
+        # notify_changed arrives and is coalesced (SingleFlightRefresh marks
+        # it pending, since a run is still executing) rather than starting a
+        # second task. Before the pending-rerun fix, the in-flight run's
+        # resubmit would land using the STALE {kept}-only snapshot it read
+        # before the drop, and nothing would ever reschedule another refresh --
+        # ``added`` would be missing from the roster indefinitely. The fix
+        # makes SingleFlightRefresh loop once more after the stale resubmit,
+        # picking up the live catalog and landing ``added`` too.
+        kept = album_of("aa11bb", name="Kept", tracks=0, on_disk=3)
+        added = album_of("cc22dd", name="Added", tracks=0, on_disk=5)
+        service = _FakeService(ProgramStatus.idle(), (kept,))
+        publisher = _CapturingPublisher()
+        player = MusicPlayer(service, publisher)
+
+        slow_event = asyncio.Event()
+        real_refresh = TrackCountCache.serialized_refresh
+
+        async def _slow_refresh(
+            self: TrackCountCache, albums: tuple[Album, ...]
+        ) -> None:
+            await slow_event.wait()
+            await real_refresh(self, albums)
+
+        monkeypatch.setattr(TrackCountCache, "serialized_refresh", _slow_refresh)
+
+        player.notify_changed()  # schedules a refresh; its disk read blocks
+        await asyncio.sleep(0)  # let the run start and reach the blocked read
+
+        service.set_albums((kept, added))  # added joins mid-refresh
+        player.notify_changed()  # coalesced: a run is already in flight
+
+        slow_event.set()  # let the blocked (stale-catalog) read complete
+        await _settle()  # the stale resubmit lands, then the follow-up runs
+
+        assert _by_id(publisher.submitted[-1].elements, "music.albums")["rows"] == [
+            ["Kept", "techno", 3],
+            ["Added", "techno", 5],  # not left stale by the mid-flight drop
         ]
 
     async def test_install_schedules_a_background_cache_refresh(

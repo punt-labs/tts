@@ -59,7 +59,7 @@ async def test_running_is_false_again_once_the_run_completes() -> None:
     assert not refresher.running
 
 
-async def test_a_call_while_running_is_a_no_op() -> None:
+async def test_a_call_while_running_coalesces_into_one_follow_up_run() -> None:
     started = asyncio.Event()
     release = asyncio.Event()
     calls = 0
@@ -68,21 +68,27 @@ async def test_a_call_while_running_is_a_no_op() -> None:
         nonlocal calls
         calls += 1
         started.set()
-        await release.wait()
+        # Only the first call blocks on release -- the follow-up run must be
+        # free to complete on its own once release fires.
+        if calls == 1:
+            await release.wait()
 
     refresher = SingleFlightRefresh()
     refresher.schedule(_work)
     await asyncio.wait_for(started.wait(), timeout=1.0)
-    refresher.schedule(_work)  # dropped -- the first run is still in flight
-    refresher.schedule(_work)
+    refresher.schedule(_work)  # coalesced -- marks a pending follow-up
+    refresher.schedule(_work)  # coalesced again -- still just one pending flag
 
     release.set()
     await asyncio.sleep(0.01)
 
-    assert calls == 1
+    # A burst of two coalesced calls still yields exactly one follow-up, not
+    # one extra run per call: the flag has no count to accumulate.
+    assert calls == 2
+    assert refresher.running is False
 
 
-async def test_a_dropped_call_while_running_logs_at_debug(
+async def test_a_call_while_running_logs_at_debug(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     started = asyncio.Event()
@@ -97,13 +103,13 @@ async def test_a_dropped_call_while_running_logs_at_debug(
     await asyncio.wait_for(started.wait(), timeout=1.0)
 
     with caplog.at_level(logging.DEBUG):
-        refresher.schedule(_work)  # dropped -- the first run is still in flight
+        refresher.schedule(_work)  # coalesced -- the first run is still in flight
 
     release.set()
     await asyncio.sleep(0.01)
 
     assert any(
-        "dropped" in r.getMessage() and "in flight" in r.getMessage()
+        "coalesced" in r.getMessage() and "in flight" in r.getMessage()
         for r in caplog.records
     )
 

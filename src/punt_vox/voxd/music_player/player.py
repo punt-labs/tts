@@ -175,10 +175,16 @@ class MusicPlayer:
         """Best-effort: warm the cache off the hot path, then resubmit if it changes.
 
         Single-flighted via :attr:`_refresher`: a burst of state changes (one
-        per completed Part) arriving while a refresh is in flight is dropped
-        outright, not merged -- safe only because :meth:`_refresh_track_counts`
-        re-reads the live catalog fresh at execution time, so the run already
-        in flight still picks up a newly joined album a dropped call carried.
+        per completed Part) arriving while a refresh is in flight does not
+        queue a second background task -- it marks a pending follow-up, and
+        the run already in flight loops once more, immediately after it
+        finishes, before releasing the guard. That follow-up is what makes a
+        dropped call's effect not lost even when the drop lands mid-refresh,
+        after :meth:`_refresh_track_counts` has already read its (now stale)
+        catalog snapshot: the extra pass re-reads the live catalog fresh, so
+        an album that joined partway through the run in flight is picked up
+        by the follow-up rather than left stuck out of the cache until some
+        unrelated later change happens to schedule another refresh.
         """
         self._refresher.schedule(self._refresh_track_counts)
 
