@@ -32,6 +32,59 @@ _REDACTED = "[redacted]"
 
 
 @final
+class Sanitizer:
+    """Rewrites host-specific path prefixes to stable placeholders.
+
+    Ledgers and captures are committed run artifacts; absolute paths in
+    them leak the username and machine layout. Rules apply in order, so
+    the more specific prefix (the scratch root, which lives under the
+    home dir) must precede the general one.
+    """
+
+    __slots__ = ("_rules",)
+
+    _rules: tuple[tuple[str, str], ...]
+
+    def __new__(cls, rules: tuple[tuple[str, str], ...]) -> Self:
+        self = super().__new__(cls)
+        self._rules = rules
+        return self
+
+    @classmethod
+    def for_host(cls, scratch_root: Path | None = None) -> Self:
+        """Standard host rules: scratch root -> <scratch>, home -> ~.
+
+        ``scratch_root`` is optional because callers outside a harness
+        run (unit tests, ad-hoc store starts) have no scratch namespace.
+        Each prefix is also matched in Claude Code's dash-encoded form
+        (the ``projects/`` directory slug, ``/`` and ``.`` -> ``-``),
+        which otherwise re-leaks the username through transcript paths.
+        """
+        rules: list[tuple[str, str]] = []
+        if scratch_root is not None:
+            rules.append((str(scratch_root), "<scratch>"))
+            rules.append((cls._dash_encoded(str(scratch_root)), "<scratch-slug>"))
+        rules.append((str(Path.home()), "~"))
+        rules.append((cls._dash_encoded(str(Path.home())), "<home-slug>"))
+        return cls(tuple(rules))
+
+    @staticmethod
+    def _dash_encoded(prefix: str) -> str:
+        return prefix.replace("/", "-").replace(".", "-")
+
+    @classmethod
+    def null(cls) -> Self:
+        """A sanitizer with no rules -- text passes through untouched."""
+        return cls(())
+
+    def scrub(self, text: str) -> str:
+        """Apply every rule to ``text``, in order."""
+        for prefix, placeholder in self._rules:
+            text = text.replace(prefix, placeholder)
+        return text
+
+
+@final
 @dataclass(frozen=True, slots=True)
 class HookRecord:
     """One relayed hook payload, stamped with global and per-session order."""
@@ -91,15 +144,19 @@ class HookRecord:
 class SequenceStamper:
     """Assigns the monotonic stamps DES-070's rolling context store needs."""
 
-    __slots__ = ("_next_recv", "_per_session")
+    __slots__ = ("_next_recv", "_per_session", "_sanitizer")
 
     _next_recv: int
     _per_session: dict[str, int]
+    _sanitizer: Sanitizer
 
-    def __new__(cls) -> Self:
+    def __new__(cls, sanitizer: Sanitizer | None = None) -> Self:
+        # sanitizer is optional: unit tests exercising pure stamping pass
+        # none and get pass-through text.
         self = super().__new__(cls)
         self._next_recv = 1
         self._per_session = {}
+        self._sanitizer = sanitizer if sanitizer is not None else Sanitizer.null()
         return self
 
     def stamp(self, event: str, payload: WirePayload) -> HookRecord:
@@ -143,6 +200,8 @@ class SequenceStamper:
             }
         if isinstance(value, list):
             return [self._scrubbed(item) for item in value]
+        if isinstance(value, str):
+            return self._sanitizer.scrub(value)
         return value
 
     def _is_credential_key(self, key: str) -> bool:
@@ -181,8 +240,27 @@ class HookLedger:
             os.fsync(handle.fileno())
 
     def records(self) -> tuple[HookRecord, ...]:
-        """Read every record back, in file order."""
+        """Read every record back, in file order. Strict: a torn final
+        line raises -- at judgment time (store dead, file closed) a
+        fragment is real corruption, never a write in progress."""
         if not self._path.exists():
             return ()
-        lines = self._path.read_text(encoding="utf-8").splitlines()
-        return tuple(HookRecord.from_json(line) for line in lines if line)
+        raw = self._path.read_text(encoding="utf-8")
+        return tuple(HookRecord.from_json(line) for line in raw.splitlines() if line)
+
+    def records_snapshot(self) -> tuple[HookRecord, ...]:
+        """Read complete records, tolerating ONE in-flight final line.
+
+        A concurrent reader (the harness poll loop) can catch the store
+        mid-append: the file then ends in a fragment with no trailing
+        newline. Every completed append ends in a newline, so exactly
+        that unterminated tail is skipped; a malformed line anywhere in
+        the terminated portion still raises like :meth:`records`.
+        """
+        if not self._path.exists():
+            return ()
+        raw = self._path.read_text(encoding="utf-8")
+        terminated, _, _in_flight = raw.rpartition("\n")
+        return tuple(
+            HookRecord.from_json(line) for line in terminated.splitlines() if line
+        )

@@ -7,14 +7,11 @@ without spawning any real claude session.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
-from stamp import UNATTRIBUTED, HookLedger, HookRecord, SequenceStamper
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from stamp import UNATTRIBUTED, HookLedger, HookRecord, Sanitizer, SequenceStamper
 
 
 class TestSequenceStamper:
@@ -122,6 +119,56 @@ class TestSequenceStamper:
         assert extras["note"] is None
 
 
+class TestSanitizer:
+    """Host paths in persisted payloads become stable placeholders."""
+
+    def test_scratch_rule_applies_before_home_rule(self, tmp_path: Path) -> None:
+        # The scratch root lives under home; ordering makes it win.
+        sanitizer = Sanitizer.for_host(tmp_path / "scratch")
+        scrubbed = sanitizer.scrub(f"{tmp_path}/scratch/proj/greeting.py")
+        assert scrubbed == "<scratch>/proj/greeting.py"
+
+    def test_home_prefix_becomes_tilde(self) -> None:
+        sanitizer = Sanitizer.for_host()
+        assert sanitizer.scrub(f"{Path.home()}/notes.txt") == "~/notes.txt"
+
+    def test_non_path_text_is_untouched(self) -> None:
+        sanitizer = Sanitizer.for_host()
+        assert sanitizer.scrub("plain words, no paths") == "plain words, no paths"
+
+    def test_dash_encoded_prefixes_are_scrubbed_too(self, tmp_path: Path) -> None:
+        # Claude Code's projects/ dir encodes the project path with "/"
+        # and "." turned into "-"; transcript paths carry that slug and
+        # would re-leak the username past the plain prefix rules.
+        scratch = tmp_path / "scratch"
+        sanitizer = Sanitizer.for_host(scratch)
+        encoded = str(scratch).replace("/", "-").replace(".", "-")
+        scrubbed = sanitizer.scrub(f"projects/{encoded}-project/x.jsonl")
+        assert scrubbed == "projects/<scratch-slug>-project/x.jsonl"
+        home_encoded = str(Path.home()).replace("/", "-").replace(".", "-")
+        assert sanitizer.scrub(home_encoded) == "<home-slug>"
+
+    def test_stamper_sanitizes_string_values_at_any_depth(self, tmp_path: Path) -> None:
+        scratch = tmp_path / "scratch"
+        stamper = SequenceStamper(Sanitizer.for_host(scratch))
+        record = stamper.stamp(
+            "PostToolUse",
+            {
+                "session_id": "s",
+                "cwd": f"{scratch}/proj",
+                "tool_input": {"file_path": f"{scratch}/proj/greeting.py"},
+                "count": 3,
+                "flag": None,
+            },
+        )
+        assert record.payload["cwd"] == "<scratch>/proj"
+        tool_input = record.payload["tool_input"]
+        assert isinstance(tool_input, dict)
+        assert tool_input["file_path"] == "<scratch>/proj/greeting.py"
+        assert record.payload["count"] == 3
+        assert record.payload["flag"] is None
+
+
 class TestHookRecordRoundTrip:
     """JSONL serialization survives a parse round trip; bad lines raise."""
 
@@ -149,6 +196,44 @@ class TestHookRecordRoundTrip:
 
 class TestHookLedger:
     """Append-only persistence that survives the store being killed."""
+
+    def test_snapshot_skips_only_an_unterminated_final_line(
+        self, tmp_path: Path
+    ) -> None:
+        # A concurrent poll can catch the store mid-append: the file ends
+        # in a fragment without a trailing newline. The snapshot read
+        # returns the complete records; the strict read fails loud.
+        ledger = HookLedger(tmp_path / "ledger.jsonl")
+        stamper = SequenceStamper()
+        for event in ("SessionStart", "UserPromptSubmit"):
+            ledger.append(stamper.stamp(event, {"session_id": "s"}))
+        with ledger.path.open("a", encoding="utf-8") as handle:
+            handle.write('{"recv_seq": 3, "session_')  # torn, no newline
+        snapshot = ledger.records_snapshot()
+        assert [r.event for r in snapshot] == ["SessionStart", "UserPromptSubmit"]
+        with pytest.raises(ValueError):
+            ledger.records()
+
+    def test_snapshot_with_terminated_final_line_returns_everything(
+        self, tmp_path: Path
+    ) -> None:
+        ledger = HookLedger(tmp_path / "ledger.jsonl")
+        stamper = SequenceStamper()
+        for event in ("SessionStart", "Stop"):
+            ledger.append(stamper.stamp(event, {"session_id": "s"}))
+        assert ledger.records_snapshot() == ledger.records()
+
+    def test_snapshot_still_fails_loud_on_a_torn_middle_line(
+        self, tmp_path: Path
+    ) -> None:
+        # Only the unterminated tail is a write in progress; a malformed
+        # line WITH a newline is corruption in both read modes.
+        path = tmp_path / "ledger.jsonl"
+        good = SequenceStamper().stamp("SessionStart", {"session_id": "s"})
+        path.write_text('{"torn": \n' + good.to_json() + "\n", encoding="utf-8")
+        ledger = HookLedger(path)
+        with pytest.raises(ValueError):
+            ledger.records_snapshot()
 
     def test_appended_records_read_back_in_order(self, tmp_path: Path) -> None:
         ledger = HookLedger(tmp_path / "ledger.jsonl")

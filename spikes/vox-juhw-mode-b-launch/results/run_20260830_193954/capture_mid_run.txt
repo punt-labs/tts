@@ -3,7 +3,7 @@
 ▝▜██████▀  Opus 5 (1M context) · Claude Team
   ▝▝ ▝▝    ~/Coding/punt-labs/vox/.claude/worktrees/vox-juhw-mode-b-launch/spikes/vox-juhw-mode-b-launch/.tmp/voxjuhw-193955/project
 
-⚠ Your login expires in 2 days · run /login to renew
+<login-status banner removed>
 
 ❯ You were launched from a voice conversation (Mode B). The user said: I want to start a tiny Python utility while I walk. A greeting module: a greet function that takes a name and returns a hello string, plus a short readme describing it. Yes, launch it.
   Task: in the current directory create greeting.py defining greet(name: str) -> str returning f"Hello, {name}!", and a README.md (three sentences max) describing the module. When both files exist, reply with the single word DONE and stop. Do not run shell commands, do not use the network, and do not

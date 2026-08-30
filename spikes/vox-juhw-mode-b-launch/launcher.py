@@ -168,9 +168,11 @@ class SessionLauncher:
         if not name.startswith(SESSION_PREFIX):
             msg = f"session name must carry the {SESSION_PREFIX!r} prefix: {name}"
             raise ValueError(msg)
-        self._forked += 1
         session = TmuxSession(name)
         session.spawn(
             LaunchCommand(self._claude_bin, prompt), project.path, config.env()
         )
+        # Budget is consumed only by a session that actually exists: a
+        # spawn failure (tmux absent, bad cwd) must leave room for a retry.
+        self._forked += 1
         return session

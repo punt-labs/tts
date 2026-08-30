@@ -25,7 +25,7 @@ from typing import Self, final
 
 from websockets.asyncio.server import serve
 
-from stamp import HookLedger, SequenceStamper
+from stamp import HookLedger, Sanitizer, SequenceStamper
 
 _HOOK_PREFIX = "hook/"
 _PARSE_ERROR = -32700
@@ -99,10 +99,11 @@ class HookStore:
     _ledger: HookLedger
     _stamper: SequenceStamper
 
-    def __new__(cls, ledger: HookLedger) -> Self:
+    def __new__(cls, ledger: HookLedger, sanitizer: Sanitizer | None = None) -> Self:
+        # sanitizer optional: tests of the wire contract need no host rules.
         self = super().__new__(cls)
         self._ledger = ledger
-        self._stamper = SequenceStamper()
+        self._stamper = SequenceStamper(sanitizer)
         return self
 
     def process(self, raw: str) -> str | None:
@@ -162,8 +163,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--ledger", type=Path, required=True)
+    parser.add_argument(
+        "--scratch-root",
+        type=Path,
+        default=None,
+        help="harness scratch namespace; paths under it persist as <scratch>",
+    )
     args = parser.parse_args()
-    store = HookStore(HookLedger(args.ledger))
+    store = HookStore(HookLedger(args.ledger), Sanitizer.for_host(args.scratch_root))
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(_serve(args.port, store))
 

@@ -5,8 +5,17 @@ without custom Claude Code changes: PASS.**
 
 Adjudicated run: `results/run_20260830_193954/` (`verdict.json` —
 overall PASS, zero interactive nudges required). One claude session
-forked, bounded, and torn down; 68 offline tests cover the
+forked, bounded, and torn down; 77 offline tests cover the
 verdict-bearing logic without spawning any session.
+
+Committed artifacts are path-sanitized: the home directory and the
+harness scratch root are rewritten to the stable placeholders `~` and
+`<scratch>` (plus their dash-encoded `projects/`-slug forms), and the
+login-status banner line is dropped from pane captures. Event ids,
+sequences, event names, and ordering are untouched — the semantics the
+verdict rests on are exactly as recorded. The harness now applies the
+same substitutions at persist/capture time, so future runs are
+portable as written.
 
 ## What was validated, mechanism by mechanism
 

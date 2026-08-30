@@ -7,6 +7,7 @@ and no claude session is spawned.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Self
 
 import pytest
 
@@ -94,12 +95,54 @@ class TestSessionLauncherCap:
             TmuxSession.spawn = original  # type: ignore[method-assign]
         assert len(spawned) == MAX_FORKS_PER_RUN
 
+    def test_failed_spawn_does_not_consume_budget(self, tmp_path: Path) -> None:
+        # A tmux failure must leave room for a retry: only a session that
+        # actually exists counts against the per-run cap.
+        launcher = SessionLauncher(_CLAUDE)
+        project = _FakeProject(tmp_path)
+        config = _FakeConfig()
+        calls = {"n": 0}
+
+        def _flaky_spawn(
+            self: TmuxSession, command: object, cwd: object, env: object
+        ) -> None:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                msg = "tmux exploded"
+                raise RuntimeError(msg)
+
+        original = TmuxSession.spawn
+        TmuxSession.spawn = _flaky_spawn  # type: ignore[method-assign, assignment]
+        try:
+            with pytest.raises(RuntimeError, match="tmux exploded"):
+                launcher.launch(
+                    f"{SESSION_PREFIX}-fail",
+                    project,  # type: ignore[arg-type]
+                    config,  # type: ignore[arg-type]
+                    "prompt",
+                )
+            # Full budget still available after the failure.
+            for index in range(MAX_FORKS_PER_RUN):
+                launcher.launch(
+                    f"{SESSION_PREFIX}-retry-{index}",
+                    project,  # type: ignore[arg-type]
+                    config,  # type: ignore[arg-type]
+                    "prompt",
+                )
+        finally:
+            TmuxSession.spawn = original  # type: ignore[method-assign]
+        assert calls["n"] == 1 + MAX_FORKS_PER_RUN
+
 
 class _FakeProject:
     """Path-bearing stand-in for ScratchProject."""
 
-    def __init__(self, path: Path) -> None:
+    _path: Path
+
+    def __new__(cls, path: Path) -> Self:
+        self = super().__new__(cls)
         self._path = path
+        return self
 
     @property
     def path(self) -> Path:
@@ -108,6 +151,9 @@ class _FakeProject:
 
 class _FakeConfig:
     """Env-bearing stand-in for IsolatedConfig."""
+
+    def __new__(cls) -> Self:
+        return super().__new__(cls)
 
     def env(self) -> dict[str, str]:
         return {"CLAUDE_CONFIG_DIR": "/cfg"}

@@ -42,7 +42,7 @@ from websockets.asyncio.client import connect
 from launcher import SESSION_PREFIX, SessionLauncher, TmuxSession
 from profiles import VOICE_LAUNCH_V1, HookWiring, SettingsDocument
 from scratch import IsolatedConfig, ScratchProject
-from stamp import HookLedger
+from stamp import HookLedger, Sanitizer
 from teardown import Teardown
 from transcript import TaskSeed
 
@@ -88,6 +88,13 @@ _SURVIVAL_PROMPT = (
     "word, no space, and nothing else."
 )
 _SURVIVAL_MARKER = "ALIVE"
+
+# Captures and ledgers are committed run artifacts: host-specific path
+# prefixes are rewritten to stable placeholders at persist time, and the
+# login-expiry banner (host credential state) is dropped from captures.
+_HOST_SANITIZER = Sanitizer.for_host(_SCRATCH_ROOT)
+_LOGIN_BANNER_MARKER = "Your login expires"
+_LOGIN_BANNER_PLACEHOLDER = "<login-status banner removed>"
 
 
 def _free_port() -> int:
@@ -137,6 +144,8 @@ class StoreProcess:
                 str(self._port),
                 "--ledger",
                 str(self._ledger_path),
+                "--scratch-root",
+                str(_SCRATCH_ROOT),
             ],
             cwd=_SPIKE_DIR,
             start_new_session=True,
@@ -291,7 +300,9 @@ class ValidationRun:
 
         print("[6] capturing pane mid-run (non-interactive tmux attach)")
         mid = session.capture()
-        (self._results_dir / "capture_mid_run.txt").write_text(mid, "utf-8")
+        (self._results_dir / "capture_mid_run.txt").write_text(
+            self._sanitized_capture(mid), "utf-8"
+        )
         self._verdicts["attach_shows_usable_session"] = self._judge_pane(mid)
 
         print("[7] SIGKILL the store; fork must survive")
@@ -305,7 +316,9 @@ class ValidationRun:
         seen: set[str] = set()
         while time.monotonic() < deadline:
             self._nudge_dialogs(session)
-            seen = {record.event for record in ledger.records()}
+            # Snapshot read: the store may be mid-append right now, and a
+            # torn in-flight final line must not crash the poll loop.
+            seen = {record.event for record in ledger.records_snapshot()}
             if seen >= _REQUIRED_EVENTS:
                 break
             time.sleep(_POLL_INTERVAL_S)
@@ -339,6 +352,14 @@ class ValidationRun:
         self._notes.append(note)
         print(f"    {note}")
         return False
+
+    def _sanitized_capture(self, pane: str) -> str:
+        """Portable form of a pane capture for the committed evidence."""
+        scrubbed = _HOST_SANITIZER.scrub(pane)
+        return "\n".join(
+            _LOGIN_BANNER_PLACEHOLDER if _LOGIN_BANNER_MARKER in line else line
+            for line in scrubbed.splitlines()
+        )
 
     def _nudge_dialogs(self, session: TmuxSession) -> None:
         if not session.alive():
@@ -376,7 +397,8 @@ class ValidationRun:
 
     def _survival_test(self, store: StoreProcess, session: TmuxSession) -> bool:
         log: list[str] = []
-        records_before = len(HookLedger(store.ledger_path).records())
+        # Snapshot: the store is still alive here and may be mid-append.
+        records_before = len(HookLedger(store.ledger_path).records_snapshot())
         store.sigkill()
         log.append("store process group SIGKILLed")
         store_dead = store.confirmed_dead()
@@ -385,7 +407,9 @@ class ValidationRun:
         alive_after = session.alive()
         log.append(f"tmux session alive after kill: {alive_after}")
         after = session.capture() if alive_after else ""
-        (self._results_dir / "capture_after_store_kill.txt").write_text(after, "utf-8")
+        (self._results_dir / "capture_after_store_kill.txt").write_text(
+            self._sanitized_capture(after), "utf-8"
+        )
         responded = False
         if alive_after:
             if _SURVIVAL_MARKER in _SURVIVAL_PROMPT:
@@ -396,7 +420,7 @@ class ValidationRun:
                 session, _SURVIVAL_MARKER, timeout_s=120
             )
             (self._results_dir / "capture_post_kill_turn.txt").write_text(
-                session.capture(), "utf-8"
+                self._sanitized_capture(session.capture()), "utf-8"
             )
         log.append(f"fork answered a post-kill turn: {responded}")
         records_after = len(HookLedger(store.ledger_path).records())
