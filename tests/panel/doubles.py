@@ -22,6 +22,7 @@ from punt_lux import HubUnavailableError
 from punt_lux.operations import Ok
 
 from punt_vox.client_errors import VoxdProtocolError
+from punt_vox.panel.control_push import ControlPush
 from punt_vox.types_errors import ConfigValueError
 
 if TYPE_CHECKING:
@@ -250,7 +251,7 @@ class FakeService:
         self.serviced += 1
         await self.push_scene(client)
 
-    def apply_event(self, topic: str, payload: Mapping[str, object]) -> bool:
+    def apply_event(self, topic: str, payload: Mapping[str, object]) -> ControlPush:
         if self._raise_on == "apply":
             msg = "bad payload"
             raise TypeError(msg)
@@ -268,7 +269,7 @@ class FakeService:
         if self._raise_on == "unexpected":
             raise RuntimeError(_BUG)
         self.applied.append((topic, payload))
-        return self.apply_returns
+        return ControlPush.REFRESH if self.apply_returns else ControlPush.NONE
 
     async def push_scene(self, client: object) -> None:
         self.pushed += 1

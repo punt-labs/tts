@@ -155,4 +155,4 @@ class PanelRunner:
                 "vox-panel: rejected control event on %s: %r", topic, payload
             )
             return ControlPush.CORRECT
-        return ControlPush.REFRESH if changed else ControlPush.NONE
+        return changed
