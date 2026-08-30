@@ -382,12 +382,28 @@ class TestTrackCountsNeverBlockTheHotPath:
         assert _by_id(elements, "music.albums")["rows"] == [["Techno Mix", "techno", 9]]
 
     async def test_a_burst_of_changes_schedules_only_one_refresh(
-        self, album_of: AlbumFactory
+        self, album_of: AlbumFactory, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # One per completed Part could mean many notify_changed calls in a
         # row; every one after the first must be dropped outright while a
         # refresh is already in flight, rather than queueing an unbounded
-        # pile of disk reads.
+        # pile of disk reads. ``_refresher.running`` flips True then False
+        # whether one refresh ran or three -- SingleFlightRefresh's own
+        # drop-when-busy guard is what has to hold, so only a spy on the
+        # scheduled work itself (see
+        # test_notify_changed_schedules_a_background_cache_refresh above for
+        # why this patches TrackCountCache.serialized_refresh) can tell one
+        # dispatch from three.
+        calls: list[tuple[Album, ...]] = []
+        real_refresh = TrackCountCache.serialized_refresh
+
+        async def _spying_refresh(
+            self: TrackCountCache, albums: tuple[Album, ...]
+        ) -> None:
+            calls.append(albums)
+            await real_refresh(self, albums)
+
+        monkeypatch.setattr(TrackCountCache, "serialized_refresh", _spying_refresh)
         album = album_of("aa11bb", tracks=0, on_disk=9)
         publisher = _CapturingPublisher()
         player = MusicPlayer(_FakeService(ProgramStatus.idle(), (album,)), publisher)
@@ -395,10 +411,9 @@ class TestTrackCountsNeverBlockTheHotPath:
         player.notify_changed()
         player.notify_changed()
         player.notify_changed()
-        assert player._refresher.running is True
         await _settle()
 
-        assert player._refresher.running is False
+        assert len(calls) == 1
 
     async def test_install_awaits_a_fresh_cache_refresh(
         self, album_of: AlbumFactory, monkeypatch: pytest.MonkeyPatch
