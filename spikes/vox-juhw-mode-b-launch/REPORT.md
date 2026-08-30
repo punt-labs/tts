@@ -87,6 +87,11 @@ JSONL **before** the acknowledgement is sent.
 - Bounded: 600-char prompt with explicit stop; one fork per run
   (hard cap 2, enforced and tested); `Bash` denied by profile; ledger
   payloads pass a credential-shaped-key redaction before persisting.
+- **Confinement, stated precisely: edits are confined to the project;
+  reads are not path-confined in v1.** `acceptEdits` auto-accepts edits
+  only inside the project dir, but the profile's `Read`/`Glob`/`Grep`
+  entries carry no path patterns — the fork can read anywhere the
+  launching user can. See rough edge 8.
 
 ## ROUGH EDGES
 
@@ -134,6 +139,30 @@ v1 scope. Itemized honestly:
    "login expires in 2 days"; an expired credential file would stall a
    voice-initiated launch on an interactive `/login`. voxd should
    surface credential health before offering `launch_session`.
+8. **Credential-read surface.** A voice-launched fork can read the
+   seeded OAuth credentials file (and the user's `~/.claude/`) with its
+   allowed tools, because reads are not path-confined in v1. Egress is
+   bounded — Bash, WebFetch, WebSearch, and Task are denied — so the
+   fork has no channel to exfiltrate what it reads, but the read itself
+   is open. Mitigation is settings-side path-scoped permission rules
+   (e.g. deny reads outside the project) written by the launcher —
+   launcher work, no Claude Code change; quarter-trigger unaffected.
+
+## Design notes to carry forward (evaluator, security review)
+
+- **Recursive redaction for DES-070.** The spike's ledger redaction is
+  top-level-key only (`stamp.py` `_redacted`): a credential-shaped key
+  nested inside `tool_input` / `tool_response` payload objects would
+  persist verbatim. Sufficient for this harness's payloads; the real
+  voxd rolling context store must redact recursively before retaining
+  hook payloads.
+- **Scratch placement must be a capability invariant, not a harness
+  convention.** Here the throwaway project root is pinned by the
+  harness (`run_validation.py` `_SCRATCH_ROOT`). The real
+  `launch_session` capability must itself refuse project roots outside
+  its managed scratch namespace — deny-by-default in the capability,
+  not in whoever happens to call it. Record as a DES-071 implementation
+  requirement.
 
 ## Costs and bounds
 

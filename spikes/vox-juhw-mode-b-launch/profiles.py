@@ -57,9 +57,11 @@ class PermissionsProfile:
         }
 
 
-# The v1 profile under test: file tools inside the scratch project only.
-# Bash is denied outright -- a voice-launched session that needs a shell is
-# beyond v1's blast radius; edits auto-accept only inside the project dir.
+# The v1 profile under test: edits confined to the project; reads are not
+# path-confined in v1. acceptEdits auto-accepts EDITS only inside the project
+# dir, but Read/Glob/Grep carry no path patterns, so the fork can read
+# anywhere the launching user can. Bash is denied outright -- a voice-launched
+# session that needs a shell is beyond v1's blast radius.
 VOICE_LAUNCH_V1 = PermissionsProfile(
     name="voice-launch-v1",
     allow=("Read", "Write", "Edit", "Glob", "Grep", "TodoWrite"),
