@@ -63,8 +63,14 @@ class SingleFlightRefresh:
         _refresh_track_counts`, satisfies this because its resubmit reads
         ``self._latest_notice`` and the live catalog fresh at execution time --
         but that safety is a property of the caller, not of this class.
+
+        The drop is logged at debug: a burst of routine coalescing during a
+        normal fast refresh looks the same in the logs as a call dropped while
+        the background refresh is stuck (or has been dead a long time) unless
+        each drop leaves its own trace to compare timestamps against.
         """
         if self._running:
+            logger.debug("single-flight: call dropped, a run is already in flight")
             return
         self._running = True
         self._task = asyncio.create_task(self._run(work))

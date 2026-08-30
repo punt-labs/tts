@@ -10,7 +10,7 @@ listener's event loop for a menu click or a hub handshake. Both are places a
 blocking disk read must never run: the writer serializes every playback
 mutation behind it, and the listener holds the session's lease keepalive.
 
-This cache is the fix: :meth:`refresh` is the one place that still does the
+This cache is the fix: :meth:`_refresh` is the one place that still does the
 disk read. Every caller reaches it through :meth:`serialized_refresh`, which
 dispatches it off the hot path via ``asyncio.to_thread`` AND serializes
 overlapping callers behind a lock -- :meth:`~punt_vox.voxd.music_player.player.
@@ -22,13 +22,40 @@ unconditionally overwrite :attr:`_counts` -- whichever finishes LAST wins,
 not whichever started most recently. Every render reads :meth:`get` instead --
 an in-memory dict lookup, never disk.
 
+:meth:`serialized_refresh` is bounded by :data:`_REFRESH_TIMEOUT_SECONDS`: a
+genuinely stuck disk read (a hung mount, a sleeping disk) must never block its
+caller forever. :meth:`install` runs inline in the lux listener's event loop,
+so an unbounded wait there would freeze the whole connection's event
+delivery -- every future menu click and hub handshake -- with no error or log
+to explain why, and would also leave :class:`~punt_vox.voxd.music_player.
+single_flight.SingleFlightRefresh` permanently wedged, since its guard only
+clears when the scheduled work returns. Timing out closes both: the ``asyncio.
+Lock`` below is released the moment ``asyncio.wait_for`` gives up (the
+cancellation propagates through the ``async with`` block), so the next caller
+is never blocked by one that timed out.
+
+A timeout does not stop the underlying OS thread -- ``asyncio.to_thread``
+dispatches to a thread pool, and cancelling the awaiting coroutine does not
+cancel the thread itself, which keeps running :meth:`_refresh` to completion
+(or forever) in the background. That orphaned thread can still finish and try
+to write :attr:`_counts` after a newer, faster refresh has already landed a
+better answer -- reintroducing the exact "last to FINISH wins" race the lock
+exists to close, just narrowed to the timeout window. :attr:`_generation` and
+:attr:`_written_generation` close that window: each :meth:`serialized_refresh`
+call is stamped with a generation number, bumped only on the event loop before
+dispatch (so it needs no lock of its own), and :meth:`_refresh` -- which may
+run on an orphaned thread well after its caller gave up -- only commits its
+write under :attr:`_write_lock` when its generation is still the newest one
+ever attempted. A late write from an abandoned refresh is thus a safe no-op
+whenever a newer one has already landed.
+
 An album this cache has never seen reads as zero, matching a genuinely fresh
 album before its first Part lands, so an unrefreshed row looks identical to a
 real empty one rather than some other placeholder (PY-TS-14: the *absence* of a
 cached count and a *genuine* zero count are meant to render the same way; there
 is no third state a caller could distinguish them by, nor would one be useful
 here). An album the store no longer holds is simply dropped from a refresh
-(:meth:`refresh` catches its ``LookupError`` and excludes it) -- the catalog
+(:meth:`_refresh` catches its ``LookupError`` and excludes it) -- the catalog
 itself, not this cache, is what stops a deleted album from being rendered at
 all, since deletion removes it from the catalog synchronously in the same call
 that removes it from disk (:meth:`~punt_vox.voxd.programs.library.Library.
@@ -39,6 +66,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from typing import TYPE_CHECKING, Self, final
 
 from punt_vox.voxd.music_player.album_display import AlbumDisplay
@@ -51,22 +79,47 @@ __all__ = ["TrackCountCache"]
 
 logger = logging.getLogger(__name__)
 
+# A disk read across a real catalog should never legitimately take this long;
+# past this, the caller treats the worker thread as stuck rather than block on
+# it indefinitely.
+_REFRESH_TIMEOUT_SECONDS: float = 5.0
+
 
 @final
 class TrackCountCache:
     """The last-known ready-track count per album, refreshed off the hot path."""
 
-    __slots__ = ("_counts", "_lock")
+    __slots__ = (
+        "_counts",
+        "_generation",
+        "_lock",
+        "_write_lock",
+        "_written_generation",
+    )
     _counts: dict[AlbumId, int]
     # Guards :meth:`serialized_refresh` so overlapping callers run one at a
     # time instead of racing to overwrite :attr:`_counts` with whichever
-    # thread happens to finish last.
+    # thread happens to finish last. Released early by a timeout -- see
+    # module docstring.
     _lock: asyncio.Lock
+    # Bumped once per call, only inside :meth:`serialized_refresh`, which runs
+    # exclusively on the event loop -- single-writer, so no lock guards it.
+    _generation: int
+    # A plain ``threading.Lock``, not an ``asyncio.Lock``: the write it guards
+    # runs inside :meth:`_refresh`, on a worker thread, and an orphaned thread
+    # from a timed-out caller can still reach it well after that caller's
+    # event-loop task has moved on.
+    _write_lock: threading.Lock
+    # The generation of the last write that actually landed in :attr:`_counts`.
+    _written_generation: int
 
     def __new__(cls) -> Self:
         self = super().__new__(cls)
         self._counts = {}
         self._lock = asyncio.Lock()
+        self._write_lock = threading.Lock()
+        self._generation = 0
+        self._written_generation = 0
         return self
 
     def get(self, album_id: AlbumId) -> int:
@@ -74,7 +127,7 @@ class TrackCountCache:
         return self._counts.get(album_id, 0)
 
     async def serialized_refresh(self, albums: tuple[Album, ...]) -> None:
-        """Refresh off the event loop via :meth:`refresh`, one caller at a time.
+        """Refresh off the event loop via :meth:`_refresh`, one caller at a time.
 
         This is the entry point every caller must use -- :meth:`install` (the
         lux listener's event loop) and the single-flighted background repaint
@@ -84,15 +137,52 @@ class TrackCountCache:
         ``fresh`` dict from their own snapshot and unconditionally overwrite
         :attr:`_counts` -- whichever thread happens to finish LAST wins, not
         whichever started most recently. The lock is acquired here, on the
-        event loop, before the thread dispatch -- never inside :meth:`refresh`
+        event loop, before the thread dispatch -- never inside :meth:`_refresh`
         itself, which runs in a worker thread once dispatched and cannot await
         an ``asyncio.Lock`` there -- so a caller that arrives mid-refresh
         simply waits its turn instead of racing the one already running.
-        """
-        async with self._lock:
-            await asyncio.to_thread(self.refresh, albums)
 
-    def refresh(self, albums: tuple[Album, ...]) -> None:
+        Bounded by :data:`_REFRESH_TIMEOUT_SECONDS`: a stuck disk read gives up
+        the wait rather than blocking this caller (and everyone serialized
+        behind it) forever. A timeout is logged and swallowed here -- the
+        caller gets whatever the cache already held, same as any other refresh
+        fault -- while :attr:`_generation` protects against the abandoned
+        worker thread landing a stale write later (see module docstring).
+
+        Only OUR deadline is swallowed. A real disk-level timeout (``OSError``
+        with ``errno.ETIMEDOUT``, e.g. a hung NFS mount) is also a
+        ``TimeoutError`` in Python (a built-in ``OSError`` subclass), and would
+        be caught by an unqualified ``except TimeoutError`` just the same --
+        silently misreporting a genuine fault as "gave up waiting" and hiding
+        it from :meth:`~punt_vox.voxd.music_player.player.MusicPlayer.
+        _try_refresh_cache`. :meth:`asyncio.wait_for` only cancels its inner
+        task when ITS OWN deadline elapses, so checking ``task.cancelled()``
+        distinguishes the two: cancelled means the deadline fired and this is
+        our timeout; not cancelled means the task ran to completion and raised
+        that ``TimeoutError`` itself, which is re-raised unchanged.
+        """
+        self._generation += 1
+        generation = self._generation
+        task = asyncio.ensure_future(self._locked_refresh(albums, generation))
+        try:
+            await asyncio.wait_for(task, timeout=_REFRESH_TIMEOUT_SECONDS)
+        except TimeoutError:
+            if not task.cancelled():
+                raise  # a genuine fault from the read itself, not our deadline
+            logger.warning(
+                "music: track-count refresh for %d albums exceeded %.1fs; "
+                "abandoning the wait (a late write, if any, will be ignored "
+                "unless it is still the newest attempt)",
+                len(albums),
+                _REFRESH_TIMEOUT_SECONDS,
+            )
+
+    async def _locked_refresh(self, albums: tuple[Album, ...], generation: int) -> None:
+        """Hold :attr:`_lock` across the dispatch, so overlapping callers queue."""
+        async with self._lock:
+            await asyncio.to_thread(self._refresh, albums, generation)
+
+    def _refresh(self, albums: tuple[Album, ...], generation: int) -> None:
         """Re-read every album's live count from disk; the one blocking call here.
 
         Callers reach this through :meth:`serialized_refresh`, never directly
@@ -103,6 +193,12 @@ class TrackCountCache:
         transient ``OSError`` from a permission blip or a descriptor exhaustion
         -- propagates rather than silently freezing that album's count at its
         last-known value.
+
+        The write is gated on ``generation`` under :attr:`_write_lock`: this
+        method may run on a worker thread orphaned by a caller that already
+        timed out (see module docstring), so a late write here must never
+        clobber a newer refresh's result. It commits only when ``generation``
+        is still the newest one any caller has ever attempted.
         """
         fresh: dict[AlbumId, int] = {}
         for album in albums:
@@ -113,4 +209,33 @@ class TrackCountCache:
                     "album %s is no longer on disk; dropping its cached count",
                     album.id,
                 )
-        self._counts = fresh
+        with self._write_lock:
+            if generation > self._written_generation:
+                self._counts = fresh
+                self._written_generation = generation
+
+    @classmethod
+    def for_testing(cls, albums: tuple[Album, ...]) -> Self:
+        """Return a cache pre-populated with ``albums``' live counts; tests only.
+
+        Synchronous and lock-free by design -- production code always reaches
+        the disk read through :meth:`serialized_refresh`, off the event loop.
+        This exists so fixtures for :class:`~punt_vox.voxd.music_player.
+        album_roster.AlbumRoster`, :class:`~punt_vox.voxd.music_player.
+        album_table.AlbumTable`, and :class:`~punt_vox.voxd.music_player.scene.
+        AlbumListScene` can populate a cache without touching the async path
+        or a private method directly.
+
+        Advances :attr:`_generation` in lockstep with the write, not just
+        :attr:`_written_generation` -- a cache built here that a test later
+        drives through a real :meth:`serialized_refresh` must still be able to
+        write: that call bumps ``_generation`` to 2 starting from 1, which
+        stays ``> _written_generation``. Leaving ``_generation`` at its
+        default zero would have made that next real refresh's generation
+        (1) fail the ``>`` gate against the written generation this method
+        already set to 1, silently discarding it.
+        """
+        self = cls()
+        self._generation = 1
+        self._refresh(albums, self._generation)
+        return self

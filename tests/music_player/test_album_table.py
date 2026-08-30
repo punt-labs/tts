@@ -36,8 +36,7 @@ def _table(elements: list[dict[str, object]]) -> dict[str, object]:
 def _elements(
     albums: tuple[Album, ...], playing: AlbumId | None = None
 ) -> dict[str, object]:
-    cache = TrackCountCache()
-    cache.refresh(albums)
+    cache = TrackCountCache.for_testing(albums)
     roster = AlbumRoster.from_cache(albums, cache)
     return _table(AlbumTable(roster, playing).elements())
 

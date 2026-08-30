@@ -43,8 +43,7 @@ def _scene(
     notice: PlaybackNotice | None = None,
 ) -> AlbumListScene:
     """Build the scene the way the player does: from a cache refreshed live."""
-    cache = TrackCountCache()
-    cache.refresh(albums)
+    cache = TrackCountCache.for_testing(albums)
     roster = AlbumRoster.from_cache(albums, cache)
     if notice is None:
         return AlbumListScene(roster, view)

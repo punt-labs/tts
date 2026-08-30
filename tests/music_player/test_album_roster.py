@@ -30,8 +30,7 @@ class TestFromCache:
     ) -> None:
         one = album_of("aa11bb", name="One")
         two = album_of("cc22dd", name="Two")
-        cache = TrackCountCache()
-        cache.refresh((one, two))
+        cache = TrackCountCache.for_testing((one, two))
 
         roster = AlbumRoster.from_cache((one, two), cache)
 

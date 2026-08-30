@@ -214,7 +214,7 @@ class TestInstallSurvivesARefreshFailure:
     async def test_install_still_shows_the_window_when_the_refresh_fails(
         self, album_of: AlbumFactory
     ) -> None:
-        # TrackCountCache.refresh propagates any non-LookupError fault. Before
+        # TrackCountCache._refresh propagates any non-LookupError fault. Before
         # this fix, install() had no guard around it -- an OSError (disk
         # pressure, fd exhaustion) would propagate out of install() entirely,
         # caught only by the outer lux boundary's log-and-swallow, so the menu
@@ -296,7 +296,7 @@ class TestTrackCountsNeverBlockTheHotPath:
         player.notify_changed()
         await _settle()
 
-        assert calls == [player._cache.refresh]
+        assert calls == [player._cache._refresh]
 
     async def test_the_background_refresh_resubmits_with_the_live_count(
         self, album_of: AlbumFactory
@@ -369,7 +369,7 @@ class TestTrackCountsNeverBlockTheHotPath:
 
         await player.install()
 
-        assert calls == [player._cache.refresh]
+        assert calls == [player._cache._refresh]
         assert _by_id(publisher.installed[0].elements, "music.albums")["rows"] == [
             ["Techno Mix", "techno", 4]
         ]

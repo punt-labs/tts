@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from typing import TYPE_CHECKING
 
 from punt_vox.voxd.music_player.single_flight import SingleFlightRefresh
+
+if TYPE_CHECKING:
+    import pytest
 
 
 async def test_schedule_runs_the_work_in_the_background() -> None:
@@ -68,13 +73,39 @@ async def test_a_call_while_running_is_a_no_op() -> None:
     refresher = SingleFlightRefresh()
     refresher.schedule(_work)
     await asyncio.wait_for(started.wait(), timeout=1.0)
-    refresher.schedule(_work)  # coalesces -- the first run is still in flight
+    refresher.schedule(_work)  # dropped -- the first run is still in flight
     refresher.schedule(_work)
 
     release.set()
     await asyncio.sleep(0.01)
 
     assert calls == 1
+
+
+async def test_a_dropped_call_while_running_logs_at_debug(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def _work() -> None:
+        started.set()
+        await release.wait()
+
+    refresher = SingleFlightRefresh()
+    refresher.schedule(_work)
+    await asyncio.wait_for(started.wait(), timeout=1.0)
+
+    with caplog.at_level(logging.DEBUG):
+        refresher.schedule(_work)  # dropped -- the first run is still in flight
+
+    release.set()
+    await asyncio.sleep(0.01)
+
+    assert any(
+        "dropped" in r.getMessage() and "in flight" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 async def test_a_later_call_after_completion_runs_again() -> None:
