@@ -1,0 +1,135 @@
+{
+  "generated": "2026-08-29T20:36:09+00:00",
+  "llm": "gemini-2.0-flash",
+  "gate": "overall overhead_ms p95 < 1500",
+  "runs": [
+    {
+      "tag": "20260829T203601Z_seed1024",
+      "seed_bytes": 1024,
+      "prompt_bytes": 1597,
+      "signed_url_ms": 310.6,
+      "conversation_id": "conv_9201m17ks1snfrg91c94ejwkvdc9",
+      "ws_connect_ms": 656.2,
+      "init_metadata_ms": 0.2,
+      "session_start_ms": 656.4,
+      "first_response_ms": 103.1,
+      "turn_response_ms": [
+        103.1,
+        1414.2
+      ],
+      "ping_ms": [
+        119.0,
+        156.0
+      ],
+      "invocations": [
+        {
+          "tool": "clock",
+          "tool_call_id": "clock_b8f36c98a7004787b77e908011a96bc8",
+          "exec_ms": 0.7,
+          "handling_ms": 1.6,
+          "total_ms": 844.0,
+          "overhead_ms": 843.4,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "write_note",
+          "tool_call_id": "write_note_285b58c6e0704bd9b552e6c0dfea19c0",
+          "exec_ms": 0.7,
+          "handling_ms": 1.2,
+          "total_ms": 15.6,
+          "overhead_ms": 14.9,
+          "is_error": false,
+          "is_clean": true
+        }
+      ],
+      "incomplete_invocations": 0,
+      "transcript": [
+        {
+          "role": "user",
+          "text": "What time is it right now?"
+        },
+        {
+          "role": "agent",
+          "text": "Voice agent ready. What do you need?"
+        },
+        {
+          "role": "agent",
+          "text": "It is currently 8:36 PM on August 29, 2026."
+        },
+        {
+          "role": "user",
+          "text": "Write a note saying: smoke test note."
+        },
+        {
+          "role": "agent",
+          "text": "I have saved the note for you."
+        }
+      ]
+    }
+  ],
+  "aggregate": {
+    "overall": {
+      "handling_ms": {
+        "n": 2,
+        "p50_ms": 1.2,
+        "p95_ms": 1.6,
+        "max_ms": 1.6
+      },
+      "total_ms": {
+        "n": 2,
+        "p50_ms": 15.6,
+        "p95_ms": 844.0,
+        "max_ms": 844.0
+      },
+      "overhead_ms": {
+        "n": 2,
+        "p50_ms": 14.9,
+        "p95_ms": 843.4,
+        "max_ms": 843.4
+      }
+    },
+    "per_tool": {
+      "clock": {
+        "handling_ms": {
+          "n": 1,
+          "p50_ms": 1.6,
+          "p95_ms": 1.6,
+          "max_ms": 1.6
+        },
+        "total_ms": {
+          "n": 1,
+          "p50_ms": 844.0,
+          "p95_ms": 844.0,
+          "max_ms": 844.0
+        },
+        "overhead_ms": {
+          "n": 1,
+          "p50_ms": 843.4,
+          "p95_ms": 843.4,
+          "max_ms": 843.4
+        }
+      },
+      "write_note": {
+        "handling_ms": {
+          "n": 1,
+          "p50_ms": 1.2,
+          "p95_ms": 1.2,
+          "max_ms": 1.2
+        },
+        "total_ms": {
+          "n": 1,
+          "p50_ms": 15.6,
+          "p95_ms": 15.6,
+          "max_ms": 15.6
+        },
+        "overhead_ms": {
+          "n": 1,
+          "p50_ms": 14.9,
+          "p95_ms": 14.9,
+          "max_ms": 14.9
+        }
+      }
+    }
+  }
+}

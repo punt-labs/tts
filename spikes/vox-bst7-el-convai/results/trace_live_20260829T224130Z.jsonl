@@ -1,0 +1,47 @@
+{"ws_connect_ms": 242.6, "t": "2026-08-29T22:41:31.226+00:00", "ms": 669.0, "dir": "note", "type": "ws_open"}
+{"conversation_id": "conv_6801m17tyte1f0sb9mbjsajpx77s", "agent_output_audio_format": "pcm_16000", "user_input_audio_format": "pcm_16000", "persistent_session_token": null, "t": "2026-08-29T22:41:31.226+00:00", "ms": 669.7, "dir": "recv", "type": "conversation_initiation_metadata"}
+{"t": "2026-08-29T22:41:31.298+00:00", "ms": 741.6, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 41952, "event_id": 1, "t": "2026-08-29T22:41:31.514+00:00", "ms": 957.9, "dir": "recv", "type": "audio"}
+{"bytes_b64": 41960, "event_id": 1, "t": "2026-08-29T22:41:31.636+00:00", "ms": 1079.6, "dir": "recv", "type": "audio"}
+{"text": "Voice agent ready. What do you need?", "t": "2026-08-29T22:41:31.636+00:00", "ms": 1079.9, "dir": "recv", "type": "agent_response"}
+{"ping_ms": null, "t": "2026-08-29T22:41:32.995+00:00", "ms": 2438.5, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:41:33.492+00:00", "ms": 2935.3, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 65, "t": "2026-08-29T22:41:34.695+00:00", "ms": 4138.4, "dir": "recv", "type": "ping"}
+{"ping_ms": 68, "t": "2026-08-29T22:41:36.428+00:00", "ms": 5871.7, "dir": "recv", "type": "ping"}
+{"ping_ms": 72, "t": "2026-08-29T22:41:38.106+00:00", "ms": 7549.2, "dir": "recv", "type": "ping"}
+{"ping_ms": 95, "t": "2026-08-29T22:41:39.798+00:00", "ms": 9241.0, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:41:41.191+00:00", "ms": 10634.4, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "...", "t": "2026-08-29T22:41:41.241+00:00", "ms": 10684.9, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 38728, "event_id": 56, "t": "2026-08-29T22:41:41.327+00:00", "ms": 10770.6, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T22:41:41.328+00:00", "ms": 10771.0, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 129104, "event_id": 56, "t": "2026-08-29T22:41:41.891+00:00", "ms": 11334.6, "dir": "recv", "type": "audio"}
+{"text": "Are you still there? Please let me know if you need help with anything during this coding session.", "t": "2026-08-29T22:41:41.892+00:00", "ms": 11335.1, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 95, "t": "2026-08-29T22:41:41.892+00:00", "ms": 11335.4, "dir": "recv", "type": "ping"}
+{"event_id": 70, "t": "2026-08-29T22:41:42.732+00:00", "ms": 12175.2, "dir": "recv", "type": "interruption"}
+{"original_agent_response": "Are you still there? Please let me know if you need help with anything during this coding session.", "corrected_agent_response": "Are you still there? Please let me...", "event_id": 56, "response_id": "cd2253cc-3a3e-4747-b2dd-d03b58d84e2a", "t": "2026-08-29T22:41:42.733+00:00", "ms": 12176.3, "dir": "recv", "type": "agent_response_correction"}
+{"ping_ms": 107, "t": "2026-08-29T22:41:43.215+00:00", "ms": 12658.3, "dir": "recv", "type": "ping"}
+{"ping_ms": 112, "t": "2026-08-29T22:41:44.943+00:00", "ms": 14386.4, "dir": "recv", "type": "ping"}
+{"ping_ms": 182, "t": "2026-08-29T22:41:46.694+00:00", "ms": 16137.6, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:41:47.576+00:00", "ms": 17019.3, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Are you still there? Please let- Yeah, man. I'm still here. What language are we using?", "t": "2026-08-29T22:41:47.718+00:00", "ms": 17162.0, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 94, "t": "2026-08-29T22:41:47.840+00:00", "ms": 17283.6, "dir": "recv", "type": "audio"}
+{"bytes_b64": 48416, "event_id": 94, "t": "2026-08-29T22:41:47.920+00:00", "ms": 17363.9, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T22:41:47.921+00:00", "ms": 17364.1, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 206568, "event_id": 94, "t": "2026-08-29T22:41:48.490+00:00", "ms": 17933.1, "dir": "recv", "type": "audio"}
+{"text": "We are using English for our conversation. Let me know if you would like me to search the code to see what programming language the project is written in.", "t": "2026-08-29T22:41:48.490+00:00", "ms": 17933.3, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 157, "t": "2026-08-29T22:41:48.490+00:00", "ms": 17933.4, "dir": "recv", "type": "ping"}
+{"ping_ms": 182, "t": "2026-08-29T22:41:50.002+00:00", "ms": 19445.7, "dir": "recv", "type": "ping"}
+{"event_id": 118, "t": "2026-08-29T22:41:50.789+00:00", "ms": 20232.6, "dir": "recv", "type": "interruption"}
+{"original_agent_response": "We are using English for our conversation. Let me know if you would like me to search the code to see what programming language the project is written in.", "corrected_agent_response": "We are using English for our conversation. Let me know if you would...", "event_id": 94, "response_id": "38d79b2a-e92a-4368-9b7d-11a221561a69", "t": "2026-08-29T22:41:50.795+00:00", "ms": 20238.6, "dir": "recv", "type": "agent_response_correction"}
+{"ping_ms": 157, "t": "2026-08-29T22:41:51.703+00:00", "ms": 21146.6, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:41:52.999+00:00", "ms": 22442.1, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Let me know if you would like...", "t": "2026-08-29T22:41:53.059+00:00", "ms": 22502.0, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 38728, "event_id": 127, "t": "2026-08-29T22:41:53.186+00:00", "ms": 22629.1, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T22:41:53.186+00:00", "ms": 22629.5, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 64552, "event_id": 127, "t": "2026-08-29T22:41:53.288+00:00", "ms": 22731.6, "dir": "recv", "type": "audio"}
+{"text": "Are you still there? Please let me know what you need help...", "t": "2026-08-29T22:41:53.288+00:00", "ms": 22731.8, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 60, "t": "2026-08-29T22:41:53.404+00:00", "ms": 22847.8, "dir": "recv", "type": "ping"}
+{"event_id": 141, "t": "2026-08-29T22:41:54.499+00:00", "ms": 23942.9, "dir": "recv", "type": "interruption"}
+{"original_agent_response": "Are you still there? Please let me know what you need help...", "corrected_agent_response": "Are you still there? Please let me know...", "event_id": 127, "response_id": "2b6b7080-c19d-4597-9b3a-b91bdc0ed421", "t": "2026-08-29T22:41:54.500+00:00", "ms": 23943.9, "dir": "recv", "type": "agent_response_correction"}
+{"ping_ms": 59, "t": "2026-08-29T22:41:55.126+00:00", "ms": 24569.5, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:41:55.464+00:00", "ms": 24907.6, "dir": "note", "type": "session_closed"}

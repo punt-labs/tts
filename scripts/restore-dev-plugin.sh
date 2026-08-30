@@ -8,6 +8,13 @@ set -euo pipefail
 #
 # If no argument is given, auto-detects the last "prepare plugin for release"
 # commit and restores from its parent.
+#
+# CONTRACT: This script restores dev-state files and stages them. It does
+# NOT commit. The org bans the --no-verify escape hatch this script used to
+# pass on its own commit; committing here now means the caller either skips
+# hooks or resolves a hook failure mid-release with no re-stamp step to fold
+# it into. The caller commits the staged restore with hooks running. See
+# pkit-hsyi and punt-kit 462c65d for the sibling fix this mirrors.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PLUGIN_JSON="${REPO_ROOT}/plugin/.claude-plugin/plugin.json"
@@ -57,4 +64,3 @@ git -C "$REPO_ROOT" add "$PLUGIN_JSON"
 if [[ "$restored" == true ]]; then
   git -C "$REPO_ROOT" add "$COMMANDS_DIR"
 fi
-git -C "$REPO_ROOT" commit --no-verify -m "chore: restore dev plugin state [skip ci]"

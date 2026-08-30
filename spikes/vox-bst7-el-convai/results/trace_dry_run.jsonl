@@ -1,0 +1,15 @@
+{"ws_connect_ms": 1.4, "t": "2026-08-30T02:56:59.499+00:00", "ms": 1.5, "dir": "note", "type": "ws_open"}
+{"conversation_id": "dry-run-conversation", "agent_output_audio_format": "pcm_16000", "user_input_audio_format": "pcm_16000", "t": "2026-08-30T02:56:59.500+00:00", "ms": 1.9, "dir": "recv", "type": "conversation_initiation_metadata"}
+{"text": "What time is it?", "t": "2026-08-30T02:56:59.500+00:00", "ms": 2.0, "dir": "send", "type": "user_message"}
+{"tool": "clock", "tool_call_id": "call-1", "t": "2026-08-30T02:56:59.500+00:00", "ms": 2.2, "dir": "recv", "type": "client_tool_call"}
+{"tool": "clock", "tool_call_id": "call-1", "exec_ms": 0.9, "is_error": false, "t": "2026-08-30T02:56:59.501+00:00", "ms": 3.2, "dir": "send", "type": "client_tool_result"}
+{"text": "Done with: What time is it?", "t": "2026-08-30T02:56:59.852+00:00", "ms": 354.2, "dir": "recv", "type": "agent_response"}
+{"text": "Search the code for the playback queue and write a note about it.", "t": "2026-08-30T02:57:01.503+00:00", "ms": 2005.7, "dir": "send", "type": "user_message"}
+{"tool": "search_code", "tool_call_id": "call-2", "t": "2026-08-30T02:57:01.504+00:00", "ms": 2006.1, "dir": "recv", "type": "client_tool_call"}
+{"tool": "write_note", "tool_call_id": "call-3", "t": "2026-08-30T02:57:01.504+00:00", "ms": 2006.1, "dir": "recv", "type": "client_tool_call"}
+{"tool": "write_note", "tool_call_id": "call-3", "exec_ms": 0.5, "is_error": false, "t": "2026-08-30T02:57:01.505+00:00", "ms": 2006.9, "dir": "send", "type": "client_tool_result"}
+{"tool": "search_code", "tool_call_id": "call-2", "exec_ms": 2200.4, "is_error": false, "t": "2026-08-30T02:57:03.704+00:00", "ms": 4206.8, "dir": "send", "type": "client_tool_result"}
+{"text": "Done with: Search the code for the playback queue and write a note about it.", "t": "2026-08-30T02:57:04.056+00:00", "ms": 4558.6, "dir": "recv", "type": "agent_response"}
+{"text": "Say goodbye.", "t": "2026-08-30T02:57:05.761+00:00", "ms": 6263.0, "dir": "send", "type": "user_message"}
+{"text": "Done with: Say goodbye.", "t": "2026-08-30T02:57:06.112+00:00", "ms": 6614.0, "dir": "recv", "type": "agent_response"}
+{"t": "2026-08-30T02:57:07.764+00:00", "ms": 8266.3, "dir": "note", "type": "session_closed"}

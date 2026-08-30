@@ -1,0 +1,322 @@
+{"ws_connect_ms": 402.9, "t": "2026-08-29T22:59:49.014+00:00", "ms": 562.7, "dir": "note", "type": "ws_open"}
+{"conversation_id": "conv_4601m17w0ad7ep1bqz2rsxwhf51s", "agent_output_audio_format": "pcm_16000", "user_input_audio_format": "pcm_16000", "persistent_session_token": null, "t": "2026-08-29T22:59:49.015+00:00", "ms": 563.3, "dir": "recv", "type": "conversation_initiation_metadata"}
+{"t": "2026-08-29T22:59:49.127+00:00", "ms": 676.1, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 41952, "event_id": 1, "t": "2026-08-29T22:59:49.545+00:00", "ms": 1093.8, "dir": "recv", "type": "audio"}
+{"bytes_b64": 32276, "event_id": 1, "t": "2026-08-29T22:59:49.564+00:00", "ms": 1113.1, "dir": "recv", "type": "audio"}
+{"text": "Voice agent ready. What do you need?", "t": "2026-08-29T22:59:49.565+00:00", "ms": 1113.3, "dir": "recv", "type": "agent_response"}
+{"ping_ms": null, "t": "2026-08-29T22:59:50.788+00:00", "ms": 2336.7, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:59:51.254+00:00", "ms": 2802.9, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 62, "t": "2026-08-29T22:59:52.506+00:00", "ms": 4054.6, "dir": "recv", "type": "ping"}
+{"ping_ms": 170, "t": "2026-08-29T22:59:54.261+00:00", "ms": 5809.5, "dir": "recv", "type": "ping"}
+{"ping_ms": 140, "t": "2026-08-29T22:59:55.978+00:00", "ms": 7527.0, "dir": "recv", "type": "ping"}
+{"ping_ms": 160, "t": "2026-08-29T22:59:57.599+00:00", "ms": 9147.9, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T22:59:58.771+00:00", "ms": 10319.4, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "...", "t": "2026-08-29T22:59:58.880+00:00", "ms": 10428.9, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 38728, "event_id": 54, "t": "2026-08-29T22:59:58.887+00:00", "ms": 10435.2, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T22:59:58.887+00:00", "ms": 10435.3, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 129104, "event_id": 54, "t": "2026-08-29T22:59:59.239+00:00", "ms": 10787.9, "dir": "recv", "type": "audio"}
+{"text": "Are you still there? Please let me know if you need help with anything during our coding session.", "t": "2026-08-29T22:59:59.240+00:00", "ms": 10788.1, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 140, "t": "2026-08-29T22:59:59.304+00:00", "ms": 10853.1, "dir": "recv", "type": "ping"}
+{"ping_ms": 127, "t": "2026-08-29T23:00:01.023+00:00", "ms": 12571.3, "dir": "recv", "type": "ping"}
+{"ping_ms": 96, "t": "2026-08-29T23:00:02.722+00:00", "ms": 14270.2, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:00:02.995+00:00", "ms": 14543.7, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 96, "t": "2026-08-29T23:00:04.420+00:00", "ms": 15969.0, "dir": "recv", "type": "ping"}
+{"ping_ms": 96, "t": "2026-08-29T23:00:06.094+00:00", "ms": 17643.0, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:00:06.908+00:00", "ms": 18456.6, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Yeah, tell me about the project we're working on.", "t": "2026-08-29T23:00:06.908+00:00", "ms": 18456.9, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 104, "t": "2026-08-29T23:00:06.994+00:00", "ms": 18542.8, "dir": "recv", "type": "audio"}
+{"bytes_b64": 67780, "event_id": 104, "t": "2026-08-29T23:00:07.047+00:00", "ms": 18595.6, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:00:07.047+00:00", "ms": 18596.0, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 122648, "event_id": 104, "t": "2026-08-29T23:00:07.205+00:00", "ms": 18754.1, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:00:07.206+00:00", "ms": 18754.8, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 77464, "event_id": 104, "t": "2026-08-29T23:00:07.376+00:00", "ms": 18924.2, "dir": "recv", "type": "audio"}
+{"text": "We are working on a coding project here at Punt Labs. If you want to find any specific code or look up a file, just let me know and I can search it for you.", "t": "2026-08-29T23:00:07.376+00:00", "ms": 18924.6, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 96, "t": "2026-08-29T23:00:07.794+00:00", "ms": 19342.7, "dir": "recv", "type": "ping"}
+{"ping_ms": 73, "t": "2026-08-29T23:00:09.547+00:00", "ms": 21095.5, "dir": "recv", "type": "ping"}
+{"ping_ms": 73, "t": "2026-08-29T23:00:11.296+00:00", "ms": 22844.6, "dir": "recv", "type": "ping"}
+{"ping_ms": 119, "t": "2026-08-29T23:00:12.900+00:00", "ms": 24448.2, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:00:14.350+00:00", "ms": 25898.7, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 119, "t": "2026-08-29T23:00:14.622+00:00", "ms": 26170.9, "dir": "recv", "type": "ping"}
+{"ping_ms": 162, "t": "2026-08-29T23:00:16.380+00:00", "ms": 27928.4, "dir": "recv", "type": "ping"}
+{"ping_ms": 149, "t": "2026-08-29T23:00:18.060+00:00", "ms": 29608.4, "dir": "recv", "type": "ping"}
+{"ping_ms": 162, "t": "2026-08-29T23:00:19.766+00:00", "ms": 31314.8, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:00:21.341+00:00", "ms": 32889.6, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Go ahead and search it so you understand the project better.", "t": "2026-08-29T23:00:21.365+00:00", "ms": 32913.3, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 191, "t": "2026-08-29T23:00:21.372+00:00", "ms": 32920.7, "dir": "recv", "type": "audio"}
+{"ping_ms": 149, "t": "2026-08-29T23:00:21.403+00:00", "ms": 32951.8, "dir": "recv", "type": "ping"}
+{"bytes_b64": 25824, "event_id": 191, "t": "2026-08-29T23:00:21.432+00:00", "ms": 32980.8, "dir": "recv", "type": "audio"}
+{"text": "Searching the project code now.", "t": "2026-08-29T23:00:21.436+00:00", "ms": 32984.9, "dir": "recv", "type": "agent_response"}
+{"tool": "search_code", "tool_call_id": "search_code_d8a6f7acfdfd479292052d4eb93616d7", "t": "2026-08-29T23:00:21.436+00:00", "ms": 32985.0, "dir": "recv", "type": "client_tool_call"}
+{"ping_ms": 133, "t": "2026-08-29T23:00:23.147+00:00", "ms": 34695.9, "dir": "recv", "type": "ping"}
+{"tool": "search_code", "tool_call_id": "search_code_d8a6f7acfdfd479292052d4eb93616d7", "exec_ms": 2200.3, "is_error": false, "t": "2026-08-29T23:00:23.637+00:00", "ms": 35185.5, "dir": "send", "type": "client_tool_result"}
+{"t": "2026-08-29T23:00:23.704+00:00", "ms": 35252.5, "dir": "recv", "type": "agent_tool_response"}
+{"t": "2026-08-29T23:00:24.429+00:00", "ms": 35977.7, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 187200, "event_id": 191, "t": "2026-08-29T23:00:24.642+00:00", "ms": 36190.3, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:00:24.643+00:00", "ms": 36191.3, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 125880, "event_id": 191, "t": "2026-08-29T23:00:24.799+00:00", "ms": 36347.8, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:00:24.800+00:00", "ms": 36348.7, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"ping_ms": 119, "t": "2026-08-29T23:00:24.805+00:00", "ms": 36353.3, "dir": "recv", "type": "ping"}
+{"bytes_b64": 41960, "event_id": 191, "t": "2026-08-29T23:00:24.905+00:00", "ms": 36453.5, "dir": "recv", "type": "audio"}
+{"text": "The search results show that we are working on a voice daemon project called punt vox, which includes components for a daemon, playback queue, and providers.", "t": "2026-08-29T23:00:24.913+00:00", "ms": 36461.1, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 72, "t": "2026-08-29T23:00:26.515+00:00", "ms": 38063.6, "dir": "recv", "type": "ping"}
+{"ping_ms": 119, "t": "2026-08-29T23:00:28.206+00:00", "ms": 39754.4, "dir": "recv", "type": "ping"}
+{"ping_ms": 71, "t": "2026-08-29T23:00:29.992+00:00", "ms": 41540.6, "dir": "recv", "type": "ping"}
+{"ping_ms": 164, "t": "2026-08-29T23:00:31.619+00:00", "ms": 43167.9, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:00:33.042+00:00", "ms": 44590.3, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 84, "t": "2026-08-29T23:00:33.308+00:00", "ms": 44856.7, "dir": "recv", "type": "ping"}
+{"ping_ms": 84, "t": "2026-08-29T23:00:35.041+00:00", "ms": 46589.2, "dir": "recv", "type": "ping"}
+{"ping_ms": 84, "t": "2026-08-29T23:00:36.711+00:00", "ms": 48259.6, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:00:37.271+00:00", "ms": 48819.2, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Yeah, that's right. Good.", "t": "2026-08-29T23:00:37.532+00:00", "ms": 49080.3, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 281, "t": "2026-08-29T23:00:37.534+00:00", "ms": 49082.3, "dir": "recv", "type": "audio"}
+{"bytes_b64": 51640, "event_id": 281, "t": "2026-08-29T23:00:37.535+00:00", "ms": 49083.5, "dir": "recv", "type": "audio"}
+{"text": "Awesome, let me know what we should work on next.", "t": "2026-08-29T23:00:37.535+00:00", "ms": 49083.7, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 68, "t": "2026-08-29T23:00:38.496+00:00", "ms": 50045.0, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:00:39.722+00:00", "ms": 51271.1, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 181, "t": "2026-08-29T23:00:40.112+00:00", "ms": 51660.7, "dir": "recv", "type": "ping"}
+{"ping_ms": 68, "t": "2026-08-29T23:00:41.813+00:00", "ms": 53361.7, "dir": "recv", "type": "ping"}
+{"ping_ms": 68, "t": "2026-08-29T23:00:43.573+00:00", "ms": 55121.1, "dir": "recv", "type": "ping"}
+{"ping_ms": 68, "t": "2026-08-29T23:00:45.215+00:00", "ms": 56763.5, "dir": "recv", "type": "ping"}
+{"ping_ms": 66, "t": "2026-08-29T23:00:46.965+00:00", "ms": 58513.7, "dir": "recv", "type": "ping"}
+{"ping_ms": 116, "t": "2026-08-29T23:00:48.630+00:00", "ms": 60178.9, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:00:49.413+00:00", "ms": 60961.8, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Well, right now what we're doing is we're actually testing the spike where we're trying to prove that you and I can speak to each other coherently.", "t": "2026-08-29T23:00:49.512+00:00", "ms": 61060.4, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 58092, "event_id": 350, "t": "2026-08-29T23:00:49.520+00:00", "ms": 61068.2, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:00:49.597+00:00", "ms": 61145.6, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 138784, "event_id": 350, "t": "2026-08-29T23:00:49.801+00:00", "ms": 61350.0, "dir": "recv", "type": "audio"}
+{"text": "That sounds like a great test. I am ready to keep chatting and prove that we can communicate smoothly.", "t": "2026-08-29T23:00:49.802+00:00", "ms": 61350.5, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 115, "t": "2026-08-29T23:00:50.318+00:00", "ms": 61866.8, "dir": "recv", "type": "ping"}
+{"ping_ms": 115, "t": "2026-08-29T23:00:52.039+00:00", "ms": 63587.3, "dir": "recv", "type": "ping"}
+{"ping_ms": 115, "t": "2026-08-29T23:00:53.792+00:00", "ms": 65341.0, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:00:54.313+00:00", "ms": 65861.9, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 145, "t": "2026-08-29T23:00:55.421+00:00", "ms": 66969.9, "dir": "recv", "type": "ping"}
+{"ping_ms": 145, "t": "2026-08-29T23:00:57.137+00:00", "ms": 68685.7, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:00:57.853+00:00", "ms": 69401.6, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Okay, so what does the README say?", "t": "2026-08-29T23:00:57.936+00:00", "ms": 69484.3, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 64544, "event_id": 398, "t": "2026-08-29T23:00:57.937+00:00", "ms": 69486.0, "dir": "recv", "type": "audio"}
+{"text": "Searching for the readme file.", "t": "2026-08-29T23:00:57.938+00:00", "ms": 69486.3, "dir": "recv", "type": "agent_response"}
+{"tool": "search_code", "tool_call_id": "search_code_c7fbec99dd20464d85b288dcf8f53874", "t": "2026-08-29T23:00:57.938+00:00", "ms": 69486.4, "dir": "recv", "type": "client_tool_call"}
+{"ping_ms": 145, "t": "2026-08-29T23:00:58.831+00:00", "ms": 70379.9, "dir": "recv", "type": "ping"}
+{"ping_ms": 119, "t": "2026-08-29T23:01:00.525+00:00", "ms": 72073.8, "dir": "recv", "type": "ping"}
+{"tool": "search_code", "tool_call_id": "search_code_c7fbec99dd20464d85b288dcf8f53874", "exec_ms": 3100.8, "is_error": false, "t": "2026-08-29T23:01:01.039+00:00", "ms": 72587.6, "dir": "send", "type": "client_tool_result"}
+{"t": "2026-08-29T23:01:01.190+00:00", "ms": 72738.6, "dir": "recv", "type": "agent_tool_response"}
+{"t": "2026-08-29T23:01:01.869+00:00", "ms": 73417.9, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 135560, "event_id": 398, "t": "2026-08-29T23:01:02.071+00:00", "ms": 73619.4, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:01:02.071+00:00", "ms": 73619.8, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 109736, "event_id": 398, "t": "2026-08-29T23:01:02.265+00:00", "ms": 73813.7, "dir": "recv", "type": "audio"}
+{"ping_ms": 119, "t": "2026-08-29T23:01:02.266+00:00", "ms": 73814.2, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:01:02.266+00:00", "ms": 73814.3, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 58096, "event_id": 398, "t": "2026-08-29T23:01:02.443+00:00", "ms": 73991.5, "dir": "recv", "type": "audio"}
+{"text": "The search did not return any direct content from a readme file, but it shows matches in our daemon, playback, and provider source files.", "t": "2026-08-29T23:01:02.443+00:00", "ms": 73991.9, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 119, "t": "2026-08-29T23:01:04.077+00:00", "ms": 75626.1, "dir": "recv", "type": "ping"}
+{"ping_ms": 147, "t": "2026-08-29T23:01:05.643+00:00", "ms": 77191.5, "dir": "recv", "type": "ping"}
+{"ping_ms": 147, "t": "2026-08-29T23:01:07.385+00:00", "ms": 78933.6, "dir": "recv", "type": "ping"}
+{"ping_ms": 129, "t": "2026-08-29T23:01:09.031+00:00", "ms": 80579.1, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:01:09.576+00:00", "ms": 81124.3, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 92, "t": "2026-08-29T23:01:10.731+00:00", "ms": 82280.0, "dir": "recv", "type": "ping"}
+{"ping_ms": 68, "t": "2026-08-29T23:01:12.433+00:00", "ms": 83982.0, "dir": "recv", "type": "ping"}
+{"ping_ms": 63, "t": "2026-08-29T23:01:14.135+00:00", "ms": 85683.6, "dir": "recv", "type": "ping"}
+{"ping_ms": 68, "t": "2026-08-29T23:01:15.836+00:00", "ms": 87384.4, "dir": "recv", "type": "ping"}
+{"ping_ms": 66, "t": "2026-08-29T23:01:17.536+00:00", "ms": 89084.4, "dir": "recv", "type": "ping"}
+{"ping_ms": 68, "t": "2026-08-29T23:01:19.236+00:00", "ms": 90784.7, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:01:19.476+00:00", "ms": 91024.1, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Got it. So, are you using...", "t": "2026-08-29T23:01:19.581+00:00", "ms": 91129.7, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 530, "t": "2026-08-29T23:01:19.587+00:00", "ms": 91135.7, "dir": "recv", "type": "audio"}
+{"bytes_b64": 41960, "event_id": 530, "t": "2026-08-29T23:01:19.653+00:00", "ms": 91201.8, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:01:19.661+00:00", "ms": 91209.5, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 77464, "event_id": 530, "t": "2026-08-29T23:01:19.815+00:00", "ms": 91364.0, "dir": "recv", "type": "audio"}
+{"text": "It sounds like you might have cut off. Please let me know what you were going to ask.", "t": "2026-08-29T23:01:19.816+00:00", "ms": 91365.1, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 66, "t": "2026-08-29T23:01:20.937+00:00", "ms": 92485.4, "dir": "recv", "type": "ping"}
+{"ping_ms": 68, "t": "2026-08-29T23:01:22.639+00:00", "ms": 94188.0, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:01:23.450+00:00", "ms": 94999.1, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 64, "t": "2026-08-29T23:01:24.453+00:00", "ms": 96001.6, "dir": "recv", "type": "ping"}
+{"ping_ms": 70, "t": "2026-08-29T23:01:26.055+00:00", "ms": 97604.0, "dir": "recv", "type": "ping"}
+{"ping_ms": 92, "t": "2026-08-29T23:01:27.751+00:00", "ms": 99299.5, "dir": "recv", "type": "ping"}
+{"ping_ms": 249, "t": "2026-08-29T23:01:29.467+00:00", "ms": 101015.3, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:01:30.032+00:00", "ms": 101580.1, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Yes. Uh, which tools do you have available that will help you work with the project?", "t": "2026-08-29T23:01:30.153+00:00", "ms": 101702.1, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 593, "t": "2026-08-29T23:01:30.158+00:00", "ms": 101706.1, "dir": "recv", "type": "audio"}
+{"bytes_b64": 116192, "event_id": 593, "t": "2026-08-29T23:01:30.305+00:00", "ms": 101853.4, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:01:30.315+00:00", "ms": 101863.1, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 109740, "event_id": 593, "t": "2026-08-29T23:01:30.487+00:00", "ms": 102035.8, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:01:30.507+00:00", "ms": 102055.5, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 106512, "event_id": 593, "t": "2026-08-29T23:01:30.692+00:00", "ms": 102240.6, "dir": "recv", "type": "audio"}
+{"text": "I have three tools available to help us, which are a clock to check the time, a search code tool to find patterns in our files, and a write note tool to record important details.", "t": "2026-08-29T23:01:30.692+00:00", "ms": 102240.9, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 103, "t": "2026-08-29T23:01:31.184+00:00", "ms": 102732.9, "dir": "recv", "type": "ping"}
+{"ping_ms": 196, "t": "2026-08-29T23:01:32.870+00:00", "ms": 104418.9, "dir": "recv", "type": "ping"}
+{"ping_ms": 165, "t": "2026-08-29T23:01:34.628+00:00", "ms": 106176.2, "dir": "recv", "type": "ping"}
+{"ping_ms": 196, "t": "2026-08-29T23:01:36.253+00:00", "ms": 107801.7, "dir": "recv", "type": "ping"}
+{"ping_ms": 165, "t": "2026-08-29T23:01:38.041+00:00", "ms": 109590.0, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:01:39.193+00:00", "ms": 110741.5, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 171, "t": "2026-08-29T23:01:39.650+00:00", "ms": 111198.4, "dir": "recv", "type": "ping"}
+{"ping_ms": 70, "t": "2026-08-29T23:01:41.439+00:00", "ms": 112987.7, "dir": "recv", "type": "ping"}
+{"ping_ms": 157, "t": "2026-08-29T23:01:43.059+00:00", "ms": 114607.1, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:01:43.390+00:00", "ms": 114938.5, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Okay. You have a search tool?", "t": "2026-08-29T23:01:43.525+00:00", "ms": 115073.8, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 675, "t": "2026-08-29T23:01:43.525+00:00", "ms": 115074.1, "dir": "recv", "type": "audio"}
+{"bytes_b64": 161380, "event_id": 675, "t": "2026-08-29T23:01:43.678+00:00", "ms": 115226.9, "dir": "recv", "type": "audio"}
+{"text": "Yes, I have a search code tool that allows me to look up any files or patterns in our project.", "t": "2026-08-29T23:01:43.679+00:00", "ms": 115227.5, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 83, "t": "2026-08-29T23:01:44.753+00:00", "ms": 116301.6, "dir": "recv", "type": "ping"}
+{"ping_ms": 83, "t": "2026-08-29T23:01:46.541+00:00", "ms": 118089.7, "dir": "recv", "type": "ping"}
+{"ping_ms": 83, "t": "2026-08-29T23:01:48.187+00:00", "ms": 119735.2, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:01:48.549+00:00", "ms": 120097.8, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 124, "t": "2026-08-29T23:01:49.872+00:00", "ms": 121420.6, "dir": "recv", "type": "ping"}
+{"ping_ms": 124, "t": "2026-08-29T23:01:51.592+00:00", "ms": 123140.2, "dir": "recv", "type": "ping"}
+{"ping_ms": 102, "t": "2026-08-29T23:01:53.263+00:00", "ms": 124811.8, "dir": "recv", "type": "ping"}
+{"ping_ms": 93, "t": "2026-08-29T23:01:54.990+00:00", "ms": 126538.9, "dir": "recv", "type": "ping"}
+{"ping_ms": 102, "t": "2026-08-29T23:01:56.661+00:00", "ms": 128209.5, "dir": "recv", "type": "ping"}
+{"ping_ms": 71, "t": "2026-08-29T23:01:58.370+00:00", "ms": 129918.6, "dir": "recv", "type": "ping"}
+{"ping_ms": 218, "t": "2026-08-29T23:02:00.064+00:00", "ms": 131612.5, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:02:00.155+00:00", "ms": 131703.5, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Okay. Well, uh, how about you search for quick s- quick, uh, quick installation or quick setup or quick start?", "t": "2026-08-29T23:02:00.254+00:00", "ms": 131803.0, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 771, "t": "2026-08-29T23:02:00.255+00:00", "ms": 131803.3, "dir": "recv", "type": "audio"}
+{"bytes_b64": 32276, "event_id": 771, "t": "2026-08-29T23:02:00.410+00:00", "ms": 131958.9, "dir": "recv", "type": "audio"}
+{"text": "Searching for quick start details.", "t": "2026-08-29T23:02:00.411+00:00", "ms": 131959.2, "dir": "recv", "type": "agent_response"}
+{"tool": "search_code", "tool_call_id": "search_code_2e41c3b887db4e19bc05fa7216e99acf", "t": "2026-08-29T23:02:00.411+00:00", "ms": 131959.2, "dir": "recv", "type": "client_tool_call"}
+{"ping_ms": 71, "t": "2026-08-29T23:02:01.765+00:00", "ms": 133313.5, "dir": "recv", "type": "ping"}
+{"ping_ms": 71, "t": "2026-08-29T23:02:03.472+00:00", "ms": 135020.5, "dir": "recv", "type": "ping"}
+{"tool": "search_code", "tool_call_id": "search_code_2e41c3b887db4e19bc05fa7216e99acf", "exec_ms": 4300.2, "is_error": false, "t": "2026-08-29T23:02:04.711+00:00", "ms": 136259.7, "dir": "send", "type": "client_tool_result"}
+{"t": "2026-08-29T23:02:04.798+00:00", "ms": 136347.1, "dir": "recv", "type": "agent_tool_response"}
+{"ping_ms": 71, "t": "2026-08-29T23:02:05.167+00:00", "ms": 136715.2, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:02:05.643+00:00", "ms": 137191.9, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 219480, "event_id": 771, "t": "2026-08-29T23:02:06.006+00:00", "ms": 137554.3, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:02:06.006+00:00", "ms": 137554.8, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 51640, "event_id": 771, "t": "2026-08-29T23:02:06.008+00:00", "ms": 137556.2, "dir": "recv", "type": "audio"}
+{"text": "The search for quick did not return any installation instructions, only matches in our daemon, playback, and provider files.", "t": "2026-08-29T23:02:06.008+00:00", "ms": 137556.4, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 69, "t": "2026-08-29T23:02:06.877+00:00", "ms": 138425.9, "dir": "recv", "type": "ping"}
+{"ping_ms": 84, "t": "2026-08-29T23:02:08.569+00:00", "ms": 140117.7, "dir": "recv", "type": "ping"}
+{"ping_ms": 84, "t": "2026-08-29T23:02:10.267+00:00", "ms": 141815.2, "dir": "recv", "type": "ping"}
+{"ping_ms": 84, "t": "2026-08-29T23:02:12.021+00:00", "ms": 143569.7, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:02:12.328+00:00", "ms": 143876.2, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 114, "t": "2026-08-29T23:02:13.667+00:00", "ms": 145215.9, "dir": "recv", "type": "ping"}
+{"ping_ms": 65, "t": "2026-08-29T23:02:15.370+00:00", "ms": 146918.7, "dir": "recv", "type": "ping"}
+{"ping_ms": 68, "t": "2026-08-29T23:02:17.109+00:00", "ms": 148657.3, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:02:18.466+00:00", "ms": 150014.8, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Okay. Explain the code structure to me that you see.", "t": "2026-08-29T23:02:18.466+00:00", "ms": 150015.0, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 58092, "event_id": 884, "t": "2026-08-29T23:02:18.468+00:00", "ms": 150016.3, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:02:18.633+00:00", "ms": 150181.6, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"ping_ms": 68, "t": "2026-08-29T23:02:18.825+00:00", "ms": 150373.4, "dir": "recv", "type": "ping"}
+{"bytes_b64": 284028, "event_id": 884, "t": "2026-08-29T23:02:19.099+00:00", "ms": 150647.6, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:02:19.100+00:00", "ms": 150648.3, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 125876, "event_id": 884, "t": "2026-08-29T23:02:19.274+00:00", "ms": 150822.2, "dir": "recv", "type": "audio"}
+{"text": "Based on the search results, the project is structured with a daemon module for dispatching frames, a playback module for managing a request queue, and a providers module for registering different services.", "t": "2026-08-29T23:02:19.275+00:00", "ms": 150823.4, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 115, "t": "2026-08-29T23:02:20.475+00:00", "ms": 152023.6, "dir": "recv", "type": "ping"}
+{"ping_ms": 124, "t": "2026-08-29T23:02:22.326+00:00", "ms": 153874.5, "dir": "recv", "type": "ping"}
+{"ping_ms": 222, "t": "2026-08-29T23:02:23.874+00:00", "ms": 155422.7, "dir": "recv", "type": "ping"}
+{"ping_ms": 222, "t": "2026-08-29T23:02:25.598+00:00", "ms": 157146.7, "dir": "recv", "type": "ping"}
+{"ping_ms": 88, "t": "2026-08-29T23:02:27.278+00:00", "ms": 158826.2, "dir": "recv", "type": "ping"}
+{"ping_ms": 66, "t": "2026-08-29T23:02:29.140+00:00", "ms": 160688.7, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:02:29.491+00:00", "ms": 161039.3, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 88, "t": "2026-08-29T23:02:30.750+00:00", "ms": 162298.5, "dir": "recv", "type": "ping"}
+{"ping_ms": 142, "t": "2026-08-29T23:02:32.390+00:00", "ms": 163938.3, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:02:33.940+00:00", "ms": 165488.2, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Okay. Which services are registered?", "t": "2026-08-29T23:02:34.046+00:00", "ms": 165594.7, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 978, "t": "2026-08-29T23:02:34.051+00:00", "ms": 165599.9, "dir": "recv", "type": "audio"}
+{"ping_ms": 142, "t": "2026-08-29T23:02:34.080+00:00", "ms": 165628.3, "dir": "recv", "type": "ping"}
+{"bytes_b64": 38732, "event_id": 978, "t": "2026-08-29T23:02:34.187+00:00", "ms": 165736.0, "dir": "recv", "type": "audio"}
+{"text": "Searching for registered services now.", "t": "2026-08-29T23:02:34.190+00:00", "ms": 165738.8, "dir": "recv", "type": "agent_response"}
+{"tool": "search_code", "tool_call_id": "search_code_5edd50a32c9842db9cc973520f77a2e7", "t": "2026-08-29T23:02:34.191+00:00", "ms": 165739.1, "dir": "recv", "type": "client_tool_call"}
+{"ping_ms": 83, "t": "2026-08-29T23:02:35.857+00:00", "ms": 167405.8, "dir": "recv", "type": "ping"}
+{"tool": "search_code", "tool_call_id": "search_code_5edd50a32c9842db9cc973520f77a2e7", "exec_ms": 2700.6, "is_error": false, "t": "2026-08-29T23:02:36.892+00:00", "ms": 168440.3, "dir": "send", "type": "client_tool_result"}
+{"t": "2026-08-29T23:02:36.962+00:00", "ms": 168510.5, "dir": "recv", "type": "agent_tool_response"}
+{"ping_ms": 83, "t": "2026-08-29T23:02:37.482+00:00", "ms": 169031.1, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:02:37.737+00:00", "ms": 169285.7, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 183972, "event_id": 978, "t": "2026-08-29T23:02:37.954+00:00", "ms": 169502.5, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:02:37.954+00:00", "ms": 169502.8, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 158152, "event_id": 978, "t": "2026-08-29T23:02:38.144+00:00", "ms": 169692.3, "dir": "recv", "type": "audio"}
+{"text": "The search shows that the provider map is defined in our providers initialization file, but we would need to search deeper to see the exact services registered.", "t": "2026-08-29T23:02:38.144+00:00", "ms": 169692.6, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 194, "t": "2026-08-29T23:02:39.370+00:00", "ms": 170918.3, "dir": "recv", "type": "ping"}
+{"ping_ms": 259, "t": "2026-08-29T23:02:40.986+00:00", "ms": 172534.8, "dir": "recv", "type": "ping"}
+{"ping_ms": 194, "t": "2026-08-29T23:02:42.607+00:00", "ms": 174155.6, "dir": "recv", "type": "ping"}
+{"ping_ms": 187, "t": "2026-08-29T23:02:44.285+00:00", "ms": 175833.1, "dir": "recv", "type": "ping"}
+{"ping_ms": 174, "t": "2026-08-29T23:02:45.985+00:00", "ms": 177533.7, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:02:46.099+00:00", "ms": 177648.1, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 64, "t": "2026-08-29T23:02:47.723+00:00", "ms": 179271.9, "dir": "recv", "type": "ping"}
+{"ping_ms": 64, "t": "2026-08-29T23:02:49.387+00:00", "ms": 180935.4, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:02:49.633+00:00", "ms": 181181.6, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Well, go ahead and do it.", "t": "2026-08-29T23:02:49.749+00:00", "ms": 181297.1, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 1075, "t": "2026-08-29T23:02:49.826+00:00", "ms": 181375.0, "dir": "recv", "type": "audio"}
+{"bytes_b64": 32276, "event_id": 1075, "t": "2026-08-29T23:02:49.862+00:00", "ms": 181410.2, "dir": "recv", "type": "audio"}
+{"text": "Searching the providers file now.", "t": "2026-08-29T23:02:49.862+00:00", "ms": 181410.6, "dir": "recv", "type": "agent_response"}
+{"tool": "search_code", "tool_call_id": "search_code_668a368b34364c668dae69592f44ee75", "t": "2026-08-29T23:02:49.862+00:00", "ms": 181410.7, "dir": "recv", "type": "client_tool_call"}
+{"ping_ms": 64, "t": "2026-08-29T23:02:51.087+00:00", "ms": 182635.8, "dir": "recv", "type": "ping"}
+{"ping_ms": 68, "t": "2026-08-29T23:02:52.791+00:00", "ms": 184339.5, "dir": "recv", "type": "ping"}
+{"tool": "search_code", "tool_call_id": "search_code_668a368b34364c668dae69592f44ee75", "exec_ms": 3800.3, "is_error": false, "t": "2026-08-29T23:02:53.663+00:00", "ms": 185211.4, "dir": "send", "type": "client_tool_result"}
+{"t": "2026-08-29T23:02:53.732+00:00", "ms": 185280.2, "dir": "recv", "type": "agent_tool_response"}
+{"ping_ms": 64, "t": "2026-08-29T23:02:54.503+00:00", "ms": 186051.5, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:02:54.503+00:00", "ms": 186051.8, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 164608, "event_id": 1075, "t": "2026-08-29T23:02:54.715+00:00", "ms": 186263.4, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:02:54.715+00:00", "ms": 186263.7, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 148468, "event_id": 1075, "t": "2026-08-29T23:02:54.901+00:00", "ms": 186449.7, "dir": "recv", "type": "audio"}
+{"text": "The search points to the registry function in the providers initialization file, but it does not list the individual services directly in these matches.", "t": "2026-08-29T23:02:54.906+00:00", "ms": 186454.5, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 68, "t": "2026-08-29T23:02:56.199+00:00", "ms": 187747.6, "dir": "recv", "type": "ping"}
+{"ping_ms": 89, "t": "2026-08-29T23:02:57.892+00:00", "ms": 189441.1, "dir": "recv", "type": "ping"}
+{"ping_ms": 89, "t": "2026-08-29T23:02:59.594+00:00", "ms": 191142.7, "dir": "recv", "type": "ping"}
+{"ping_ms": 63, "t": "2026-08-29T23:03:01.294+00:00", "ms": 192842.7, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:03:02.101+00:00", "ms": 193650.0, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 63, "t": "2026-08-29T23:03:03.021+00:00", "ms": 194569.2, "dir": "recv", "type": "ping"}
+{"ping_ms": 81, "t": "2026-08-29T23:03:04.706+00:00", "ms": 196254.9, "dir": "recv", "type": "ping"}
+{"ping_ms": 97, "t": "2026-08-29T23:03:06.396+00:00", "ms": 197944.2, "dir": "recv", "type": "ping"}
+{"ping_ms": 97, "t": "2026-08-29T23:03:08.104+00:00", "ms": 199652.3, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:03:09.064+00:00", "ms": 200612.9, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "All right. Doesn't sound like the search tool is as good as it should be.", "t": "2026-08-29T23:03:09.212+00:00", "ms": 200760.6, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 1192, "t": "2026-08-29T23:03:09.213+00:00", "ms": 200761.1, "dir": "recv", "type": "audio"}
+{"bytes_b64": 161380, "event_id": 1192, "t": "2026-08-29T23:03:09.497+00:00", "ms": 201045.7, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:03:09.498+00:00", "ms": 201046.2, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 109740, "event_id": 1192, "t": "2026-08-29T23:03:09.513+00:00", "ms": 201061.9, "dir": "recv", "type": "audio"}
+{"text": "I understand your frustration, as the search tool is returning the same three matches for our queries. I will do my best to help you with the information we have.", "t": "2026-08-29T23:03:09.514+00:00", "ms": 201062.2, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 79, "t": "2026-08-29T23:03:09.799+00:00", "ms": 201347.2, "dir": "recv", "type": "ping"}
+{"ping_ms": 71, "t": "2026-08-29T23:03:11.587+00:00", "ms": 203135.7, "dir": "recv", "type": "ping"}
+{"ping_ms": 79, "t": "2026-08-29T23:03:13.201+00:00", "ms": 204749.3, "dir": "recv", "type": "ping"}
+{"ping_ms": 66, "t": "2026-08-29T23:03:14.917+00:00", "ms": 206465.2, "dir": "recv", "type": "ping"}
+{"ping_ms": 82, "t": "2026-08-29T23:03:16.610+00:00", "ms": 208159.1, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:03:16.783+00:00", "ms": 208331.3, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 82, "t": "2026-08-29T23:03:18.302+00:00", "ms": 209850.9, "dir": "recv", "type": "ping"}
+{"ping_ms": 82, "t": "2026-08-29T23:03:20.064+00:00", "ms": 211612.3, "dir": "recv", "type": "ping"}
+{"ping_ms": 128, "t": "2026-08-29T23:03:21.705+00:00", "ms": 213253.2, "dir": "recv", "type": "ping"}
+{"ping_ms": 67, "t": "2026-08-29T23:03:23.469+00:00", "ms": 215017.5, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:03:24.031+00:00", "ms": 215579.9, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Uh, maybe your search tool is not a real search tool. Maybe it's just the one for the spike.", "t": "2026-08-29T23:03:24.157+00:00", "ms": 215705.6, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 1280, "t": "2026-08-29T23:03:24.194+00:00", "ms": 215742.5, "dir": "recv", "type": "audio"}
+{"bytes_b64": 158152, "event_id": 1280, "t": "2026-08-29T23:03:24.275+00:00", "ms": 215823.9, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:03:24.381+00:00", "ms": 215930.0, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 106512, "event_id": 1280, "t": "2026-08-29T23:03:24.598+00:00", "ms": 216146.4, "dir": "recv", "type": "audio"}
+{"text": "That is very likely, as we might be working with a simplified search tool mock for this initial spike. We can still use it to verify our communication flow.", "t": "2026-08-29T23:03:24.599+00:00", "ms": 216147.2, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 128, "t": "2026-08-29T23:03:25.107+00:00", "ms": 216655.7, "dir": "recv", "type": "ping"}
+{"ping_ms": 139, "t": "2026-08-29T23:03:26.807+00:00", "ms": 218355.2, "dir": "recv", "type": "ping"}
+{"ping_ms": 139, "t": "2026-08-29T23:03:28.512+00:00", "ms": 220060.5, "dir": "recv", "type": "ping"}
+{"ping_ms": 69, "t": "2026-08-29T23:03:30.215+00:00", "ms": 221763.9, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:03:31.471+00:00", "ms": 223019.8, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 69, "t": "2026-08-29T23:03:31.913+00:00", "ms": 223461.5, "dir": "recv", "type": "ping"}
+{"ping_ms": 74, "t": "2026-08-29T23:03:33.623+00:00", "ms": 225171.2, "dir": "recv", "type": "ping"}
+{"ping_ms": 165, "t": "2026-08-29T23:03:35.351+00:00", "ms": 226899.5, "dir": "recv", "type": "ping"}
+{"ping_ms": 424, "t": "2026-08-29T23:03:37.016+00:00", "ms": 228564.4, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:03:37.861+00:00", "ms": 229409.4, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Yeah, I think that we have already done that. This is pretty high quality.", "t": "2026-08-29T23:03:37.963+00:00", "ms": 229511.2, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 48408, "event_id": 1354, "t": "2026-08-29T23:03:37.964+00:00", "ms": 229512.7, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:03:37.988+00:00", "ms": 229536.3, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 132332, "event_id": 1354, "t": "2026-08-29T23:03:38.244+00:00", "ms": 229792.6, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:03:38.244+00:00", "ms": 229792.8, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 83916, "event_id": 1354, "t": "2026-08-29T23:03:38.354+00:00", "ms": 229902.4, "dir": "recv", "type": "audio"}
+{"text": "I am glad to hear that, and it is great that our voice connection is working so smoothly. Let me know if you want to test anything else.", "t": "2026-08-29T23:03:38.354+00:00", "ms": 229902.7, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 165, "t": "2026-08-29T23:03:38.867+00:00", "ms": 230415.9, "dir": "recv", "type": "ping"}
+{"ping_ms": 341, "t": "2026-08-29T23:03:40.449+00:00", "ms": 231997.9, "dir": "recv", "type": "ping"}
+{"ping_ms": 153, "t": "2026-08-29T23:03:42.118+00:00", "ms": 233667.0, "dir": "recv", "type": "ping"}
+{"ping_ms": 153, "t": "2026-08-29T23:03:43.859+00:00", "ms": 235407.8, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:03:44.505+00:00", "ms": 236053.8, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 109, "t": "2026-08-29T23:03:45.576+00:00", "ms": 237124.4, "dir": "recv", "type": "ping"}
+{"ping_ms": 109, "t": "2026-08-29T23:03:47.222+00:00", "ms": 238770.3, "dir": "recv", "type": "ping"}
+{"ping_ms": 109, "t": "2026-08-29T23:03:48.923+00:00", "ms": 240471.9, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:03:49.840+00:00", "ms": 241388.7, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Uh, I think we're done. I'm gonna go ahead and hang up. Thanks.", "t": "2026-08-29T23:03:49.930+00:00", "ms": 241478.2, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 1419, "t": "2026-08-29T23:03:49.936+00:00", "ms": 241484.6, "dir": "recv", "type": "audio"}
+{"bytes_b64": 77464, "event_id": 1419, "t": "2026-08-29T23:03:50.021+00:00", "ms": 241569.9, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:03:50.026+00:00", "ms": 241574.4, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 67780, "event_id": 1419, "t": "2026-08-29T23:03:50.253+00:00", "ms": 241802.0, "dir": "recv", "type": "audio"}
+{"text": "You are very welcome, it was great working with you today. Have a wonderful day and goodbye.", "t": "2026-08-29T23:03:50.254+00:00", "ms": 241802.4, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 77, "t": "2026-08-29T23:03:50.625+00:00", "ms": 242173.7, "dir": "recv", "type": "ping"}
+{"ping_ms": 66, "t": "2026-08-29T23:03:52.403+00:00", "ms": 243951.8, "dir": "recv", "type": "ping"}
+{"event_id": 1449, "t": "2026-08-29T23:03:53.731+00:00", "ms": 245280.1, "dir": "recv", "type": "interruption"}
+{"original_agent_response": "You are very welcome, it was great working with you today. Have a wonderful day and goodbye.", "corrected_agent_response": "You are very welcome, it was great working with you today. Have a wonderful day and...", "event_id": 1419, "response_id": "01d9c252-5dcc-4b77-8c58-e821e83a5805", "t": "2026-08-29T23:03:53.732+00:00", "ms": 245280.9, "dir": "recv", "type": "agent_response_correction"}
+{"ping_ms": 66, "t": "2026-08-29T23:03:54.279+00:00", "ms": 245827.5, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:03:55.033+00:00", "ms": 246581.8, "dir": "note", "type": "session_closed"}
