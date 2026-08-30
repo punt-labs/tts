@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, cast, final
 
 import pytest
 from punt_lux import HubUnavailableError, OpError
-from punt_lux.operations import Ok
+from punt_lux.operations import FrameRaise, Ok
 
 from punt_vox.client_errors import (
     VoxdConnectionError,
@@ -116,6 +116,18 @@ class _FakeCallbackAccessor:
 
 
 @final
+class _FakeFrameAccessor:
+    """Records every ``raise_`` call, answering each with a successful raise."""
+
+    def __init__(self) -> None:
+        self.raised: list[str] = []
+
+    async def raise_(self, frame_id: str) -> FrameRaise | OpError:
+        self.raised.append(frame_id)
+        return FrameRaise(frame_id=frame_id, raised=True)
+
+
+@final
 class _DownSceneAccessor:
     """What a stopped luxd looks like from the panel's push path."""
 
@@ -158,6 +170,7 @@ class _FakeRest:
         self.patched: list[list[dict[str, object]]] = []
         self.scene = _FakeSceneAccessor(self)
         self.callback = _FakeCallbackAccessor()
+        self.frame = _FakeFrameAccessor()
 
     def listener(
         self,
@@ -764,6 +777,9 @@ class TestInstallScene:
 
         assert len(rest.rendered) == 2
         assert rest.patched == []
+        # DES-072 addendum: ``show`` alone does not reliably raise a frame the
+        # scene is not new to -- ``install_scene`` must ALSO raise explicitly.
+        assert rest.frame.raised == ["vox.panel"]
 
 
 class TestRefreshAndRecover:
@@ -914,6 +930,7 @@ class TestAcknowledgeAndService:
         rest = _FakeRest()
         await service.acknowledge(cast("LuxClient", rest), ClickLatency("vox-panel"))
         assert len(rest.rendered) == 1
+        assert rest.frame.raised == ["vox.panel"]  # the click's frame raise
 
     async def test_service_refreshes_then_pushes(self) -> None:
         from punt_lux.applets import ClickLatency

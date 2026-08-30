@@ -10,8 +10,13 @@ the frame shell changed and no patch could express it.
 :meth:`install` is the other door, and it is a different intent rather than a
 different mechanism: the user clicked the menu entry that opens this window, or a
 hub handshake just told us nothing is installed. Both mean *put this in front of
-me*, which is exactly what ``show``'s frame raise does, so both take it
-unconditionally.
+me*, so both take a full :class:`InstallScene` push unconditionally -- but
+``show`` on its own does NOT reliably raise the frame (DES-072 addendum): the
+Hub only clears the frame's minimized state and grabs focus when the scene is
+new to it, and this scene stays installed past the first push, so every later
+``show`` finds the scene already there and raises nothing. The caller that owns
+this object is the one that must explicitly raise the frame after the push
+lands.
 
 One field, ``_previous``, is the whole state machine. ``None`` means nothing is
 installed on the current connection; :meth:`disarm` restores that after luxd goes

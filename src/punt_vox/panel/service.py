@@ -13,11 +13,12 @@ read-modify-write so one thread's commit is never overwritten.
 
 Reaching luxd is :class:`~punt_vox.panel.panel_push.PanelPush`'s job, not this
 one's. The two verbs it exposes differ in intent rather than content:
-:meth:`VoxPanelService.install_scene` shows, raising the frame, and is reached
-only from the ``Vox`` menu click; :meth:`VoxPanelService.push_scene` refreshes the
-panel where it already sits, which is what the confirm push behind a click and
-every control-change re-push want. Radio clicks used to take the ``show`` path,
-so changing a setting yanked the panel in front of whatever was on top of it.
+:meth:`VoxPanelService.install_scene` shows the scene and then explicitly
+raises the frame, and is reached only from the ``Vox`` menu click;
+:meth:`VoxPanelService.push_scene` refreshes the panel where it already sits,
+which is what the confirm push behind a click and every control-change re-push
+want. Radio clicks used to take the ``show`` path, so changing a setting
+yanked the panel in front of whatever was on top of it.
 """
 
 from __future__ import annotations

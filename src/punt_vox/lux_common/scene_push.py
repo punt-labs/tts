@@ -1,11 +1,20 @@
 """The three ways one planned scene push completes: install, patch, or nothing.
 
 ``show`` and ``update`` are not two spellings of one operation. ``show`` installs
-the tree *and raises the frame*, which is what a user gesture -- clicking the menu
-entry that opens the window -- asks for. ``update`` writes fields onto an
-installed tree and touches frame, focus, and tab state not at all, which is what a
-refresh of a window the user is already looking at asks for. Conflating them is
-what makes a widget steal focus every time a number in it changes.
+the whole tree, which is what a user gesture -- clicking the menu entry that
+opens the window -- asks for. ``update`` writes fields onto an installed tree
+and touches frame, focus, and tab state not at all, which is what a refresh of a
+window the user is already looking at asks for. Conflating them is what makes a
+widget steal focus every time a number in it changes.
+
+``show`` does NOT reliably raise or unminimize the frame on its own (DES-072
+addendum): the Hub only clears a frame's minimized state and grabs focus when
+the scene is genuinely new to that frame, and both of vox's scenes stay
+installed across the session, so by the second install ``show`` alone raises
+nothing. A caller that means "bring this window to me" -- a menu click -- makes
+an explicit ``client.frame.raise_`` call alongside the install; see
+:class:`~punt_vox.voxd.music_player.lux_scene_publisher.LuxScenePublisher` and
+:class:`~punt_vox.panel.panel_push.PanelPush` for where that call lives.
 
 Each push knows how to complete itself, so the caller has no three-way branch:
 :class:`InstallScene` awaits ``show``; :class:`PatchScene` awaits ``update`` and,
@@ -65,7 +74,12 @@ class ScenePush(Protocol):
 @final
 @dataclass(frozen=True, slots=True)
 class InstallScene:
-    """Install (or replace) the whole tree, raising the frame -- ``show``."""
+    """Install (or replace) the whole tree -- ``show``.
+
+    Raising the frame is NOT a reliable side effect of this push (DES-072
+    addendum): the caller that means "bring this window to me" makes its own
+    explicit ``client.frame.raise_`` call alongside it.
+    """
 
     request: RenderRequest
 

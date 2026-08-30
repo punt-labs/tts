@@ -11,14 +11,20 @@ refresh whose render is byte-identical to the installed one costs nothing; one
 whose values moved is a field patch that leaves the frame's stacking order alone;
 one whose element roster or frame shell changed re-installs, because no patch can
 express that. :meth:`reinstall` is the other intent entirely -- the Music menu was
-clicked, or a hub handshake says nothing is installed -- and it always shows,
-because raising the frame is the answer the user asked for.
+clicked, or a hub handshake says nothing is installed -- and this publisher backs
+it with an *explicit* ``client.frame.raise_`` call once the push lands, because
+``scene.show`` only raises/unminimizes a frame the scene is genuinely new to
+(DES-072 addendum): the scene stays installed on this ``LiveScene`` across every
+menu click after the first, so by the second click ``show`` alone no longer
+raises anything, and the frame is left wherever the window manager last put it.
 
 A lux timeout / :class:`HubUnavailableError` is logged, dropped, and disarms the
 live scene, so the fresh connection installs rather than patching a scene the new
 luxd never saw. An engine-side ``OpError`` -- a scene luxd refused, almost always
 a projection defect rather than an absent display -- is logged at error. No lux
-failure is propagated back into audio control.
+failure is propagated back into audio control. The explicit raise is
+best-effort in the same spirit: a refused or unreachable raise is logged and
+swallowed, never allowed to look like a playback failure.
 """
 
 from __future__ import annotations
@@ -28,7 +34,7 @@ from typing import TYPE_CHECKING, Self, final
 
 from punt_lux import HubUnavailableError
 
-from punt_vox.lux_common import LiveScene
+from punt_vox.lux_common import FrameRaiser, LiveScene
 from punt_vox.voxd.music_player.lux_trace import LuxTrace
 from punt_vox.voxd.music_player.scene_mailbox import SceneMailbox
 
@@ -50,11 +56,12 @@ _trace = LuxTrace(logger)
 class LuxScenePublisher:
     """Own the scene mailbox and render each newest scene to luxd on its own task."""
 
-    __slots__ = ("_client", "_connect", "_live", "_mailbox")
+    __slots__ = ("_client", "_connect", "_live", "_mailbox", "_raiser")
     _connect: Callable[[], LuxClient]
     _client: LuxClient | None  # None until first connect / after a drop
     _mailbox: SceneMailbox
     _live: LiveScene
+    _raiser: FrameRaiser
 
     def __new__(cls, connect: Callable[[], LuxClient]) -> Self:
         self = super().__new__(cls)
@@ -62,6 +69,7 @@ class LuxScenePublisher:
         self._client = None
         self._mailbox = SceneMailbox()
         self._live = LiveScene()
+        self._raiser = FrameRaiser(lambda msg: _trace.warning("%s", msg))
         return self
 
     def submit(self, request: RenderRequest) -> None:
@@ -92,8 +100,9 @@ class LuxScenePublisher:
         """Connect if needed and complete the planned push, dropping any lux failure."""
         request = delivery.request
         try:
+            client = self._ensure_client()
             push = self._plan(delivery)
-            refusal = await push.apply(self._ensure_client())
+            refusal = await push.apply(client)
         except HubUnavailableError:
             self._client = None  # force a reconnect on the next scene
             self._live.disarm()  # ... which must install, not patch
@@ -109,6 +118,8 @@ class LuxScenePublisher:
             _trace.error("rejected %s scene: %s", request.scene_id, refusal.reason)
             return
         _trace.info("%s", push.summary)
+        if delivery.install:
+            await self._raiser.raise_frame(client, request)
 
     def _plan(self, delivery: SceneDelivery) -> ScenePush:
         """Return the push this delivery asked for: a demanded install, or the plan."""

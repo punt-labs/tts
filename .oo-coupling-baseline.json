@@ -420,8 +420,15 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/lux_common/__init__.py": {
-    "efferent_coupling": 4.0,
-    "public_names": 4.0,
+    "efferent_coupling": 6.0,
+    "public_names": 6.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
+  "src/punt_vox/lux_common/frame_id.py": {
+    "efferent_coupling": 0.0,
+    "public_names": 1.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
     "avg_lcom": 0.0
@@ -602,6 +609,13 @@
     "avg_lcom": 0.714
   },
   "src/punt_vox/panel/panel_notice.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 0.0,
+    "avg_lcom": 0.0
+  },
+  "src/punt_vox/panel/panel_push.py": {
     "efferent_coupling": 1.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
@@ -1515,8 +1529,8 @@
     "efferent_coupling": 1.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.0,
-    "avg_lcom": 0.0
+    "max_lcom": 0.333,
+    "avg_lcom": 0.333
   },
   "src/punt_vox/voxd/music_player/album_table.py": {
     "efferent_coupling": 3.0,
@@ -1625,7 +1639,7 @@
   },
   "src/punt_vox/voxd/music_player/ports.py": {
     "efferent_coupling": 0.0,
-    "public_names": 3.0,
+    "public_names": 2.0,
     "circular_imports": 0.0,
     "max_lcom": 0.0,
     "avg_lcom": 0.0

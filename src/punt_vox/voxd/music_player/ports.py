@@ -40,7 +40,10 @@ class ScenePublisher(Protocol):
     Two verbs, because a push carries an intent as well as a tree. A refresh
     updates a window the user is already looking at and must leave its stacking
     order alone; an install puts the window in front of the user, which is what a
-    menu click asks for and what a fresh hub connection needs.
+    menu click asks for and what a fresh hub connection needs -- the concrete
+    sink backs an install with both a ``show`` push and an explicit frame raise,
+    because ``show`` alone does not reliably raise a frame already installed
+    (DES-072 addendum).
     """
 
     def submit(self, request: RenderRequest) -> None:
@@ -48,5 +51,5 @@ class ScenePublisher(Protocol):
         ...
 
     def reinstall(self, request: RenderRequest) -> None:
-        """Accept the newest scene as an install -- show it, frame raise and all."""
+        """Accept the newest scene as an install -- shown, and its frame raised."""
         ...

@@ -1,10 +1,15 @@
 """Tests for :mod:`punt_vox.panel.panel_push`.
 
-The property that matters is the one the user sees: a refresh must not reinstall,
-because installing raises the frame. Everything else here is what has to hold for
-that to stay safe -- a refusal or an outage leaves the panel's idea of what is
-installed *disarmed*, so the next push installs rather than patching a tree luxd
-never accepted.
+Two properties matter. The first is the one the user sees: a refresh must not
+reinstall, because installing raises the frame -- everything else here is what
+has to hold for that to stay safe (a refusal or an outage leaves the panel's
+idea of what is installed *disarmed*, so the next push installs rather than
+patching a tree luxd never accepted). The second is the DES-072 addendum:
+``show`` alone does not reliably raise a frame the scene is not new to, so
+:meth:`PanelPush.install` must ALSO make an explicit ``client.frame.raise_``
+call once the scene push lands -- and it must do so even on the second and
+later clicks, when the panel scene is already installed and ``show``'s own
+raise would (per the bug) stay silent.
 """
 
 from __future__ import annotations
@@ -15,6 +20,7 @@ from typing import TYPE_CHECKING, cast, final
 
 import pytest
 from punt_lux import HubUnavailableError, LuxClient, OpError, RenderRequest, SceneShown
+from punt_lux.operations import FrameRaise
 
 from punt_vox.panel.panel_push import PanelPush
 
@@ -59,9 +65,22 @@ class _FakeSceneAccessor:
 
 
 @final
+class _FakeFrameAccessor:
+    """Records every ``raise_`` call, answering each with a successful raise."""
+
+    def __init__(self) -> None:
+        self.raised: list[str] = []
+
+    async def raise_(self, frame_id: str) -> FrameRaise | OpError:
+        self.raised.append(frame_id)
+        return FrameRaise(frame_id=frame_id, raised=True)
+
+
+@final
 class _FakeClient:
     def __init__(self, *, refuse: bool = False, down: bool = False) -> None:
         self.scene = _FakeSceneAccessor(refuse=refuse, down=down)
+        self.frame = _FakeFrameAccessor()
 
 
 @final
@@ -143,6 +162,84 @@ class TestInstall:
 
         assert len(client.scene.shown) == 2
         assert client.scene.patched == []
+        # DES-072 addendum: ``show`` alone does not reliably raise a frame the
+        # scene is not new to -- the install must ALSO make an explicit raise.
+        assert client.frame.raised == ["vox.panel"]
+
+
+class TestExplicitFrameRaise:
+    """DES-072 addendum: ``show`` only raises a frame the scene is new to.
+
+    A ``Vox`` menu click's :meth:`PanelPush.install` must make its own explicit
+    ``client.frame.raise_`` call after the push lands -- and, crucially, the
+    raise must fire on the second and later clicks, when the panel scene is
+    already known to luxd and ``show``'s own raise would (per the bug) stay
+    silent.
+    """
+
+    async def test_raises_even_when_the_scene_was_not_new_to_luxd(self) -> None:
+        push, client = PanelPush(), _FakeClient()
+        await push.install(_as_client(client), _scene())  # first: becomes "known"
+        await push.install(_as_client(client), _scene())  # a later click
+        await push.install(_as_client(client), _scene())  # and again -- still not new
+
+        assert client.frame.raised == ["vox.panel", "vox.panel", "vox.panel"]
+
+    async def test_a_refresh_never_raises_the_frame(self) -> None:
+        push, client = PanelPush(), _FakeClient()
+        await push.refresh(_as_client(client), _scene())
+        await push.refresh(_as_client(client), _scene("changed"))
+
+        assert client.frame.raised == []
+
+    async def test_a_refused_install_skips_the_raise(self) -> None:
+        push, client = PanelPush(), _FakeClient(refuse=True)
+        await push.install(_as_client(client), _scene())
+
+        assert client.frame.raised == []
+
+    async def test_an_absent_luxd_on_install_skips_the_raise(self) -> None:
+        push, client = PanelPush(), _FakeClient(down=True)
+        with pytest.raises(HubUnavailableError):
+            await push.install(_as_client(client), _scene())
+
+        assert client.frame.raised == []
+
+    async def test_a_refused_raise_is_logged_and_swallowed(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        @final
+        class _RefusingFrameAccessor:
+            async def raise_(self, frame_id: str) -> FrameRaise | OpError:
+                return OpError(code="rejected", reason="no such frame")
+
+        client = _FakeClient()
+        client.frame = _RefusingFrameAccessor()  # type: ignore[assignment]
+        with caplog.at_level(logging.WARNING):
+            await PanelPush().install(_as_client(client), _scene())
+
+        assert any(
+            "vox-panel" in r.getMessage() and "refused to raise" in r.getMessage()
+            for r in caplog.records
+        )
+
+    async def test_an_unreachable_raise_is_logged_and_swallowed(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        @final
+        class _DownFrameAccessor:
+            async def raise_(self, frame_id: str) -> FrameRaise | OpError:
+                raise HubUnavailableError("luxd is not running")
+
+        client = _FakeClient()
+        client.frame = _DownFrameAccessor()  # type: ignore[assignment]
+        with caplog.at_level(logging.WARNING):
+            await PanelPush().install(_as_client(client), _scene())
+
+        assert any(
+            "vox-panel" in r.getMessage() and "unavailable" in r.getMessage()
+            for r in caplog.records
+        )
 
 
 class TestConcurrentPushes:

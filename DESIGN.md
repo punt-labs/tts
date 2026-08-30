@@ -3469,6 +3469,35 @@ stale state.
   trees — the previous `RenderRequest` and the new one — which is
   authoritative for what *they* sent and needs no round-trip.
 
+### Addendum (2026-08-29): `show` does not reliably raise the frame
+
+The Context and Decision above assumed `client.scene.show` always raises
+and unminimizes the frame it targets. It does not. The Hub's
+`upsert_scene_in_frame` (`punt_lux.display.replica.scene_replica`) only
+clears `frame.minimized` and grabs focus when the scene is *new* to the
+frame (`is_new`, keyed on `msg.id not in frame.scenes`); a scene already
+registered in the frame gets its content replaced in place and none of
+that attention. Because `vox.music` and `vox.panel` both stay
+permanently installed on their `LiveScene` once the first connection
+lands, the scene is never new by the time a real menu click fires — so
+`show`'s raise silently stopped firing on every "bring this window to
+me" gesture after the very first one. Live-reproduced: minimize the
+Music widget, click Clients → voxd → Music, confirm via `vox.log`
+("Music menu clicked; installing the scene" / "installed vox.music
+scene") that `install()` ran, and watch the window stay minimized.
+
+The four install call sites in the table above did not change. What
+changed is that each of them now *also* calls the Hub's `raise_frame`
+operation (`client.frame.raise_`) explicitly, immediately after its
+`show`/reinstall push lands, instead of trusting `show` to raise on its
+own: `LuxScenePublisher` raises for every `SceneDelivery` whose `install`
+flag is set (both `vox.music` sites), and `PanelPush.install` raises for
+`vox.panel`'s one site. `show` still carries the content; raising the
+frame is now a second, explicit step the same caller takes right after.
+The decision to keep two verbs (refresh vs. install) stands unchanged —
+only the assumption that install's raise came for free from `show` was
+wrong.
+
 ---
 
 ## DES-068: E+ Umbrella — Voice Agent Hosted in `voxd` via ElevenLabs Conversational AI
