@@ -71,12 +71,15 @@ class ScenePresenter(ChangeListener, FailurePresenter, Protocol):
     in front of the user" rather than "the numbers in it changed".
     """
 
-    def install(self) -> None:
+    async def install(self) -> None:
         """Project the scene and install it, raising its frame.
 
         The Music menu was clicked, or a hub handshake reports a connection with
         nothing on it. Both want the frame shown; every other trigger deliberately
         does not, because raising a window the user parked behind another one is
-        the defect this verb exists to keep out of the refresh path.
+        the defect this verb exists to keep out of the refresh path. Async because
+        the concrete presenter refreshes its live track-count cache from disk via
+        ``asyncio.to_thread`` before it projects, so this moment's click shows
+        accurate counts rather than whatever a background repaint last cached.
         """
         ...

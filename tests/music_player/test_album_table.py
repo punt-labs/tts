@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from punt_vox.voxd.music_player.album_roster import AlbumRoster
 from punt_vox.voxd.music_player.album_table import AlbumTable
+from punt_vox.voxd.music_player.track_count_cache import TrackCountCache
 from punt_vox.voxd.programs.album_id import AlbumId
 
 if TYPE_CHECKING:
@@ -35,7 +36,10 @@ def _table(elements: list[dict[str, object]]) -> dict[str, object]:
 def _elements(
     albums: tuple[Album, ...], playing: AlbumId | None = None
 ) -> dict[str, object]:
-    return _table(AlbumTable(AlbumRoster.read(albums), playing).elements())
+    cache = TrackCountCache()
+    cache.refresh(albums)
+    roster = AlbumRoster.from_cache(albums, cache)
+    return _table(AlbumTable(roster, playing).elements())
 
 
 def test_no_playing_id_selects_no_row(album_of: AlbumFactory) -> None:

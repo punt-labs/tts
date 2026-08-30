@@ -433,6 +433,13 @@
     "max_lcom": 0.0,
     "avg_lcom": 0.0
   },
+  "src/punt_vox/lux_common/frame_raise.py": {
+    "efferent_coupling": 1.0,
+    "public_names": 1.0,
+    "circular_imports": 0.0,
+    "max_lcom": 1.0,
+    "avg_lcom": 1.0
+  },
   "src/punt_vox/lux_common/hub_outage_log.py": {
     "efferent_coupling": 0.0,
     "public_names": 1.0,
@@ -1610,11 +1617,11 @@
     "avg_lcom": 0.0
   },
   "src/punt_vox/voxd/music_player/player.py": {
-    "efferent_coupling": 4.0,
+    "efferent_coupling": 6.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.167,
-    "avg_lcom": 0.167
+    "max_lcom": 0.273,
+    "avg_lcom": 0.273
   },
   "src/punt_vox/voxd/music_player/player_event_codec.py": {
     "efferent_coupling": 3.0,

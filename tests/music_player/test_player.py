@@ -1,7 +1,21 @@
-"""Tests for MusicPlayer: notify_changed projects fresh state and submits once."""
+"""Tests for MusicPlayer: notify_changed projects fresh state and submits once.
+
+Two properties matter beyond the projection content itself. The first
+(vox-h777): an install shows and raises, a change refreshes and never installs.
+The second is this bug's own fix: neither ``notify_changed`` nor the failure
+presenters may block on disk for a track count -- they read
+:class:`~punt_vox.voxd.music_player.track_count_cache.TrackCountCache` instead,
+which is refreshed off the hot path via ``asyncio.to_thread`` and (for the
+control-channel path) resubmits once the refresh lands, so a render fired the
+instant a state change arrives can be a render or two behind the true disk
+count, converging shortly after. ``install`` gets a fresh read awaited inline
+instead, because it already runs on the lux listener's event loop, never the
+control-channel writer.
+"""
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, final
 
 from punt_vox.types_programs.status import ProgramStatus
@@ -11,12 +25,17 @@ from punt_vox.voxd.programs.album_id import AlbumId
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    import pytest
     from punt_lux import RenderRequest
 
     from punt_vox.voxd.programs.catalog import Album
 
     type AlbumFactory = Callable[..., Album]
     type PlayingFactory = Callable[[Album, int, int], ProgramStatus]
+
+# Ample time for a scheduled background refresh (an in-memory fake store, no
+# real disk) to land and, where one is expected, resubmit.
+_SETTLE_SECONDS = 0.05
 
 
 def _by_id(elements: list[dict[str, object]], elem_id: str) -> dict[str, object]:
@@ -27,6 +46,11 @@ def _by_id(elements: list[dict[str, object]], elem_id: str) -> dict[str, object]
 def _position_text(elements: list[dict[str, object]]) -> str:
     """Return the ``N of M`` cell from the now-playing position line."""
     return str(_by_id(elements, "music.now.position")["content"])
+
+
+async def _settle() -> None:
+    """Yield the event loop long enough for a scheduled refresh to complete."""
+    await asyncio.sleep(_SETTLE_SECONDS)
 
 
 @final
@@ -63,7 +87,7 @@ class _CapturingPublisher:
         self.installed.append(request)
 
 
-def test_notify_changed_projects_the_playing_scene_and_submits_once(
+async def test_notify_changed_projects_the_playing_scene_and_submits_once(
     album_of: AlbumFactory, playing_of: PlayingFactory
 ) -> None:
     album = album_of("aa11bb", name="Techno Mix")
@@ -77,9 +101,10 @@ def test_notify_changed_projects_the_playing_scene_and_submits_once(
     assert publisher.submitted[0].scene_id == "vox.music"
     assert "Techno Mix" in str(_by_id(elements, "music.now.album")["content"])
     assert _position_text(elements) == "1 of 3"
+    await _settle()  # let the background refresh this scheduled drain cleanly
 
 
-def test_notify_changed_projects_the_idle_scene(album_of: AlbumFactory) -> None:
+async def test_notify_changed_projects_the_idle_scene(album_of: AlbumFactory) -> None:
     service = _FakeService(ProgramStatus.idle(), (album_of("aa11bb"),))
     publisher = _CapturingPublisher()
 
@@ -88,9 +113,10 @@ def test_notify_changed_projects_the_idle_scene(album_of: AlbumFactory) -> None:
     elements = publisher.submitted[0].elements
     assert _by_id(elements, "music.now.album")["content"] == "### Nothing playing"
     assert _position_text(elements) == ""
+    await _settle()  # let the background refresh this scheduled drain cleanly
 
 
-def test_present_play_failure_surfaces_the_warning_then_a_change_clears_it(
+async def test_present_play_failure_surfaces_the_warning_then_a_change_clears_it(
     album_of: AlbumFactory,
 ) -> None:
     # A play that could not run shows its warning in the status slot; the failure
@@ -114,9 +140,10 @@ def test_present_play_failure_surfaces_the_warning_then_a_change_clears_it(
     player.notify_changed()
     cleared = publisher.submitted[-1].elements
     assert _by_id(cleared, "music.status")["content"] == ""  # cleared in place
+    await _settle()  # let the background refresh this scheduled drain cleanly
 
 
-def test_present_play_failure_keeps_now_playing_when_a_source_plays(
+async def test_present_play_failure_keeps_now_playing_when_a_source_plays(
     album_of: AlbumFactory, playing_of: PlayingFactory
 ) -> None:
     # A failed switch to a vanished album leaves the current source playing, so the
@@ -134,10 +161,11 @@ def test_present_play_failure_keeps_now_playing_when_a_source_plays(
         _by_id(elements, "music.status")["content"]
         == "⚠ couldn't play ff99ee — no longer in the crate"
     )
+    await _settle()  # let the background refresh this scheduled drain cleanly
 
 
 class TestInstallVersusRefresh:
-    def test_a_change_refreshes_and_never_installs(
+    async def test_a_change_refreshes_and_never_installs(
         self, album_of: AlbumFactory
     ) -> None:
         publisher = _CapturingPublisher()
@@ -147,17 +175,20 @@ class TestInstallVersusRefresh:
 
         assert len(publisher.submitted) == 1
         assert publisher.installed == []  # no frame raise on a state change
+        await _settle()  # let the background refresh this scheduled drain cleanly
 
-    def test_install_installs_and_never_refreshes(self, album_of: AlbumFactory) -> None:
+    async def test_install_installs_and_never_refreshes(
+        self, album_of: AlbumFactory
+    ) -> None:
         publisher = _CapturingPublisher()
         service = _FakeService(ProgramStatus.idle(), (album_of("aa11bb"),))
 
-        MusicPlayer(service, publisher).install()
+        await MusicPlayer(service, publisher).install()
 
         assert len(publisher.installed) == 1
         assert publisher.submitted == []
 
-    def test_a_refused_click_refreshes_because_the_user_is_already_here(
+    async def test_a_refused_click_refreshes_because_the_user_is_already_here(
         self, album_of: AlbumFactory
     ) -> None:
         # The user clicked *inside* this window, so it is already in front of
@@ -173,45 +204,174 @@ class TestInstallVersusRefresh:
 
         assert len(publisher.submitted) == 4
         assert publisher.installed == []
+        await _settle()  # let the background refresh this scheduled drain cleanly
 
 
-def test_the_submitted_scene_carries_live_track_counts(
+class TestTrackCountsNeverBlockTheHotPath:
+    """The bug this fix closes: a disk read must never run inline on a render
+    fired from the control-channel single-writer or the lux listener's loop."""
+
+    async def test_notify_changed_never_blocks_on_the_live_read(
+        self, album_of: AlbumFactory
+    ) -> None:
+        # The immediate render -- before any background refresh has had a
+        # chance to run -- reads the cache's default (zero), not the disk.
+        # That is the whole point: notify_changed returns without waiting on
+        # anything the store's disk access could stall on.
+        album = album_of("aa11bb", name="Techno Mix", tracks=0, on_disk=9)
+        publisher = _CapturingPublisher()
+        player = MusicPlayer(_FakeService(ProgramStatus.idle(), (album,)), publisher)
+
+        player.notify_changed()
+
+        assert _by_id(publisher.submitted[0].elements, "music.albums")["rows"] == [
+            ["Techno Mix", "techno", 0]
+        ]
+        await _settle()  # let the background refresh this scheduled drain cleanly
+
+    async def test_notify_changed_schedules_a_background_refresh_via_to_thread(
+        self, album_of: AlbumFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[object] = []
+        real_to_thread = asyncio.to_thread
+
+        async def _spying_to_thread(func: object, *args: object) -> object:
+            calls.append(func)
+            return await real_to_thread(func, *args)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(asyncio, "to_thread", _spying_to_thread)
+        album = album_of("aa11bb", name="Techno Mix", tracks=0, on_disk=9)
+        publisher = _CapturingPublisher()
+        player = MusicPlayer(_FakeService(ProgramStatus.idle(), (album,)), publisher)
+
+        player.notify_changed()
+        await _settle()
+
+        assert calls == [player._cache.refresh]
+
+    async def test_the_background_refresh_resubmits_with_the_live_count(
+        self, album_of: AlbumFactory
+    ) -> None:
+        album = album_of("aa11bb", name="Techno Mix", tracks=0, on_disk=9)
+        publisher = _CapturingPublisher()
+        player = MusicPlayer(_FakeService(ProgramStatus.idle(), (album,)), publisher)
+
+        player.notify_changed()
+        await _settle()
+
+        assert _by_id(publisher.submitted[-1].elements, "music.albums")["rows"] == [
+            ["Techno Mix", "techno", 9]
+        ]
+
+    async def test_a_background_refresh_never_clobbers_a_warning_raised_after_it(
+        self, album_of: AlbumFactory
+    ) -> None:
+        # notify_changed schedules a refresh; before it lands, a click fails
+        # and raises a warning. The refresh's resubmit must carry that warning
+        # forward, not silently wipe it back to the silent notice it started
+        # with.
+        album = album_of("aa11bb", name="Techno Mix", tracks=0, on_disk=9)
+        publisher = _CapturingPublisher()
+        player = MusicPlayer(_FakeService(ProgramStatus.idle(), (album,)), publisher)
+
+        player.notify_changed()
+        player.present_stop_failure()
+        await _settle()
+
+        elements = publisher.submitted[-1].elements
+        status = _by_id(elements, "music.status")["content"]
+        assert status == "⚠ couldn't stop the music"
+        # The count still converged even though the refresh in flight was
+        # scheduled by notify_changed, not by the failure that followed it.
+        assert _by_id(elements, "music.albums")["rows"] == [["Techno Mix", "techno", 9]]
+
+    async def test_a_burst_of_changes_schedules_only_one_refresh(
+        self, album_of: AlbumFactory
+    ) -> None:
+        # One per completed Part could mean many notify_changed calls in a
+        # row; they must coalesce onto whichever refresh is already in
+        # flight rather than queueing an unbounded pile of disk reads.
+        album = album_of("aa11bb", tracks=0, on_disk=9)
+        publisher = _CapturingPublisher()
+        player = MusicPlayer(_FakeService(ProgramStatus.idle(), (album,)), publisher)
+
+        player.notify_changed()
+        player.notify_changed()
+        player.notify_changed()
+        assert player._refresher.running is True
+        await _settle()
+
+        assert player._refresher.running is False
+
+    async def test_install_awaits_a_fresh_read_via_to_thread(
+        self, album_of: AlbumFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: list[object] = []
+        real_to_thread = asyncio.to_thread
+
+        async def _spying_to_thread(func: object, *args: object) -> object:
+            calls.append(func)
+            return await real_to_thread(func, *args)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(asyncio, "to_thread", _spying_to_thread)
+        album = album_of("aa11bb", name="Techno Mix", tracks=0, on_disk=4)
+        publisher = _CapturingPublisher()
+        player = MusicPlayer(_FakeService(ProgramStatus.idle(), (album,)), publisher)
+
+        await player.install()
+
+        assert calls == [player._cache.refresh]
+        assert _by_id(publisher.installed[0].elements, "music.albums")["rows"] == [
+            ["Techno Mix", "techno", 4]
+        ]
+
+    async def test_a_menu_click_shows_the_live_count_at_once_no_settling_needed(
+        self, album_of: AlbumFactory
+    ) -> None:
+        # Unlike notify_changed, install already runs on the lux listener's
+        # event loop, so it can afford to await the fresh read inline -- the
+        # very click that asks to see the window shows accurate counts,
+        # with no background convergence needed.
+        album = album_of("aa11bb", name="Techno Mix", tracks=0, on_disk=4)
+        publisher = _CapturingPublisher()
+        player = MusicPlayer(_FakeService(ProgramStatus.idle(), (album,)), publisher)
+
+        await player.install()
+
+        assert _by_id(publisher.installed[0].elements, "music.albums")["rows"] == [
+            ["Techno Mix", "techno", 4]
+        ]
+
+
+async def test_an_album_the_disk_read_fails_for_keeps_its_row_at_zero(
     album_of: AlbumFactory,
 ) -> None:
-    # The player's seam is where the live read happens, so a scene it submits
-    # already knows the on-disk count -- not the empty creation-time snapshot.
-    album = album_of("aa11bb", name="Techno Mix", tracks=0, on_disk=9)
-    publisher = _CapturingPublisher()
-
-    MusicPlayer(
-        _FakeService(ProgramStatus.idle(), (album,)), publisher
-    ).notify_changed()
-
-    assert _by_id(publisher.submitted[0].elements, "music.albums")["rows"] == [
-        ["Techno Mix", "techno", 9]
-    ]
-
-
-def test_an_album_deleted_since_the_catalog_read_drops_out_coherently(
-    album_of: AlbumFactory,
-) -> None:
-    # The catalog is in memory and the album is on disk, so the two can disagree.
-    # A row whose album has been deleted disappears from the table AND from the
-    # count label -- one render, one coherent view of the catalog.
-    kept = album_of("aa11bb", name="Kept")
+    # A LookupError during the background refresh (the store's documented
+    # delete contract) drops the album from the CACHE, not from the render:
+    # the catalog decides which albums exist at all now (it already excludes a
+    # deleted album synchronously, in the same call that deletes its
+    # directory -- see Library.remove), so this only means the row keeps its
+    # default zero count instead of the whole row vanishing or the background
+    # refresh crashing.
+    kept = album_of("aa11bb", name="Kept", tracks=0, on_disk=3)
     gone = album_of("cc22dd", name="Gone", fails_with=LookupError("deleted"))
     publisher = _CapturingPublisher()
+    player = MusicPlayer(_FakeService(ProgramStatus.idle(), (kept, gone)), publisher)
 
-    MusicPlayer(
-        _FakeService(ProgramStatus.idle(), (kept, gone)), publisher
-    ).notify_changed()
+    player.notify_changed()
+    await _settle()
 
-    elements = publisher.submitted[0].elements
-    assert _by_id(elements, "music.albums")["rows"] == [["Kept", "techno", 3]]
-    assert _by_id(elements, "music.albums.label")["content"] == "Albums · 1 album"
+    elements = publisher.submitted[-1].elements
+    assert _by_id(elements, "music.albums")["rows"] == [
+        ["Kept", "techno", 3],
+        ["Gone", "techno", 0],
+    ]
+    assert _by_id(elements, "music.albums.label")["content"] == "Albums · 2 albums"
 
 
-def test_present_stop_failure_surfaces_the_stop_warning(album_of: AlbumFactory) -> None:
+async def test_present_stop_failure_surfaces_the_stop_warning(
+    album_of: AlbumFactory,
+) -> None:
     service = _FakeService(ProgramStatus.idle(), (album_of("aa11bb"),))
     publisher = _CapturingPublisher()
 
@@ -219,3 +379,4 @@ def test_present_stop_failure_surfaces_the_stop_warning(album_of: AlbumFactory) 
 
     elements = publisher.submitted[-1].elements
     assert _by_id(elements, "music.status")["content"] == "⚠ couldn't stop the music"
+    await _settle()  # let the background refresh this scheduled drain cleanly

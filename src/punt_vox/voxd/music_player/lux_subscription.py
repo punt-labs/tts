@@ -235,7 +235,7 @@ class LuxSubscription:
             return
         _trace.info("Music menu clicked; installing the scene")
         try:
-            self._presenter.install()
+            await self._presenter.install()
         except Exception:
             logger.exception("[lux] music menu open failed for %r", callback_id)
 
@@ -260,6 +260,6 @@ class LuxSubscription:
         self._outage.clear()
         await self._menu.register(_MENU_CALLBACK_ID, _MENU_LABEL)
         try:
-            self._presenter.install()
+            await self._presenter.install()
         except Exception:
             logger.exception("[lux] music scene projection on connect failed")

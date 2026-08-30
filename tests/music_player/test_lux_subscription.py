@@ -116,7 +116,7 @@ class _FakeOpener:
             msg = "projection blew up"
             raise RuntimeError(msg)
 
-    def install(self) -> None:
+    async def install(self) -> None:
         self.opens += 1
         if self._boom:
             msg = "projection blew up"

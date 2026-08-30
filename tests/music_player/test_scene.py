@@ -24,6 +24,7 @@ from punt_vox.voxd.music_player.now_playing_block import MarkdownText
 from punt_vox.voxd.music_player.playback_notice import PlaybackNotice
 from punt_vox.voxd.music_player.player_view import PlayerView
 from punt_vox.voxd.music_player.scene import AlbumListScene
+from punt_vox.voxd.music_player.track_count_cache import TrackCountCache
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -41,8 +42,10 @@ def _scene(
     view: PlayerView,
     notice: PlaybackNotice | None = None,
 ) -> AlbumListScene:
-    """Build the scene the way the player does: from a roster read at its seam."""
-    roster = AlbumRoster.read(albums)
+    """Build the scene the way the player does: from a cache refreshed live."""
+    cache = TrackCountCache()
+    cache.refresh(albums)
+    roster = AlbumRoster.from_cache(albums, cache)
     if notice is None:
         return AlbumListScene(roster, view)
     return AlbumListScene(roster, view, notice)
