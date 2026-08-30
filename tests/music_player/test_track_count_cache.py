@@ -113,11 +113,12 @@ class TestRefresh:
 
 
 class TestGenerationGatedWrite:
-    """The write inside :meth:`_refresh` only lands for the newest generation.
+    """The write inside :meth:`_refresh` only lands over the last write that landed.
 
-    This is what keeps a write from an abandoned (timed-out) refresh from
-    clobbering a newer one that already completed -- see
-    ``TestSerializedRefreshTimeout`` below for the same property exercised
+    Not the newest generation any caller has ever attempted -- the newest one
+    that actually committed. This is what keeps a write from an abandoned
+    (timed-out) refresh from clobbering a newer one that already completed --
+    see ``TestSerializedRefreshTimeout`` below for the same property exercised
     through the real async path.
     """
 
@@ -133,8 +134,8 @@ class TestGenerationGatedWrite:
         assert cache.get(fresh.id) == 9
 
         # An older refresh (generation 1), simulating one whose caller already
-        # gave up and moved on, finally gets to write -- its generation is no
-        # longer the newest, so the write is a no-op. Passing the smaller
+        # gave up and moved on, finally gets to write -- generation 2 has
+        # already landed, so the write is a no-op. Passing the smaller
         # generation directly as the argument (rather than mutating
         # ``cache._generation``) is how this whitebox test recreates "a call
         # that captured its generation before a later one ran" without

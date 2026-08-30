@@ -212,7 +212,7 @@ class TrackCountCache:
             logger.warning(
                 "music: track-count refresh for %d albums exceeded %.1fs; "
                 "abandoning the wait (a late write, if any, will be ignored "
-                "unless it is still the newest attempt)",
+                "once a newer refresh has actually landed, not merely attempted)",
                 len(albums),
                 _REFRESH_TIMEOUT_SECONDS,
             )
