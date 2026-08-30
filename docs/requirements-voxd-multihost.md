@@ -200,9 +200,10 @@ the commands invoke them end-to-end in a live session.
 
 - **R-E.1** `vox enable` MUST detect installed host surfaces and
   deposit what each needs. For opencode: the tools shim, the command
-  files, the `opencode.json` plugin entry, and the agent guide
-  (AGENTS.md-reachable, since opencode does not parse `@`-imports).
-  For Claude Code: unchanged.
+  files, the `opencode.json` plugin entry, and the agent guide — wired
+  so opencode actually loads it, meaning referenced from `AGENTS.md`
+  or listed in `opencode.json` `instructions`, since opencode does not
+  parse the `@`-imports Claude Code uses. For Claude Code: unchanged.
 - **R-E.2** `vox disable` MUST remove exactly what enable deposited,
   per host, leaving the `.punt-labs/vox/` subtree dormant as today.
 - **R-E.3** Enable/disable MUST remain idempotent and MUST NOT run
