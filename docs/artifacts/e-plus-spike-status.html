@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>E+ Voice Architecture — validation status (2026-08-30)</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+         background: #fafaf8; color: #1a1a1a; margin: 24px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.sub { color: #555; margin: 0 0 16px; font-size: 13px; }
+  svg { background: #fff; border: 1px solid #ddd; border-radius: 8px; }
+  text { font-family: inherit; }
+</style>
+</head>
+<body>
+<h1>E+ Voice Architecture — what we're building, and what's proven</h1>
+<p class="sub">DES-068 umbrella · DES-069 turn loop · DES-070 context · DES-071 Mode B ·
+status as of 2026-08-30 (post vox-bst7 merge, PR #481)</p>
+
+<svg viewBox="0 0 1240 900" width="1240" height="900" role="img"
+     aria-label="E plus voice architecture with spike validation status">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#444"/>
+    </marker>
+    <marker id="arrb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1565c0"/>
+    </marker>
+  </defs>
+
+  <!-- ======== USER ======== -->
+  <rect x="30" y="40" width="190" height="86" rx="10" fill="#fff8e1" stroke="#b08900" stroke-width="1.5"/>
+  <text x="125" y="68" text-anchor="middle" font-size="15" font-weight="600">User</text>
+  <text x="125" y="88" text-anchor="middle" font-size="12" fill="#555">mic + speakers/headset</text>
+  <text x="125" y="106" text-anchor="middle" font-size="11" fill="#a15c00">⚠ open speakers need AEC</text>
+
+  <!-- ======== CLAUDE CODE PRIMARY SESSION (Mode A) ======== -->
+  <rect x="30" y="200" width="190" height="120" rx="10" fill="#ede7f6" stroke="#5e35b1" stroke-width="1.5"/>
+  <text x="125" y="226" text-anchor="middle" font-size="14" font-weight="600">Claude Code</text>
+  <text x="125" y="243" text-anchor="middle" font-size="12" fill="#555">primary session</text>
+  <text x="125" y="266" text-anchor="middle" font-size="12" fill="#333">Mode A entry:</text>
+  <text x="125" y="283" text-anchor="middle" font-size="12" font-weight="600" fill="#333">/vox:talk</text>
+  <text x="125" y="300" text-anchor="middle" font-size="11" fill="#555">one blocking tool call</text>
+
+  <!-- other sessions feeding hooks -->
+  <rect x="30" y="352" width="190" height="70" rx="10" fill="#ede7f6" stroke="#9575cd" stroke-width="1" stroke-dasharray="5 3"/>
+  <text x="125" y="378" text-anchor="middle" font-size="12" fill="#555">other Claude Code</text>
+  <text x="125" y="394" text-anchor="middle" font-size="12" fill="#555">sessions (any repo)</text>
+  <text x="125" y="410" text-anchor="middle" font-size="11" fill="#777">hook events via mcp-proxy</text>
+
+  <!-- ======== VOXD ENGINE ======== -->
+  <rect x="330" y="40" width="420" height="560" rx="12" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2"/>
+  <text x="540" y="68" text-anchor="middle" font-size="17" font-weight="700" fill="#1b5e20">voxd — the audio daemon (engine)</text>
+
+  <!-- audio I/O -->
+  <rect x="352" y="88" width="176" height="72" rx="8" fill="#ffffff" stroke="#2e7d32"/>
+  <text x="440" y="112" text-anchor="middle" font-size="12" font-weight="600">Audio I/O</text>
+  <text x="440" y="128" text-anchor="middle" font-size="11" fill="#555">capture + playback</text>
+  <text x="440" y="144" text-anchor="middle" font-size="11" fill="#a15c00">AEC stage: required</text>
+
+  <!-- EL session driver -->
+  <rect x="552" y="88" width="176" height="72" rx="8" fill="#ffffff" stroke="#2e7d32"/>
+  <text x="640" y="112" text-anchor="middle" font-size="12" font-weight="600">EL session driver</text>
+  <text x="640" y="128" text-anchor="middle" font-size="11" fill="#555">one WebSocket per call</text>
+  <text x="640" y="144" text-anchor="middle" font-size="11" fill="#555">audio + tool events</text>
+
+  <!-- client tools -->
+  <rect x="352" y="184" width="376" height="118" rx="8" fill="#ffffff" stroke="#2e7d32"/>
+  <text x="540" y="208" text-anchor="middle" font-size="12" font-weight="600">Client tools — implemented locally in voxd</text>
+  <text x="540" y="228" text-anchor="middle" font-size="12" fill="#333">search_code · read_recent_conversation ·</text>
+  <text x="540" y="245" text-anchor="middle" font-size="12" fill="#333">read_older_conversation · write_note · launch_session</text>
+  <text x="540" y="268" text-anchor="middle" font-size="11" fill="#1565c0">closed-world: no MCP inside the call agent (DES-069)</text>
+  <text x="540" y="288" text-anchor="middle" font-size="11" fill="#a15c00">must be idempotent — see barge-in caveat ↓</text>
+
+  <!-- result cache -->
+  <rect x="352" y="326" width="176" height="66" rx="8" fill="#ffffff" stroke="#2e7d32"/>
+  <text x="440" y="349" text-anchor="middle" font-size="12" font-weight="600">Result cache</text>
+  <text x="440" y="366" text-anchor="middle" font-size="11" fill="#555">re-ask after barge-in</text>
+  <text x="440" y="381" text-anchor="middle" font-size="11" fill="#555">is instant + free</text>
+
+  <!-- rolling context store -->
+  <rect x="552" y="326" width="176" height="66" rx="8" fill="#ffffff" stroke="#2e7d32"/>
+  <text x="640" y="349" text-anchor="middle" font-size="12" font-weight="600">Rolling context store</text>
+  <text x="640" y="366" text-anchor="middle" font-size="11" fill="#555">last N turns + summary</text>
+  <text x="640" y="381" text-anchor="middle" font-size="11" fill="#555">per session (DES-070)</text>
+
+  <!-- session launcher -->
+  <rect x="352" y="416" width="376" height="64" rx="8" fill="#ffffff" stroke="#2e7d32"/>
+  <text x="540" y="440" text-anchor="middle" font-size="12" font-weight="600">Session launcher (Mode B, DES-071)</text>
+  <text x="540" y="458" text-anchor="middle" font-size="11" fill="#555">fork claude in detached tmux · permissions profile ·</text>
+  <text x="540" y="472" text-anchor="middle" font-size="11" fill="#555">capability escalation — security-gated design</text>
+
+  <!-- security constraints strip -->
+  <rect x="352" y="500" width="376" height="80" rx="8" fill="#fff" stroke="#c62828" stroke-dasharray="5 3"/>
+  <text x="540" y="522" text-anchor="middle" font-size="12" font-weight="600" fill="#c62828">Security copy-forward constraints (from vox-bst7)</text>
+  <text x="540" y="540" text-anchor="middle" font-size="11" fill="#555">redact token-shaped fields in trace sinks · signed URLs are</text>
+  <text x="540" y="555" text-anchor="middle" font-size="11" fill="#555">bearer credentials, never logged · cap WS frame size ·</text>
+  <text x="540" y="570" text-anchor="middle" font-size="11" fill="#555">no unscrubbed live transcripts in git</text>
+
+  <!-- ======== ELEVENLABS CLOUD ======== -->
+  <rect x="860" y="40" width="350" height="250" rx="12" fill="#e3f2fd" stroke="#1565c0" stroke-width="2"/>
+  <text x="1035" y="68" text-anchor="middle" font-size="16" font-weight="700" fill="#0d47a1">ElevenLabs Conversational AI</text>
+  <text x="1035" y="86" text-anchor="middle" font-size="12" fill="#555">(Agents Platform — cloud)</text>
+  <rect x="882" y="102" width="140" height="52" rx="8" fill="#fff" stroke="#1565c0"/>
+  <text x="952" y="124" text-anchor="middle" font-size="12" font-weight="600">ASR + VAD</text>
+  <text x="952" y="141" text-anchor="middle" font-size="11" fill="#555">turn-taking, barge-in</text>
+  <rect x="1048" y="102" width="140" height="52" rx="8" fill="#fff" stroke="#1565c0"/>
+  <text x="1118" y="124" text-anchor="middle" font-size="12" font-weight="600">LLM turn loop</text>
+  <text x="1118" y="141" text-anchor="middle" font-size="11" fill="#555">tool calls, replies</text>
+  <rect x="882" y="170" width="140" height="52" rx="8" fill="#fff" stroke="#1565c0"/>
+  <text x="952" y="192" text-anchor="middle" font-size="12" font-weight="600">TTS</text>
+  <text x="952" y="209" text-anchor="middle" font-size="11" fill="#555">streaming voice out</text>
+  <rect x="1048" y="170" width="140" height="52" rx="8" fill="#fff" stroke="#1565c0"/>
+  <text x="1118" y="192" text-anchor="middle" font-size="12" font-weight="600">Agent config</text>
+  <text x="1118" y="209" text-anchor="middle" font-size="11" fill="#555">seed ≈10KB sweet spot</text>
+  <text x="1035" y="252" text-anchor="middle" font-size="11" fill="#a15c00">caveat: barge-in mid-tool-call drops that call's result</text>
+  <text x="1035" y="268" text-anchor="middle" font-size="11" fill="#a15c00">from LLM context (recoverable by re-ask; cache mitigates)</text>
+
+  <!-- ======== MODE B SPAWNED SESSION ======== -->
+  <rect x="860" y="392" width="350" height="128" rx="12" fill="#ede7f6" stroke="#5e35b1" stroke-width="1.5"/>
+  <text x="1035" y="418" text-anchor="middle" font-size="14" font-weight="600">Spawned Claude Code session</text>
+  <text x="1035" y="436" text-anchor="middle" font-size="12" fill="#555">detached tmux · fresh project dir</text>
+  <text x="1035" y="454" text-anchor="middle" font-size="12" fill="#555">initial prompt derived from the voice call</text>
+  <text x="1035" y="472" text-anchor="middle" font-size="11" fill="#555">its own hooks loop back to voxd (loopback, v1)</text>
+  <text x="1035" y="496" text-anchor="middle" font-size="11" fill="#555">survives voxd death · user can tmux attach anytime</text>
+
+  <!-- ======== ARROWS ======== -->
+  <!-- user audio to voxd -->
+  <line x1="220" y1="83" x2="352" y2="110" stroke="#444" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="352" y1="128" x2="220" y2="103" stroke="#444" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="266" y="88" font-size="11" fill="#555">speech in / voice out</text>
+
+  <!-- /vox:talk to voxd -->
+  <line x1="220" y1="250" x2="352" y2="250" stroke="#444" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="286" y="240" text-anchor="middle" font-size="11" fill="#555">seed (context snapshot)</text>
+  <line x1="352" y1="272" x2="220" y2="272" stroke="#444" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="286" y="290" text-anchor="middle" font-size="11" fill="#555">transcript + notes on hang-up</text>
+
+  <!-- hooks fanout -->
+  <line x1="220" y1="386" x2="552" y2="358" stroke="#444" stroke-width="1.4" stroke-dasharray="6 3" marker-end="url(#arr)"/>
+  <text x="372" y="392" text-anchor="middle" font-size="11" fill="#555">hook fanout (mcp-proxy --hook)</text>
+
+  <!-- voxd <-> EL websocket -->
+  <line x1="750" y1="118" x2="860" y2="118" stroke="#1565c0" stroke-width="2.4" marker-end="url(#arrb)"/>
+  <line x1="860" y1="140" x2="750" y2="140" stroke="#1565c0" stroke-width="2.4" marker-end="url(#arrb)"/>
+  <text x="805" y="106" text-anchor="middle" font-size="11" fill="#1565c0">one WebSocket:</text>
+  <text x="805" y="160" text-anchor="middle" font-size="11" fill="#1565c0">audio ⇅ + client_tool_call/result</text>
+  <rect x="756" y="176" width="98" height="22" rx="11" fill="#c8e6c9" stroke="#2e7d32"/>
+  <text x="805" y="191" text-anchor="middle" font-size="11" font-weight="600" fill="#1b5e20">p95 993ms ✓</text>
+
+  <!-- launcher to spawned session -->
+  <line x1="728" y1="448" x2="860" y2="448" stroke="#444" stroke-width="1.8" marker-end="url(#arr)"/>
+  <text x="794" y="438" text-anchor="middle" font-size="11" fill="#555">launch_session</text>
+  <line x1="860" y1="470" x2="728" y2="470" stroke="#444" stroke-width="1.4" stroke-dasharray="6 3" marker-end="url(#arr)"/>
+  <text x="794" y="488" text-anchor="middle" font-size="11" fill="#555">hooks loop back → context store</text>
+
+  <!-- ======== SPIKE SCOREBOARD ======== -->
+  <rect x="30" y="640" width="720" height="230" rx="12" fill="#fff" stroke="#888" stroke-width="1.5"/>
+  <text x="52" y="670" font-size="15" font-weight="700">Validation spikes (DES-068 scoreboard)</text>
+
+  <rect x="52" y="690" width="14" height="14" rx="3" fill="#2e7d32"/>
+  <text x="76" y="702" font-size="13"><tspan font-weight="600">vox-bst7 — EL Conv AI foundation · PASSED, merged (PR #481).</tspan></text>
+  <text x="76" y="720" font-size="12" fill="#555">p95 tool round-trip 993ms &lt; 1.5s · barge-in preserves state (operator-ruled caveat: interrupted</text>
+  <text x="76" y="736" font-size="12" fill="#555">tool's result drops, re-ask recovers) · voice/latency confirmed by ear · code: spikes/vox-bst7-el-convai/</text>
+
+  <rect x="52" y="756" width="14" height="14" rx="3" fill="#2e7d32"/>
+  <text x="76" y="768" font-size="13"><tspan font-weight="600">vox-juhw — Mode B same-host launch · PASSED (2026-08-30).</tspan></text>
+  <text x="76" y="786" font-size="12" fill="#555">fork → configure → attach → hook-loopback works, zero custom Claude Code changes · 8 rough edges, all launcher work · reads not path-confined in v1 (mitigation: path-scoped rules) · code: spikes/vox-juhw-mode-b-launch/</text>
+
+  <rect x="52" y="806" width="14" height="14" rx="3" fill="#90a4ae"/>
+  <text x="76" y="818" font-size="13"><tspan font-weight="600">vox-73y7 — hook fanout as context feed · QUEUED NEXT.</tspan></text>
+  <text x="76" y="836" font-size="12" fill="#555">do hook payloads carry enough state, or does the /vox:talk seed suffice? · inherits the clean 50KB seed retest</text>
+
+  <rect x="52" y="852" width="14" height="14" rx="3" fill="#c62828"/>
+  <text x="76" y="864" font-size="13"><tspan font-weight="600">vox-6v7f — A/B vs subprocess-per-turn · CLOSED, won't do</tspan> <tspan fill="#555">(baseline already rejected as high-latency).</tspan></text>
+
+  <!-- ======== REQUIREMENTS LEARNED ======== -->
+  <rect x="780" y="640" width="430" height="230" rx="12" fill="#fff" stroke="#888" stroke-width="1.5"/>
+  <text x="802" y="670" font-size="15" font-weight="700">Requirements the spikes surfaced</text>
+  <text x="802" y="698" font-size="12" fill="#333">• Acoustic echo cancellation on voxd's capture leg — open</text>
+  <text x="812" y="714" font-size="12" fill="#555">speakers create a self-interruption feedback loop</text>
+  <text x="802" y="738" font-size="12" fill="#333">• Client tools idempotent + voxd result cache — makes the</text>
+  <text x="812" y="754" font-size="12" fill="#555">barge-in result-drop caveat cost one instant re-ask</text>
+  <text x="802" y="778" font-size="12" fill="#333">• Seed ≈10KB; 50KB quality drop needs a clean retest</text>
+  <text x="812" y="794" font-size="12" fill="#555">(was confounded by a harness bug — vox-73y7)</text>
+  <text x="802" y="818" font-size="12" fill="#333">• EL teardown must force-delete (lazy propagation, 409s)</text>
+  <text x="802" y="842" font-size="12" fill="#333">• Trace sinks redact tokens/signed URLs; cap WS frames</text>
+  <text x="802" y="862" font-size="12" fill="#333">• EL ASR clips first-utterance onset — lead-in needed</text>
+</svg>
+
+<p class="sub" style="margin-top:12px">
+Sources: DESIGN.md DES-068…071 (incl. validation outcome), spikes/vox-bst7-el-convai/REPORT.md.
+Companion design-phase diagrams: e-plus-voice-architecture.html, e-plus-adr-revision.html,
+distributed-target-topology.html (same directory).
+</p>
+</body>
+</html>

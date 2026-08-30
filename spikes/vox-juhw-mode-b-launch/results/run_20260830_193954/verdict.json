@@ -1,0 +1,12 @@
+{
+  "chain": "fork -> configure -> attach -> hook-loopback",
+  "criteria": {
+    "attach_shows_usable_session": true,
+    "fork_survives_store_kill": true,
+    "hooks_land_ordered_attributed": true,
+    "teardown_idempotent": true
+  },
+  "notes": [],
+  "nudges": [],
+  "overall": "PASS"
+}

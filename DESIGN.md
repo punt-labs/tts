@@ -3683,3 +3683,31 @@ At call end, the transcript (and any `write_note` outputs) return as the `/vox:t
 - `tmux attach` UX for the spawned session mid-run is untested end-to-end; `vox-juhw` verifies the fork → configure → attach → hook-loopback chain.
 - The concrete shape of `permissions_profile` (what named profiles ship, how they compose, how they surface to the voice agent for informed selection) is not fully specified here; it inherits from Claude Code's own permission model and gets worked out in the implementation mission.
 - v1's "user's project must live on the laptop" limitation is real: `voxd` on the laptop forks locally, so the spawned session sees the laptop's filesystem. For distributed dev-box users, v2 becomes non-optional. Documented as a known Mode B v1 scope, not a bug.
+
+### Validation outcome (2026-08-30, `vox-juhw`)
+
+The chain works: **fork → configure → attach → hook-loopback, end-to-end,
+with zero custom Claude Code changes** — Mode B v1 is launcher engineering,
+not a quarter. Full evidence: `spikes/vox-juhw-mode-b-launch/REPORT.md`
+and its committed run artifacts (hook ledger, mid-run and post-kill pane
+captures, teardown logs).
+
+- A deposited project `.claude/settings.json` (`voice-launch-v1`) is a
+  workable permissions-profile mechanism: honored with zero flags and
+  zero prompts. **Precision that must survive into implementation:**
+  `acceptEdits` confines *edits* to the project; reads are NOT
+  path-confined in v1 — a launched fork can read anything the launching
+  user can, including its seeded credentials file. Mitigation is
+  path-scoped permission rules; launcher-side, no Claude Code change.
+- Hooks from the spawned session reach the store over the real
+  `mcp-proxy --hook`, ordered and session-attributed; killing `voxd`
+  (the store) does not orphan or kill the spawned session — it keeps
+  working and stays attachable, with hook relays failing non-blocking.
+- Eight rough edges recorded in the REPORT, all launcher/config work:
+  trust-dialog pre-seed, credential seeding + the credential-read
+  surface, env hygiene (blank inherited API keys), process-group kill
+  discipline, scratch placement, readiness signaling, login expiry.
+- Implementation requirements carried forward: the real `launch_session`
+  capability must itself enforce scratch-namespace placement
+  (deny-by-default in the capability, not the harness), and DES-070's
+  context store needs recursive redaction of nested payloads.

@@ -1,0 +1,5 @@
+store process group SIGKILLed
+store port refuses connections: True
+tmux session alive after kill: True
+fork answered a post-kill turn: True
+ledger records before kill: 5, after post-kill turn: 5 (no growth proves the fork's relays failed harmlessly)
