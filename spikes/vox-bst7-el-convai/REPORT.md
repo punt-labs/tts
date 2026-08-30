@@ -8,17 +8,20 @@ live operator sessions with corroborating automated machine evidence.**
 - **p95 tool round-trip < 1.5s: PASS (measured 993ms)** — overall
   EL-attributable overhead p95 across n=27 client-tool invocations,
   real WAN, three sessions (`results/metrics_20260829T203630Z.json`).
-- **barge-in mid-tool-call preserves state: PASS (live operator
-  sessions + automated audio-injection test; see traces)** — a genuine
-  interruption landed mid-`search_code` in the live run
-  (`results/trace_live_20260829T224035Z.jsonl`), the tool result was
-  still consumed and the agent's answer was tool-derived and correct;
-  state stayed coherent through a 7-interruption echo storm and a
-  246s 12-turn headphone session
-  (`results/trace_live_20260829T225948Z.jsonl`), operator-confirmed by
-  ear. Automated audio-injection runs
-  (`results/trace_barge_in_20260829T230811Z.jsonl`) corroborate the
-  state-integrity mechanics. Full evidence below.
+- **barge-in mid-tool-call preserves state: PASS with caveat:
+  interrupted tool's result is dropped from LLM context (deterministic,
+  recoverable by re-ask); mitigation: idempotent tools + voxd result
+  cache** — operator-ruled 2026-08-29. Conversation state survives a
+  mid-tool-call interruption intact: no WS close, topic memory coherent,
+  subsequent tools work, clean corrections — across a 7-interruption
+  echo storm (`results/trace_live_20260829T224035Z.jsonl`), a 246s
+  12-turn headphone session (`results/trace_live_20260829T225948Z.jsonl`,
+  operator-confirmed by ear), and the automated audio-injection runs
+  (`results/trace_barge_in_20260829T230811Z.jsonl`). The caveat is the
+  automated runs' reproducible finding: the interrupted call's RESULT
+  never reaches the LLM context (2/2 runs, including a topic-neutral
+  interruption), so the agent must re-run the tool. Ruled acceptable
+  with the mitigation above. Full evidence below.
 
 ## Barge-in mid-tool-call — the evidence
 
@@ -28,11 +31,15 @@ The criterion-2 event, caught in the wild: at ms=30583 the agent said
 *"Let me search the code to see what language we are using."* and issued
 `client_tool_call search_code` (executed 30583→32784). An `interruption`
 landed at **ms=31648 — mid-tool-call** — with a clean
-`agent_response_correction`. The tool result was **still consumed**
-(`agent_tool_result` posted at 32784, `agent_tool_response` acked at
-32854) and the agent's answer was tool-derived and correct: *"Based on
-the search results, it looks like we are using Python for this
-software."*
+`agent_response_correction`, and the session carried on undamaged. EL
+accepted the interrupted call's result at the transport level
+(`client_tool_result` posted at 32784, `agent_tool_response` acked at
+32854). Attribution caution: the correct answer that followed (*"Based
+on the search results, it looks like we are using Python for this
+software."*, ms=37707) came after a SECOND, echo-induced `search_code`
+completed uninterrupted (33514→36614), so it cannot be cleanly credited
+to the interrupted first call's result — the automated runs below are
+what pin down that result's fate.
 
 The same trace then shows 7 interruptions in a storm — and that storm
 was **acoustic echo, not EL misbehavior**: the run used open speakers
@@ -70,20 +77,22 @@ run. Three billed runs (the budgeted cap); traces + verdict JSONs in
 Definitive run (`trace_barge_in_20260829T230811Z.jsonl`): interruption
 0.71s into the 2.2s execution window; **no WS close; session, topic
 memory, and post-barge-in `write_note` all intact**; EL accepted the
-mid-barge-in `client_tool_result` (`agent_tool_response` in-trace). The
-one divergence from the live run: asked "What did you just find?", the
-agent answered *"I did not find anything because the search was stopped
-before it could finish."* Reconciled against live session 1 (where the
-result WAS folded in), this is LLM prompting behavior, not platform
-state loss — the synthesized interruption said "stop", and
-gemini-2.0-flash took the instruction at face value and disclaimed the
-result it had; the live trace proves the result pipeline survives the
-interruption. Run 2 was INCONCLUSIVE for a separate reason worth
-knowing: EL's ASR clips the onset of a session's first utterance
-("Please search the code…" heard as "Hold for the playback queue"),
-fixed with sacrificial lead-in words. This is an automated
-synthesized-voice test of state mechanics; the by-ear judgment is the
-operator's, above.
+mid-barge-in `client_tool_result` (`agent_tool_response` in-trace). But
+asked "What did you just find?", the agent answered *"I did not find
+anything because the search was stopped before it could finish."* —
+**the interrupted call's result never reached the LLM context.** This
+reproduced 2/2 completed runs, INCLUDING this one's topic-neutral
+interruption ("Wait, wait, stop, hold on one moment…"), which rules out
+"the prompt said to stop, so the LLM obeyed" as the explanation: the
+drop is deterministic platform behavior, not phrasing. The loss is
+recoverable — the agent offers to re-run the search, and a re-ask
+succeeds — which is what the ruled mitigation (idempotent tools + a
+voxd result cache, so a re-issued call is cheap) leans on. Run 2 was
+INCONCLUSIVE for a separate reason worth knowing: EL's ASR clips the
+onset of a session's first utterance ("Please search the code…" heard
+as "Hold for the playback queue"), fixed with sacrificial lead-in
+words. This is an automated synthesized-voice test of state mechanics;
+the by-ear judgment is the operator's, above.
 
 ## Findings for E+ design (DES-068 inputs)
 
@@ -92,10 +101,13 @@ operator's, above.
   sentence re-enters the mic and triggers a barge-in loop (see live
   session 1). Ship with PipeWire/PulseAudio `echo-cancel` on the capture
   leg, or document a headset assumption.
-- **A barge-in that semantically says "stop" can make the LLM disclaim
-  a tool result it received.** The platform keeps the result; whether
-  the agent uses it is prompt-sensitive. E+ prompts should instruct the
-  agent to surface completed tool results after an interruption.
+- **A barge-in during a client tool call drops that call's result from
+  LLM context — deterministically.** The platform acks the result at
+  the transport level but the cancelled turn takes it down; the agent
+  will re-run the tool on a re-ask. Reproduced 2/2 in the automated
+  runs, including with a topic-neutral interruption. E+ mitigation
+  (per the operator ruling): keep client tools idempotent and add a
+  voxd result cache so the re-issued call is instant and free.
 
 ## Known harness-tier issues (throwaway code, recorded only)
 
