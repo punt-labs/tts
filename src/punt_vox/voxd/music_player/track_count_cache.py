@@ -50,8 +50,16 @@ overlapping dispatches share that one counter and a slow-to-start worker
 could otherwise read a LATER call's bump instead of its own. :meth:`_refresh`
 -- which may run on an orphaned thread well after its caller gave up --
 commits its write under :attr:`_write_lock` only when the generation it was
-handed is still the newest one ever attempted. A late write from an abandoned
-refresh is thus a safe no-op whenever a newer one has already landed.
+handed is still newer than the last write that actually landed in
+:attr:`_counts` -- not newer than every generation any caller has ever
+attempted. Those are different: a dispatch can and does legitimately commit
+even while a newer generation is still in flight elsewhere, because "in
+flight" is not "landed." Gating on "newest attempted" instead would be
+stricter and wrong -- it would drop a perfectly valid write whenever some
+later-dispatched attempt never completes (its own timeout, say), wedging the
+cache against a write that would otherwise have succeeded. A late write from
+an abandoned refresh is thus a safe no-op only once a newer one has actually
+landed, never merely attempted.
 
 An album this cache has never seen reads as zero, matching a genuinely fresh
 album before its first Part lands, so an unrefreshed row looks identical to a
@@ -245,7 +253,13 @@ class TrackCountCache:
         method may run on a worker thread orphaned by a caller that already
         timed out (see module docstring), so a late write here must never
         clobber a newer refresh's result. It commits only when ``generation``
-        is still the newest one any caller has ever attempted.
+        is still newer than :attr:`_written_generation` -- the last write
+        that actually landed, not the newest one any caller has ever
+        attempted. A dispatch can commit even while a newer generation is
+        still in flight elsewhere; gating on "newest attempted" instead would
+        be stricter and wrong, since it would drop a legitimate write
+        whenever some later-dispatched attempt never completes (its own
+        timeout, say).
         """
         fresh: dict[AlbumId, int] = {}
         for album in albums:
