@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import shlex
 import subprocess
+import time
 from typing import TYPE_CHECKING, Self, final
 
 if TYPE_CHECKING:
@@ -106,12 +107,20 @@ class TmuxSession:
         return captured.stdout
 
     def send_line(self, text: str) -> None:
-        """Type one line into the session and press Enter."""
+        """Type one line into the session, then press Enter.
+
+        The Enter is a separate send-keys after a short settle: a TUI that
+        treats rapid input as a bracketed paste can otherwise leave the
+        whole line sitting unsubmitted in its composer -- observed with
+        Claude Code's input box on longer prompts.
+        """
         subprocess.run(
-            ["tmux", "send-keys", "-t", f"{self._name}:", text, "Enter"],
+            ["tmux", "send-keys", "-t", f"{self._name}:", text],
             check=True,
             capture_output=True,
         )
+        time.sleep(0.5)
+        self.send_key("Enter")
 
     def send_key(self, key: str) -> None:
         """Send one named key (e.g. ``Down``, ``Enter``) to the pane."""

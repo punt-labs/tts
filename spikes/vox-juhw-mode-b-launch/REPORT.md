@@ -3,9 +3,9 @@
 **Verdict: fork → configure → attach → hook-loopback works end-to-end
 without custom Claude Code changes: PASS.**
 
-Adjudicated run: `results/run_20260830_171420/` (`verdict.json` —
+Adjudicated run: `results/run_20260830_193954/` (`verdict.json` —
 overall PASS, zero interactive nudges required). One claude session
-forked, bounded, and torn down; 53 offline tests cover the
+forked, bounded, and torn down; 68 offline tests cover the
 verdict-bearing logic without spawning any session.
 
 ## What was validated, mechanism by mechanism
@@ -46,29 +46,32 @@ JSONL **before** the acknowledgement is sent.
 ## Evidence per acceptance criterion
 
 1. **Hooks land, ordered, session identifiable** —
-   `results/run_20260830_171420/hook_ledger.jsonl`: 5 records
+   `results/run_20260830_193954/hook_ledger.jsonl`: 5 records
    (SessionStart, UserPromptSubmit, PostToolUse ×2, Stop), `recv_seq`
    1–5 strictly increasing, `session_seq` 1–5, every record attributed
-   to the fork's real session id `de9dd114-6fd…`. Ordering,
+   to the fork's real session id `76d2248e-d20…`. Ordering,
    attribution, and redaction invariants are also pinned by
    `test_stamp.py` and `test_hook_store.py`.
 2. **Attach shows a usable session mid-run** —
-   `results/run_20260830_171420/capture_mid_run.txt` (non-interactive
+   `results/run_20260830_193954/capture_mid_run.txt` (non-interactive
    `tmux capture-pane`): Claude Code banner, the derived prompt, and the
    first Write tool call, live in the scratch project.
 3. **Killing the stub voxd does not kill/orphan the fork** —
-   `results/run_20260830_171420/survival.log`: the store's **process
+   `results/run_20260830_193954/survival.log`: the store's **process
    group** SIGKILLed (`os.killpg` — killing only the `uv run` wrapper pid
    leaves the python store alive; an earlier run demonstrated exactly
    that, so the honest kill is load-bearing); the port then refuses
-   connections; the tmux session stays alive; the fork answers a
-   follow-up turn ("ALIVE" — `capture_post_kill_turn.txt`); the ledger
-   does not grow (5 → 5). The pane shows the designed failure mode:
+   connections (polled — SIGKILL and socket teardown are not atomic);
+   the tmux session stays alive; the fork answers a follow-up turn with
+   "ALIVE", a marker the sent prompt never contains (it asks the fork
+   to join the fragments ALI + VE, so the prompt's own echo cannot
+   satisfy the judge — `capture_post_kill_turn.txt`); the ledger does
+   not grow (5 → 5). The pane shows the designed failure mode:
    `Stop hook error: Failed with non-blocking status code: mcp-proxy:
    connection refused` — the relay fails harmlessly, the session
    continues.
 4. **Teardown exists, clean, idempotent** —
-   `results/run_20260830_171420/teardown.log`: first pass kills the
+   `results/run_20260830_193954/teardown.log`: first pass kills the
    tmux session and removes the scratch root (including the credentials
    copy); second pass finds nothing and still exits clean.
    `test_teardown.py` pins idempotence offline.
@@ -170,8 +173,18 @@ v1 scope. Itemized honestly:
 
 ## Costs and bounds
 
-Two end-to-end runs were executed in total during development (the first
-invalidated and its evidence deleted when the wrapper-pid kill was
-caught); each forked exactly one claude session for roughly two minutes
-of wall clock and two short turns of Opus usage. No ElevenLabs credits
-were involved anywhere in this spike.
+Four end-to-end runs were executed in total during development, each
+forking exactly one claude session for roughly two minutes of wall
+clock and two short turns of Opus usage; two more claude sessions were
+spawned during early manual debugging. Two runs were invalidated and
+their evidence deleted: the first when the wrapper-pid kill was caught
+faking the survival evidence, the second when the survival prompt was
+found sitting unsubmitted in the fork's composer (paste-vs-Enter race)
+while the port probe raced SIGKILL's socket teardown — both harness
+defects, both fixed before the adjudicated run. The committed
+`results/run_20260830_193954/` is the run consistent with the current
+judge: un-echoable survival marker (the prompt asks the fork to join
+the fragments ALI + VE, so only a real reply puts "ALIVE" on screen),
+completeness-gated hooks verdict, recursive ledger redaction, and
+polled port-death confirmation. No ElevenLabs credits were involved
+anywhere in this spike.

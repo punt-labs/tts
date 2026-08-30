@@ -6,6 +6,7 @@
     "hooks_land_ordered_attributed": true,
     "teardown_idempotent": true
   },
+  "notes": [],
   "nudges": [],
   "overall": "PASS"
 }

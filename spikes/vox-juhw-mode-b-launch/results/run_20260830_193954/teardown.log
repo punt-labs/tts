@@ -1,5 +1,5 @@
 -- first pass --
-killed tmux session voxjuhw-171420
+killed tmux session voxjuhw-193955
 removed scratch root: /home/jfreeman/Coding/punt-labs/vox/.claude/worktrees/vox-juhw-mode-b-launch/spikes/vox-juhw-mode-b-launch/.tmp
 -- second pass --
 scratch root already absent: /home/jfreeman/Coding/punt-labs/vox/.claude/worktrees/vox-juhw-mode-b-launch/spikes/vox-juhw-mode-b-launch/.tmp

@@ -179,7 +179,20 @@ class StoreProcess:
                 )
 
     def confirmed_dead(self) -> bool:
-        """True when the loopback port no longer answers a connection."""
+        """True once the loopback port refuses connections.
+
+        Polls briefly: SIGKILL delivery and the kernel's socket teardown
+        are not atomic, and a probe in that window can still connect to
+        the dying listener.
+        """
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if self._port_refuses():
+                return True
+            time.sleep(0.5)
+        return False
+
+    def _port_refuses(self) -> bool:
         with socket.socket() as probe:
             probe.settimeout(2)
             try:
