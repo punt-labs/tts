@@ -185,8 +185,11 @@ class TestTraceRedaction:
             overrides={},
         )
         error = session._connect_error(WebSocketException("boom SECRET-BEARER"))
-        assert "api.example.io" in str(error)
-        assert "SECRET-BEARER" not in str(error)
+        # Exact match: the sanitized message is host + exception type and
+        # nothing else -- no token, no query string, no library text.
+        assert str(error) == (
+            "websocket connect to api.example.io rejected: WebSocketException"
+        )
 
 
 class TestTurnCompletion:
