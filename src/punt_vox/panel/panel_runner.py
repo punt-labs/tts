@@ -140,19 +140,50 @@ class PanelRunner:
         Order matters between the two buckets: ``ConfigValueError`` is a
         ``ValueError``, so catching it second would file a change the user
         really chose as a malformed event and revert it with no notice.
+
+        Both buckets name the topic to the user through
+        :attr:`~punt_vox.panel.topics.PanelTopic.label`, never the wire
+        value: "that vox.model change was refused" reads out an identifier
+        that means nothing outside this codebase. Each resolves the topic
+        *inside* its own handler rather than once above the ``try``, so a
+        topic this panel does not own still reaches ``apply_event``, which
+        logs it and answers :attr:`~ControlPush.NONE`. Resolving first
+        turned that handled case into an unhandled one -- ``PanelTopic``
+        refuses the unknown value, and the refusal escapes both handlers.
         """
         try:
             changed = self._service.apply_event(topic, payload)
         except (ConfigValueError, OSError):
-            field = PanelTopic(topic).field_name
+            control = PanelTopic(topic)
             self._logger.exception(
-                "vox-panel: the %s change did not stick; correcting the scene", field
+                "vox-panel: the %s change did not stick; correcting the scene",
+                control.label,
             )
-            self._service.recover_from_write_failure(field)
+            self._recover(control)
             return ControlPush.CORRECT
         except (TypeError, ValueError):
             self._logger.exception(
                 "vox-panel: rejected control event on %s: %r", topic, payload
             )
+            # The widget already moved to the value the user picked, and the
+            # correction below snaps it back. Saying nothing while that
+            # happens is the worst of both: the setting visibly reverts and
+            # the only account of why is a daemon log the user cannot read.
+            self._service.note_control_rejected(PanelTopic(topic).label)
             return ControlPush.CORRECT
         return changed
+
+    def _recover(self, control: PanelTopic) -> None:
+        """Re-sync from the real settings after *control*'s config write failed.
+
+        Only a topic that commits a field has a field to revert to. A
+        preview reaches here through its own fresh read of the store, so a
+        malformed config faults it with nothing written and nothing to
+        recover -- asking for "the field that did not stick" would raise
+        while handling the failure and strand the widget with no notice at
+        all.
+        """
+        if control.writes_field:
+            self._service.recover_from_write_failure(control.field_name)
+        else:
+            self._service.note_control_rejected(control.label)

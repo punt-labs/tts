@@ -206,6 +206,27 @@ class TestChanged:
         assert service.corrected == 1
         assert service.pushed == 0
 
+    async def test_a_config_fault_while_previewing_notices_rather_than_raises(
+        self, build_runner: Callable[..., PanelRunner]
+    ) -> None:
+        """A preview is the one topic with no field to revert to.
+
+        The preview reads the config store fresh, so a malformed config
+        faults it with nothing written. Recovering "the field that did not
+        stick" is not an operation that exists for it, and asking anyway
+        raised while handling the failure -- which left the widget with no
+        correction and no notice, the exact silence this handler exists to
+        prevent.
+        """
+        rest = FakeRest()
+        service = FakeService(raise_on="refused")
+        await build_runner(service, lambda: rest).changed(
+            PanelTopic.VOICE_PREVIEW.value, {}
+        )  # must not raise
+        assert service.recovered == []
+        assert service.control_rejections == ["voice preview"]
+        assert service.corrected == 1
+
     async def test_a_refused_value_is_logged_at_error_with_a_traceback(
         self,
         caplog: pytest.LogCaptureFixture,
@@ -223,14 +244,20 @@ class TestChanged:
     async def test_a_rejected_payload_corrects_but_does_not_recover(
         self, build_runner: Callable[..., PanelRunner]
     ) -> None:
-        # The malformed-event path sets no notice at all, so a diff-based
-        # re-push (``pushed``) would find the corrective render byte-identical
-        # to the last one this session landed and push nothing -- the widget's
-        # wrongly-set field would never get reasserted on the wire.
+        # A malformed event is not a failed *write*, so there is nothing to
+        # re-read and recover from -- but the widget still visibly reverts,
+        # so the band must say why. A diff-based re-push (``pushed``) is the
+        # wrong instrument regardless: it would find the corrective render
+        # byte-identical to the last one this session landed and push
+        # nothing, leaving the widget's wrongly-set field never reasserted.
         rest = FakeRest()
         service = FakeService(raise_on="apply")
         await build_runner(service, lambda: rest).changed(PanelTopic.NOTIFY.value, {})
         assert service.recovered == []
+        # The notice names the control the way a user knows it, never the
+        # wire topic they have no reason to have heard of.
+        assert service.control_rejections == [PanelTopic.NOTIFY.label]
+        assert service.control_rejections == ["notification"]
         assert service.corrected == 1
         assert service.pushed == 0
 

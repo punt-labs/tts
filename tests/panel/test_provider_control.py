@@ -15,8 +15,8 @@ class TestToDict:
         assert wire["kind"] == "combo"
         assert wire["id"] == "vox.panel.provider"
         assert wire["label"] == "Provider"
-        assert wire["items"] == ["elevenlabs", "openai"]
-        assert wire["selected"] == 1
+        assert wire["items"] == ["(none)", "elevenlabs", "openai"]
+        assert wire["selected"] == 2
         assert wire["handlers"] == [
             {"event": "changed", "publish": [PanelTopic.PROVIDER.value]}
         ]
@@ -33,12 +33,28 @@ class TestToDict:
 
 
 class TestProviderForIndex:
-    def test_valid_index_returns_its_provider(self) -> None:
-        control = ProviderControl(providers=("elevenlabs", "openai"), current=None)
-        assert control.provider_for_index(1) == "openai"
+    @pytest.mark.parametrize("current", [None, "elevenlabs", "openai"])
+    def test_the_providers_start_at_one_whatever_is_chosen(
+        self, current: str | None
+    ) -> None:
+        """Index 0 is always ``(none)``, so the offset never depends on state.
 
-    @pytest.mark.parametrize("index", [-1, 2])
-    def test_out_of_range_index_raises(self, index: int) -> None:
+        A click carries an index picked from the list as rendered and is
+        resolved against state read later. An offset that came and went
+        with the current value would shift the whole mapping under a click
+        already in flight, committing the wrong provider silently.
+        """
+        control = ProviderControl(providers=("elevenlabs", "openai"), current=current)
+        assert control.provider_for_index(1) == "elevenlabs"
+        assert control.provider_for_index(2) == "openai"
+
+    def test_clicking_the_sentinel_itself_is_refused(self) -> None:
         control = ProviderControl(providers=("elevenlabs", "openai"), current=None)
+        with pytest.raises(ValueError, match="out of range"):
+            control.provider_for_index(0)
+
+    @pytest.mark.parametrize("index", [-1, 3])
+    def test_out_of_range_index_raises(self, index: int) -> None:
+        control = ProviderControl(providers=("elevenlabs", "openai"), current="openai")
         with pytest.raises(ValueError, match="out of range"):
             control.provider_for_index(index)

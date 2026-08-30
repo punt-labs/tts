@@ -87,8 +87,19 @@ class ModelTable:
         """Return the provider's model list, empty for unknown or modelless."""
         return self._table.get(provider, _EMPTY)
 
-    def available(self, provider: str) -> tuple[str, ...]:
-        """Return the full model names for *provider*, empty when none."""
+    def available(self, provider: str | None) -> tuple[str, ...]:
+        """Return the full model names for *provider*, empty when none.
+
+        ``None`` -- no provider chosen -- answers the empty tuple, the same
+        as a modelless or unknown provider. Callers holding an optional
+        provider therefore need no guard of their own, and two callers
+        holding the same optional cannot drift apart by guarding it
+        differently: the Vox panel offered a live ElevenLabs model list to
+        provider-less sessions from one such open-coded guard while its
+        click resolver refused every index from another.
+        """
+        if provider is None:
+            return ()
         return self.for_provider(provider).full
 
     def validate(self, name: str, provider: str) -> None:

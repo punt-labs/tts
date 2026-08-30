@@ -213,10 +213,14 @@ def _config(
 
 
 def _openai_index() -> int:
-    """Return the combo index a click on the ``openai`` provider carries."""
+    """Return the combo index a click on the ``openai`` provider carries.
+
+    One past its position in the enum: every non-empty combo is rendered
+    with a leading ``(none)`` entry, so the real choices start at 1.
+    """
     from punt_vox.server_switches import PROVIDER_NAMES
 
-    return PROVIDER_NAMES.index("openai")
+    return PROVIDER_NAMES.index("openai") + 1
 
 
 def _selected(request: RenderRequest, element_id: str) -> object:
@@ -298,7 +302,7 @@ class TestApplyEvent:
     def test_voice_writes_the_name_and_updates_state(self) -> None:
         service = VoxPanelService(_FakeDaemonClient(), (store := _FakeStore(_config())))
         service.prefetch()
-        service.apply_event(PanelTopic.VOICE, {"value": 0})
+        service.apply_event(PanelTopic.VOICE, {"value": 1})
         assert store.written["voice"] == "aria"
         assert service.scene().voice == "aria"
 
@@ -318,12 +322,43 @@ class TestApplyEvent:
         )
         assert client.synth_calls == [expected]
 
-    def test_voice_preview_with_no_voice_selected_is_a_silent_no_op(self) -> None:
+    def test_voice_preview_with_no_voice_selected_says_so(self) -> None:
+        """A ▶ press that plays nothing must not also change nothing on screen.
+
+        Skipping in silence gave the user a button that swallowed the click:
+        no audio, no notice, no scene change, and only a daemon log line
+        recording that anything happened at all.
+        """
         client = _FakeDaemonClient()
         service = VoxPanelService(client, _FakeStore(_config(voice=None)))
         service.prefetch()
-        service.apply_event(PanelTopic.VOICE_PREVIEW, {})
+        changed = service.apply_event(PanelTopic.VOICE_PREVIEW, {})
         assert client.synth_calls == []
+        assert changed is ControlPush.REFRESH
+        assert service.scene().notice == PanelNotice.no_voice_selected()
+
+    def test_a_heard_preview_clears_a_stale_voxd_warning(self) -> None:
+        """Audio the user just heard is proof the warning about voxd is stale.
+
+        The preview is the one action that proves voxd answered, so leaving
+        a "voxd is unreachable" line standing after one plays contradicts
+        the evidence in the user's ears.
+        """
+        client = _FakeDaemonClient()
+        service = VoxPanelService(client, _FakeStore(_config()))
+        service.prefetch()
+        service.note_rejection("voxd said no")
+        assert service.scene().notice.is_present
+
+        changed = service.apply_event(PanelTopic.VOICE_PREVIEW, {})
+
+        assert changed is ControlPush.REFRESH
+        assert service.scene().notice == PanelNotice.silent()
+        assert len(client.synth_calls) == 1
+        # The already-silent case is the complementary branch, and
+        # ``test_voice_preview_does_not_write_and_reports_no_repush`` above
+        # already pins it: a heard preview over a clean band asks for
+        # nothing.
 
     def test_voice_preview_survives_an_unavailable_voxd(self) -> None:
         client = _FakeDaemonClient(raise_on_synth=True)
@@ -341,7 +376,7 @@ class TestApplyEvent:
             (store := _FakeStore(_config(provider="elevenlabs", model="eleven_v3"))),
         )
         service.prefetch()
-        service.apply_event(PanelTopic.PROVIDER, {"value": 1})  # openai
+        service.apply_event(PanelTopic.PROVIDER, {"value": 2})  # openai
         assert store.written["provider"] == "openai"
         # Model cascades to MODEL_TABLE.available("openai")[0].
         assert store.written["model"] == "tts-1"
@@ -366,7 +401,7 @@ class TestApplyEvent:
         )
         service.prefetch()
         # espeak has index 4 in PROVIDER_NAMES (elevenlabs, openai, polly, say, espeak).
-        service.apply_event(PanelTopic.PROVIDER, {"value": 4})
+        service.apply_event(PanelTopic.PROVIDER, {"value": 5})
         scene = service.scene()
         assert scene.provider == "espeak"
         assert scene.roster == ("en", "en-us")
@@ -391,7 +426,7 @@ class TestApplyEvent:
             (store := _FakeStore(_config(voice="benno", provider="elevenlabs"))),
         )
         service.prefetch()
-        service.apply_event(PanelTopic.PROVIDER, {"value": 4})  # espeak
+        service.apply_event(PanelTopic.PROVIDER, {"value": 5})  # espeak
         assert store.written["voice"] == "en"
         assert service.scene().voice == "en"
 
@@ -412,7 +447,7 @@ class TestApplyEvent:
             client, (store := _FakeStore(_config(voice="alloy", provider="openai")))
         )
         service.prefetch()
-        service.apply_event(PanelTopic.PROVIDER, {"value": 3})  # say
+        service.apply_event(PanelTopic.PROVIDER, {"value": 4})  # say
         assert store.written["voice"] == "alloy"  # say roster[0]
         assert service.scene().voice == "alloy"
 
@@ -424,12 +459,49 @@ class TestApplyEvent:
         )
         service.prefetch()
         client.roster_reads_by_provider.clear()
-        service.apply_event(PanelTopic.PROVIDER, {"value": 0})  # elevenlabs (same)
+        service.apply_event(PanelTopic.PROVIDER, {"value": 1})  # elevenlabs (same)
         assert "provider" not in store.written
         assert "voice" not in store.written
         # And no wasteful roster refetch for a no-op switch.
         assert client.roster_reads_by_provider == []
         assert service.scene().voice == "benno"
+
+    def test_provider_no_op_clearing_a_stale_notice_asks_for_a_repush(self) -> None:
+        """Clearing a displayed notice IS a scene change, so it needs a push.
+
+        A re-publish of the already-selected provider writes nothing, but it
+        does wipe whatever warning the notice band was showing. Answering
+        ``NONE`` there left that wipe stranded in daemon memory: the runner
+        pushes nothing, and the display goes on rendering a warning the panel
+        no longer holds.
+        """
+        client = _FakeDaemonClient(voices_by_provider={"elevenlabs": ["benno", "aria"]})
+        service = VoxPanelService(
+            client, (store := _FakeStore(_config(voice="benno", provider="elevenlabs")))
+        )
+        service.prefetch()
+        service.note_rejection("voxd said no")
+        assert service.scene().notice.is_present
+
+        changed = service.apply_event(PanelTopic.PROVIDER, {"value": 1})  # same
+
+        assert changed is ControlPush.REFRESH
+        assert service.scene().notice == PanelNotice.silent()
+        assert "provider" not in store.written
+
+    def test_provider_no_op_over_a_silent_panel_asks_for_nothing(self) -> None:
+        """With no notice to clear, the same re-publish really is a no-op."""
+        client = _FakeDaemonClient(voices_by_provider={"elevenlabs": ["benno", "aria"]})
+        service = VoxPanelService(
+            client, (store := _FakeStore(_config(voice="benno", provider="elevenlabs")))
+        )
+        service.prefetch()
+        assert not service.scene().notice.is_present
+
+        changed = service.apply_event(PanelTopic.PROVIDER, {"value": 1})  # same
+
+        assert changed is ControlPush.NONE
+        assert "provider" not in store.written
 
     def test_provider_roster_wire_rejection_surfaces_reason_verbatim(self) -> None:
         """A daemon-sent rejection during a roster fetch shows voxd's reason.
@@ -460,7 +532,7 @@ class TestApplyEvent:
             (store := _FakeStore(_config(voice="benno", provider="elevenlabs"))),
         )
         service.prefetch()
-        service.apply_event(PanelTopic.PROVIDER, {"value": 1})  # openai
+        service.apply_event(PanelTopic.PROVIDER, {"value": 2})  # openai
         assert "provider" not in store.written
         assert "voice" not in store.written
         notice = service.scene().notice
@@ -518,7 +590,7 @@ class TestApplyEvent:
             (store := _FakeStore(_config(voice="benno", provider="elevenlabs"))),
         )
         service.prefetch()
-        changed = service.apply_event(PanelTopic.PROVIDER, {"value": 4})  # espeak
+        changed = service.apply_event(PanelTopic.PROVIDER, {"value": 5})  # espeak
         # The widget already applied "espeak" optimistically the instant the
         # click fired; ``_state`` never moved, so only a full reinstall
         # (``ControlPush.CORRECT``) snaps it back -- a ``REFRESH`` diff
@@ -571,7 +643,7 @@ class TestApplyEvent:
         ref.append(service)
         service.prefetch()
         changed = service.apply_event(
-            PanelTopic.PROVIDER, {"value": 4}
+            PanelTopic.PROVIDER, {"value": 5}
         )  # ask for espeak
         # The widget already shows "espeak"; ``_state`` landed on "openai"
         # instead, via the race, so a diff against the last confirmed render
@@ -587,12 +659,28 @@ class TestApplyEvent:
     def test_model_writes_the_name_and_updates_state(self) -> None:
         service = VoxPanelService(
             _FakeDaemonClient(),
-            (store := _FakeStore(_config(provider="openai"))),
+            (store := _FakeStore(_config(provider="openai", model="tts-1"))),
         )
         service.prefetch()
-        service.apply_event(PanelTopic.MODEL, {"value": 1})  # tts-1-hd
+        service.apply_event(PanelTopic.MODEL, {"value": 2})  # tts-1-hd
         assert store.written["model"] == "tts-1-hd"
         assert service.scene().model == "tts-1-hd"
+
+    def test_model_click_indexes_past_the_sentinel(self) -> None:
+        """The combo always leads with ``(none)``, so 1 is the first model.
+
+        The service resolves the click through the same ``ChoiceList`` the
+        scene was rendered from, and that list leads with the sentinel
+        whether or not a model is chosen -- so the offset cannot differ
+        between the render and the click that answers it.
+        """
+        service = VoxPanelService(
+            _FakeDaemonClient(),
+            (store := _FakeStore(_config(provider="openai", model=None))),
+        )
+        service.prefetch()
+        service.apply_event(PanelTopic.MODEL, {"value": 1})
+        assert store.written["model"] == "tts-1"
 
     def test_model_click_with_no_provider_selected_corrects(self) -> None:
         """A model commit dispatched before any provider is chosen is abandoned.
@@ -643,7 +731,7 @@ class TestApplyEvent:
             (store := _FakeStore(_config(provider="openai"))),
         )
         service.prefetch()
-        changed = service.apply_event(PanelTopic.MODEL, {"value": 1})  # tts-1-hd
+        changed = service.apply_event(PanelTopic.MODEL, {"value": 2})  # tts-1-hd
         assert changed is ControlPush.CORRECT
         assert "model" not in store.written
         assert "voice" not in store.written
@@ -687,7 +775,7 @@ class TestApplyEvent:
         ref.append(service)
         service.prefetch()
         changed = service.apply_event(
-            PanelTopic.MODEL, {"value": 1}
+            PanelTopic.MODEL, {"value": 2}
         )  # tts-1-hd (arbitrary)
         # The widget already shows "tts-1-hd"; ``_state`` landed on "espeak"
         # instead, via the race, so only a full reinstall

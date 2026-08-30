@@ -219,8 +219,15 @@ class TestWithField:
         assert after.voice == "en"
         assert after.roster == ("en", "en-us")
 
-    def test_with_provider_no_op_when_provider_unchanged(self) -> None:
-        """A re-publish of the same provider drops nothing, even with new args."""
+    def test_with_provider_stores_new_args_for_the_provider_already_held(self) -> None:
+        """Re-asserting the held provider still stores the args handed with it.
+
+        A same-value guard used to short-circuit to ``self`` here, silently
+        discarding a roster, model, and voice the caller had just fetched
+        and answering with the stale ones instead. Whether a re-publish is
+        a no-op is the caller's call -- it knows whether anything else
+        moved; a setter looking at one field does not.
+        """
         before = PanelState(
             notify="y",
             speak="y",
@@ -235,7 +242,10 @@ class TestWithField:
             model="eleven_flash_v2_5",
             voice="only",
         )
-        assert after is before
+        assert after.provider == "elevenlabs"
+        assert after.roster == ("only", "roger")
+        assert after.model == "eleven_flash_v2_5"
+        assert after.voice == "only"
 
     def test_with_model_stores_cascaded_voice(self) -> None:
         """The cascade rule stores exactly what the caller resolved."""

@@ -220,6 +220,7 @@ class FakeService:
         self.corrected = 0
         self.recovered: list[str] = []
         self.rejections: list[str] = []
+        self.control_rejections: list[str] = []
         # The order the leg's two verbs actually ran in for one click -- proof
         # of sequence, which counts alone (``acknowledged``, ``serviced``)
         # cannot give: both land at 1 whether the runner calls them in order
@@ -285,3 +286,6 @@ class FakeService:
 
     def note_rejection(self, detail: str) -> None:
         self.rejections.append(detail)
+
+    def note_control_rejected(self, topic: str) -> None:
+        self.control_rejections.append(topic)

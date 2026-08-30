@@ -187,7 +187,8 @@ class TestRunnerServiceSeam:
         await runner.warmed()
         await service.push_scene(rest_factory())
         assert len(rest.rendered) == 1
-        elevenlabs_index = PROVIDER_NAMES.index("elevenlabs")
+        # One past its position in the enum: the combo leads with ``(none)``.
+        elevenlabs_index = PROVIDER_NAMES.index("elevenlabs") + 1
         assert _selected(rest.rendered[0], "vox.panel.provider") == elevenlabs_index
 
         # The widget already shows "espeak" the instant the click fires; the
@@ -195,7 +196,7 @@ class TestRunnerServiceSeam:
         # moves off "elevenlabs" -- the round-10 regression this seam test
         # guards: a diff-based re-push always looked like the right answer
         # against a fake that couldn't tell REFRESH from CORRECT.
-        espeak_index = PROVIDER_NAMES.index("espeak")
+        espeak_index = PROVIDER_NAMES.index("espeak") + 1
         await runner.changed(PanelTopic.PROVIDER.value, {"value": espeak_index})
 
         # A full reinstall, not a diff patch: the corrective render must

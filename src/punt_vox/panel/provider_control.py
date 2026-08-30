@@ -6,6 +6,11 @@ element ready to render. The provider list is the closed enum
 :data:`~punt_vox.server_switches.PROVIDER_NAMES` (§3.2): adding a provider is
 a code change, never a runtime discovery, so the panel embeds the same
 static list the MCP tool exposes.
+
+A session that has chosen no provider is shown ``(none)`` rather than the
+first provider in the enum -- see :class:`~punt_vox.panel.choice_list.ChoiceList`,
+which owns both the offered list and the click resolution so the two cannot
+disagree about whether that entry is present.
 """
 
 from __future__ import annotations
@@ -13,11 +18,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final, final
 
+from punt_vox.panel.choice_list import ChoiceList
 from punt_vox.panel.topics import PanelTopic
 
 __all__ = ["ProviderControl"]
 
 _COMBO_ID: Final = "vox.panel.provider"
+# The enum is never empty, so this label is unreachable in practice; the
+# choice list still requires one rather than inventing wording of its own.
+_EMPTY_LABEL: Final = "(no providers)"
 
 
 @final
@@ -29,26 +38,22 @@ class ProviderControl:
     current: str | None
 
     def to_dict(self) -> dict[str, object]:
-        """Return the combo's wire dict, selected at ``current``'s index."""
+        """Return the combo's wire dict, selected at ``current``'s entry."""
+        choices = self._choices()
         return {
             "kind": "combo",
             "id": _COMBO_ID,
             "label": "Provider",
-            "items": list(self.providers),
-            "selected": self._selected_index(),
+            "items": choices.wire_items(),
+            "selected": choices.selected_index(),
             "handlers": [{"event": "changed", "publish": [PanelTopic.PROVIDER.value]}],
         }
 
     def provider_for_index(self, index: int) -> str:
         """Return the provider name a clicked ``index`` selects, or raise if invalid."""
-        if not 0 <= index < len(self.providers):
-            count = len(self.providers)
-            msg = f"provider combo: index {index} out of range for {count} providers"
-            raise ValueError(msg)
-        return self.providers[index]
+        return self._choices().name_for_index(index, noun="providers")
 
-    def _selected_index(self) -> int:
-        """Return ``current``'s index into the enum, or 0 when absent/unknown."""
-        if self.current is None or self.current not in self.providers:
-            return 0
-        return self.providers.index(self.current)
+    def _choices(self) -> ChoiceList:
+        return ChoiceList(
+            items=self.providers, current=self.current, empty_label=_EMPTY_LABEL
+        )

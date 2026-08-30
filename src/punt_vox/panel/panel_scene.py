@@ -43,7 +43,6 @@ _TITLE = "Vox"
 _STATUS_ID = "vox.panel.status"
 _ENGINE_LABEL_ID = "vox.panel.voice_engine"
 _ENGINE_LABEL = "Voice engine"
-_DEFAULT_PROVIDER = "elevenlabs"
 # The widest row (the Voice combo plus its inline preview button) measured
 # ~330-350px wide against the locked mockup. Height grew with the Voice engine
 # trio (provider combo, model combo, section label) from ~240 to ~340; the
@@ -66,7 +65,6 @@ class PanelScene:
 
     def render_request(self) -> RenderRequest:
         """Return the whole panel scene: status, radios, Voice engine trio."""
-        provider = self.provider or _DEFAULT_PROVIDER
         elements = [
             TextElement(id=_STATUS_ID, content=self.notice.message).to_dict(),
             NOTIFY_SPEC.control_for(self.notify).to_dict(),
@@ -76,7 +74,7 @@ class PanelScene:
             TextElement(id=_ENGINE_LABEL_ID, content=_ENGINE_LABEL).to_dict(),
             ProviderControl(providers=PROVIDER_NAMES, current=self.provider).to_dict(),
             ModelControl(
-                models=MODEL_TABLE.available(provider), current=self.model
+                models=MODEL_TABLE.available(self.provider), current=self.model
             ).to_dict(),
             VoiceControl(roster=self.roster, current=self.voice).to_dict(),
         ]
