@@ -3,24 +3,20 @@
 The player is the daemon's :class:`ChangeListener`: on each notification it reads
 the fresh status and catalog, builds the :class:`PlayerView` and the
 :class:`AlbumListScene`, and hands the rendered scene to the publisher's mailbox.
-:meth:`notify_changed` and the failure presenters must return at once -- they run
-on the control-channel single-writer, which every playback mutation is
-serialized behind -- so the render they build reads each album's track count
+Every entry point -- :meth:`notify_changed`, the failure presenters, and
+:meth:`install` alike -- must return at once, since any of them can run on the
+lux listener's event loop (a menu click, a hub handshake) as readily as the
+control-channel single-writer. So every render reads each album's track count
 from :class:`~punt_vox.voxd.music_player.track_count_cache.TrackCountCache`
-rather than the disk: a cache lookup, never a stat/open/read/JSON-parse per
-album. :meth:`install` runs on the lux listener's event loop instead (the Music
-menu click, or a hub handshake), and it can afford to await a fresh read --
-:meth:`~punt_vox.voxd.music_player.track_count_cache.TrackCountCache.
-serialized_refresh` keeps that disk read off the loop the session's lease
-keepalive shares, matching the pattern
-:class:`~punt_vox.panel.panel_runner.PanelRunner` already uses for its own
-prefetch.
+rather than the disk, and the live refresh that keeps the cache honest always
+runs as a best-effort background task via :meth:`_schedule_track_count_refresh`,
+never awaited inline: paint from whatever is already known, refresh live in the
+background, and resubmit once that refresh lands.
 
-Every projection here is the same tree; what differs is the *intent* the player
-attaches to it. :meth:`MusicPlayer.notify_changed` and the failure presenters all
-refresh, so a window the user has parked stays parked. :meth:`MusicPlayer.install`
-is the one verb that shows -- and it is reached only from the Music menu click and
-the hub handshake, the two moments that genuinely mean "put this in front of me".
+Every projection is the same tree; only the *intent* differs. :meth:`notify_changed`
+and the failure presenters refresh, so a parked window stays parked;
+:meth:`install` is the one verb that shows, reached only from the Music menu
+click and the hub handshake.
 """
 
 from __future__ import annotations
@@ -93,32 +89,25 @@ class MusicPlayer:
         self._submit(self._service.catalog_albums(), PlaybackNotice.silent())
 
     async def install(self) -> None:
-        """Refresh the live track counts, re-project the scene, and install it.
+        """Project the scene from cached track counts and install it at once.
 
-        The one difference from :meth:`notify_changed` is intent, not content: a
-        track change is a refresh of a window the user has already placed, while
-        a menu click or a fresh hub connection is a request to see the window --
-        and since this call already runs on the lux listener's event loop (never
-        the control-channel writer), it can afford to await a fresh disk read via
-        :meth:`~punt_vox.voxd.music_player.track_count_cache.TrackCountCache.
-        serialized_refresh` before it shows, rather than trust a background
-        repaint to have already landed one.
-
-        A refresh failure is logged and swallowed by :meth:`_try_refresh_cache`,
-        never left to propagate: the outer lux boundary that calls this only
-        logs an unhandled exception, so a raise here would mean the menu click
-        that asked to see the window produces nothing visible at all.
-        Installing with whatever counts the cache already holds -- stale, but
-        on screen -- beats that outcome. ``_latest_notice`` is set here exactly
-        like every path through :meth:`_submit`, so a background refresh that
-        resolves after this call never resurrects a warning this call just
-        cleared.
+        Differs from :meth:`notify_changed` in intent, not content: a menu
+        click or fresh hub connection means "show this", so it installs
+        (raises the frame) rather than merely refreshing. Async only for
+        :class:`~punt_vox.voxd.music_player.presenter_ports.ScenePresenter`;
+        nothing here awaits -- this runs on the event loop that holds the hub
+        connection's session lease, so it must never await the bounded-but-up-
+        to-5s :meth:`~punt_vox.voxd.music_player.track_count_cache.
+        TrackCountCache.serialized_refresh` before showing anything, as it
+        used to. Instead it installs from whatever :attr:`_cache` already
+        holds and hands the live refresh to :meth:`_schedule_track_count_
+        refresh`, the same background path :meth:`notify_changed` uses.
         """
         albums = self._service.catalog_albums()
-        await self._try_refresh_cache(albums)
         notice = PlaybackNotice.silent()
         self._latest_notice = notice
         self._publisher.reinstall(self._render(albums, notice))
+        self._schedule_track_count_refresh()
 
     def present_play_failure(self, album: AlbumId) -> None:
         """Re-project the scene warning that ``album`` could not play (transient).
@@ -156,12 +145,14 @@ class MusicPlayer:
         self._submit(self._service.catalog_albums(), PlaybackNotice.silent())
 
     def _submit(self, albums: tuple[Album, ...], notice: PlaybackNotice) -> None:
-        """Project from fresh status, ``albums`` and ``notice``; submit a refresh.
+        """Project from ``albums`` and ``notice``; submit a refresh.
 
-        Also schedules a best-effort background cache refresh: the render this
-        call submits reads whatever the cache already holds, which may be a
-        render or two behind the true disk state until that refresh lands and
-        resubmits.
+        Paints immediately from whatever :attr:`_cache` already holds -- a
+        dict lookup, never a disk read, so this never blocks its caller -- and
+        schedules the same background refresh :meth:`install` also triggers,
+        converging once it lands. :meth:`install` does not call this: it
+        installs (raises the frame) rather than merely refreshing, so it
+        repeats this shape against ``reinstall`` instead of ``submit``.
         """
         self._latest_notice = notice
         self._publisher.submit(self._render(albums, notice))

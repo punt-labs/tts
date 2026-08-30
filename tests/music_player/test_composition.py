@@ -321,7 +321,10 @@ async def test_run_installs_the_initial_scene_then_patches_it_on_change(
     # End to end through the real subsystem: the handshake installs the scene, and
     # a subsequent state change writes onto the installed tree instead of
     # re-installing it -- which is what keeps the frame where the user left it.
-    album = album_of("aa11bb", name="Mix")
+    # on_disk=0 matches the track-count cache's own pre-refresh default (also
+    # zero), so install()'s own background correction refresh is a no-op patch
+    # here -- this test is about the STATE-CHANGE patch below, not that one.
+    album = album_of("aa11bb", name="Mix", on_disk=0)
     service = _FakeService(ProgramStatus.idle(), (album,))
     changes = ChangeSignal()
     client = _FakeClient()
@@ -355,8 +358,12 @@ async def test_a_change_that_alters_nothing_costs_nothing_on_the_wire(
 ) -> None:
     # The change signal fires on every generated part and every catalog touch, and
     # many of those alter nothing the widget shows. Each used to be a full tree
-    # re-install; now it is zero bytes.
-    service = _FakeService(ProgramStatus.idle(), (album_of("aa11bb", name="Mix"),))
+    # re-install; now it is zero bytes. on_disk=0 matches the track-count
+    # cache's own pre-refresh default, so install()'s background correction
+    # refresh has nothing to correct here.
+    service = _FakeService(
+        ProgramStatus.idle(), (album_of("aa11bb", name="Mix", on_disk=0),)
+    )
     changes = ChangeSignal()
     client = _FakeClient()
     sub = MusicPlayerSubsystem(service, changes, _FakeClients(client))

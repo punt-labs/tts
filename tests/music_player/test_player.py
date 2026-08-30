@@ -2,15 +2,16 @@
 
 Two properties matter beyond the projection content itself. The first
 (vox-h777): an install shows and raises, a change refreshes and never installs.
-The second is this bug's own fix: neither ``notify_changed`` nor the failure
-presenters may block on disk for a track count -- they read
+The second is this bug's own fix: no entry point -- ``notify_changed``, the
+failure presenters, or ``install`` alike -- may block on disk for a track
+count. All of them read
 :class:`~punt_vox.voxd.music_player.track_count_cache.TrackCountCache` instead,
-which is refreshed off the hot path via ``asyncio.to_thread`` and (for the
-control-channel path) resubmits once the refresh lands, so a render fired the
-instant a state change arrives can be a render or two behind the true disk
-count, converging shortly after. ``install`` gets a fresh read awaited inline
-instead, because it already runs on the lux listener's event loop, never the
-control-channel writer.
+which is refreshed off the hot path via ``asyncio.to_thread`` and resubmits
+once the refresh lands, so a render fired the instant a state change (or a
+menu click, or a hub handshake) arrives can be a render or two behind the true
+disk count, converging shortly after (round 9 finding 3: ``install`` used to
+await that refresh inline, which stalled the same event loop that holds the
+hub connection's session lease and its future event dispatch).
 """
 
 from __future__ import annotations
@@ -220,11 +221,13 @@ class TestInstallSurvivesARefreshFailure:
     async def test_install_still_shows_the_window_when_the_refresh_fails(
         self, album_of: AlbumFactory
     ) -> None:
-        # TrackCountCache._refresh propagates any non-LookupError fault. Before
-        # this fix, install() had no guard around it -- an OSError (disk
-        # pressure, fd exhaustion) would propagate out of install() entirely,
-        # caught only by the outer lux boundary's log-and-swallow, so the menu
-        # click that asked to see the window would produce nothing visible.
+        # TrackCountCache._refresh propagates any non-LookupError fault. install()
+        # no longer awaits the refresh at all -- it paints from the cache and
+        # backgrounds the refresh via _schedule_track_count_refresh -- so an
+        # OSError (disk pressure, fd exhaustion) surfacing there can never sink
+        # the window install() already showed; only the background resubmit is
+        # skipped, exactly as :meth:`_try_refresh_cache` already guarantees for
+        # every other caller.
         album = album_of("aa11bb", name="Techno Mix", fails_with=OSError("EMFILE"))
         publisher = _CapturingPublisher()
         player = MusicPlayer(_FakeService(ProgramStatus.idle(), (album,)), publisher)
@@ -232,14 +235,15 @@ class TestInstallSurvivesARefreshFailure:
         await player.install()  # must not raise
 
         assert len(publisher.installed) == 1
+        await _settle()  # let the background refresh fail and be dropped cleanly
 
     async def test_install_still_shows_the_window_on_a_corrupt_manifest(
         self, album_of: AlbumFactory
     ) -> None:
         # A corrupt on-disk manifest surfaces as ValueError (AlbumManifest.
         # from_json's documented contract), not OSError -- _try_refresh_cache
-        # must catch both, or this is exactly as fatal to the menu click as
-        # the unguarded OSError case above used to be.
+        # must catch both, or the background refresh's own task would raise
+        # unretrieved.
         album = album_of(
             "aa11bb", name="Techno Mix", fails_with=ValueError("corrupt manifest")
         )
@@ -249,25 +253,29 @@ class TestInstallSurvivesARefreshFailure:
         await player.install()  # must not raise
 
         assert len(publisher.installed) == 1
+        await _settle()  # let the background refresh fail and be dropped cleanly
 
-    async def test_a_real_bug_propagates_instead_of_being_caught_as_a_refresh_fault(
+    async def test_a_real_bug_propagates_out_of_the_background_refresh_itself(
         self, album_of: AlbumFactory
     ) -> None:
-        # The converse of the two tests above: _try_refresh_cache narrows its
-        # except clause to (OSError, ValueError) on purpose, because those two
-        # name a store-side data condition, not a programmer bug. An
-        # AttributeError names neither -- it must blow up install() rather
-        # than being logged and swallowed under the same line as store
-        # corruption, or a real bug in the read path would look identical to
-        # routine disk pressure in the log.
+        # _try_refresh_cache narrows its except clause to (OSError, ValueError)
+        # on purpose, because those two name a store-side data condition, not a
+        # programmer bug -- exercised directly against _refresh_track_counts,
+        # since install() no longer awaits it: both install() and
+        # notify_changed() now fire it as the same background task via
+        # SingleFlightRefresh, which catches broad Exception itself (logging it)
+        # so nothing awaits this coroutine directly in production. Calling it
+        # here bypasses that wrapper to prove the narrow except still lets a
+        # real bug (AttributeError, TypeError) propagate rather than being
+        # swallowed under the same log line as store corruption.
         album = album_of("aa11bb", name="Techno Mix", fails_with=AttributeError("boom"))
         publisher = _CapturingPublisher()
         player = MusicPlayer(_FakeService(ProgramStatus.idle(), (album,)), publisher)
 
         with pytest.raises(AttributeError, match="boom"):
-            await player.install()
+            await player._refresh_track_counts()
 
-        assert publisher.installed == []  # never reached the render/install step
+        assert publisher.submitted == []  # never reached the resubmit step
 
     async def test_a_warning_install_clears_is_not_resurrected_by_a_refresh_in_flight(
         self, album_of: AlbumFactory
@@ -449,13 +457,14 @@ class TestTrackCountsNeverBlockTheHotPath:
             ["Added", "techno", 5],  # not stuck at 0
         ]
 
-    async def test_install_awaits_a_fresh_cache_refresh(
+    async def test_install_schedules_a_background_cache_refresh(
         self, album_of: AlbumFactory, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # See test_notify_changed_schedules_a_background_cache_refresh above
-        # for why this patches TrackCountCache.serialized_refresh (a method
-        # MusicPlayer calls directly) instead of reaching through
-        # player._cache to identity-check asyncio.to_thread's argument.
+        # install() no longer awaits the refresh inline -- it fires the exact
+        # same background path notify_changed() uses. See
+        # test_notify_changed_schedules_a_background_cache_refresh above for why
+        # this patches TrackCountCache.serialized_refresh (a method MusicPlayer
+        # calls directly) instead of reaching through player._cache.
         calls: list[tuple[Album, ...]] = []
         real_refresh = TrackCountCache.serialized_refresh
 
@@ -471,19 +480,17 @@ class TestTrackCountsNeverBlockTheHotPath:
         player = MusicPlayer(_FakeService(ProgramStatus.idle(), (album,)), publisher)
 
         await player.install()
+        await _settle()
 
         assert calls == [(album,)]
-        assert _by_id(publisher.installed[0].elements, "music.albums")["rows"] == [
-            ["Techno Mix", "techno", 4]
-        ]
 
-    async def test_a_menu_click_shows_the_live_count_at_once_no_settling_needed(
+    async def test_a_menu_click_shows_the_cached_count_at_once_then_converges(
         self, album_of: AlbumFactory
     ) -> None:
-        # Unlike notify_changed, install already runs on the lux listener's
-        # event loop, so it can afford to await the fresh read inline -- the
-        # very click that asks to see the window shows accurate counts,
-        # with no background convergence needed.
+        # install() must never block on the disk read (finding 3, round 9): the
+        # immediate install carries whatever _cache already holds -- the default
+        # zero, since nothing has refreshed it yet -- and the live count only
+        # lands a beat later once the background refresh resubmits.
         album = album_of("aa11bb", name="Techno Mix", tracks=0, on_disk=4)
         publisher = _CapturingPublisher()
         player = MusicPlayer(_FakeService(ProgramStatus.idle(), (album,)), publisher)
@@ -491,7 +498,52 @@ class TestTrackCountsNeverBlockTheHotPath:
         await player.install()
 
         assert _by_id(publisher.installed[0].elements, "music.albums")["rows"] == [
+            ["Techno Mix", "techno", 0]
+        ]
+        assert publisher.submitted == []  # the background refresh hasn't landed yet
+
+        await _settle()
+
+        assert _by_id(publisher.submitted[-1].elements, "music.albums")["rows"] == [
             ["Techno Mix", "techno", 4]
+        ]
+
+    async def test_install_does_not_wait_on_a_slow_disk_read(
+        self, album_of: AlbumFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Round 9 finding 3: install() used to await the refresh inline -- on
+        # the same event loop as the hub connection's handshake and dispatch,
+        # a slow (bounded 5s) disk read there stalled the click/reconnect that
+        # reached it. asyncio.wait_for with a timeout far under that 5s proves
+        # install() no longer waits: against the pre-fix code this call would
+        # itself time out, because install() awaited serialized_refresh (and
+        # therefore slow_event) before ever returning.
+        slow_event = asyncio.Event()
+        real_refresh = TrackCountCache.serialized_refresh
+
+        async def _slow_refresh(
+            self: TrackCountCache, albums: tuple[Album, ...]
+        ) -> None:
+            await slow_event.wait()
+            await real_refresh(self, albums)
+
+        monkeypatch.setattr(TrackCountCache, "serialized_refresh", _slow_refresh)
+        album = album_of("aa11bb", name="Techno Mix", tracks=0, on_disk=9)
+        publisher = _CapturingPublisher()
+        player = MusicPlayer(_FakeService(ProgramStatus.idle(), (album,)), publisher)
+
+        await asyncio.wait_for(player.install(), timeout=0.2)
+
+        assert len(publisher.installed) == 1
+        assert _by_id(publisher.installed[0].elements, "music.albums")["rows"] == [
+            ["Techno Mix", "techno", 0]  # the cache's stale default, shown at once
+        ]
+
+        slow_event.set()  # let the background refresh actually run
+        await _settle()
+
+        assert _by_id(publisher.submitted[-1].elements, "music.albums")["rows"] == [
+            ["Techno Mix", "techno", 9]  # corrected a beat later, in the background
         ]
 
 
