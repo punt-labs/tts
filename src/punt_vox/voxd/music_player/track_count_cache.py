@@ -41,13 +41,20 @@ cancel the thread itself, which keeps running :meth:`_refresh` to completion
 to write :attr:`_counts` after a newer, faster refresh has already landed a
 better answer -- reintroducing the exact "last to FINISH wins" race the lock
 exists to close, just narrowed to the timeout window. :attr:`_generation` and
-:attr:`_written_generation` close that window: each :meth:`serialized_refresh`
-call is stamped with a generation number, bumped only on the event loop before
-dispatch (so it needs no lock of its own), and :meth:`_refresh` -- which may
-run on an orphaned thread well after its caller gave up -- only commits its
-write under :attr:`_write_lock` when its generation is still the newest one
-ever attempted. A late write from an abandoned refresh is thus a safe no-op
-whenever a newer one has already landed.
+:attr:`_written_generation` close that window. :meth:`serialized_refresh`
+(and, for fixtures, :meth:`for_testing`) is the only code that ever bumps
+:attr:`_generation`, always the same ``+= 1`` on the event loop, before
+dispatch -- well before the corresponding worker thread can even start,
+since the default thread-pool executor's queue is strictly FIFO, so a
+thread's actual start order can never precede its own dispatch order.
+:meth:`_refresh` never receives a generation from its caller: it *reads*
+:attr:`_generation` itself, as the first thing it does once its worker
+thread actually runs, and commits its write under :attr:`_write_lock` only
+when that reading is still the newest generation ever attempted. A late
+write from an abandoned refresh is thus a safe no-op whenever a newer one
+has already landed, and no caller -- buggy or otherwise -- can hand
+:meth:`_refresh` an arbitrary generation number to wedge the gate, because
+the parameter does not exist.
 
 An album this cache has never seen reads as zero, matching a genuinely fresh
 album before its first Part lands, so an unrefreshed row looks identical to a
@@ -102,8 +109,12 @@ class TrackCountCache:
     # thread happens to finish last. Released early by a timeout -- see
     # module docstring.
     _lock: asyncio.Lock
-    # Bumped once per call, only inside :meth:`serialized_refresh`, which runs
-    # exclusively on the event loop -- single-writer, so no lock guards it.
+    # Bumped by ``+= 1`` in exactly two places -- :meth:`serialized_refresh`
+    # (the real path) and :meth:`for_testing` (fixtures) -- both
+    # synchronously, on the event loop, never concurrently with each other.
+    # :meth:`_refresh` only ever *reads* this, once, as the first thing it
+    # does when its worker thread actually starts; it never writes it, so no
+    # caller can hand it an ungoverned generation number.
     _generation: int
     # A plain ``threading.Lock``, not an ``asyncio.Lock``: the write it guards
     # runs inside :meth:`_refresh`, on a worker thread, and an orphaned thread
@@ -162,8 +173,7 @@ class TrackCountCache:
         that ``TimeoutError`` itself, which is re-raised unchanged.
         """
         self._generation += 1
-        generation = self._generation
-        task = asyncio.ensure_future(self._locked_refresh(albums, generation))
+        task = asyncio.ensure_future(self._locked_refresh(albums))
         try:
             await asyncio.wait_for(task, timeout=_REFRESH_TIMEOUT_SECONDS)
         except TimeoutError:
@@ -177,29 +187,41 @@ class TrackCountCache:
                 _REFRESH_TIMEOUT_SECONDS,
             )
 
-    async def _locked_refresh(self, albums: tuple[Album, ...], generation: int) -> None:
+    async def _locked_refresh(self, albums: tuple[Album, ...]) -> None:
         """Hold :attr:`_lock` across the dispatch, so overlapping callers queue."""
         async with self._lock:
-            await asyncio.to_thread(self._refresh, albums, generation)
+            await asyncio.to_thread(self._refresh, albums)
 
-    def _refresh(self, albums: tuple[Album, ...], generation: int) -> None:
+    def _refresh(self, albums: tuple[Album, ...]) -> None:
         """Re-read every album's live count from disk; the one blocking call here.
 
-        Callers reach this through :meth:`serialized_refresh`, never directly
-        -- a direct call runs inline, blocking whatever event loop called it,
-        and races any concurrent :meth:`serialized_refresh` in flight. Only
-        ``LookupError`` (the store's documented "this album was deleted"
-        contract) drops an album from the refreshed set; any other fault -- a
-        transient ``OSError`` from a permission blip or a descriptor exhaustion
-        -- propagates rather than silently freezing that album's count at its
+        Intended to run only via :meth:`serialized_refresh` -- a direct call
+        runs inline, blocking whatever event loop called it, and races any
+        concurrent :meth:`serialized_refresh` in flight. Only ``LookupError``
+        (the store's documented "this album was deleted" contract) drops an
+        album from the refreshed set; any other fault -- a transient
+        ``OSError`` from a permission blip or a descriptor exhaustion --
+        propagates rather than silently freezing that album's count at its
         last-known value.
 
-        The write is gated on ``generation`` under :attr:`_write_lock`: this
+        Takes no generation argument: it reads :attr:`_generation` itself,
+        once, as the very first thing it does once its worker thread actually
+        starts running -- never handed one by a caller, so nothing outside
+        this method can inject an arbitrary generation number to wedge the
+        write-gate below. Reading it here, rather than being passed a value
+        captured at dispatch time, is still safe: :meth:`serialized_refresh`
+        is the only dispatcher, and the default thread-pool executor's queue
+        is FIFO, so a worker thread can never start running before the
+        dispatch that queued it -- the generation this method reads is
+        always the one its own dispatch intended, never a later call's.
+
+        The write is gated on that generation under :attr:`_write_lock`: this
         method may run on a worker thread orphaned by a caller that already
         timed out (see module docstring), so a late write here must never
-        clobber a newer refresh's result. It commits only when ``generation``
-        is still the newest one any caller has ever attempted.
+        clobber a newer refresh's result. It commits only when the generation
+        it read is still the newest one any caller has ever attempted.
         """
+        generation = self._generation
         fresh: dict[AlbumId, int] = {}
         for album in albums:
             try:
@@ -218,24 +240,26 @@ class TrackCountCache:
     def for_testing(cls, albums: tuple[Album, ...]) -> Self:
         """Return a cache pre-populated with ``albums``' live counts; tests only.
 
-        Synchronous and lock-free by design -- production code always reaches
-        the disk read through :meth:`serialized_refresh`, off the event loop.
-        This exists so fixtures for :class:`~punt_vox.voxd.music_player.
-        album_roster.AlbumRoster`, :class:`~punt_vox.voxd.music_player.
-        album_table.AlbumTable`, and :class:`~punt_vox.voxd.music_player.scene.
-        AlbumListScene` can populate a cache without touching the async path
-        or a private method directly.
+        Synchronous by design -- production code always reaches the disk read
+        through :meth:`serialized_refresh`, off the event loop. This exists so
+        fixtures for :class:`~punt_vox.voxd.music_player.album_roster.
+        AlbumRoster`, :class:`~punt_vox.voxd.music_player.album_table.
+        AlbumTable`, and :class:`~punt_vox.voxd.music_player.scene.
+        AlbumListScene` can populate a cache without going through the async
+        ``serialized_refresh`` path, which needs a running event loop these
+        fixtures don't have.
 
-        Advances :attr:`_generation` in lockstep with the write, not just
-        :attr:`_written_generation` -- a cache built here that a test later
-        drives through a real :meth:`serialized_refresh` must still be able to
-        write: that call bumps ``_generation`` to 2 starting from 1, which
-        stays ``> _written_generation``. Leaving ``_generation`` at its
-        default zero would have made that next real refresh's generation
-        (1) fail the ``>`` gate against the written generation this method
-        already set to 1, silently discarding it.
+        Bumps :attr:`_generation` the same ``+= 1`` way :meth:`serialized_refresh`
+        does, rather than setting it to a literal value -- a cache built here
+        that a test later drives through a real :meth:`serialized_refresh`
+        must still be able to write: that call bumps ``_generation`` to 2
+        starting from 1, which stays ``> _written_generation``. Setting
+        ``_generation`` to a literal ``1`` here would look identical for a
+        fresh cache (``0 + 1 == 1``), but the ``+=`` is what keeps the "only
+        these two places ever bump ``_generation``" comment on the attribute
+        honest.
         """
         self = cls()
-        self._generation = 1
-        self._refresh(albums, self._generation)
+        self._generation += 1
+        self._refresh(albums)
         return self

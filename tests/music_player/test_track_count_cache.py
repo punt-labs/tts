@@ -48,7 +48,8 @@ class TestRefresh:
         two = album_of("cc22dd", name="Two", tracks=0, on_disk=12)
         cache = TrackCountCache()
 
-        cache._refresh((one, two), 1)
+        cache._generation += 1
+        cache._refresh((one, two))
 
         assert cache.get(one.id) == 5
         assert cache.get(two.id) == 12
@@ -58,11 +59,13 @@ class TestRefresh:
     ) -> None:
         album = album_of("aa11bb", tracks=0, on_disk=3)
         cache = TrackCountCache()
-        cache._refresh((album,), 1)
+        cache._generation += 1
+        cache._refresh((album,))
         assert cache.get(album.id) == 3
 
         grown = album_of("aa11bb", tracks=0, on_disk=7)
-        cache._refresh((grown,), 2)
+        cache._generation += 1
+        cache._refresh((grown,))
         assert cache.get(album.id) == 7
 
     def test_a_deleted_album_drops_out_of_the_refreshed_set(
@@ -72,7 +75,8 @@ class TestRefresh:
         gone = album_of("cc22dd", name="Gone", fails_with=LookupError("deleted"))
         cache = TrackCountCache()
 
-        cache._refresh((kept, gone), 1)
+        cache._generation += 1
+        cache._refresh((kept, gone))
 
         assert cache.get(kept.id) == 4
         assert cache.get(gone.id) == 0  # never cached, not a real zero
@@ -86,12 +90,14 @@ class TestRefresh:
         kept = album_of("aa11bb", name="Kept", tracks=0, on_disk=4)
         first_pass = album_of("cc22dd", name="Gone", tracks=0, on_disk=2)
         cache = TrackCountCache()
-        cache._refresh((kept, first_pass), 1)
+        cache._generation += 1
+        cache._refresh((kept, first_pass))
         assert cache.get(kept.id) == 4
         assert cache.get(first_pass.id) == 2
 
         gone = album_of("cc22dd", name="Gone", fails_with=LookupError("deleted"))
-        cache._refresh((kept, gone), 2)
+        cache._generation += 1
+        cache._refresh((kept, gone))
 
         assert cache.get(kept.id) == 4
         assert cache.get(gone.id) == 0
@@ -100,8 +106,10 @@ class TestRefresh:
         self, album_of: AlbumFactory
     ) -> None:
         album = album_of("aa11bb", name="Blip", fails_with=OSError("EMFILE"))
+        cache = TrackCountCache()
+        cache._generation += 1
         with pytest.raises(OSError, match="EMFILE"):
-            TrackCountCache()._refresh((album,), 1)
+            cache._refresh((album,))
 
 
 class TestGenerationGatedWrite:
@@ -121,13 +129,18 @@ class TestGenerationGatedWrite:
         cache = TrackCountCache()
 
         # The newer refresh (generation 2) lands first.
-        cache._refresh((fresh,), 2)
+        cache._generation = 2
+        cache._refresh((fresh,))
         assert cache.get(fresh.id) == 9
 
         # An older refresh (generation 1), simulating one whose caller already
         # gave up and moved on, finally gets to write -- its generation is no
-        # longer the newest, so the write is a no-op.
-        cache._refresh((stale,), 1)
+        # longer the newest, so the write is a no-op. Setting ``_generation``
+        # back down to 1 directly (rather than via the ``+=`` production
+        # path) is how this whitebox test recreates "a call that captured its
+        # generation before a later one ran" without needing two real threads.
+        cache._generation = 1
+        cache._refresh((stale,))
 
         assert cache.get(fresh.id) == 9  # unchanged
         assert cache.get(stale.id) == 0  # never actually written
@@ -137,11 +150,13 @@ class TestGenerationGatedWrite:
     ) -> None:
         album = album_of("aa11bb", tracks=0, on_disk=4)
         cache = TrackCountCache()
-        cache._refresh((album,), 1)
+        cache._generation += 1
+        cache._refresh((album,))
         assert cache.get(album.id) == 4
 
         grown = album_of("aa11bb", tracks=0, on_disk=8)
-        cache._refresh((grown,), 2)
+        cache._generation += 1
+        cache._refresh((grown,))
         assert cache.get(album.id) == 8
 
 
@@ -202,16 +217,14 @@ class TestSerializedRefresh:
         max_in_flight = 0
         real_refresh = TrackCountCache._refresh
 
-        def _slow_refresh(
-            self: TrackCountCache, albums: tuple[Album, ...], generation: int
-        ) -> None:
+        def _slow_refresh(self: TrackCountCache, albums: tuple[Album, ...]) -> None:
             nonlocal in_flight, max_in_flight
             with guard:
                 in_flight += 1
                 max_in_flight = max(max_in_flight, in_flight)
             time.sleep(0.05)
             try:
-                real_refresh(self, albums, generation)
+                real_refresh(self, albums)
             finally:
                 with guard:
                     in_flight -= 1
@@ -243,9 +256,7 @@ class TestSerializedRefreshTimeout:
     ) -> None:
         monkeypatch.setattr(track_count_cache_module, "_REFRESH_TIMEOUT_SECONDS", 0.05)
 
-        def _stuck_refresh(
-            self: TrackCountCache, albums: tuple[Album, ...], generation: int
-        ) -> None:
+        def _stuck_refresh(self: TrackCountCache, albums: tuple[Album, ...]) -> None:
             time.sleep(0.3)  # much longer than the monkeypatched timeout
 
         monkeypatch.setattr(TrackCountCache, "_refresh", _stuck_refresh)
@@ -268,9 +279,7 @@ class TestSerializedRefreshTimeout:
             track_count_cache_module, "_REFRESH_TIMEOUT_SECONDS", timeout
         )
 
-        def _stuck_refresh(
-            self: TrackCountCache, albums: tuple[Album, ...], generation: int
-        ) -> None:
+        def _stuck_refresh(self: TrackCountCache, albums: tuple[Album, ...]) -> None:
             time.sleep(0.3)
 
         monkeypatch.setattr(TrackCountCache, "_refresh", _stuck_refresh)
@@ -297,12 +306,16 @@ class TestSerializedRefreshTimeout:
         done_writing = threading.Event()
         real_refresh = TrackCountCache._refresh
 
-        def _blocking_refresh(
-            self: TrackCountCache, albums: tuple[Album, ...], generation: int
-        ) -> None:
+        def _blocking_refresh(self: TrackCountCache, albums: tuple[Album, ...]) -> None:
+            # Read _generation the same way the real _refresh does -- as the
+            # first thing this call does once its worker thread starts -- so
+            # it captures its OWN dispatch's generation (1) even though the
+            # second call bumps _generation to 2 while this one is still
+            # blocked below.
+            generation = self._generation
             if generation == 1:
                 release.wait(timeout=2.0)
-            real_refresh(self, albums, generation)
+            real_refresh(self, albums)
             if generation == 1:
                 done_writing.set()
 
