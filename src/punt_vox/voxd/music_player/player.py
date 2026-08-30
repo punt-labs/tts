@@ -10,7 +10,8 @@ from :class:`~punt_vox.voxd.music_player.track_count_cache.TrackCountCache`
 rather than the disk: a cache lookup, never a stat/open/read/JSON-parse per
 album. :meth:`install` runs on the lux listener's event loop instead (the Music
 menu click, or a hub handshake), and it can afford to await a fresh read --
-:meth:`asyncio.to_thread` keeps that disk read off the loop the session's lease
+:meth:`~punt_vox.voxd.music_player.track_count_cache.TrackCountCache.
+serialized_refresh` keeps that disk read off the loop the session's lease
 keepalive shares, matching the pattern
 :class:`~punt_vox.panel.panel_runner.PanelRunner` already uses for its own
 prefetch.
@@ -24,7 +25,6 @@ the hub handshake, the two moments that genuinely mean "put this in front of me"
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Self, final
 
@@ -100,12 +100,25 @@ class MusicPlayer:
         a menu click or a fresh hub connection is a request to see the window --
         and since this call already runs on the lux listener's event loop (never
         the control-channel writer), it can afford to await a fresh disk read via
-        ``asyncio.to_thread`` before it shows, rather than trust a background
+        :meth:`~punt_vox.voxd.music_player.track_count_cache.TrackCountCache.
+        serialized_refresh` before it shows, rather than trust a background
         repaint to have already landed one.
+
+        A refresh failure is logged and swallowed by :meth:`_try_refresh_cache`,
+        never left to propagate: the outer lux boundary that calls this only
+        logs an unhandled exception, so a raise here would mean the menu click
+        that asked to see the window produces nothing visible at all.
+        Installing with whatever counts the cache already holds -- stale, but
+        on screen -- beats that outcome. ``_latest_notice`` is set here exactly
+        like every path through :meth:`_submit`, so a background refresh that
+        resolves after this call never resurrects a warning this call just
+        cleared.
         """
         albums = self._service.catalog_albums()
-        await asyncio.to_thread(self._cache.refresh, albums)
-        self._publisher.reinstall(self._render(albums, PlaybackNotice.silent()))
+        await self._try_refresh_cache(albums)
+        notice = PlaybackNotice.silent()
+        self._latest_notice = notice
+        self._publisher.reinstall(self._render(albums, notice))
 
     def present_play_failure(self, album: AlbumId) -> None:
         """Re-project the scene warning that ``album`` could not play (transient).
@@ -180,20 +193,38 @@ class MusicPlayer:
     async def _refresh_track_counts(self, albums: tuple[Album, ...]) -> None:
         """Refresh the cache from disk, off the control-channel writer entirely.
 
-        A failure here (an ``OSError`` the cache does not itself catch) is
-        logged and dropped: a stale track count is a display nit, never a
-        reason to take down the write path that fired this refresh. On success,
-        resubmits with whatever notice is current at THIS moment -- never the
-        one captured when the refresh was scheduled -- so a warning raised, or
-        cleared, while the refresh was in flight is never clobbered or
-        resurrected by a repaint that started before it happened.
+        A failure here is logged and dropped by :meth:`_try_refresh_cache`: a
+        stale track count is a display nit, never a reason to take down the
+        write path that fired this refresh. On success, resubmits with
+        whatever notice is current at THIS moment -- never the one captured
+        when the refresh was scheduled -- so a warning raised, or cleared,
+        while the refresh was in flight is never clobbered or resurrected by a
+        repaint that started before it happened.
         """
-        try:
-            await asyncio.to_thread(self._cache.refresh, albums)
-        except Exception:
-            logger.exception("music: track-count cache refresh failed")
+        if not await self._try_refresh_cache(albums):
             return
         # Fresh, not the snapshot the refresh was scheduled with: the catalog
         # itself may have gained or lost an album while the disk read ran.
         fresh_albums = self._service.catalog_albums()
         self._publisher.submit(self._render(fresh_albums, self._latest_notice))
+
+    async def _try_refresh_cache(self, albums: tuple[Album, ...]) -> bool:
+        """Refresh :attr:`_cache`; log and report failure rather than raise.
+
+        Both callers -- :meth:`install` and :meth:`_refresh_track_counts` --
+        treat a refresh fault (an ``OSError`` the cache does not itself catch,
+        from disk pressure or descriptor exhaustion) as non-fatal: a stale
+        count is a display nit, never a reason to sink a menu click or take
+        down the write path that fired a background refresh. The log line
+        names how many albums this refresh covered, so a persistently failing
+        catalog is diagnosable from the log rather than an unqualified line
+        repeating forever.
+        """
+        try:
+            await self._cache.serialized_refresh(albums)
+        except Exception:
+            logger.exception(
+                "music: track-count cache refresh failed for %d albums", len(albums)
+            )
+            return False
+        return True

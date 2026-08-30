@@ -207,6 +207,55 @@ class TestInstallVersusRefresh:
         await _settle()  # let the background refresh this scheduled drain cleanly
 
 
+class TestInstallSurvivesARefreshFailure:
+    """The bug this fix closes: a failed cache refresh must never sink the
+    menu click, and a warning install() clears must not come back."""
+
+    async def test_install_still_shows_the_window_when_the_refresh_fails(
+        self, album_of: AlbumFactory
+    ) -> None:
+        # TrackCountCache.refresh propagates any non-LookupError fault. Before
+        # this fix, install() had no guard around it -- an OSError (disk
+        # pressure, fd exhaustion) would propagate out of install() entirely,
+        # caught only by the outer lux boundary's log-and-swallow, so the menu
+        # click that asked to see the window would produce nothing visible.
+        album = album_of("aa11bb", name="Techno Mix", fails_with=OSError("EMFILE"))
+        publisher = _CapturingPublisher()
+        player = MusicPlayer(_FakeService(ProgramStatus.idle(), (album,)), publisher)
+
+        await player.install()  # must not raise
+
+        assert len(publisher.installed) == 1
+
+    async def test_a_warning_install_clears_is_not_resurrected_by_a_refresh_in_flight(
+        self, album_of: AlbumFactory
+    ) -> None:
+        # notify_changed schedules a background refresh; before it lands, a
+        # failed stop raises a warning. install() (the menu click) then clears
+        # it in the scene -- and must update _latest_notice too, or the
+        # background refresh's resubmit (which reads _latest_notice fresh at
+        # its own execution time, not the notice captured at schedule time)
+        # brings the warning back right after the click just cleared it.
+        album = album_of("aa11bb", name="Techno Mix", tracks=0, on_disk=9)
+        publisher = _CapturingPublisher()
+        player = MusicPlayer(_FakeService(ProgramStatus.idle(), (album,)), publisher)
+
+        player.notify_changed()  # schedules a background refresh (not yet run)
+        player.present_stop_failure()  # raises a warning before it lands
+        warned = _by_id(publisher.submitted[-1].elements, "music.status")["content"]
+        assert warned == "⚠ couldn't stop the music"
+
+        await player.install()
+        cleared = _by_id(publisher.installed[-1].elements, "music.status")["content"]
+        assert cleared == ""  # the click clears it
+
+        await _settle()  # let the in-flight background refresh resubmit
+        resubmitted = _by_id(publisher.submitted[-1].elements, "music.status")[
+            "content"
+        ]
+        assert resubmitted == ""  # never resurrected
+
+
 class TestTrackCountsNeverBlockTheHotPath:
     """The bug this fix closes: a disk read must never run inline on a render
     fired from the control-channel single-writer or the lux listener's loop."""

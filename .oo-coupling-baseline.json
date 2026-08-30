@@ -1620,8 +1620,8 @@
     "efferent_coupling": 6.0,
     "public_names": 1.0,
     "circular_imports": 0.0,
-    "max_lcom": 0.273,
-    "avg_lcom": 0.273
+    "max_lcom": 0.364,
+    "avg_lcom": 0.364
   },
   "src/punt_vox/voxd/music_player/player_event_codec.py": {
     "efferent_coupling": 3.0,

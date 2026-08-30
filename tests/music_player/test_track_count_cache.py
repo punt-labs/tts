@@ -10,6 +10,9 @@ freezing that album's count silently.
 
 from __future__ import annotations
 
+import asyncio
+import threading
+import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -92,3 +95,57 @@ class TestRefresh:
         album = album_of("aa11bb", name="Blip", fails_with=OSError("EMFILE"))
         with pytest.raises(OSError, match="EMFILE"):
             TrackCountCache().refresh((album,))
+
+
+class TestSerializedRefresh:
+    """The entry point every real caller uses: off the event loop, one at a time.
+
+    :meth:`~punt_vox.voxd.music_player.player.MusicPlayer.install` (the lux
+    listener's event loop) and the single-flighted background repaint (the
+    control-channel writer's event loop) can both reach this cache at once --
+    an install landing while a Part-completion refresh is mid-flight. Without
+    serialization, both would build ``fresh`` from their own snapshot and
+    unconditionally overwrite ``_counts`` -- whichever thread happens to
+    finish LAST wins, not whichever started most recently.
+    """
+
+    async def test_it_still_lands_the_live_count(self, album_of: AlbumFactory) -> None:
+        album = album_of("aa11bb", tracks=0, on_disk=6)
+        cache = TrackCountCache()
+
+        await cache.serialized_refresh((album,))
+
+        assert cache.get(album.id) == 6
+
+    async def test_two_concurrent_callers_never_overlap(
+        self, album_of: AlbumFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A slowed-down refresh body makes an unguarded overlap observable:
+        # without the lock, asyncio.gather would dispatch both calls to
+        # separate worker threads at once and max_in_flight would reach 2.
+        guard = threading.Lock()
+        in_flight = 0
+        max_in_flight = 0
+        real_refresh = TrackCountCache.refresh
+
+        def _slow_refresh(self: TrackCountCache, albums: tuple[Album, ...]) -> None:
+            nonlocal in_flight, max_in_flight
+            with guard:
+                in_flight += 1
+                max_in_flight = max(max_in_flight, in_flight)
+            time.sleep(0.05)
+            try:
+                real_refresh(self, albums)
+            finally:
+                with guard:
+                    in_flight -= 1
+
+        monkeypatch.setattr(TrackCountCache, "refresh", _slow_refresh)
+        album = album_of("aa11bb", tracks=0, on_disk=5)
+        cache = TrackCountCache()
+
+        await asyncio.gather(
+            cache.serialized_refresh((album,)), cache.serialized_refresh((album,))
+        )
+
+        assert max_in_flight == 1
