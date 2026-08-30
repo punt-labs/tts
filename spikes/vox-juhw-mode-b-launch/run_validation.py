@@ -167,7 +167,16 @@ class StoreProcess:
         except subprocess.TimeoutExpired:
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(os.getpgid(self._process.pid), signal.SIGKILL)
-            self._process.wait(timeout=10)
+            try:
+                self._process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                # Even SIGKILL cannot reap a D-state process; note it and
+                # return rather than raising out of the caller's finally.
+                print(
+                    f"WARNING: store pid {self._process.pid} unreaped after "
+                    "SIGKILL (uninterruptible sleep?)",
+                    file=sys.stderr,
+                )
 
     def confirmed_dead(self) -> bool:
         """True when the loopback port no longer answers a connection."""
@@ -265,9 +274,7 @@ class ValidationRun:
         ledger = HookLedger(ledger_path)
         seen = self._await_hooks(session, ledger)
         print(f"    events seen: {sorted(seen)}")
-        self._verdicts["hooks_land_ordered_attributed"] = self._judge_hooks(
-            ledger, seen
-        )
+        self._verdicts["hooks_land_ordered_attributed"] = self._judge_hooks(ledger)
 
         print("[6] capturing pane mid-run (non-interactive tmux attach)")
         mid = session.capture()
@@ -291,13 +298,18 @@ class ValidationRun:
             time.sleep(_POLL_INTERVAL_S)
         return seen
 
-    def _judge_hooks(self, ledger: HookLedger, seen: set[str]) -> bool:
+    def _judge_hooks(self, ledger: HookLedger) -> bool:
         """PASS only for a COMPLETE, ordered, attributed ledger.
 
         Ordering/attribution alone is not enough: a run where the relay
         died after SessionStart would leave a perfectly ordered partial
         ledger. Completeness against the required event set gates first.
+
+        Completeness is judged on a FRESH ledger read, never on the poll
+        loop's last snapshot: an event landing in the final poll gap would
+        otherwise make the verdict contradict the on-disk evidence.
         """
+        seen = {record.event for record in ledger.records()}
         missing = _REQUIRED_EVENTS - seen
         if missing:
             note = f"hooks incomplete at timeout; missing: {sorted(missing)}"
@@ -402,8 +414,14 @@ class ValidationRun:
         return first.clean and second.clean and gone
 
     def _teardown_safety_net(self) -> None:
-        # Never leave a fork running, whatever failed above.
-        Teardown(_SCRATCH_ROOT).run()
+        # Never leave a fork running, whatever failed above -- and never
+        # discard the outcome: on an exception path a silently-failing
+        # rmtree would otherwise leave the credentials copy unnamed.
+        outcome = Teardown(_SCRATCH_ROOT).run()
+        if not outcome.clean:
+            for line in outcome.log:
+                self._notes.append(f"safety-net teardown: {line}")
+                print(f"    safety-net teardown: {line}", file=sys.stderr)
 
     def _write_verdict(self) -> int:
         overall = bool(self._verdicts) and all(self._verdicts.values())

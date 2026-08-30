@@ -32,8 +32,7 @@ class TestJudgeHooksCompleteness:
     ) -> None:
         run = ValidationRun()
         ledger = _ledger_with(tmp_path, ["SessionStart"])
-        seen = {record.event for record in ledger.records()}
-        assert run._judge_hooks(ledger, seen) is False
+        assert run._judge_hooks(ledger) is False
         assert any(
             "missing" in note and "Stop" in note and "UserPromptSubmit" in note
             for note in run._notes
@@ -42,15 +41,14 @@ class TestJudgeHooksCompleteness:
     def test_empty_ledger_fails(self, tmp_path: Path) -> None:
         run = ValidationRun()
         ledger = HookLedger(tmp_path / "ledger.jsonl")
-        assert run._judge_hooks(ledger, set()) is False
+        assert run._judge_hooks(ledger) is False
 
     def test_complete_ordered_attributed_ledger_passes(self, tmp_path: Path) -> None:
         run = ValidationRun()
         ledger = _ledger_with(
             tmp_path, ["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"]
         )
-        seen = {record.event for record in ledger.records()}
-        assert run._judge_hooks(ledger, seen) is True
+        assert run._judge_hooks(ledger) is True
         assert run._notes == []
 
     def test_complete_but_unattributed_ledger_fails(self, tmp_path: Path) -> None:
@@ -59,8 +57,26 @@ class TestJudgeHooksCompleteness:
         stamper = SequenceStamper()
         for event in ("SessionStart", "UserPromptSubmit", "Stop"):
             ledger.append(stamper.stamp(event, {}))  # no session_id
-        seen = {record.event for record in ledger.records()}
-        assert run._judge_hooks(ledger, seen) is False
+        assert run._judge_hooks(ledger) is False
+
+    def test_event_landing_after_the_last_poll_still_counts(
+        self, tmp_path: Path
+    ) -> None:
+        # The poll loop's final snapshot is up to one interval stale; a
+        # Stop that lands in that gap is in the ledger but not in the
+        # snapshot. The judge must read the ledger fresh, or the verdict
+        # would contradict the on-disk evidence.
+        run = ValidationRun()
+        ledger = HookLedger(tmp_path / "ledger.jsonl")
+        stamper = SequenceStamper()
+        for event in ("SessionStart", "UserPromptSubmit"):
+            ledger.append(stamper.stamp(event, {"session_id": "sess"}))
+        stale_snapshot = {record.event for record in ledger.records()}
+        assert "Stop" not in stale_snapshot
+        # Stop lands after the caller's last look, same relay stream.
+        ledger.append(stamper.stamp("Stop", {"session_id": "sess"}))
+        assert run._judge_hooks(ledger) is True
+        assert run._notes == []
 
 
 class TestJudgePane:
