@@ -172,7 +172,13 @@ class SessionLauncher:
         session.spawn(
             LaunchCommand(self._claude_bin, prompt), project.path, config.env()
         )
-        # Budget is consumed only by a session that actually exists: a
-        # spawn failure (tmux absent, bad cwd) must leave room for a retry.
+        # Budget is consumed only by a session that verifiably exists: a
+        # spawn failure (tmux absent, bad cwd) or a fork that died at
+        # startup (bad claude binary exits instantly, taking the tmux
+        # session with it despite spawn's exit 0) must leave room for a
+        # retry.
+        if not session.alive():
+            msg = f"fork died at startup: tmux session {name} vanished"
+            raise RuntimeError(msg)
         self._forked += 1
         return session

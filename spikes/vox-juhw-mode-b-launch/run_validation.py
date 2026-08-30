@@ -70,8 +70,12 @@ _POLL_INTERVAL_S = 3.0
 
 # The hook events a complete run MUST deliver; a ledger that is ordered and
 # attributed but missing any of these is an incomplete run and fails the
-# hooks criterion outright.
-_REQUIRED_EVENTS = frozenset({"SessionStart", "UserPromptSubmit", "Stop"})
+# hooks criterion outright. PostToolUse is required because mid-run payload
+# flow is the point of the loopback chain -- a session that emits only
+# startup and stop hooks proves nothing about it.
+_REQUIRED_EVENTS = frozenset(
+    {"SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"}
+)
 
 # The mid-run pane must show evidence of the seeded task -- the derived
 # prompt names this file and the fork's first tool call writes it. A merely

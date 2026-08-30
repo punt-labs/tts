@@ -55,9 +55,20 @@ class TestJudgeHooksCompleteness:
         run = ValidationRun()
         ledger = HookLedger(tmp_path / "ledger.jsonl")
         stamper = SequenceStamper()
-        for event in ("SessionStart", "UserPromptSubmit", "Stop"):
+        for event in ("SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"):
             ledger.append(stamper.stamp(event, {}))  # no session_id
         assert run._judge_hooks(ledger) is False
+
+    def test_startup_and_stop_only_ledger_fails_naming_posttooluse(
+        self, tmp_path: Path
+    ) -> None:
+        # Mid-run payload flow is the point of the loopback chain: a fork
+        # that emitted only startup and stop hooks proved nothing about
+        # it, however ordered and attributed those records are.
+        run = ValidationRun()
+        ledger = _ledger_with(tmp_path, ["SessionStart", "UserPromptSubmit", "Stop"])
+        assert run._judge_hooks(ledger) is False
+        assert any("missing" in note and "PostToolUse" in note for note in run._notes)
 
     def test_event_landing_after_the_last_poll_still_counts(
         self, tmp_path: Path
@@ -69,7 +80,7 @@ class TestJudgeHooksCompleteness:
         run = ValidationRun()
         ledger = HookLedger(tmp_path / "ledger.jsonl")
         stamper = SequenceStamper()
-        for event in ("SessionStart", "UserPromptSubmit"):
+        for event in ("SessionStart", "UserPromptSubmit", "PostToolUse"):
             ledger.append(stamper.stamp(event, {"session_id": "sess"}))
         stale_snapshot = {record.event for record in ledger.records()}
         assert "Stop" not in stale_snapshot
