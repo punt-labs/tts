@@ -364,12 +364,16 @@ fi
 # lock), gated additionally on vox's own per-repo enablement marker so an
 # unrelated repo never gets a floating "Vox" menu entry.
 #
-# $PPID is the Claude Code process that ran this hook. The applet watches it
-# and exits when it goes, so it never outlives its session. SessionStart
-# fires more than once for one session -- /resume and /clear both fire it
-# again against the same process -- and the applet refuses a second start
-# itself under its own session-pid lock, so the guard below only saves the
-# pointless respawn.
+# $PPID is NOT the Claude Code process that ran this hook -- it is a
+# short-lived `sh` wrapper that Claude Code interposes to invoke SessionStart
+# hooks, and that wrapper exits within seconds of this script finishing.
+# Watching $PPID means the panel's own liveness check sees the wrapper vanish
+# almost immediately and leaves before it ever reaches the Hub -- the panel
+# never registers in the menu, which is exactly the bug this block fixes (see
+# the SESSION_WATCH_PID resolution below). SessionStart fires more than once
+# for one session -- /resume and /clear both fire it again against the same
+# process -- and the applet refuses a second start itself under its own
+# session-pid lock, so the guard below only saves the pointless respawn.
 _repo_root=$(git -C "$_cwd" rev-parse --show-toplevel 2>/dev/null) || _repo_root=""
 if [ -z "$_repo_root" ]; then
   _dir="$_cwd"
@@ -379,6 +383,31 @@ if [ -z "$_repo_root" ]; then
   _repo_root="$_dir"
 fi
 if [ -f "$_repo_root/.punt-labs/vox/enabled" ]; then
+  # The genuinely persistent `claude` process is the wrapper's *parent*, i.e.
+  # $PPID's grandparent from here. Resolve it, but verify its command name is
+  # EXACTLY "claude" (not a substring/glob match -- a process named
+  # "not-claude" must be REJECTED) before trusting it: a differently-shaped
+  # process tree (a future Claude Code version with no wrapper, a different
+  # OS's process model) must fail safe -- an applet that exits too early,
+  # same as today -- rather than silently watching an unrelated long-lived
+  # ancestor (a login shell, systemd) forever, which would leak the panel
+  # process past the actual session's end.
+  #
+  # Both `ps` calls are allowed to fail -- a vanished parent between
+  # resolving the pid and querying its comm is a real race, however rare, and
+  # under `set -e` an unguarded failure here would abort the whole hook (no
+  # panel, nothing past this point) rather than falling back to $PPID as
+  # intended.
+  _grandparent_pid="$(ps -o ppid= -p "$PPID" 2>/dev/null | tr -d '[:space:]')" || true
+  _grandparent_comm=""
+  if [[ -n "$_grandparent_pid" ]]; then
+    _grandparent_comm="$(ps -o comm= -p "$_grandparent_pid" 2>/dev/null | tr -d '[:space:]')" || true
+  fi
+  case "$_grandparent_comm" in
+    claude) SESSION_WATCH_PID="$_grandparent_pid" ;;
+    *) SESSION_WATCH_PID="$PPID" ;;
+  esac
+
   # ~/.punt-labs/vox/logs is where every other vox process already logs, and
   # unlike a shared tmp dir it is not writable by other local users -- so a
   # predictable per-session filename cannot be pre-empted by a symlink planted
@@ -390,7 +419,7 @@ if [ -f "$_repo_root/.punt-labs/vox/enabled" ]; then
   # traversable by a permissive umask stays that way. This mirrors
   # private_state.ensure_private_tree() on the Python side.
   chmod 700 "$HOME/.punt-labs" "$HOME/.punt-labs/vox" "$PANEL_LOG_DIR" 2>/dev/null || true
-  PANEL_LOG="$PANEL_LOG_DIR/vox-panel-$PPID.log"
+  PANEL_LOG="$PANEL_LOG_DIR/vox-panel-$SESSION_WATCH_PID.log"
   # An unwritable log path must cost this session its log, not its panel. The
   # `>>` redirects below are unguarded, and a failed redirect on a synchronous
   # command aborts under `set -e` -- so without this fallback an unwritable
@@ -401,10 +430,10 @@ if [ -f "$_repo_root/.punt-labs/vox/enabled" ]; then
     # connected to voxd or luxd yet at this point in the hook, so there is no
     # daemon to carry this reason into `vox status`/`vox doctor`.
     echo "$(date '+%Y-%m-%d %H:%M:%S') session-start: vox-panel not found on PATH; the Vox control panel will not be available this session" >>"$PANEL_LOG"
-  elif pgrep -f "vox-panel --session-pid ${PPID}\$" >/dev/null 2>&1; then
+  elif pgrep -f "vox-panel --session-pid ${SESSION_WATCH_PID}\$" >/dev/null 2>&1; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') session-start: this session is already served; not spawning another panel" >>"$PANEL_LOG"
   else
-    nohup vox-panel --session-pid "$PPID" >>"$PANEL_LOG" 2>&1 &
+    nohup vox-panel --session-pid "$SESSION_WATCH_PID" >>"$PANEL_LOG" 2>&1 &
     disown
   fi
 fi

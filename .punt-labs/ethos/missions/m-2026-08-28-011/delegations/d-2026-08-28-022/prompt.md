@@ -1,0 +1,7 @@
+Review the changes on branch fix/vox-1gub-linux-desktop-config in the git worktree at <repo>/.claude/worktrees/vox-1gub-linux-desktop, compared to its merge-base with main (commit 97ebc61). Run `git diff 97ebc61..HEAD` in that directory (5 commits: Linux Claude Desktop config path support, platform-dispatch consolidation, a doctor.py crash fix, an XDG_CONFIG_HOME relative-path fix, and an atomic-write/permissions fix for claude_desktop_config.json).
+
+Act as a thorough code reviewer for this Punt Labs Python project (OO standards under `.claude/rules/python-*.md` in the parent workspace, already in your context via ancestor CLAUDE.md walk). Review src/punt_vox/desktop_install.py, src/punt_vox/cli_desktop.py, src/punt_vox/doctor.py and their new tests for: code quality, correctness, adherence to project conventions (OO rules, error handling, naming), and any bugs.
+
+One known issue already found by another reviewer, which you do NOT need to re-report: DesktopCli.install()'s docstring claims "a host cannot register with leaves no output directory behind" but audio_dir.mkdir() runs before _resolve_installer(), so a no-credentials failure leaves a stray directory. Focus on everything else.
+
+Do not edit any files — this is a review pass only. End your turn with your complete findings written out in plain text as your final message (or state "zero findings" if the diff is otherwise clean). This is important: your final response text is read directly as your report, so write it out in full rather than summarizing that you "reviewed" something.

@@ -1,0 +1,8 @@
+id: d-2026-08-28-022
+tier: B
+mission: m-2026-08-28-011
+parent_session: b77acb75-1e8c-4a9e-b90b-77887ce2ed35
+agent_type: general-purpose
+created_at: "2026-08-28T14:00:57Z"
+closed_at: "2026-08-28T14:19:05Z"
+verdict: pass

@@ -1,0 +1,7 @@
+You are working under ethos mission m-2026-08-28-005. Run `ethos mission show m-2026-08-28-005` first to read your full contract (write-set, success criteria, context) — do not skip this.
+
+Working directory: <repo>/.claude/worktrees/vox-1gub-linux-desktop (a dedicated git worktree on branch fix/vox-1gub-linux-desktop-config — you are already on this branch; do not switch branches or touch the main checkout).
+
+Summary of the task: `vox desktop install` only knows the macOS Claude Desktop config path. Claude Desktop now ships for Linux. Add Linux support to `DesktopInstaller.config_path()` in src/punt_vox/desktop_install.py, remove/fix the now-stale "only known for macOS" warning duplication in src/punt_vox/cli_desktop.py, add test coverage, and add a CHANGELOG entry. Full details, exact file:line citations, and the OO-consolidation requirement are in the mission contract — read it via `ethos mission show m-2026-08-28-005`.
+
+Commit incrementally per the contract's commit discipline (one logical step per commit, `make check` green before each commit, never more than 30 minutes uncommitted). Do not open a PR. When done and `make check` passes, submit your result via `ethos mission result` for mission m-2026-08-28-005, round 1.

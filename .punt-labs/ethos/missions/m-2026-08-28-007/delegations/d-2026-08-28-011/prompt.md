@@ -1,0 +1,10 @@
+You are working under ethos mission m-2026-08-28-007 in the vox repo, worktree at <repo>/.claude/worktrees/vox-h777-lux-widget (branch fix/vox-h777-lux-widget-refresh). Run `ethos mission show m-2026-08-28-007` there first to read your full contract (context + success criteria) — do not rely on a paraphrase.
+
+This is a DESIGN mission: produce a design note at docs/vox-h777-lux-widget-refresh.md (your only authorized write path — do not edit source files in this mission). It must resolve, concretely, both defects described in the mission context:
+
+1. How AlbumDisplay's track/album-count should read live state instead of the frozen manifest snapshot.
+2. How the applet's periodic widget refresh should move from full-tree scene.show() to element-level scene.update() patches, including exactly which fields get patched and how the applet computes the patch set from previous-vs-current state.
+
+Read the actual source before designing: src/punt_vox/voxd/music_player/album_display.py, src/punt_vox/voxd/programs/catalog.py, src/punt_vox/voxd/music_player/lux_scene_publisher.py, src/punt_vox/voxd/music_player/now_playing_block.py, src/punt_vox/voxd/music_player/player_view.py, src/punt_vox/voxd/music_player/player.py, src/punt_vox/panel/applet.py, and the punt_lux side at ~/Coding/punt-labs/lux/src/punt_lux/operations/scenes.py and ~/Coding/punt-labs/lux/src/punt_lux/tools/write_tools.py (the update() tool signature: scene_id + patches, each `{"id": ..., "set": {...}}` or `{"id": ..., "remove": true}`).
+
+Your design note should end with a concrete "Write set for implementation" section listing the files an implementation mission would touch/create, since that write-set becomes the next mission's contract. Commit the design note when done (one commit, passes any doc lint that applies). Submit your mission result via `ethos mission result` when finished per the standard mission protocol.

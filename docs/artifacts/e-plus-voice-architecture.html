@@ -1,0 +1,679 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vox voice · E+</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@400;500&display=swap">
+
+<style>
+:root {
+    --paper:      #F5F7F9;
+    --paper-2:    #EBEEF3;
+    --ink:        #171B21;
+    --ink-2:      #303640;
+    --rule:       #D3D9E2;
+    --rule-2:     #B4BCC8;
+    --mute:       #6B7480;
+
+    --client:      #4E6B80;
+    --client-fill: #E4EBF2;
+    --daemon:      #416B4C;
+    --daemon-fill: #E2EEE6;
+    --new:         #8A6D2E;
+    --new-fill:    #F3EBD5;
+    --external:    #904030;
+    --external-fill: #F3E1DD;
+    --wan:         #5C6E93;
+    --wan-fill:    #E4E7F0;
+    --hook:        #7A6294;
+    --hook-fill:   #EDE5F2;
+
+    --mode-a:      #17548A;
+    --mode-a-fill: #DFE9F3;
+    --mode-b:      #A04B6A;
+    --mode-b-fill: #F1DFE4;
+
+    --font-serif: "IBM Plex Serif", Georgia, "Times New Roman", serif;
+    --font-sans:  "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --font-mono:  "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --paper:      #12151B;
+        --paper-2:    #1A1F27;
+        --ink:        #E6E9EE;
+        --ink-2:      #B8BFCB;
+        --rule:       #2B323C;
+        --rule-2:     #3D4652;
+        --mute:       #8A93A0;
+
+        --client:      #7EA0BC;
+        --client-fill: #1D2833;
+        --daemon:      #7CB088;
+        --daemon-fill: #1B2820;
+        --new:         #D0AC5D;
+        --new-fill:    #2A2418;
+        --external:    #C97D6B;
+        --external-fill: #2B1D18;
+        --wan:         #8B9BC0;
+        --wan-fill:    #1E2333;
+        --hook:        #B29CCF;
+        --hook-fill:   #241E2E;
+
+        --mode-a:      #82B4E6;
+        --mode-a-fill: #182231;
+        --mode-b:      #D48AA0;
+        --mode-b-fill: #291821;
+    }
+}
+:root[data-theme="dark"] {
+    --paper:      #12151B;
+    --paper-2:    #1A1F27;
+    --ink:        #E6E9EE;
+    --ink-2:      #B8BFCB;
+    --rule:       #2B323C;
+    --rule-2:     #3D4652;
+    --mute:       #8A93A0;
+
+    --client:      #7EA0BC;
+    --client-fill: #1D2833;
+    --daemon:      #7CB088;
+    --daemon-fill: #1B2820;
+    --new:         #D0AC5D;
+    --new-fill:    #2A2418;
+    --external:    #C97D6B;
+    --external-fill: #2B1D18;
+    --wan:         #8B9BC0;
+    --wan-fill:    #1E2333;
+    --hook:        #B29CCF;
+    --hook-fill:   #241E2E;
+
+    --mode-a:      #82B4E6;
+    --mode-a-fill: #182231;
+    --mode-b:      #D48AA0;
+    --mode-b-fill: #291821;
+}
+
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+}
+.page { max-width: 1280px; margin: 0 auto; padding: 32px 24px 64px; }
+@media (max-width: 640px) { .page { padding: 20px 12px 48px; } }
+
+.head { border-bottom: 1px solid var(--rule); padding-bottom: 18px; margin-bottom: 28px; }
+.eyebrow {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--mute);
+    margin-bottom: 8px;
+}
+.title {
+    font-family: var(--font-serif);
+    font-weight: 500;
+    font-size: clamp(24px, 3.6vw, 32px);
+    letter-spacing: -0.01em;
+    line-height: 1.1;
+    margin: 0 0 10px;
+    text-wrap: balance;
+}
+.lede {
+    margin: 0 0 8px;
+    color: var(--ink-2);
+    font-size: 15px;
+    max-width: 82ch;
+}
+.lede code {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    padding: 1px 5px;
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+}
+
+.mode-chips {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 12px;
+}
+.mode-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    border: 1px solid;
+}
+.chip-a { color: var(--mode-a); background: var(--mode-a-fill); border-color: var(--mode-a); }
+.chip-b { color: var(--mode-b); background: var(--mode-b-fill); border-color: var(--mode-b); }
+.mode-chip .dot { width: 6px; height: 6px; border-radius: 999px; display: inline-block; }
+.chip-a .dot { background: var(--mode-a); }
+.chip-b .dot { background: var(--mode-b); }
+
+.diagram {
+    width: 100%;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 8px;
+    margin-bottom: 28px;
+    overflow-x: auto;
+}
+.diagram svg { display: block; width: 100%; height: auto; min-width: 900px; }
+
+svg text { font-family: var(--font-sans); fill: var(--ink); }
+svg .lbl-mono { font-family: var(--font-mono); }
+svg .band-title { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; }
+svg .band-title-client   { fill: var(--client); }
+svg .band-title-daemon   { fill: var(--daemon); }
+svg .band-title-external { fill: var(--external); }
+svg .band-title-wan      { fill: var(--wan); }
+
+svg .node-title { font-size: 12px; font-weight: 600; fill: var(--ink); font-family: var(--font-mono); }
+svg .node-sub   { font-size: 10.5px; fill: var(--mute); }
+
+svg .machine-laptop { fill: var(--daemon-fill); stroke: var(--daemon); stroke-width: 1.5; }
+svg .machine-devbox { fill: var(--client-fill); stroke: var(--client); stroke-width: 1.5; }
+svg .wan-band { fill: var(--wan-fill); stroke: var(--wan); stroke-width: 1; stroke-dasharray: 3 3; }
+
+svg .group-external { fill: var(--external-fill); stroke: var(--external); stroke-width: 1; }
+svg .group-hook     { fill: var(--hook-fill);     stroke: var(--hook);     stroke-width: 1.5; stroke-dasharray: 4 3; }
+svg .group-new      { fill: var(--new-fill);      stroke: var(--new);      stroke-width: 1.5; }
+
+svg .inner-node-daemon { fill: var(--paper); stroke: var(--daemon); stroke-width: 1; }
+svg .inner-node-client { fill: var(--paper); stroke: var(--client); stroke-width: 1; }
+svg .inner-node-spawn  { fill: var(--mode-b-fill); stroke: var(--mode-b); stroke-width: 1.25; stroke-dasharray: 3 2; }
+
+svg .arrow-line-daemon { stroke: var(--daemon); stroke-width: 1.5; fill: none; }
+svg .arrow-line-ext    { stroke: var(--external); stroke-width: 1.5; fill: none; }
+svg .arrow-line-wan    { stroke: var(--wan); stroke-width: 1.75; fill: none; }
+svg .arrow-line-hook   { stroke: var(--hook); stroke-width: 1.2; fill: none; stroke-dasharray: 4 2; }
+svg .arrow-line-new    { stroke: var(--new); stroke-width: 1.5; fill: none; }
+svg .arrow-line-a      { stroke: var(--mode-a); stroke-width: 2; fill: none; }
+svg .arrow-line-b      { stroke: var(--mode-b); stroke-width: 2; fill: none; }
+svg .arrow-return-ext  { stroke: var(--external); stroke-width: 1.2; fill: none; stroke-dasharray: 4 3; }
+svg .arrow-return-a    { stroke: var(--mode-a); stroke-width: 1.4; fill: none; stroke-dasharray: 5 3; }
+svg .arrow-return-b    { stroke: var(--mode-b); stroke-width: 1.4; fill: none; stroke-dasharray: 5 3; }
+
+svg .arrow-label { font-family: var(--font-mono); font-size: 10.5px; fill: var(--ink-2); }
+svg .step-a { fill: var(--mode-a); }
+svg .step-b { fill: var(--mode-b); }
+svg .step-num { font-family: var(--font-mono); font-size: 10px; font-weight: 600; fill: var(--paper); text-anchor: middle; }
+
+.flow-group { margin-bottom: 20px; }
+.flow-group h3 {
+    font-family: var(--font-sans);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--mute);
+    margin: 0 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.flow-group h3 .kind {
+    padding: 2px 8px;
+    border-radius: 2px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    border: 1px solid;
+}
+.kind-hook { color: var(--hook); border-color: var(--hook); background: var(--hook-fill); }
+.kind-a    { color: var(--mode-a); border-color: var(--mode-a); background: var(--mode-a-fill); }
+.kind-b    { color: var(--mode-b); border-color: var(--mode-b); background: var(--mode-b-fill); }
+.flow-group h3 .who {
+    color: var(--mute);
+    font-family: var(--font-sans);
+    font-weight: 500;
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    text-transform: none;
+}
+.flow {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 6px 22px;
+}
+.step {
+    display: grid;
+    grid-template-columns: 30px 1fr;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--rule);
+    font-size: 13px;
+    align-items: baseline;
+}
+.step-n {
+    color: var(--paper);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    border-radius: 999px;
+    padding: 2px 0;
+    text-align: center;
+    align-self: start;
+    margin-top: 2px;
+}
+.step-n.a { background: var(--mode-a); }
+.step-n.b { background: var(--mode-b); }
+.step-n.h { background: var(--hook); }
+.step-body strong {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--ink);
+    font-weight: 500;
+    display: block;
+    margin-bottom: 2px;
+}
+.step-body span { color: var(--ink-2); font-size: 13px; }
+.step-body code { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); background: transparent; }
+
+.two-col {
+    display: grid;
+    grid-template-columns: minmax(260px, 1fr) minmax(360px, 1.4fr);
+    gap: 32px;
+}
+@media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
+
+.legend, .principles {
+    padding: 16px 18px;
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+}
+.legend h3, .principles h3 {
+    font-family: var(--font-sans);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--mute);
+    margin: 0 0 12px;
+}
+.legend-row {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 8px; font-size: 13px;
+}
+.legend-row:last-child { margin-bottom: 0; }
+.swatch {
+    display: inline-block; width: 18px; height: 12px;
+    border-radius: 2px; border: 1px solid; flex-shrink: 0;
+}
+.sw-daemon   { background: var(--daemon-fill);   border-color: var(--daemon);   }
+.sw-client   { background: var(--client-fill);   border-color: var(--client);   }
+.sw-new      { background: var(--new-fill);      border-color: var(--new);      }
+.sw-hook     { background: var(--hook-fill);     border-color: var(--hook);     border-style: dashed; }
+.sw-wan      { background: var(--wan-fill);      border-color: var(--wan);      border-style: dashed; }
+.sw-external { background: var(--external-fill); border-color: var(--external); }
+.sw-a        { background: var(--mode-a-fill);   border-color: var(--mode-a);   }
+.sw-b        { background: var(--mode-b-fill);   border-color: var(--mode-b);   border-style: dashed; }
+
+.principles p {
+    margin: 0 0 8px;
+    font-size: 13px;
+    color: var(--ink-2);
+    line-height: 1.6;
+}
+.principles p:last-child { margin-bottom: 0; }
+.principles strong {
+    color: var(--ink);
+    font-family: var(--font-serif);
+    font-weight: 500;
+    font-size: 15px;
+    display: block;
+    margin-top: 12px;
+    margin-bottom: 4px;
+}
+.principles strong:first-child { margin-top: 0; }
+.principles code { font-family: var(--font-mono); font-size: 12px; color: var(--ink); background: transparent; }
+
+.foot {
+    margin-top: 28px; padding-top: 14px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--mute); letter-spacing: 0.02em;
+}
+</style>
+
+<div class="page">
+    <header class="head">
+        <span class="eyebrow">Vox voice · Option E+ · voxd hosts the voice agent</span>
+        <h1 class="title">Vox voice — Option E+</h1>
+        <p class="lede">
+            The voice agent lives inside <code>voxd</code>, backed by ElevenLabs Conversational AI. Rolling per-session context stays warm via the same hook fanout that already delivers TTS chimes. The voice agent reaches code via <code>quarryd</code> REST, and can launch a fresh <code>claude</code>, <code>pi</code>, or <code>opencode</code> session from the conversation itself.
+        </p>
+        <div class="mode-chips" role="list" aria-label="Entry modes">
+            <span class="mode-chip chip-a" role="listitem"><span class="dot"></span>Mode A · session-attached · Claude Code opens the mic with /vox:talk</span>
+            <span class="mode-chip chip-b" role="listitem"><span class="dot"></span>Mode B · voice-first · user talks to voxd; voxd spawns the session</span>
+        </div>
+    </header>
+
+    <div class="diagram">
+        <svg viewBox="0 0 1280 970" role="img" aria-label="Option E+ voice architecture — voxd hosts the voice agent, reached either from an existing Claude Code session (Mode A) or by the user talking to voxd first, with same-host session spawn on the laptop as v1 default and optional SSH-remote spawn on the dev-box as v2.">
+
+            <defs>
+                <marker id="ar-daemon" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M0 0 L8 4 L0 8 z" fill="var(--daemon)"/>
+                </marker>
+                <marker id="ar-ext" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M0 0 L8 4 L0 8 z" fill="var(--external)"/>
+                </marker>
+                <marker id="ar-wan" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M0 0 L8 4 L0 8 z" fill="var(--wan)"/>
+                </marker>
+                <marker id="ar-hook" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M0 0 L8 4 L0 8 z" fill="var(--hook)"/>
+                </marker>
+                <marker id="ar-new" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M0 0 L8 4 L0 8 z" fill="var(--new)"/>
+                </marker>
+                <marker id="ar-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M0 0 L8 4 L0 8 z" fill="var(--mode-a)"/>
+                </marker>
+                <marker id="ar-b" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M0 0 L8 4 L0 8 z" fill="var(--mode-b)"/>
+                </marker>
+            </defs>
+
+            <!-- ==== External ==== -->
+            <text x="20" y="26" class="band-title band-title-external">External · network API</text>
+
+            <rect x="60" y="42" width="380" height="66" rx="3" class="group-external"/>
+            <text x="250" y="66" text-anchor="middle" class="node-title">ElevenLabs Conversational AI</text>
+            <text x="250" y="82" text-anchor="middle" class="node-sub">STT + LLM + TTS bundled · streaming</text>
+            <text x="250" y="97" text-anchor="middle" class="node-sub lbl-mono">the voice agent lives here</text>
+
+            <!-- ==== Machine bands ==== -->
+            <text x="20"  y="140" class="band-title band-title-daemon">Laptop · audio hardware · voxd</text>
+            <text x="740" y="140" class="band-title band-title-client">Dev-box · Claude Code · mcp-proxy · quarryd</text>
+
+            <!-- ============= LAPTOP ============= -->
+            <rect x="60" y="152" width="600" height="808" rx="4" class="machine-laptop"/>
+
+            <!-- Row 1: mic capture · surfaces · hook receiver -->
+            <rect x="80"  y="180" width="140" height="80" rx="2" class="inner-node-daemon"/>
+            <text x="150" y="204" text-anchor="middle" class="node-title">MicAudioSource</text>
+            <text x="150" y="222" text-anchor="middle" class="node-sub">sounddevice · 16 kHz</text>
+            <text x="150" y="240" text-anchor="middle" class="node-sub">forwarded to EL</text>
+
+            <rect x="240" y="180" width="200" height="80" rx="2" class="inner-node-daemon"/>
+            <text x="340" y="204" text-anchor="middle" class="node-title">/call · /mcp · /v1</text>
+            <text x="340" y="222" text-anchor="middle" class="node-sub">WebSocket + REST</text>
+            <text x="340" y="240" text-anchor="middle" class="node-sub">TLS + bearer</text>
+
+            <rect x="460" y="180" width="180" height="80" rx="2" class="group-hook"/>
+            <text x="550" y="204" text-anchor="middle" class="node-title" fill="var(--hook)">Hook receiver</text>
+            <text x="550" y="222" text-anchor="middle" class="node-sub">from mcp-proxy --hook</text>
+            <text x="550" y="240" text-anchor="middle" class="node-sub">monotonic seq · gap-resync</text>
+
+            <!-- Row 2: rolling context · tool broker -->
+            <rect x="80"  y="290" width="260" height="90" rx="3" class="group-new"/>
+            <text x="210" y="316" text-anchor="middle" class="node-title" fill="var(--new)">Rolling context store</text>
+            <text x="210" y="336" text-anchor="middle" class="node-sub">last N turns raw · running summary</text>
+            <text x="210" y="356" text-anchor="middle" class="node-sub">keyed by session</text>
+
+            <rect x="360" y="290" width="280" height="90" rx="3" class="group-new"/>
+            <text x="500" y="312" text-anchor="middle" class="node-title" fill="var(--new)">Tool broker</text>
+            <text x="500" y="330" text-anchor="middle" class="node-sub lbl-mono">search_code · read_recent · read_older</text>
+            <text x="500" y="348" text-anchor="middle" class="node-sub lbl-mono">write_note</text>
+            <text x="500" y="368" text-anchor="middle" class="node-sub lbl-mono" fill="var(--mode-b)">launch_session(agent, task, host?)</text>
+
+            <!-- Row 3: EL Conv AI session -->
+            <rect x="80"  y="410" width="560" height="100" rx="3" class="group-new"/>
+            <text x="360" y="434" text-anchor="middle" class="node-title" fill="var(--new)">ElevenLabs Conv AI session  (per active call)</text>
+            <text x="360" y="454" text-anchor="middle" class="node-sub">seeded warm from rolling store (Mode A) · opens cold (Mode B)</text>
+            <text x="360" y="472" text-anchor="middle" class="node-sub">tools registered → voxd's tool broker → services</text>
+            <text x="360" y="490" text-anchor="middle" class="node-sub">streams mic in · streams TTS out · turn-taking + barge-in</text>
+
+            <!-- Row 4: audio out -->
+            <rect x="80"  y="540" width="180" height="70" rx="2" class="inner-node-daemon"/>
+            <text x="170" y="562" text-anchor="middle" class="node-title">TTS-only path</text>
+            <text x="170" y="580" text-anchor="middle" class="node-sub">hook-driven chimes</text>
+            <text x="170" y="596" text-anchor="middle" class="node-sub">not on call path</text>
+
+            <rect x="280" y="540" width="160" height="70" rx="2" class="inner-node-daemon"/>
+            <text x="360" y="562" text-anchor="middle" class="node-title">playback queue</text>
+            <text x="360" y="580" text-anchor="middle" class="node-sub">serialise</text>
+            <text x="360" y="596" text-anchor="middle" class="node-sub">dedup</text>
+
+            <rect x="460" y="540" width="180" height="70" rx="2" class="inner-node-daemon"/>
+            <text x="550" y="562" text-anchor="middle" class="node-title">mpv</text>
+            <text x="550" y="580" text-anchor="middle" class="node-sub">audio out</text>
+            <text x="550" y="596" text-anchor="middle" class="node-sub">playback events</text>
+
+            <!-- Row 5: Same-host spawn (v1 default) -->
+            <rect x="80"  y="650" width="560" height="130" rx="3" class="inner-node-spawn"/>
+            <text x="360" y="674" text-anchor="middle" class="node-title" fill="var(--mode-b)">Spawned session · same host  (v1 default)</text>
+            <text x="360" y="694" text-anchor="middle" class="node-sub">voxd forks a fresh claude, pi, or opencode into a detached tmux</text>
+            <text x="360" y="712" text-anchor="middle" class="node-sub">seeded with prompt derived from the voice conversation</text>
+            <text x="360" y="730" text-anchor="middle" class="node-sub">its own mcp-proxy --hook loops back to voxd over localhost</text>
+            <text x="360" y="748" text-anchor="middle" class="node-sub">no SSH · no WAN · no auth · matches the laptop's filesystem</text>
+            <text x="360" y="768" text-anchor="middle" class="node-sub" font-style="italic">user attaches with tmux attach -t &lt;name&gt; from a laptop terminal</text>
+
+            <!-- Row 6: Mode B entry -->
+            <rect x="80"  y="810" width="560" height="46" rx="3" fill="none" stroke="var(--mode-b)" stroke-width="1.25" stroke-dasharray="4 3"/>
+            <text x="360" y="830" text-anchor="middle" class="node-title" fill="var(--mode-b)">Mode B entry — user speaks first</text>
+            <text x="360" y="848" text-anchor="middle" class="node-sub">wake word · vox call from a laptop terminal · hotkey · no prior session required</text>
+
+            <!-- Row 7: audio hardware -->
+            <rect x="140" y="880" width="140" height="42" rx="3" fill="none" stroke="var(--daemon)" stroke-dasharray="4 3"/>
+            <text x="210" y="906" text-anchor="middle" class="node-sub lbl-mono" fill="var(--daemon)">🎙 microphone</text>
+
+            <rect x="400" y="880" width="140" height="42" rx="3" fill="none" stroke="var(--daemon)" stroke-dasharray="4 3"/>
+            <text x="470" y="906" text-anchor="middle" class="node-sub lbl-mono" fill="var(--daemon)">🔊 speakers</text>
+
+            <text x="360" y="946" text-anchor="middle" class="node-sub" font-style="italic">User's laptop · audio hardware physically here</text>
+
+            <!-- ============= WAN ============= -->
+            <text x="682" y="140" class="band-title band-title-wan">WAN</text>
+            <rect x="670" y="152" width="60" height="808" rx="4" class="wan-band"/>
+            <text x="700" y="555" text-anchor="middle" class="node-sub lbl-mono" fill="var(--wan)"
+                  transform="rotate(-90 700 555)">TLS · bearer · text + events · NO PCM</text>
+
+            <!-- ============= DEV-BOX ============= -->
+            <rect x="740" y="152" width="500" height="808" rx="4" class="machine-devbox"/>
+
+            <!-- Row 1: Claude Code · mcp-proxy -->
+            <rect x="760" y="180" width="240" height="86" rx="2" class="inner-node-client" style="stroke:var(--mode-a); stroke-width:1.5"/>
+            <text x="880" y="204" text-anchor="middle" class="node-title" fill="var(--mode-a)">Claude Code · Mode A</text>
+            <text x="880" y="222" text-anchor="middle" class="node-sub">existing primary session</text>
+            <text x="880" y="238" text-anchor="middle" class="node-sub">blocked in /vox:talk during call</text>
+            <text x="880" y="254" text-anchor="middle" class="node-sub">fires hooks throughout lifetime</text>
+
+            <rect x="1020" y="180" width="200" height="86" rx="2" class="inner-node-client"/>
+            <text x="1120" y="204" text-anchor="middle" class="node-title">mcp-proxy</text>
+            <text x="1120" y="222" text-anchor="middle" class="node-sub">~9 MB per session</text>
+            <text x="1120" y="238" text-anchor="middle" class="node-sub">MCP stdio → WebSocket</text>
+            <text x="1120" y="254" text-anchor="middle" class="node-sub">TLS + bearer to voxd</text>
+
+            <!-- Row 2: /vox:talk -->
+            <rect x="760" y="300" width="460" height="60" rx="3" class="inner-node-client" style="stroke:var(--mode-a); stroke-width:1.5"/>
+            <text x="990" y="322" text-anchor="middle" class="node-title" fill="var(--mode-a)">/vox:talk  (Mode A entry)</text>
+            <text x="990" y="340" text-anchor="middle" class="node-sub">one blocking Claude Code tool call · wraps N voice turns · returns transcript + notes</text>
+
+            <!-- Row 3: Hook fanout -->
+            <rect x="760" y="390" width="460" height="60" rx="3" class="group-hook"/>
+            <text x="990" y="412" text-anchor="middle" class="node-title" fill="var(--hook)">Hook fanout · continuous</text>
+            <text x="990" y="428" text-anchor="middle" class="node-sub">SessionStart · PromptSubmit · PostToolUse · Stop · Notification</text>
+            <text x="990" y="444" text-anchor="middle" class="node-sub">payloads carry state · TTS chime is a side effect</text>
+
+            <!-- Row 4: quarryd -->
+            <rect x="760" y="480" width="460" height="70" rx="3" class="inner-node-client"/>
+            <text x="990" y="502" text-anchor="middle" class="node-title">quarryd  (HTTP daemon)</text>
+            <text x="990" y="520" text-anchor="middle" class="node-sub">REST at /v1/* including /v1/search</text>
+            <text x="990" y="538" text-anchor="middle" class="node-sub">dialed by voxd's tool broker for code search</text>
+
+            <!-- Row 5: optional SSH remote spawn (v2) -->
+            <rect x="760" y="590" width="460" height="120" rx="3" fill="none" stroke="var(--mode-b)" stroke-width="1" stroke-dasharray="3 3" opacity="0.7"/>
+            <text x="990" y="614" text-anchor="middle" class="node-title" fill="var(--mode-b)" opacity="0.85">Spawned session · remote via SSH  (v2 optional)</text>
+            <text x="990" y="634" text-anchor="middle" class="node-sub">same shape as v1, but launched onto a registered host</text>
+            <text x="990" y="652" text-anchor="middle" class="node-sub">launch_session(agent, task, host="dev-box") → SSH exec + tmux</text>
+            <text x="990" y="670" text-anchor="middle" class="node-sub">its hooks loop back to voxd via mcp-proxy over WAN</text>
+            <text x="990" y="690" text-anchor="middle" class="node-sub" font-style="italic">use when the user's project lives on the dev-box, not the laptop</text>
+
+            <!-- ================= ARROWS ================= -->
+
+            <!-- H: dev-box Hook fanout → WAN → laptop Hook receiver (routed under top row) -->
+            <path d="M760 420 L700 420 L700 275 L640 275" class="arrow-line-hook" marker-end="url(#ar-hook)"/>
+            <circle cx="700" cy="345" r="10" fill="var(--hook)"/>
+            <text x="700" y="348" class="step-num">H</text>
+
+            <!-- Post-H: Hook receiver → Rolling context store (local, short) -->
+            <path d="M470 260 Q 340 275 260 290" class="arrow-line-hook" marker-end="url(#ar-hook)"/>
+
+            <!-- 🎙 microphone hardware → MicAudioSource (audio in) -->
+            <path d="M210 880 L70 880 L70 265 L145 265" class="arrow-line-daemon" marker-end="url(#ar-daemon)"/>
+
+            <!-- Mic → EL (shared) -->
+            <path d="M150 260 L150 410" class="arrow-line-daemon" marker-end="url(#ar-daemon)"/>
+
+            <!-- Rolling context → EL session (warm seed for Mode A) -->
+            <path d="M210 380 L210 410" class="arrow-line-a" marker-end="url(#ar-a)"/>
+            <circle cx="165" cy="395" r="10" class="step-a"/>
+            <text x="165" y="398" class="step-num">A3</text>
+
+            <!-- Tool broker → EL session (tool registration, implied — thin) -->
+            <path d="M500 380 L500 410" class="arrow-line-new" marker-end="url(#ar-new)" opacity="0.5"/>
+
+            <!-- EL Conv AI ↔ ElevenLabs (external) -->
+            <path d="M180 410 Q 190 260 240 108" class="arrow-line-ext" marker-end="url(#ar-ext)"/>
+            <path d="M280 108 Q 260 260 260 410" class="arrow-return-ext" marker-end="url(#ar-ext)"/>
+
+            <!-- EL → playback → mpv → speakers -->
+            <path d="M360 510 L360 540" class="arrow-line-daemon" marker-end="url(#ar-daemon)"/>
+            <path d="M440 575 L460 575" class="arrow-line-daemon" marker-end="url(#ar-daemon)"/>
+            <path d="M550 610 Q 550 745 470 880" class="arrow-line-daemon" marker-end="url(#ar-daemon)"/>
+
+            <!-- Tool broker → WAN → quarryd -->
+            <path d="M640 335 Q 705 425 760 515" class="arrow-line-wan" marker-end="url(#ar-wan)"/>
+
+            <!-- Tool broker → same-host spawn (launch_session, local, right edge) -->
+            <path d="M615 380 L615 620 L500 650" class="arrow-line-b" marker-end="url(#ar-b)"/>
+            <circle cx="615" cy="510" r="10" class="step-b"/>
+            <text x="615" y="513" class="step-num">B3</text>
+
+            <!-- Same-host spawn → hook receiver (loopback, dashed, local) -->
+            <path d="M105 650 Q 90 460 90 275 L460 275" class="arrow-return-b" marker-end="url(#ar-b)"/>
+            <circle cx="90" cy="470" r="10" class="step-b"/>
+            <text x="90" y="473" class="step-num">B4</text>
+
+            <!-- Mode B entry → Spawned session (semantic: voice call ultimately spawns) -->
+            <path d="M360 810 L360 785" class="arrow-line-b" marker-end="url(#ar-b)"/>
+
+            <!-- =========== Mode A cross-WAN =========== -->
+
+            <!-- A1: /vox:talk → mcp-proxy (dev-box internal) -->
+            <path d="M990 300 Q 1055 285 1120 266" class="arrow-line-a" marker-end="url(#ar-a)"/>
+            <circle cx="1055" cy="285" r="10" class="step-a"/>
+            <text x="1055" y="288" class="step-num">A1</text>
+
+            <!-- A2: mcp-proxy → WAN → /call handler (top horizontal, forward) -->
+            <path d="M1020 210 L440 210" class="arrow-line-a" marker-end="url(#ar-a)"/>
+            <circle cx="900" cy="210" r="10" class="step-a"/>
+            <text x="900" y="213" class="step-num">A2</text>
+
+            <!-- A5: /call handler → WAN → /vox:talk (return, dashed) -->
+            <path d="M440 245 L1020 245" class="arrow-return-a" marker-end="url(#ar-a)"/>
+            <circle cx="900" cy="245" r="10" class="step-a"/>
+            <text x="900" y="248" class="step-num">A5</text>
+
+            <!-- =========== Mode B badges (no long arrows) =========== -->
+
+            <!-- B1 near Mode B entry -->
+            <circle cx="115" cy="833" r="10" class="step-b"/>
+            <text x="115" y="836" class="step-num">B1</text>
+
+            <!-- B2 near EL session (cold start, opposite corner from A3) -->
+            <circle cx="600" cy="418" r="10" class="step-b"/>
+            <text x="600" y="421" class="step-num">B2</text>
+
+        </svg>
+    </div>
+
+    <!-- ==== Flows ==== -->
+
+    <section class="flow-group">
+        <h3><span class="kind kind-hook">Continuous</span>Hook fanout <span class="who">— steady-state, not just during calls</span></h3>
+        <div class="flow">
+            <div class="step"><span class="step-n h">H</span><div class="step-body"><strong>Every hook payload reaches voxd and is retained</strong><span>Existing sessions (Claude Code, and Mode-B-spawned sessions after they start) send <code>SessionStart</code>, <code>PromptSubmit</code>, <code>PostToolUse</code>, <code>Stop</code>, <code>Notification</code>, etc. through <code>mcp-proxy --hook</code>. Voxd both takes the TTS action (existing) and appends the payload to the rolling context store keyed by session (new).</span></div></div>
+        </div>
+    </section>
+
+    <section class="flow-group">
+        <h3><span class="kind kind-a">Mode A</span>Session-attached <span class="who">— existing Claude Code session opens the mic</span></h3>
+        <div class="flow">
+            <div class="step"><span class="step-n a">A1</span><div class="step-body"><strong>Claude Code invokes <code>/vox:talk</code></strong><span>Slash command or MCP tool. Blocks the primary session's turn for the duration of the call.</span></div></div>
+            <div class="step"><span class="step-n a">A2</span><div class="step-body"><strong>mcp-proxy → WAN → voxd</strong><span>WebSocket message on <code>/mcp</code>. First and only WAN hop for control.</span></div></div>
+            <div class="step"><span class="step-n a">A3</span><div class="step-body"><strong>Voxd starts EL Conv AI session with warm context</strong><span>Rolling store seeds recent turns + running summary. Tool broker registers <code>search_code</code>, <code>read_recent_conversation</code>, <code>read_older_conversation</code>, <code>write_note</code>. In Mode A, <code>launch_session</code> is typically unregistered — the session already exists.</span></div></div>
+            <div class="step"><span class="step-n a">A4</span><div class="step-body"><strong>Voice conversation runs inside voxd</strong><span>Mic → EL Conv AI → tools as needed → TTS → speakers. Multi-turn happens here. The Claude Code turn model is not crossed because Claude Code still sees exactly one turn.</span></div></div>
+            <div class="step"><span class="step-n a">A5</span><div class="step-body"><strong>Call ends → transcript + notes as tool return</strong><span><code>/vox:talk</code> returns. The primary Claude Code session resumes with the transcript and any <code>write_note</code> outputs in view.</span></div></div>
+        </div>
+    </section>
+
+    <section class="flow-group">
+        <h3><span class="kind kind-b">Mode B</span>Voice-first <span class="who">— user speaks to voxd; voxd spawns the session</span></h3>
+        <div class="flow">
+            <div class="step"><span class="step-n b">B1</span><div class="step-body"><strong>User initiates the call at the laptop</strong><span>Wake word, hotkey, or <code>vox call</code> from a terminal on the laptop. No prior coding session exists.</span></div></div>
+            <div class="step"><span class="step-n b">B2</span><div class="step-body"><strong>Voxd starts EL Conv AI session (cold context)</strong><span>No warm hook-fanout seed for this call — this is the entry point. Rolling context store may contribute cross-session notes if voxd is configured for that; otherwise the conversation starts clean. Tool broker registers <code>search_code</code>, <code>write_note</code>, and <code>launch_session</code>.</span></div></div>
+            <div class="step"><span class="step-n b">B3</span><div class="step-body"><strong>Voice agent calls <code>launch_session(agent, task, host?)</code></strong><span><b>v1 default — same host:</b> voxd forks a fresh <code>claude</code>, <code>pi</code>, or <code>opencode</code> into a detached tmux on its own machine (the laptop). No SSH, no WAN hop, no host registry — just <code>subprocess</code> + <code>tmux</code>. <b>v2 optional — SSH remote:</b> supply a <code>host</code> argument and voxd resolves it against a registered-hosts config, then <code>ssh</code>-execs into a detached tmux there. Use v2 when the user's project lives on the dev-box, not the laptop.</span></div></div>
+            <div class="step"><span class="step-n b">B4</span><div class="step-body"><strong>Spawned session's hooks route back to voxd</strong><span>The launched session uses <code>mcp-proxy --hook</code> the same way any Claude Code session would. In v1 that's a localhost loopback (no auth needed if voxd binds to <code>127.0.0.1</code>); in v2 it's the same WAN path Mode A uses. Its hook payloads join the rolling context store, and voxd's voice agent can narrate progress or take further actions in the same call — no primary session to compete with.</span></div></div>
+            <div class="step"><span class="step-n b">B5</span><div class="step-body"><strong>User attaches or reviews later</strong><span>The spawned session lives in a detached tmux; the user attaches from the dev-box terminal when convenient. Voice-first mode is "kick something off by voice", not "drive an IDE by voice."</span></div></div>
+        </div>
+    </section>
+
+    <div class="two-col">
+        <aside class="legend" aria-label="Legend">
+            <h3>Legend</h3>
+            <div class="legend-row"><span class="swatch sw-daemon"></span>Laptop · voxd, audio hardware</div>
+            <div class="legend-row"><span class="swatch sw-client"></span>Dev-box · Claude Code, mcp-proxy, quarryd</div>
+            <div class="legend-row"><span class="swatch sw-new"></span>Voxd voice-agent components</div>
+            <div class="legend-row"><span class="swatch sw-hook"></span>Hook fanout · continuous</div>
+            <div class="legend-row"><span class="swatch sw-wan"></span>WAN link · TLS + bearer · text + events only</div>
+            <div class="legend-row"><span class="swatch sw-external"></span>External · ElevenLabs Conversational AI</div>
+            <div class="legend-row"><span class="swatch sw-a"></span>Mode A · session-attached path</div>
+            <div class="legend-row"><span class="swatch sw-b"></span>Mode B · voice-first path</div>
+        </aside>
+
+        <aside class="principles" aria-label="Load-bearing principles">
+            <h3>Load-bearing principles</h3>
+
+            <strong>Voxd is the voice-agent host, and the coding-session launcher.</strong>
+            <p>Both modes converge on the same interior: one EL Conv AI session, one tool broker, one rolling context store. The only difference is whether a primary coding session pre-exists (Mode A) or gets spawned mid-call (Mode B). Consumers see one voice architecture with two entry points, not two architectures.</p>
+
+            <strong>Same host first; SSH is a v2 layer, not a v1 requirement.</strong>
+            <p><code>launch_session</code> with no <code>host</code> forks locally on the voxd host — no SSH, no host registry, no auth. That's v1. A registered-hosts config and <code>ssh</code> exec come later, when someone actually wants to voice-launch onto a remote box. Same tool signature; the API doesn't change when SSH is added.</p>
+
+            <strong>One agent at a time.</strong>
+            <p>During a call, the user is talking to voxd's voice agent — nothing else. In Mode A the primary Claude Code session is blocked in <code>/vox:talk</code>; in Mode B no primary session exists yet, or the spawned one is fresh and running headless. Voice is read-mostly against any primary session's tools, and any writes it initiates go through the tool broker's small, deliberate surface.</p>
+
+            <strong>Latency budget is inside voxd, not per turn.</strong>
+            <p>No <code>claude -p --resume --bare</code> spawn between the user's speech and the reply. EL Conv AI streams end-to-end. Per-turn cost is dominated by the streaming service, not by cold-starts on either side.</p>
+
+            <strong>Context is a fanout, not a fetch.</strong>
+            <p>The rolling context store is fed by hook payloads flowing continuously from every mcp-proxy-connected session — including Mode-B-spawned sessions once they start. The voice agent reads from the store, never blocks on remote history retrieval, and stays available for barge-in throughout.</p>
+        </aside>
+    </div>
+
+    <footer class="foot">
+        Companion doc · ADR revision published earlier in this conversation. This diagram is the E+-only view with both Mode A (session-attached) and Mode B (voice-first) entry points visible.
+    </footer>
+</div>

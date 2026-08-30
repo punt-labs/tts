@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vox call ADR · revision</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+
+<style>
+:root {
+    --paper:      #F5F7F9;
+    --paper-2:    #EBEEF3;
+    --ink:        #171B21;
+    --ink-2:      #303640;
+    --rule:       #D3D9E2;
+    --rule-2:     #B4BCC8;
+    --mute:       #6B7480;
+
+    --d-color:      #4E6B80;
+    --d-fill:       #E4EBF2;
+    --e-color:      #416B4C;
+    --e-fill:       #E2EEE6;
+    --wall:         #B04B48;
+    --wall-fill:    #F3DFDE;
+    --pillar:       #8A6D2E;
+    --pillar-fill:  #F3EBD5;
+    --recommend:    #416B4C;
+
+    --font-serif: "IBM Plex Serif", Georgia, "Times New Roman", serif;
+    --font-sans:  "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --font-mono:  "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --paper:      #12151B;
+        --paper-2:    #1A1F27;
+        --ink:        #E6E9EE;
+        --ink-2:      #B8BFCB;
+        --rule:       #2B323C;
+        --rule-2:     #3D4652;
+        --mute:       #8A93A0;
+
+        --d-color:      #7EA0BC;
+        --d-fill:       #1D2833;
+        --e-color:      #7CB088;
+        --e-fill:       #1B2820;
+        --wall:         #D57C79;
+        --wall-fill:    #2D1918;
+        --pillar:       #D0AC5D;
+        --pillar-fill:  #2A2418;
+        --recommend:    #7CB088;
+    }
+}
+:root[data-theme="dark"] {
+    --paper:      #12151B;
+    --paper-2:    #1A1F27;
+    --ink:        #E6E9EE;
+    --ink-2:      #B8BFCB;
+    --rule:       #2B323C;
+    --rule-2:     #3D4652;
+    --mute:       #8A93A0;
+
+    --d-color:      #7EA0BC;
+    --d-fill:       #1D2833;
+    --e-color:      #7CB088;
+    --e-fill:       #1B2820;
+    --wall:         #D57C79;
+    --wall-fill:    #2D1918;
+    --pillar:       #D0AC5D;
+    --pillar-fill:  #2A2418;
+    --recommend:    #7CB088;
+}
+
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+}
+.page { max-width: 940px; margin: 0 auto; padding: 40px 32px 96px; }
+@media (max-width: 640px) { .page { padding: 24px 16px 64px; } }
+
+.head { border-bottom: 1px solid var(--rule); padding-bottom: 20px; margin-bottom: 36px; }
+.doc-id {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--mute);
+    margin-bottom: 10px;
+}
+.doc-id .status { color: var(--e-color); }
+.title {
+    font-family: var(--font-serif);
+    font-weight: 500;
+    font-size: clamp(28px, 4.4vw, 40px);
+    line-height: 1.05;
+    letter-spacing: -0.015em;
+    margin: 0 0 10px;
+    text-wrap: balance;
+}
+.subtitle {
+    font-family: var(--font-serif);
+    font-style: italic;
+    font-weight: 400;
+    color: var(--mute);
+    font-size: 17px;
+    margin: 0;
+}
+
+h2 {
+    font-family: var(--font-serif);
+    font-weight: 500;
+    font-size: 24px;
+    letter-spacing: -0.008em;
+    line-height: 1.2;
+    margin: 40px 0 14px;
+    text-wrap: balance;
+}
+h3 {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--mute);
+    margin: 24px 0 10px;
+}
+p { margin: 0 0 14px; max-width: 74ch; }
+p:last-child { margin-bottom: 0; }
+p code, li code {
+    font-family: var(--font-mono);
+    font-size: 13.5px;
+    padding: 1px 5px;
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    color: var(--ink);
+}
+
+.walls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 8px 0 18px;
+}
+@media (max-width: 720px) { .walls { grid-template-columns: 1fr; } }
+.wall {
+    padding: 16px 18px;
+    background: var(--wall-fill);
+    border-left: 3px solid var(--wall);
+    border-radius: 0 3px 3px 0;
+}
+.wall h4 {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--wall);
+    margin: 0 0 8px;
+}
+.wall p { margin: 0; font-size: 14px; color: var(--ink); }
+
+.survivable {
+    padding: 16px 20px;
+    background: var(--pillar-fill);
+    border-left: 3px solid var(--pillar);
+    border-radius: 0 3px 3px 0;
+    margin: 18px 0 8px;
+    font-size: 14.5px;
+}
+.survivable strong { color: var(--pillar); font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; }
+
+.options {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin: 12px 0;
+}
+@media (max-width: 900px) { .options { grid-template-columns: 1fr; } }
+.opt {
+    padding: 20px 22px;
+    background: var(--paper);
+    border: 1px solid;
+    border-radius: 3px;
+}
+.opt-D  { border-color: var(--d-color); }
+.opt-E  { border-color: var(--e-color); }
+
+.opt-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--rule-2);
+    margin-bottom: 12px;
+}
+.opt-tag {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 2px;
+    border: 1px solid;
+}
+.opt-D .opt-tag { color: var(--d-color); border-color: var(--d-color); }
+.opt-E .opt-tag { color: var(--e-color); border-color: var(--e-color); }
+.opt-title {
+    font-family: var(--font-serif);
+    font-weight: 500;
+    font-size: 19px;
+    letter-spacing: -0.005em;
+    margin: 0;
+}
+.opt-title small {
+    display: block;
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-size: 12.5px;
+    color: var(--mute);
+    margin-top: 2px;
+    font-style: italic;
+}
+
+.opt h4 {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--mute);
+    margin: 14px 0 6px;
+}
+.opt ul { margin: 0; padding-left: 18px; font-size: 13.5px; color: var(--ink-2); }
+.opt ul li { margin-bottom: 4px; line-height: 1.5; }
+.opt p { font-size: 13.5px; color: var(--ink-2); margin: 0 0 8px; max-width: none; }
+.opt code {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    background: var(--paper-2);
+    padding: 1px 4px;
+    border-radius: 2px;
+    color: var(--ink);
+}
+
+.diamond {
+    width: 100%;
+    overflow-x: auto;
+    margin: 12px 0 4px;
+}
+.diamond table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+    font-variant-numeric: tabular-nums;
+    min-width: 640px;
+}
+.diamond th, .diamond td {
+    text-align: left;
+    padding: 9px 12px 9px 0;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+}
+.diamond th {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 10.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--mute);
+}
+.diamond .col-d { color: var(--d-color); font-family: var(--font-mono); font-size: 13px; }
+.diamond .col-e { color: var(--e-color); font-family: var(--font-mono); font-size: 13px; }
+.diamond .axis { color: var(--ink); font-weight: 500; }
+.diamond tr:last-child td { border-bottom: none; }
+
+.recommend {
+    padding: 20px 24px;
+    background: var(--e-fill);
+    border-left: 3px solid var(--recommend);
+    border-radius: 0 3px 3px 0;
+    margin: 14px 0;
+}
+.recommend h3 {
+    color: var(--recommend);
+    margin: 0 0 10px;
+}
+.recommend p { margin: 0 0 8px; max-width: none; font-size: 14px; }
+.recommend p:last-child { margin-bottom: 0; }
+
+.principle {
+    padding: 20px 24px;
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    margin: 14px 0;
+}
+.principle .p-title {
+    font-family: var(--font-serif);
+    font-weight: 500;
+    font-size: 18px;
+    letter-spacing: -0.005em;
+    margin: 0 0 8px;
+    color: var(--ink);
+}
+.principle p { margin: 0 0 8px; font-size: 14px; max-width: none; }
+.principle p:last-child { margin-bottom: 0; }
+.principle ul { margin: 0 0 8px; padding-left: 18px; font-size: 14px; color: var(--ink-2); }
+.principle ul li { margin-bottom: 4px; }
+
+.seq {
+    margin: 8px 0 0;
+    padding-left: 0;
+    counter-reset: seq;
+    list-style: none;
+}
+.seq li {
+    counter-increment: seq;
+    display: grid;
+    grid-template-columns: 32px 1fr;
+    gap: 12px;
+    align-items: baseline;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--rule);
+    font-size: 14px;
+}
+.seq li:last-child { border-bottom: none; }
+.seq li::before {
+    content: counter(seq);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--e-color);
+    background: var(--e-fill);
+    border: 1px solid var(--e-color);
+    border-radius: 999px;
+    text-align: center;
+    padding: 2px 0;
+    align-self: start;
+    margin-top: 1px;
+}
+
+.foot {
+    margin-top: 40px;
+    padding-top: 18px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--mute);
+    letter-spacing: 0.02em;
+    line-height: 1.6;
+}
+.foot code { background: transparent; font-family: var(--font-mono); color: var(--ink-2); }
+</style>
+
+<div class="page">
+
+    <header class="head">
+        <div class="doc-id">
+            <span>ADR · conversation-mode-session-attach · <span class="status">proposed revision</span></span>
+            <span>replaces four-option analysis with two-walls framing</span>
+        </div>
+        <h1 class="title">Conversation Mode: Session Attachment</h1>
+        <p class="subtitle">Two structural constraints, two surviving shapes, one product principle.</p>
+    </header>
+
+    <!-- =========== Problem statement =========== -->
+
+    <h2>Problem, restated</h2>
+
+    <p>Any design for a voice conversation over an active Claude Code session runs into two structural constraints of Claude Code itself. The original ADR walked through four options; only these two constraints did the actual work of ruling any option out. Naming them explicitly reduces the four-option table to two facts:</p>
+
+    <div class="walls">
+        <div class="wall">
+            <h4>Wall 1 · No foreground command spans turns</h4>
+            <p>A slash command or user-side entry point is bound by the session's turn model: it's a prompt, the assistant responds, the turn closes. <code>/vox:talk</code> could open the mic and drive one exchange, but the moment the LLM finishes its reply the command has exited. There is no primitive to hold a command alive across multiple turns. This rules out barge-in <em>and</em> multi-turn as a foreground shape.</p>
+        </div>
+        <div class="wall">
+            <h4>Wall 2 · No background process can inject</h4>
+            <p>Push the mic loop outside the session and the transcript has to reach the session somehow. Claude Code exposes no channel by which an external process can hand a user turn <em>in</em>. Hooks are reactive to internal events; the interactive loop is TTY-driven; there is no injection surface a background process can push into.</p>
+        </div>
+    </div>
+
+    <p>Every survivable design has to avoid <em>both</em> walls. There are only two ways to do that:</p>
+
+    <div class="survivable">
+        <strong>The two survivable shapes.</strong> Either <b>(a)</b> collapse the multi-turn voice conversation into a single Claude turn — so Wall 1 doesn't apply because there's only one turn — or <b>(b)</b> run the voice conversation in a peer process against the same session's stored state — so Wall 2 doesn't apply because there's no injection.
+    </div>
+
+    <p>Option D in the original ADR is (b). Option E+, added here, is (a).</p>
+
+    <!-- =========== Options D and E+ side by side =========== -->
+
+    <h2>Two surviving options</h2>
+
+    <div class="options">
+
+        <article class="opt opt-D">
+            <div class="opt-head">
+                <div>
+                    <h3 class="opt-title" style="color: var(--d-color);">Option D<small>Peer subprocess per turn</small></h3>
+                </div>
+                <span class="opt-tag">Shape (b)</span>
+            </div>
+
+            <h4>Design</h4>
+            <p>Per turn, spawn <code>claude -p --resume &lt;id&gt; --input-format stream-json --output-format stream-json --bare</code>. Same session ID as the interactive session, separate process. Voxd on the audio-hardware machine owns mic, TurnDetector, STT, TTS, and playback; the subprocess spawn happens on whichever machine hosts <code>vox call</code>.</p>
+
+            <h4>Pros</h4>
+            <ul>
+                <li>Reuses Claude Code's own engine; no reimplementation of tools, permissions, or context.</li>
+                <li>Voice agent has access to whatever tools the primary session has, via <code>claude</code> itself.</li>
+                <li>Bounded new work — the mechanism is a supported CLI invocation.</li>
+            </ul>
+
+            <h4>Cons</h4>
+            <ul>
+                <li>13-25s per-turn cold start motivates <code>--bare</code>, which requires <code>ANTHROPIC_API_KEY</code> (no OAuth path).</li>
+                <li>Concurrent-resume safety against the live session is unverified; the original ADR flags it as Slice 1b's blocking spike.</li>
+                <li>A third process (the subprocess) per turn adds spawn overhead and lifecycle management.</li>
+                <li>Voice call's context is exactly the session's stored history — no continuous update possible during the call.</li>
+            </ul>
+        </article>
+
+        <article class="opt opt-E">
+            <div class="opt-head">
+                <div>
+                    <h3 class="opt-title" style="color: var(--e-color);">Option E+<small>Voxd hosts the voice agent; context stays warm via hook fanout</small></h3>
+                </div>
+                <span class="opt-tag">Shape (a)</span>
+            </div>
+
+            <h4>Design</h4>
+            <p><code>/vox:talk</code> is a blocking Claude Code tool call. Voxd hosts the voice agent (via ElevenLabs Conversational AI). Rolling per-session context is maintained inside voxd by the hook fanout that already exists for TTS chimes. Voice-agent tools reach code via <code>quarryd</code>'s REST API. When the call ends, transcript and any notes return as the tool's value.</p>
+
+            <h4>Design elements</h4>
+            <ul>
+                <li><strong>Hook fanout carries context, not just TTS.</strong> Every Claude Code hook that reaches voxd via <code>mcp-proxy --hook</code> for chime purposes carries a payload with the relevant session state. Voxd retains those payloads in a rolling per-session transcript store alongside whatever TTS action the hook triggers. No new hook; no new wire.</li>
+                <li><strong>Voxd instantiates the voice agent with warm context.</strong> On <code>/vox:talk</code>, voxd starts an EL Conversational AI session with a system prompt (voice-first, tool-friendly), a rolling context (recent turns raw + running summary), and a small tool surface.</li>
+                <li><strong>Voxd implements the voice-agent's tools by dialing services.</strong> <code>search_code(query)</code> → quarryd's REST API over the WAN. <code>read_recent_conversation(n)</code>, <code>read_older_conversation(query)</code> → local reads over voxd's rolling store. <code>write_note(text)</code> → append to a per-call note file returned in the tool result.</li>
+                <li><strong>The voice call is one Claude turn.</strong> <code>/vox:talk</code> blocks; multi-turn happens inside voxd. Return value is transcript + notes. Wall 1 is not violated because there is only one Claude turn.</li>
+            </ul>
+
+            <h4>Pros</h4>
+            <ul>
+                <li>Sub-second per-turn latency via EL streaming — no <code>claude</code> subprocess cold-start.</li>
+                <li>No <code>--bare</code>; OAuth-only setups work — voxd owns its own LLM API key.</li>
+                <li>No concurrent-writer risk; voxd's transcript is independent of Claude Code's session storage.</li>
+                <li>Warm context: fanout maintains it, so voxd's LLM knows what the primary session was just doing.</li>
+                <li>Notes and transcript surface as tool return value for the primary session to act on afterward.</li>
+            </ul>
+
+            <h4>Cons</h4>
+            <ul>
+                <li>Voxd hosts a rolling-context store — new work, well-understood chat + retrieval territory.</li>
+                <li>Vendor coupling to ElevenLabs Conversational AI.</li>
+                <li>Hook reliability matters. A dropped hook creates a context hole. Design needs an idempotent monotonic sequence + gap-resync between Claude Code hooks and voxd.</li>
+                <li>Voice agent has no direct access to the primary session's tools. Depends on accepting the design principle below.</li>
+            </ul>
+        </article>
+
+    </div>
+
+    <!-- =========== Comparison table =========== -->
+
+    <h2>Comparison</h2>
+
+    <div class="diamond">
+        <table>
+            <thead>
+                <tr>
+                    <th class="axis">Axis</th>
+                    <th class="col-d">Option D</th>
+                    <th class="col-e">Option E+</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td class="axis">Per-turn cold start</td><td class="col-d">13-25 s</td><td class="col-e">sub-second (EL streaming)</td></tr>
+                <tr><td class="axis">OAuth callers</td><td class="col-d">No — needs <code style="color:var(--d-color);background:transparent">ANTHROPIC_API_KEY</code> for <code style="color:var(--d-color);background:transparent">--bare</code></td><td class="col-e">Yes — voxd owns its own key</td></tr>
+                <tr><td class="axis">Live task context</td><td class="col-d">Yes, via <code style="color:var(--d-color);background:transparent">--resume</code> (stored history at call time)</td><td class="col-e">Yes, continuously updated via hook fanout</td></tr>
+                <tr><td class="axis">Code access during call</td><td class="col-d">Yes (subprocess has all Claude Code tools)</td><td class="col-e">Yes via <code style="color:var(--e-color);background:transparent">search_code</code> → quarry REST</td></tr>
+                <tr><td class="axis">Concurrent-writer risk</td><td class="col-d">Present; Open Risk in original ADR</td><td class="col-e">None (voxd transcript is independent)</td></tr>
+                <tr><td class="axis">Process count per call</td><td class="col-d">3 (Claude Code + subprocess + voxd)</td><td class="col-e">2 (Claude Code + voxd)</td></tr>
+                <tr><td class="axis">Return channel</td><td class="col-d">Voice-loop only</td><td class="col-e">Transcript + <code style="color:var(--e-color);background:transparent">write_note</code> outputs as tool return</td></tr>
+                <tr><td class="axis">New moving parts</td><td class="col-d">Subprocess lifecycle harness</td><td class="col-e">Rolling context store, hook-payload retention, tool broker</td></tr>
+                <tr><td class="axis">Vendor coupling</td><td class="col-d">Anthropic (via <code style="color:var(--d-color);background:transparent">claude</code> binary)</td><td class="col-e">ElevenLabs Conversational AI</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- =========== Recommendation =========== -->
+
+    <h2>Recommendation</h2>
+
+    <div class="recommend">
+        <h3>Adopt Option E+ if the streaming voice work already targets ElevenLabs Conversational AI</h3>
+        <p>The rolling-context store is bounded new work. The hook fanout already exists as a pipe — voxd is just retaining what today it discards after playing the chime. The wins are durable: sub-second per-turn latency, OAuth-compatible, no concurrent-writer risk, and a natural return channel through the tool call's value.</p>
+        <p>If the schedule cannot absorb the rolling-context work this cycle, Option D remains a working design; its costs are real but its infrastructure exists. Nothing about E+ invalidates D as a fallback.</p>
+    </div>
+
+    <!-- =========== Load-bearing principle =========== -->
+
+    <h2>Load-bearing product principle</h2>
+
+    <div class="principle">
+        <p class="p-title">One agent at a time. Voice is read-mostly.</p>
+        <p>During a call, the primary Claude Code session is blocked in <code>/vox:talk</code>. The voice agent has read access to code (via quarry) and to recent conversation (via voxd's rolling store) but has no write access to the primary session or its tools. Anything action-worthy that emerges from the call returns as <code>write_note</code> output, for the primary session to act on when it resumes.</p>
+        <p>This is stated as a first-class design principle, not a limitation. It buys three properties that fall out of nothing else:</p>
+        <ul>
+            <li><strong>No concurrent-writer risk</strong> — the primary session's storage is untouched.</li>
+            <li><strong>No attention-splitting</strong> — the user is on one channel at a time.</li>
+            <li><strong>No risk of destructive tool calls initiated by voice</strong> — voice is a good modality for exploration, a bad modality for irreversible actions.</li>
+        </ul>
+        <p>Naming this principle in the ADR is the load-bearing decision. Everything else in Option E+ falls out of it.</p>
+    </div>
+
+    <!-- =========== Superseded / carry-forward =========== -->
+
+    <h2>Superseded &amp; carry-forward</h2>
+
+    <p>Options A, B, C from the original ADR remain rejected, but the framing shifts. A and B fail Wall 2 (no injection surface); C fails FR-4 as originally stated — but E+ is the shape C wanted to be. C imagined running the agent inside voxd with a parallel context; E+ delivers that shape with the two ingredients C lacked: <em>warm context via hook fanout</em>, and <em>code access via quarry</em>. Rejecting C in the original ADR was correct at the time; adopting E+ now is not a reversal of that rejection, it is what becomes possible once those two ingredients are added.</p>
+
+    <p>The Open Risk on concurrent-resume safety (original Slice 1b) becomes moot under E+ and stays live under D.</p>
+
+    <!-- =========== Sequencing =========== -->
+
+    <h2>Sequencing under Option E+</h2>
+
+    <ol class="seq">
+        <li>Streaming ADR commits to <strong>ElevenLabs Conversational AI</strong> as the voice-agent vendor. Voxd's <code>/call/&lt;id&gt;</code> event-stream WebSocket contract carries typed JSON events between voxd and the dev-box client — no PCM on the wire.</li>
+        <li><strong>Voxd owns mic + STT + TTS + speakers.</strong> Mic capture, TurnDetector, and STT provider move from <code>vox call</code>'s wiring into voxd. Package layout already matches.</li>
+        <li><strong>Voxd gains a rolling per-session context store</strong> plus a small tool broker (<code>search_code</code>, <code>read_recent_conversation</code>, <code>read_older_conversation</code>, <code>write_note</code>).</li>
+        <li><strong>Claude Code hooks route through <code>mcp-proxy --hook</code></strong>. Hook payloads reach voxd both for TTS action and for context retention. Add a monotonic sequence + gap-resync mechanism between Claude Code and voxd so context holes are detectable.</li>
+        <li><strong>Voxd's tool implementations dial quarryd's REST API</strong> for <code>search_code</code>. Same TLS + bearer + profile pattern <code>mcp-proxy</code> uses; no MCP required.</li>
+        <li><strong><code>/vox:talk</code> is added as a Claude Code slash command or blocking MCP tool.</strong> Returns transcript + notes on completion. Multi-turn happens inside voxd; Claude Code sees one turn.</li>
+        <li><strong>Option D remains buildable as a fallback</strong> for as long as it's cheap to keep. It becomes the go-to shape only if E+'s hook-fanout reliability cannot be brought up to load-bearing quality.</li>
+    </ol>
+
+    <footer class="foot">
+        Companion diagrams: current-state architecture (as coded) and distributed-target Option D published earlier in the same conversation. E+ diagram forthcoming as the second half of this deliverable. All three diagrams share palette and typographic conventions.
+    </footer>
+
+</div>
