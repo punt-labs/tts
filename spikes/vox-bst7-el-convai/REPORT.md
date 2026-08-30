@@ -81,10 +81,12 @@ mid-barge-in `client_tool_result` (`agent_tool_response` in-trace). But
 asked "What did you just find?", the agent answered *"I did not find
 anything because the search was stopped before it could finish."* —
 **the interrupted call's result never reached the LLM context.** This
-reproduced 2/2 completed runs, INCLUDING this one's topic-neutral
-interruption ("Wait, wait, stop, hold on one moment…"), which rules out
-"the prompt said to stop, so the LLM obeyed" as the explanation: the
-drop is deterministic platform behavior, not phrasing. The loss is
+reproduced 2/2 completed runs — one interruption that redirected the
+topic ("ask you something completely different"), one topic-neutral
+("Wait, wait, stop, hold on one moment…") — which rules out topic
+redirection as the cause; both necessarily contained stop-words (an
+interruption cannot avoid stop-semantics), so the precise claim is that
+the drop is insensitive to interruption phrasing and topic. The loss is
 recoverable — the agent offers to re-run the search, and a re-ask
 succeeds — which is what the ruled mitigation (idempotent tools + a
 voxd result cache, so a re-issued call is cheap) leans on. Run 2 was
