@@ -16,8 +16,9 @@ The track count is *held*, not fetched. ``genre`` and ``id`` read durable metada
 that is fixed at creation, but an album's Parts grow on disk as the background
 fill lands, so the count has to be read live -- and a live read belongs at the
 player's seam, not inside a render. :meth:`AlbumDisplay.read` is that read;
-:class:`~punt_vox.voxd.music_player.album_roster.AlbumRoster` is where it happens,
-once per projection.
+:class:`~punt_vox.voxd.music_player.track_count_cache.TrackCountCache` is where
+it happens, off the hot path via ``asyncio.to_thread``, never inline in a
+projection.
 """
 
 from __future__ import annotations
@@ -43,8 +44,16 @@ class AlbumDisplay:
     def read(cls, album: Album) -> Self:
         """Pair ``album`` with its ready-Part count, read live from the store.
 
-        Raises ``LookupError`` when the store no longer holds the album; the
-        roster catches that and drops the row.
+        Raises ``LookupError`` when the store no longer holds the album;
+        :meth:`~punt_vox.voxd.music_player.track_count_cache.TrackCountCache.
+        _refresh`, the sole caller, catches that and excludes the album from
+        the refreshed counts. That is not the same as dropping its row: an
+        album this cache has never refreshed (or has just dropped from a
+        refresh) still renders, at a zero track count
+        (:class:`~punt_vox.voxd.music_player.album_roster.AlbumRoster`'s own
+        docstring documents that). What actually removes a row is the album
+        leaving the catalog entirely, which happens synchronously elsewhere,
+        well before this method would ever see it again.
         """
         return cls(album, len(album.ready_parts()))
 
