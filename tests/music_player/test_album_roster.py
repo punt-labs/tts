@@ -28,8 +28,12 @@ class TestFromCache:
     def test_each_display_carries_its_cached_track_count(
         self, album_of: AlbumFactory
     ) -> None:
-        one = album_of("aa11bb", name="One")
-        two = album_of("cc22dd", name="Two")
+        # Distinct counts on purpose: two albums both defaulting to 3 tracks
+        # would pass this assertion even paired backwards -- [3, 3] == [3, 3]
+        # either way. One and Two must disagree so a rotated pairing in
+        # ``from_cache`` actually fails here.
+        one = album_of("aa11bb", name="One", on_disk=3)
+        two = album_of("cc22dd", name="Two", on_disk=5)
         cache = TrackCountCache.for_testing((one, two))
 
         roster = AlbumRoster.from_cache((one, two), cache)
@@ -38,6 +42,7 @@ class TestFromCache:
             cache.get(one.id),
             cache.get(two.id),
         ]
+        assert [display.tracks for display in roster.displays] == [3, 5]
 
     def test_catalog_order_is_preserved(self, album_of: AlbumFactory) -> None:
         albums = (album_of("aa11bb", name="One"), album_of("cc22dd", name="Two"))
