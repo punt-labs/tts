@@ -136,9 +136,21 @@ class SyntheticAudio:
             # Pad the tail chunk so every send stays one 64ms frame.
             self._pending.append(chunk.ljust(_CHUNK_BYTES, b"\x00"))
 
-    async def wait_spoken(self) -> None:
-        """Return once every queued utterance chunk has been streamed."""
+    async def wait_spoken(self, timeout_s: float = 60.0) -> None:
+        """Return once every queued utterance chunk has been streamed.
+
+        Raises when the pump is dead with chunks still pending -- waiting
+        on a queue nobody drains would otherwise block a billed run until
+        its outer cap (or a dry run forever).
+        """
+        deadline = time.monotonic() + timeout_s
         while self._pending:
+            if self._pump is None or self._pump.done():
+                msg = f"audio pump stopped with {len(self._pending)} chunks pending"
+                raise RuntimeError(msg)
+            if time.monotonic() > deadline:
+                msg = f"utterance not drained within {timeout_s}s"
+                raise TimeoutError(msg)
             await asyncio.sleep(_CHUNK_SECONDS)
 
     async def wait_interrupted(self, timeout_s: float) -> bool:

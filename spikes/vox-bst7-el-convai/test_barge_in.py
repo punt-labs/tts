@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Self, final
 
+import pytest
+
 from barge_in import SyntheticAudio
 from convai import EventTrace
 
@@ -58,6 +60,25 @@ class TestSpeakChunking:
         await mic.stop()
         assert recorder.chunks
         assert all(not any(c) for c in recorder.chunks)
+
+
+class TestWaitSpokenLiveness:
+    """wait_spoken must fail loud when nobody is draining the queue."""
+
+    async def test_raises_if_pump_never_started(self, tmp_path: Path) -> None:
+        mic = _mic(tmp_path)
+        mic.speak(b"\x01" * 100)
+        with pytest.raises(RuntimeError, match="pump stopped"):
+            await mic.wait_spoken()
+
+    async def test_raises_after_pump_stopped(self, tmp_path: Path) -> None:
+        mic = _mic(tmp_path)
+        recorder = _ChunkRecorder()
+        mic.start(recorder)
+        await mic.stop()
+        mic.speak(b"\x01" * 100)
+        with pytest.raises(RuntimeError, match="pump stopped"):
+            await mic.wait_spoken()
 
 
 class TestInterruptionObservation:

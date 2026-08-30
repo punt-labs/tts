@@ -166,15 +166,24 @@ Reading notes:
 - **EL accepted the full 50KB prompt override with no rejection, no
   truncation, no connect penalty** — session-start latency shows no
   size correlation (it is dominated by TLS/WS setup, 267-553ms).
-- Response quality: at 1KB and 10KB the agent consistently answered
-  with tool *results* ("I found three matches for the playback
-  queue..."). At 50KB it leaned into pre-tool narration — several turns
-  closed on "Searching the codebase for X." without the result summary,
-  and the turn-4 reply narrated both intents but neither result. Mild
-  but real degradation: with a large seed, gemini-2.0-flash gets
-  chattier about intent and lazier about folding tool output back in.
-  Context for E+: DES-070's Layer-1 seed can be generous (50KB is fine
-  transport-wise), but prompt discipline matters more as it grows.
+- Response quality — **the 50KB observation is CONFOUNDED, do not
+  trust it yet**: at 1KB and 10KB the agent consistently answered with
+  tool *results* ("I found three matches for the playback queue...").
+  At 50KB several turns appeared to close on pre-tool narration
+  ("Searching the codebase for X.") without the result summary. A
+  harness bug found later (Bugbot, PR #481) produces exactly these
+  symptoms: `_turn_is_complete` treated `client_tool_call` as progress,
+  so after pre-tool speech a slow tool's execution alone exceeded the
+  1.5s turn grace, `say()` returned before the post-tool answer, and
+  the next scripted prompt interrupted the real answer mid-delivery —
+  i.e. the harness, not the model, may have truncated those turns. The
+  bug is fixed (pending-invocation now holds the turn open; offline
+  pin), but the 50KB quality claim needs a re-run to be trusted —
+  DES-070's own validation bead will retest seed behavior properly.
+  The hard numbers above (accept/reject, connect and first-response
+  latencies) do not depend on turn-end detection and stand — as do the
+  p95 and barge-in verdicts: per-invocation `overhead_ms` and the
+  barge-in adjudicator never consult `_turn_is_complete`.
 
 ## Environment
 

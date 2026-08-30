@@ -502,7 +502,16 @@ class ConvAISession:
     # -- Internals ---------------------------------------------------------
 
     def _turn_is_complete(self) -> bool:
-        if self._agent_responses_in_turn < 1 or self._executing:
+        # A pending invocation holds the turn open: an executing tool has
+        # not been answered, and a sent result whose closing agent event
+        # has not arrived (_awaiting_next) means the post-tool answer is
+        # still coming. Without the _awaiting_next leg, a slow tool's
+        # execution alone outlasts the grace (client_tool_call stamped
+        # progress at its arrival), say() returns after pre-tool speech,
+        # and the next scripted prompt interrupts the real answer. The
+        # turn timeout in say() still bounds a genuinely orphaned call.
+        pending = self._executing or self._awaiting_next
+        if self._agent_responses_in_turn < 1 or pending:
             return False
         quiet_for = time.monotonic() - self._last_progress
         return quiet_for >= _TURN_GRACE_S

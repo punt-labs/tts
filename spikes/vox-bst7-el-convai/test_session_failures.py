@@ -92,7 +92,9 @@ async def _open_session(
     # The server object stays alive via the returned session's lifetime;
     # each test closes the session, after which the server is dropped.
     session_server = (session, trace_path)
-    server.close()  # stop accepting; the live connection continues
+    # close() defaults to close_connections=True, which would race the
+    # scripted conversation; stop accepting only, keep the live socket.
+    server.close(close_connections=False)
     return session_server
 
 
@@ -185,6 +187,51 @@ class TestTraceRedaction:
         error = session._connect_error(WebSocketException("boom SECRET-BEARER"))
         assert "api.example.io" in str(error)
         assert "SECRET-BEARER" not in str(error)
+
+
+class TestTurnCompletion:
+    """A pending invocation holds say() open until the post-tool answer."""
+
+    async def test_say_waits_for_the_post_tool_answer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Shrink the clocks, keep the shape: tool execution (1.0s) must
+        # exceed the turn grace (0.4s), the exact geometry where the old
+        # predicate declared the turn over before the post-tool answer.
+        monkeypatch.setattr("convai._TURN_GRACE_S", 0.4)
+        monkeypatch.setattr("spike_tools._SLOW_SCHEDULE_S", (1.0,))
+
+        async def script(ws: ServerConnection) -> None:
+            await ws.recv()  # the user_message from say()
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "agent_response",
+                        "agent_response_event": {"agent_response": "Let me search."},
+                    }
+                )
+            )
+            await ws.send(_tool_call("search_code", "turn-1", {"pattern": "x"}))
+            await ws.recv()  # client_tool_result, ~1.0s later
+            await asyncio.sleep(0.2)
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "agent_response",
+                        "agent_response_event": {
+                            "agent_response": "I found 3 matches."
+                        },
+                    }
+                )
+            )
+            # Keep the socket open past the turn grace; the handler
+            # returning would close it mid-turn and fail say() early.
+            await asyncio.sleep(3.0)
+
+        session, _trace_path = await _open_session(tmp_path, script)
+        reply = await session.say("search please", timeout_s=10.0)
+        await session.close()
+        assert "I found 3 matches." in reply
 
 
 class TestToolTaskCrashNote:
