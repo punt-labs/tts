@@ -94,7 +94,18 @@ _REFRESH_TIMEOUT_SECONDS: float = 5.0
 
 @final
 class TrackCountCache:
-    """The last-known ready-track count per album, refreshed off the hot path."""
+    """The last-known ready-track count per album, refreshed off the hot path.
+
+    ``@final``, with a leading underscore on every method but :meth:`get` and
+    :meth:`serialized_refresh`, to signal internal-use-only -- Python enforces
+    neither: there is no true private method, and a caller holding this
+    instance can still call :meth:`_refresh` directly if it chooses to ignore
+    the convention. What IS structurally enforced, not just conventional, is
+    the timeout/lock/generation-gate invariant the module docstring describes:
+    :meth:`_refresh` reads its own generation rather than accepting one as an
+    argument, so no caller -- however it reaches this class -- can hand it an
+    arbitrary generation number and corrupt :attr:`_written_generation`.
+    """
 
     __slots__ = (
         "_counts",

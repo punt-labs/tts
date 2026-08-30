@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, final
 
 from punt_vox.types_programs.status import ProgramStatus
 from punt_vox.voxd.music_player.player import MusicPlayer
+from punt_vox.voxd.music_player.track_count_cache import TrackCountCache
 from punt_vox.voxd.programs.album_id import AlbumId
 
 if TYPE_CHECKING:
@@ -295,17 +296,26 @@ class TestTrackCountsNeverBlockTheHotPath:
         ]
         await _settle()  # let the background refresh this scheduled drain cleanly
 
-    async def test_notify_changed_schedules_a_background_refresh_via_to_thread(
+    async def test_notify_changed_schedules_a_background_cache_refresh(
         self, album_of: AlbumFactory, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        calls: list[object] = []
-        real_to_thread = asyncio.to_thread
+        # Patched at the class level -- the method MusicPlayer itself calls
+        # on its cache -- rather than reaching two objects deep through
+        # player._cache to identity-check a private method it never calls
+        # directly. Whether that refresh runs off the event loop via
+        # asyncio.to_thread is TrackCountCache's own contract, proved in
+        # test_track_count_cache.py; this test only owns MusicPlayer's side
+        # of the collaboration: that a state change schedules one.
+        calls: list[tuple[Album, ...]] = []
+        real_refresh = TrackCountCache.serialized_refresh
 
-        async def _spying_to_thread(func: object, *args: object) -> object:
-            calls.append(func)
-            return await real_to_thread(func, *args)  # type: ignore[arg-type]
+        async def _spying_refresh(
+            self: TrackCountCache, albums: tuple[Album, ...]
+        ) -> None:
+            calls.append(albums)
+            await real_refresh(self, albums)
 
-        monkeypatch.setattr(asyncio, "to_thread", _spying_to_thread)
+        monkeypatch.setattr(TrackCountCache, "serialized_refresh", _spying_refresh)
         album = album_of("aa11bb", name="Techno Mix", tracks=0, on_disk=9)
         publisher = _CapturingPublisher()
         player = MusicPlayer(_FakeService(ProgramStatus.idle(), (album,)), publisher)
@@ -313,7 +323,7 @@ class TestTrackCountsNeverBlockTheHotPath:
         player.notify_changed()
         await _settle()
 
-        assert calls == [player._cache._refresh]
+        assert calls == [(album,)]
 
     async def test_the_background_refresh_resubmits_with_the_live_count(
         self, album_of: AlbumFactory
@@ -370,24 +380,30 @@ class TestTrackCountsNeverBlockTheHotPath:
 
         assert player._refresher.running is False
 
-    async def test_install_awaits_a_fresh_read_via_to_thread(
+    async def test_install_awaits_a_fresh_cache_refresh(
         self, album_of: AlbumFactory, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        calls: list[object] = []
-        real_to_thread = asyncio.to_thread
+        # See test_notify_changed_schedules_a_background_cache_refresh above
+        # for why this patches TrackCountCache.serialized_refresh (a method
+        # MusicPlayer calls directly) instead of reaching through
+        # player._cache to identity-check asyncio.to_thread's argument.
+        calls: list[tuple[Album, ...]] = []
+        real_refresh = TrackCountCache.serialized_refresh
 
-        async def _spying_to_thread(func: object, *args: object) -> object:
-            calls.append(func)
-            return await real_to_thread(func, *args)  # type: ignore[arg-type]
+        async def _spying_refresh(
+            self: TrackCountCache, albums: tuple[Album, ...]
+        ) -> None:
+            calls.append(albums)
+            await real_refresh(self, albums)
 
-        monkeypatch.setattr(asyncio, "to_thread", _spying_to_thread)
+        monkeypatch.setattr(TrackCountCache, "serialized_refresh", _spying_refresh)
         album = album_of("aa11bb", name="Techno Mix", tracks=0, on_disk=4)
         publisher = _CapturingPublisher()
         player = MusicPlayer(_FakeService(ProgramStatus.idle(), (album,)), publisher)
 
         await player.install()
 
-        assert calls == [player._cache._refresh]
+        assert calls == [(album,)]
         assert _by_id(publisher.installed[0].elements, "music.albums")["rows"] == [
             ["Techno Mix", "techno", 4]
         ]
