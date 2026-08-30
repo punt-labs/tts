@@ -68,6 +68,16 @@ _DIALOG_MARKERS: dict[str, tuple[str, ...]] = {
 _HOOK_WAIT_S = 240
 _POLL_INTERVAL_S = 3.0
 
+# The hook events a complete run MUST deliver; a ledger that is ordered and
+# attributed but missing any of these is an incomplete run and fails the
+# hooks criterion outright.
+_REQUIRED_EVENTS = frozenset({"SessionStart", "UserPromptSubmit", "Stop"})
+
+# The mid-run pane must show evidence of the seeded task -- the derived
+# prompt names this file and the fork's first tool call writes it. A merely
+# non-empty pane (stalled UI, error screen) is not a usable session.
+_PANE_TASK_MARKER = "greeting.py"
+
 
 def _free_port() -> int:
     with socket.socket() as probe:
@@ -166,8 +176,9 @@ class StoreProcess:
 class ValidationRun:
     """One full fork -> configure -> attach -> hook-loopback validation."""
 
-    __slots__ = ("_nudges", "_results_dir", "_verdicts")
+    __slots__ = ("_notes", "_nudges", "_results_dir", "_verdicts")
 
+    _notes: list[str]
     _nudges: list[str]
     _results_dir: Path
     _verdicts: dict[str, bool]
@@ -178,6 +189,7 @@ class ValidationRun:
         self._results_dir = _SPIKE_DIR / "results" / stamp_dir
         self._verdicts = {}
         self._nudges = []
+        self._notes = []
         return self
 
     def execute(self) -> int:
@@ -221,12 +233,14 @@ class ValidationRun:
         ledger = HookLedger(ledger_path)
         seen = self._await_hooks(session, ledger)
         print(f"    events seen: {sorted(seen)}")
-        self._verdicts["hooks_land_ordered_attributed"] = self._judge_ledger(ledger)
+        self._verdicts["hooks_land_ordered_attributed"] = self._judge_hooks(
+            ledger, seen
+        )
 
         print("[6] capturing pane mid-run (non-interactive tmux attach)")
         mid = session.capture()
         (self._results_dir / "capture_mid_run.txt").write_text(mid, "utf-8")
-        self._verdicts["attach_shows_usable_session"] = bool(mid.strip())
+        self._verdicts["attach_shows_usable_session"] = self._judge_pane(mid)
 
         print("[7] SIGKILL the store; fork must survive")
         self._verdicts["fork_survives_store_kill"] = self._survival_test(store, session)
@@ -236,15 +250,38 @@ class ValidationRun:
 
     def _await_hooks(self, session: TmuxSession, ledger: HookLedger) -> set[str]:
         deadline = time.monotonic() + _HOOK_WAIT_S
-        wanted = {"SessionStart", "UserPromptSubmit", "Stop"}
         seen: set[str] = set()
         while time.monotonic() < deadline:
             self._nudge_dialogs(session)
             seen = {record.event for record in ledger.records()}
-            if wanted <= seen:
+            if seen >= _REQUIRED_EVENTS:
                 break
             time.sleep(_POLL_INTERVAL_S)
         return seen
+
+    def _judge_hooks(self, ledger: HookLedger, seen: set[str]) -> bool:
+        """PASS only for a COMPLETE, ordered, attributed ledger.
+
+        Ordering/attribution alone is not enough: a run where the relay
+        died after SessionStart would leave a perfectly ordered partial
+        ledger. Completeness against the required event set gates first.
+        """
+        missing = _REQUIRED_EVENTS - seen
+        if missing:
+            note = f"hooks incomplete at timeout; missing: {sorted(missing)}"
+            self._notes.append(note)
+            print(f"    {note}")
+            return False
+        return self._judge_ledger(ledger)
+
+    def _judge_pane(self, pane: str) -> bool:
+        """PASS only when the pane shows the seeded task in progress."""
+        if _PANE_TASK_MARKER in pane:
+            return True
+        note = f"mid-run pane lacks task marker {_PANE_TASK_MARKER!r}"
+        self._notes.append(note)
+        print(f"    {note}")
+        return False
 
     def _nudge_dialogs(self, session: TmuxSession) -> None:
         if not session.alive():
@@ -336,6 +373,7 @@ class ValidationRun:
         verdict = {
             "chain": "fork -> configure -> attach -> hook-loopback",
             "criteria": self._verdicts,
+            "notes": self._notes,
             "nudges": self._nudges,
             "overall": "PASS" if overall else "FAIL",
         }
