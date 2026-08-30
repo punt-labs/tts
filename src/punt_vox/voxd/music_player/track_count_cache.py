@@ -181,7 +181,13 @@ class TrackCountCache:
         task when ITS OWN deadline elapses, so checking ``task.cancelled()``
         distinguishes the two: cancelled means the deadline fired and this is
         our timeout; not cancelled means the task ran to completion and raised
-        that ``TimeoutError`` itself, which is re-raised unchanged.
+        that ``TimeoutError`` itself, which is re-raised unchanged. One
+        acknowledged, razor-thin edge: CPython's ``Task.cancel()``/``__step``
+        machinery has a same-event-loop-tick window where a genuine fault
+        completing in the exact tick the deadline fires can be misreported as
+        our own cancellation, discarding the real exception's diagnostic
+        content in favor of the generic timeout warning below -- an inherent
+        scheduling limitation, not a defect in this discrimination.
         """
         self._generation += 1
         task = asyncio.ensure_future(self._locked_refresh(albums))
