@@ -10,6 +10,15 @@ The held ``_state``/``_notice`` pair is read from more than one thread: a menu
 click and a control event each run their sync work on an ``asyncio.to_thread``
 worker, so two can be mid-update at once. ``_lock`` serializes every
 read-modify-write so one thread's commit is never overwritten.
+
+Reaching luxd is :class:`~punt_vox.panel.panel_push.PanelPush`'s job, not this
+one's. The two verbs it exposes differ in intent rather than content:
+:meth:`VoxPanelService.install_scene` shows the scene and then explicitly
+raises the frame, and is reached only from the ``Vox`` menu click;
+:meth:`VoxPanelService.push_scene` refreshes the panel where it already sits,
+which is what the confirm push behind a click and every control-change re-push
+want. Radio clicks used to take the ``show`` path, so changing a setting
+yanked the panel in front of whatever was on top of it.
 """
 
 from __future__ import annotations
@@ -20,19 +29,15 @@ import threading
 from dataclasses import replace
 from typing import TYPE_CHECKING, Self, final
 
-from punt_lux import OpError
-
 from punt_vox.cascade import Cascade, RosterError, RosterRejectedError
 from punt_vox.client_errors import VoxdConnectionError, VoxdRejectionError
-from punt_vox.models import MODEL_TABLE
-from punt_vox.panel.model_control import ModelControl
+from punt_vox.panel.click_target import ClickTarget
+from punt_vox.panel.control_push import ControlPush
 from punt_vox.panel.panel_notice import PanelNotice
-from punt_vox.panel.provider_control import ProviderControl
+from punt_vox.panel.panel_push import PanelPush
 from punt_vox.panel.radio_control import MIC_MODE_SPEC, NOTIFY_SPEC
 from punt_vox.panel.state import PanelState
 from punt_vox.panel.topics import PanelTopic
-from punt_vox.panel.voice_control import VoiceControl
-from punt_vox.server_switches import PROVIDER_NAMES
 from punt_vox.session_spec import SessionSpec
 from punt_vox.types_synthesis import SynthesisSpec
 from punt_vox.types_synthesis_errors import (
@@ -67,7 +72,8 @@ class VoxPanelService:
     _state: PanelState
     _notice: PanelNotice
     _lock: threading.Lock
-    __slots__ = ("_client", "_lock", "_notice", "_state", "_store")
+    _push: PanelPush
+    __slots__ = ("_client", "_lock", "_notice", "_push", "_state", "_store")
 
     def __new__(cls, client: PanelDaemonClient, store: SettingsStore) -> Self:
         self = super().__new__(cls)
@@ -76,6 +82,7 @@ class VoxPanelService:
         self._state = PanelState.empty()
         self._notice = PanelNotice.silent()
         self._lock = threading.Lock()
+        self._push = PanelPush()
         return self
 
     @property
@@ -93,12 +100,20 @@ class VoxPanelService:
         self.refresh()
 
     async def acknowledge(self, client: LuxClient, latency: ClickLatency) -> None:
-        """Push the held scene now -- the visible half of the click."""
+        """Install the held scene now -- the visible half of the click.
+
+        This is the ``Vox`` menu entry answering, so showing the scene (and with
+        it raising the frame) is the answer, not a side effect.
+        """
         with latency.answering():
-            await self.push_scene(client)
+            await self.install_scene(client)
 
     async def service(self, client: LuxClient, latency: ClickLatency) -> None:
-        """Re-read settings fresh and push the confirmed scene."""
+        """Re-read settings fresh and refresh the scene with the confirmed ones.
+
+        A few milliseconds behind :meth:`acknowledge`, onto the same window it
+        just raised -- so this refreshes rather than installing again.
+        """
         with latency.stage("refreshed"):
             await asyncio.to_thread(self.refresh)
         await self.push_scene(client)
@@ -108,11 +123,23 @@ class VoxPanelService:
         with self._lock:
             return replace(self._state.scene(), notice=self._notice)
 
+    async def install_scene(self, client: LuxClient) -> None:
+        """Show the held scene outright, frame raise and all (a menu click)."""
+        await self._push.install(client, self.scene().render_request())
+
     async def push_scene(self, client: LuxClient) -> None:
-        """Push the currently-held scene, logging (never raising) a refusal."""
-        result = await client.scene.show(self.scene().render_request())
-        if isinstance(result, OpError):
-            logger.error("vox-panel: luxd rejected the scene: %s", result.reason)
+        """Refresh the installed scene with the currently-held one."""
+        await self._push.refresh(client, self.scene().render_request())
+
+    async def correct_scene(self, client: LuxClient) -> None:
+        """Reinstall the held scene in full, snapping back an optimistic widget.
+
+        Reached only after a control-change failure that a widget already
+        applied client-side before voxd answered -- see
+        :meth:`~punt_vox.panel.panel_push.PanelPush.correct` for why a diff-based
+        refresh cannot express this correction.
+        """
+        await self._push.correct(client, self.scene().render_request())
 
     def refresh(self) -> None:
         """Re-read settings from disk and voxd; note staleness if voxd is down."""
@@ -143,35 +170,79 @@ class VoxPanelService:
         with self._lock:
             self._notice = PanelNotice.voxd_rejected(detail)
 
-    def apply_event(self, topic: str, payload: Mapping[str, object]) -> bool:
-        """Apply one control-topic event; return whether the scene needs a re-push.
+    def note_control_rejected(self, control: str) -> None:
+        """Flag the scene with a control change that could not be applied.
+
+        *control* is the control's human name, as
+        :attr:`~punt_vox.panel.topics.PanelTopic.label` gives it. Reached
+        from :class:`~punt_vox.panel.panel_runner.PanelRunner` when
+        :meth:`apply_event` refuses an event, so the corrective reinstall
+        that follows carries a reason instead of an unexplained revert.
+        """
+        with self._lock:
+            self._notice = PanelNotice.control_rejected(control)
+
+    def apply_event(self, topic: str, payload: Mapping[str, object]) -> ControlPush:
+        """Apply one control-topic event; answer what kind of re-push it needs.
 
         A payload rejection (``TypeError``/``ValueError``), a value the store
         will not serialize (``ConfigValueError``), and a config-write failure
         (``OSError``) all propagate -- this method swallows none of them, so
         :class:`~punt_vox.panel.panel_runner.PanelRunner` can answer each.
+
+        The three-way answer -- :attr:`~ControlPush.NONE`,
+        :attr:`~ControlPush.REFRESH`, :attr:`~ControlPush.CORRECT` -- is not
+        just "did the scene change": ``_commit_provider`` and ``_commit_model``
+        can abandon a commit (an unreadable roster, a provider swapped
+        mid-fetch) without raising, leaving ``_state`` exactly where it was.
+        That abandonment is still a widget the caller already updated
+        optimistically and this service never confirmed, so it answers
+        :attr:`~ControlPush.CORRECT` like every raising failure does -- a
+        bare re-derived ``bool`` cannot tell that apart from a genuine no-op.
         """
         if topic == PanelTopic.NOTIFY:
             code = NOTIFY_SPEC.code_for_index(self._index(payload))
             self._commit("notify", code, PanelState.with_notify)
-        elif topic == PanelTopic.MIC_MODE:
+            return ControlPush.REFRESH
+        if topic == PanelTopic.MIC_MODE:
             code = MIC_MODE_SPEC.code_for_index(self._index(payload))
             self._commit("speak", code, PanelState.with_speak)
-        elif topic == PanelTopic.VOICE:
-            voice = self._voice_for(self._index(payload))
+            return ControlPush.REFRESH
+        if topic == PanelTopic.VOICE:
+            voice = self._target().voice(self._index(payload))
             self._commit("voice", voice, PanelState.with_voice)
-        elif topic == PanelTopic.PROVIDER:
-            provider = self._provider_for(self._index(payload))
-            self._commit_provider(provider)
-        elif topic == PanelTopic.MODEL:
-            model = self._model_for(self._index(payload))
-            self._commit_model(model)
-        elif topic == PanelTopic.VOICE_PREVIEW:
+            return ControlPush.REFRESH
+        if topic == PanelTopic.PROVIDER:
+            return self._commit_provider(self._target().provider(self._index(payload)))
+        if topic == PanelTopic.MODEL:
+            return self._commit_model(self._target().model(self._index(payload)))
+        if topic == PanelTopic.VOICE_PREVIEW:
             return self._preview()
-        else:
-            logger.warning("vox-panel: no handler for topic %r", topic)
-            return False
-        return True
+        logger.warning("vox-panel: no handler for topic %r", topic)
+        return ControlPush.NONE
+
+    def _cleared_notice(self) -> ControlPush:
+        """Drop any displayed notice; answer the push that drop needs.
+
+        Callers hold ``_lock``, which is not reentrant, so this never takes
+        it. That is a contract the type system cannot state: reading
+        ``is_present`` and writing ``_notice`` is a read-modify-write, and a
+        caller that arrives without the lock does not deadlock loudly -- it
+        races another thread's notice and loses one silently.
+
+        A notice going away is as much a scene change as a setting moving:
+        the band the display renders disappears. Answering
+        :attr:`~ControlPush.NONE` unconditionally left that change stranded
+        in daemon memory -- the runner pushed nothing, so the display went
+        on showing a warning this service no longer held.
+        :attr:`~ControlPush.REFRESH` is the right push because the notice
+        rode the last render vox pushed, so the diff sees it leave. Only an
+        already-silent panel is a true no-op.
+        """
+        if not self._notice.is_present:
+            return ControlPush.NONE
+        self._notice = PanelNotice.silent()
+        return ControlPush.REFRESH
 
     def _commit(
         self, field: str, value: str, update: Callable[[PanelState, str], PanelState]
@@ -182,29 +253,10 @@ class VoxPanelService:
             self._state = update(self._state, value)
             self._notice = PanelNotice.silent()
 
-    def _voice_for(self, index: int) -> str:
+    def _target(self) -> ClickTarget:
+        """Snapshot the held settings as the thing a click's index names."""
         with self._lock:
-            roster, current = self._state.roster, self._state.voice
-        return VoiceControl(roster=roster, current=current).voice_for_index(index)
-
-    def _provider_for(self, index: int) -> str:
-        with self._lock:
-            current = self._state.provider
-        control = ProviderControl(providers=PROVIDER_NAMES, current=current)
-        return control.provider_for_index(index)
-
-    def _model_for(self, index: int) -> str:
-        with self._lock:
-            provider, current = self._state.provider, self._state.model
-        # A model click needs to name a provider -- previously the panel
-        # substituted ``"elevenlabs"`` when state had none, offering the
-        # ElevenLabs model list under an unset-provider session, which is
-        # the same silent substitution this bead deletes. An empty tuple
-        # produces an out-of-range click that ``ModelControl`` refuses,
-        # so the panel's guard reaches the caller as the same rejection
-        # a menu click on a genuinely modelless provider gets.
-        models = MODEL_TABLE.available(provider) if provider else ()
-        return ModelControl(models=models, current=current).model_for_index(index)
+            return ClickTarget(self._state)
 
     def _fetch_roster_or_notice(
         self, provider: str, context: str
@@ -240,34 +292,42 @@ class VoxPanelService:
             return None
         return tuple(result)
 
-    def _commit_provider(self, provider: str) -> None:
+    def _commit_provider(self, provider: str) -> ControlPush:
         """Persist a provider change; cascade model + voice to their defaults.
 
-        The cascade rule (vox-s5uv): setting a provider writes provider +
+        The cascade rule: setting a provider writes provider +
         ``MODEL_TABLE.available(provider)[0]`` (empty string for modelless
         providers) + ``roster[0]`` for the voice. All three land in one
         atomic write so a reader sees them together, never a partial
-        state. A re-publish of the same provider is still a no-op -- an
-        echoed event neither rewrites the disk nor refetches the roster.
+        state. A re-publish of the same provider neither rewrites the disk
+        nor refetches the roster; it clears a stale notice and answers
+        :meth:`_cleared_notice`'s verdict on whether that needs a push.
 
         Roster fetch happens OUTSIDE the lock -- it is a voxd round-trip
         that must not block other panel threads on their own reads. The
         provider is re-checked under the lock after the fetch: if another
         thread swapped the provider mid-flight (e.g. a second click hit
         first), this call gives up rather than clobber the newer state.
+        That re-check is the *only* one the post-fetch section needs: the
+        pre-fetch guard above already returned on ``provider ==
+        pre_fetch_provider``, so once the re-check confirms ``_state``
+        still holds ``pre_fetch_provider``, ``provider`` differs from it
+        by construction and the write below always has work to do.
 
         A ``VoxdConnectionError`` on the roster fetch surfaces as a
         transient notice; the write is abandoned so the disk never lands
-        a provider whose voice roster we could not read.
+        a provider whose voice roster we could not read. That abandonment,
+        and the mid-fetch-race abort below, both answer
+        :attr:`~ControlPush.CORRECT` for the reason :meth:`apply_event`
+        documents on its own three-way return.
         """
         with self._lock:
             pre_fetch_provider = self._state.provider
             if provider == pre_fetch_provider:
-                self._notice = PanelNotice.silent()
-                return
+                return self._cleared_notice()
         fetched = self._fetch_roster_or_notice(provider, "provider-switch")
         if fetched is None:
-            return
+            return ControlPush.CORRECT
         roster = fetched
         model_default = Cascade.default_model(provider)
         voice_default = Cascade.first_or_empty(roster)
@@ -283,11 +343,12 @@ class VoxPanelService:
                     self._state.provider,
                     provider,
                 )
-                self._notice = PanelNotice.silent()
-                return
-            if provider == self._state.provider:
-                self._notice = PanelNotice.silent()
-                return
+                # Whatever the band is showing was put there by whoever
+                # authored it, most likely the thread whose commit won this
+                # race. This one changed nothing and has nothing to report,
+                # so it leaves the notice alone rather than destroying
+                # another thread's reason before anyone reads it.
+                return ControlPush.CORRECT
             self._store.write_fields(
                 {
                     "provider": provider,
@@ -302,11 +363,12 @@ class VoxPanelService:
                 voice=voice_default or None,
             )
             self._notice = PanelNotice.silent()
+            return ControlPush.REFRESH
 
-    def _commit_model(self, model: str) -> None:
+    def _commit_model(self, model: str) -> ControlPush:
         """Persist a model change; cascade voice to the current-provider default.
 
-        The cascade rule (vox-s5uv): setting a model writes model +
+        The cascade rule: setting a model writes model +
         ``client.voices(current_provider)[0]`` for the voice, in one
         atomic write. A ``VoxdConnectionError`` on the roster fetch
         surfaces as a transient notice; the write is abandoned so the
@@ -318,23 +380,28 @@ class VoxPanelService:
         thread swapped the provider mid-flight, this commit gives up
         rather than clobber the newer state with a voice from the wrong
         provider. Mirrors ``_commit_provider``'s pre-fetch guard.
+
+        Every abandoned commit below -- no provider selected yet, an
+        unreadable roster, a provider changed mid-fetch -- answers
+        :attr:`~ControlPush.CORRECT` for the same reason
+        ``_commit_provider`` does: the widget already applied the pick and
+        ``_state`` never moved, so only a full reinstall corrects it.
         """
         with self._lock:
             pre_fetch_provider = self._state.provider
         if pre_fetch_provider is None:
-            # A model click before any provider has been chosen would have
-            # been dispatched against the substituted ``"elevenlabs"``, its
-            # cascaded voice roster fetched from a provider the session
-            # never picked. Skip cleanly instead so the panel never writes
-            # a wrong-provider voice on behalf of a caller who declared
-            # no provider.
+            # A provider-less panel renders no clickable model at all, so a
+            # MODEL event cannot originate from the widget in this state.
+            # What can reach here is a race: a concurrent resync clearing
+            # the provider between the click's own snapshot and this lock.
+            # Skip rather than fetch a cascaded voice roster from a
+            # provider the session no longer declares. The notice is left
+            # as it stands -- this call has nothing of its own to report.
             logger.info("vox-panel: model click ignored; no provider selected yet")
-            with self._lock:
-                self._notice = PanelNotice.silent()
-            return
+            return ControlPush.CORRECT
         fetched = self._fetch_roster_or_notice(pre_fetch_provider, "model-switch")
         if fetched is None:
-            return
+            return ControlPush.CORRECT
         roster = fetched
         voice_default = Cascade.first_or_empty(roster)
         with self._lock:
@@ -350,42 +417,54 @@ class VoxPanelService:
                     current_provider,
                     model,
                 )
-                self._notice = PanelNotice.silent()
-                return
+                # Same as ``_commit_provider``'s mid-fetch abort: nothing
+                # happened here, so nothing this call owns belongs on the
+                # notice band, and another thread's reason stays put.
+                return ControlPush.CORRECT
             self._store.write_fields({"model": model, "voice": voice_default})
             self._state = self._state.with_model(model, voice=voice_default or None)
             self._notice = PanelNotice.silent()
+            return ControlPush.REFRESH
 
-    def _preview(self) -> bool:
-        """Play the held voice back; return whether a status notice needs to show.
+    def _preview(self) -> ControlPush:
+        """Play the held voice back; answer the push the notice band needs.
 
         Builds the wire spec through :class:`SessionSpec` off a fresh read of
         the config store, so the preview sends the provider state declares
-        rather than letting voxd guess -- previously the preview sent no
-        provider at all (``docs/provider-authority.md`` §1.3, panel row).
-        An unconfigured or misconfigured state surfaces on the notice band
-        via :class:`PanelNotice.voxd_rejected` (F1 / F7).
+        rather than letting voxd guess. An unconfigured or misconfigured
+        state surfaces on the notice band via
+        :meth:`PanelNotice.voxd_rejected`.
+
+        A preview the caller just *heard* is the strongest evidence there is
+        that voxd is reachable, so success clears any warning still standing
+        -- otherwise a "voxd is unreachable" line outlives its own cause,
+        contradicted by the audio that just played. Every outcome here says
+        something, including the one where no voice is selected: a button
+        press that changes nothing on screen reads as a broken panel.
         """
         with self._lock:
             voice = self._state.voice
         if voice is None:
             logger.info("vox-panel: no voice selected yet; preview skipped")
-            return False
+            with self._lock:
+                self._notice = PanelNotice.no_voice_selected()
+            return ControlPush.REFRESH
         try:
             spec = SessionSpec(self._store.read()).fill(SynthesisSpec(voice=voice))
         except (ProviderNotConfiguredError, ModelNotAvailableError) as exc:
             logger.warning("vox-panel: voice preview refused: %s", exc)
             with self._lock:
                 self._notice = PanelNotice.voxd_rejected(str(exc))
-            return True
+            return ControlPush.REFRESH
         try:
             self._client.synthesize(_PREVIEW_TEXT, spec)
         except VoxdConnectionError:
             logger.warning("vox-panel: voice preview failed -- voxd is not reachable")
             with self._lock:
                 self._notice = PanelNotice.voxd_unavailable()
-            return True
-        return False
+            return ControlPush.REFRESH
+        with self._lock:
+            return self._cleared_notice()
 
     def _resync(
         self,

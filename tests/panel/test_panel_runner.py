@@ -103,6 +103,21 @@ class TestClicked:
         assert service.acknowledged == 1
         assert service.serviced == 1
 
+    async def test_a_click_acknowledges_before_it_services(
+        self, build_runner: Callable[..., PanelRunner]
+    ) -> None:
+        # The click's two halves have opposite intents. acknowledge answers the
+        # gesture -- the user asked to see the panel, so it shows and the frame
+        # comes forward. service lands milliseconds later onto the window that
+        # just came forward, so it refreshes rather than raising it again. That
+        # ordering is what the runner itself guarantees -- the call log is the
+        # only witness to it: acknowledged/serviced counts, or installed/pushed
+        # counts, would read the same at (1, 1) whichever order the two ran in.
+        rest = FakeRest()
+        service = FakeService()
+        await build_runner(service, lambda: rest).clicked()
+        assert service.calls == ["acknowledge", "service"]
+
     async def test_an_unexpected_click_failure_is_logged_at_error(
         self,
         caplog: pytest.LogCaptureFixture,
@@ -129,6 +144,9 @@ class TestChanged:
         )
         assert service.applied == [(PanelTopic.NOTIFY.value, {"value": 1})]
         assert service.pushed == 1
+        # The user is mid-interaction with a panel already on screen, so the
+        # re-push must not raise its frame.
+        assert service.installed == 0
 
     async def test_an_unchanged_event_does_not_re_push(
         self, build_runner: Callable[..., PanelRunner]
@@ -157,13 +175,18 @@ class TestChanged:
     async def test_a_write_failure_is_caught_distinctly_and_corrects_the_scene(
         self, build_runner: Callable[..., PanelRunner]
     ) -> None:
+        # The widget already shows the change optimistically; a diff-based
+        # re-push (``pushed``) would see the last-successful render as still
+        # true and skip it, so the correction must go through the full-reinstall
+        # path (``corrected``) instead.
         rest = FakeRest()
         service = FakeService(raise_on="write")
         await build_runner(service, lambda: rest).changed(
             PanelTopic.NOTIFY.value, {"value": 0}
         )  # must not raise
         assert service.recovered == ["notify"]
-        assert service.pushed == 1
+        assert service.corrected == 1
+        assert service.pushed == 0
 
     async def test_a_refused_value_is_corrected_like_a_write_that_would_not_land(
         self, build_runner: Callable[..., PanelRunner]
@@ -180,7 +203,29 @@ class TestChanged:
             PanelTopic.VOICE.value, {"value": 0}
         )  # must not raise
         assert service.recovered == ["voice"]
-        assert service.pushed == 1
+        assert service.corrected == 1
+        assert service.pushed == 0
+
+    async def test_a_config_fault_while_previewing_notices_rather_than_raises(
+        self, build_runner: Callable[..., PanelRunner]
+    ) -> None:
+        """A preview is the one topic with no field to revert to.
+
+        The preview reads the config store fresh, so a malformed config
+        faults it with nothing written. Recovering "the field that did not
+        stick" is not an operation that exists for it, and asking anyway
+        raised while handling the failure -- which left the widget with no
+        correction and no notice, the exact silence this handler exists to
+        prevent.
+        """
+        rest = FakeRest()
+        service = FakeService(raise_on="refused")
+        await build_runner(service, lambda: rest).changed(
+            PanelTopic.VOICE_PREVIEW.value, {}
+        )  # must not raise
+        assert service.recovered == []
+        assert service.control_rejections == ["voice preview"]
+        assert service.corrected == 1
 
     async def test_a_refused_value_is_logged_at_error_with_a_traceback(
         self,
@@ -196,14 +241,25 @@ class TestChanged:
         assert panel_records(caplog)[0].exc_info is not None
         assert "voice" in panel_records(caplog)[0].getMessage()
 
-    async def test_a_rejected_payload_re_pushes_but_does_not_recover(
+    async def test_a_rejected_payload_corrects_but_does_not_recover(
         self, build_runner: Callable[..., PanelRunner]
     ) -> None:
+        # A malformed event is not a failed *write*, so there is nothing to
+        # re-read and recover from -- but the widget still visibly reverts,
+        # so the band must say why. A diff-based re-push (``pushed``) is the
+        # wrong instrument regardless: it would find the corrective render
+        # byte-identical to the last one this session landed and push
+        # nothing, leaving the widget's wrongly-set field never reasserted.
         rest = FakeRest()
         service = FakeService(raise_on="apply")
         await build_runner(service, lambda: rest).changed(PanelTopic.NOTIFY.value, {})
         assert service.recovered == []
-        assert service.pushed == 1
+        # The notice names the control the way a user knows it, never the
+        # wire topic they have no reason to have heard of.
+        assert service.control_rejections == [PanelTopic.NOTIFY.label]
+        assert service.control_rejections == ["notification"]
+        assert service.corrected == 1
+        assert service.pushed == 0
 
     async def test_an_unexpected_change_failure_is_logged_at_error(
         self,
@@ -235,16 +291,21 @@ class TestVoxdRejection:
     log line nobody reads.
     """
 
-    async def test_a_refused_preview_shows_a_notice_and_re_pushes(
+    async def test_a_refused_preview_shows_a_notice_and_corrects_the_scene(
         self, build_runner: Callable[..., PanelRunner]
     ) -> None:
+        # The preview button already shows its optimistic state client-side, so
+        # this refusal must snap it back with a full reinstall (``corrected``),
+        # not the diff-based re-push (``pushed``) that would find nothing to
+        # patch and leave the widget's guess on screen.
         rest = FakeRest()
         service = FakeService(raise_on="preview")
         await build_runner(service, lambda: rest).changed(
             PanelTopic.VOICE_PREVIEW.value, {}
         )  # must not raise
         assert service.rejections == [service.refusal]
-        assert service.pushed == 1
+        assert service.corrected == 1
+        assert service.pushed == 0
 
     async def test_a_refused_preview_is_logged_at_error_with_a_traceback(
         self,

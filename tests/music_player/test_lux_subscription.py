@@ -95,10 +95,15 @@ class _FakeCommands:
 
 @final
 class _FakeOpener:
-    """A ScenePresenter double: counts re-pushes and records surfaced failures."""
+    """A ScenePresenter double: counts installs and refreshes, records failures.
+
+    The two are counted apart on purpose -- an install raises the frame and a
+    refresh must not, so a test that cannot tell them apart cannot see the bug.
+    """
 
     def __init__(self, *, boom: bool = False) -> None:
         self.opens = 0
+        self.refreshes = 0
         self.play_failures: list[AlbumId] = []
         self.stop_failures = 0
         self.transport_failures = 0
@@ -106,6 +111,12 @@ class _FakeOpener:
         self._boom = boom
 
     def notify_changed(self) -> None:
+        self.refreshes += 1
+        if self._boom:
+            msg = "projection blew up"
+            raise RuntimeError(msg)
+
+    async def install(self) -> None:
         self.opens += 1
         if self._boom:
             msg = "projection blew up"
@@ -862,7 +873,9 @@ async def test_on_callback_opens_the_scene_for_the_music_menu() -> None:
 
     await sub.on_callback("music")
 
-    assert opener.opens == 1  # the menu click re-pushes the scene
+    # The click means "show me this window", so it installs -- which raises the
+    # frame -- rather than patching it silently where it already sits.
+    assert (opener.opens, opener.refreshes) == (1, 0)
 
 
 async def test_on_callback_ignores_an_unrelated_callback() -> None:
@@ -888,8 +901,10 @@ async def test_on_callback_survives_a_failing_open(
 
 async def test_on_connect_registers_the_menu_and_repushes_the_scene() -> None:
     # register-fresh (invariant III): a fresh handshake fires on_connect, which BOTH
-    # re-registers the Music menu AND re-pushes the scene -- so a >30s outage that
-    # lapses the lease is healed on the internal reconnect, not only on an outer fault.
+    # re-registers the Music menu AND installs the scene -- so a >30s outage that
+    # lapses the lease is healed on the internal reconnect, not only on an outer
+    # fault. It installs rather than patches because the new connection holds
+    # nothing for a patch to write onto.
     menu = _FakeMenu()
     opener = _FakeOpener()
     sub = LuxSubscription(
@@ -899,7 +914,7 @@ async def test_on_connect_registers_the_menu_and_repushes_the_scene() -> None:
     await sub.on_connect()
 
     assert menu.registered == [("music", "Music")]  # menu re-registered
-    assert opener.opens == 1  # scene re-pushed
+    assert (opener.opens, opener.refreshes) == (1, 0)  # scene installed afresh
 
 
 async def test_on_connect_survives_a_failing_scene_push(

@@ -22,6 +22,7 @@ from punt_lux import HubUnavailableError
 from punt_lux.operations import Ok
 
 from punt_vox.client_errors import VoxdProtocolError
+from punt_vox.panel.control_push import ControlPush
 from punt_vox.types_errors import ConfigValueError
 
 if TYPE_CHECKING:
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
     import pytest
     from punt_lux import RenderRequest, SceneShown
     from punt_lux.hub_client import CallbackHandler, ConnectHandler, EventHandler
-    from punt_lux.operations import OpError
+    from punt_lux.operations import OpError, UpdateRequest
 
     from punt_vox.panel.ports import HubListener
 
@@ -124,13 +125,24 @@ class FakeListener:
 
 @final
 class FakeSceneAccessor:
-    """The ``client.scene`` verbs the panel's push path uses -- ``show`` only."""
+    """The ``client.scene`` verbs the panel's push path uses: ``show`` and ``update``.
+
+    Both are counted, and counted apart: an install raises the frame and a patch
+    must not, so a double that cannot tell them apart cannot see the difference
+    the panel now depends on.
+    """
 
     def __init__(self, outer: FakeRest) -> None:
         self._outer = outer
 
     async def show(self, request: RenderRequest) -> SceneShown | OpError:
         self._outer.rendered_count += 1
+        return cast("SceneShown", Ok())
+
+    async def update(
+        self, scene_id: str, request: UpdateRequest | OpError
+    ) -> SceneShown | OpError:
+        self._outer.patched_count += 1
         return cast("SceneShown", Ok())
 
 
@@ -165,6 +177,7 @@ class FakeRest:
         self.register_result = register_result if register_result is not None else Ok()
         self.registered: list[tuple[str, str]] = []
         self.rendered_count = 0
+        self.patched_count = 0
         self.listener_built: FakeListener | None = None
         self.fail_at = fail_at
         self.error = error if error is not None else HubUnavailableError("down")
@@ -203,8 +216,16 @@ class FakeService:
         self.applied: list[tuple[str, Mapping[str, object]]] = []
         self.apply_returns = True
         self.pushed = 0
+        self.installed = 0
+        self.corrected = 0
         self.recovered: list[str] = []
         self.rejections: list[str] = []
+        self.control_rejections: list[str] = []
+        # The order the leg's two verbs actually ran in for one click -- proof
+        # of sequence, which counts alone (``acknowledged``, ``serviced``)
+        # cannot give: both land at 1 whether the runner calls them in order
+        # or swapped.
+        self.calls: list[str] = []
         self._raise_on = raise_on
 
     def prefetch(self) -> None:
@@ -218,16 +239,20 @@ class FakeService:
         self.prefetch_called = True
 
     async def acknowledge(self, client: object, latency: object) -> None:
+        self.calls.append("acknowledge")
         self.acknowledged += 1
+        await self.install_scene(client)
 
     async def service(self, client: object, latency: object) -> None:
         if self._raise_on == "service":
             raise VoxdProtocolError(self.refusal)
         if self._raise_on == "unexpected":
             raise RuntimeError(_BUG)
+        self.calls.append("service")
         self.serviced += 1
+        await self.push_scene(client)
 
-    def apply_event(self, topic: str, payload: Mapping[str, object]) -> bool:
+    def apply_event(self, topic: str, payload: Mapping[str, object]) -> ControlPush:
         if self._raise_on == "apply":
             msg = "bad payload"
             raise TypeError(msg)
@@ -245,13 +270,22 @@ class FakeService:
         if self._raise_on == "unexpected":
             raise RuntimeError(_BUG)
         self.applied.append((topic, payload))
-        return self.apply_returns
+        return ControlPush.REFRESH if self.apply_returns else ControlPush.NONE
 
     async def push_scene(self, client: object) -> None:
         self.pushed += 1
+
+    async def install_scene(self, client: object) -> None:
+        self.installed += 1
+
+    async def correct_scene(self, client: object) -> None:
+        self.corrected += 1
 
     def recover_from_write_failure(self, field: str) -> None:
         self.recovered.append(field)
 
     def note_rejection(self, detail: str) -> None:
         self.rejections.append(detail)
+
+    def note_control_rejected(self, topic: str) -> None:
+        self.control_rejections.append(topic)

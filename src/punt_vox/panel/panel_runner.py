@@ -21,10 +21,11 @@ would split one story across two.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Self, final
+from typing import TYPE_CHECKING, Self, assert_never, final
 
 from punt_lux.applets import ClickLatency
 
+from punt_vox.panel.control_push import ControlPush
 from punt_vox.panel.topics import PanelTopic
 from punt_vox.types_errors import ConfigValueError
 
@@ -110,33 +111,79 @@ class PanelRunner:
         latency.report()
 
     async def _apply(self, topic: str, payload: Mapping[str, object]) -> None:
-        async with self._guard.rejection(f"a control change on {topic}"):
-            if await asyncio.to_thread(self._applied, topic, payload):
-                await self._guard.repush()
+        async with self._guard.control_rejection(f"a control change on {topic}"):
+            match await asyncio.to_thread(self._applied, topic, payload):
+                case ControlPush.REFRESH:
+                    await self._guard.repush()
+                case ControlPush.CORRECT:
+                    await self._guard.correct()
+                case ControlPush.NONE:
+                    pass
+                case _ as unreachable:
+                    # A future ControlPush member with no case above must
+                    # fail loudly here rather than silently no-op -- the
+                    # match is exhaustive over today's three members only.
+                    assert_never(unreachable)
 
-    def _applied(self, topic: str, payload: Mapping[str, object]) -> bool:
-        """Apply one control event; answer whether the scene needs a re-push.
+    def _applied(self, topic: str, payload: Mapping[str, object]) -> ControlPush:
+        """Apply one control event; answer what kind of re-push it needs.
 
-        Every failure handled here answers yes: the widget already shows the
-        change optimistically, so the still-true held scene has to go back
-        out to snap it back. A refusal from voxd is deliberately not handled
-        here -- the :class:`~punt_vox.panel.panel_guard.PanelGuard` rejection
-        guard around the caller owns that one.
+        Every failure handled here answers :attr:`~ControlPush.CORRECT`: the
+        widget already shows the change optimistically, and a diff against the
+        last render this session successfully pushed sees nothing to fix --
+        only a full reinstall (see
+        :meth:`~punt_vox.panel.panel_push.PanelPush.correct`) snaps it back. A
+        refusal from voxd is deliberately not handled here -- the
+        :class:`~punt_vox.panel.panel_guard.PanelGuard` rejection guard around
+        the caller owns that one, and answers the same way.
 
         Order matters between the two buckets: ``ConfigValueError`` is a
         ``ValueError``, so catching it second would file a change the user
         really chose as a malformed event and revert it with no notice.
+
+        Both buckets name the topic to the user through
+        :attr:`~punt_vox.panel.topics.PanelTopic.label`, never the wire
+        value: "that vox.model change was refused" reads out an identifier
+        that means nothing outside this codebase. Each resolves the topic
+        *inside* its own handler rather than once above the ``try``, so a
+        topic this panel does not own still reaches ``apply_event``, which
+        logs it and answers :attr:`~ControlPush.NONE`. Resolving first
+        turned that handled case into an unhandled one -- ``PanelTopic``
+        refuses the unknown value, and the refusal escapes both handlers.
         """
         try:
-            return self._service.apply_event(topic, payload)
+            changed = self._service.apply_event(topic, payload)
         except (ConfigValueError, OSError):
-            field = PanelTopic(topic).field_name
+            control = PanelTopic(topic)
             self._logger.exception(
-                "vox-panel: the %s change did not stick; correcting the scene", field
+                "vox-panel: the %s change did not stick; correcting the scene",
+                control.label,
             )
-            self._service.recover_from_write_failure(field)
+            self._recover(control)
+            return ControlPush.CORRECT
         except (TypeError, ValueError):
             self._logger.exception(
                 "vox-panel: rejected control event on %s: %r", topic, payload
             )
-        return True
+            # The widget already moved to the value the user picked, and the
+            # correction below snaps it back. Saying nothing while that
+            # happens is the worst of both: the setting visibly reverts and
+            # the only account of why is a daemon log the user cannot read.
+            self._service.note_control_rejected(PanelTopic(topic).label)
+            return ControlPush.CORRECT
+        return changed
+
+    def _recover(self, control: PanelTopic) -> None:
+        """Re-sync from the real settings after *control*'s config write failed.
+
+        Only a topic that commits a field has a field to revert to. A
+        preview reaches here through its own fresh read of the store, so a
+        malformed config faults it with nothing written and nothing to
+        recover -- asking for "the field that did not stick" would raise
+        while handling the failure and strand the widget with no notice at
+        all.
+        """
+        if control.writes_field:
+            self._service.recover_from_write_failure(control.field_name)
+        else:
+            self._service.note_control_rejected(control.label)

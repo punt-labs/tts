@@ -6,14 +6,15 @@ import threading
 from typing import TYPE_CHECKING, cast, final
 
 import pytest
-from punt_lux import OpError
-from punt_lux.operations import Ok
+from punt_lux import HubUnavailableError, OpError
+from punt_lux.operations import FrameRaise, Ok
 
 from punt_vox.client_errors import (
     VoxdConnectionError,
     VoxdProtocolError,
     VoxdRejectionError,
 )
+from punt_vox.panel.control_push import ControlPush
 from punt_vox.panel.panel_notice import PanelNotice
 from punt_vox.panel.service import VoxPanelService
 from punt_vox.panel.state import PanelState
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     from punt_lux import LuxClient, RenderRequest, SceneShown
     from punt_lux.applets import ClickLatency
     from punt_lux.hub_client import CallbackHandler, ConnectHandler, EventHandler
+    from punt_lux.operations import UpdateRequest
 
     from punt_vox.client import SynthesizeResult
     from punt_vox.config import VoxConfig
@@ -97,6 +99,16 @@ class _FakeSceneAccessor:
         self._outer.rendered.append(request)
         return cast("SceneShown", Ok())
 
+    async def update(
+        self, scene_id: str, request: UpdateRequest | OpError
+    ) -> SceneShown | OpError:
+        if self._outer._refuse:
+            return OpError(code="rejected", reason="no display")
+        if isinstance(request, OpError):
+            return request
+        self._outer.patched.append(request.to_wire())
+        return cast("SceneShown", Ok())
+
 
 @final
 class _FakeCallbackAccessor:
@@ -105,14 +117,61 @@ class _FakeCallbackAccessor:
 
 
 @final
+class _FakeFrameAccessor:
+    """Records every ``raise_`` call, answering each with a successful raise."""
+
+    def __init__(self) -> None:
+        self.raised: list[str] = []
+
+    async def raise_(self, frame_id: str) -> FrameRaise | OpError:
+        self.raised.append(frame_id)
+        return FrameRaise(frame_id=frame_id, raised=True)
+
+
+@final
+class _DownSceneAccessor:
+    """What a stopped luxd looks like from the panel's push path."""
+
+    async def show(self, request: RenderRequest | OpError) -> SceneShown | OpError:
+        raise HubUnavailableError("luxd is not running")
+
+    async def update(
+        self, scene_id: str, request: UpdateRequest | OpError
+    ) -> SceneShown | OpError:
+        raise HubUnavailableError("luxd is not running")
+
+
+@final
+class _DownRest:
+    def __init__(self) -> None:
+        self.scene = _DownSceneAccessor()
+        self.callback = _FakeCallbackAccessor()
+
+    def listener(
+        self,
+        *,
+        on_callback: CallbackHandler,
+        on_event: EventHandler,
+        on_connect: ConnectHandler | None = None,
+    ) -> HubListener:
+        raise NotImplementedError
+
+
+@final
 class _FakeRest:
-    """A ``PanelRestClient`` double that only needs ``scene.show`` for these tests."""
+    """A ``PanelRestClient`` double recording shows and patches apart.
+
+    They are recorded apart because they mean different things on screen: a show
+    raises the frame, a patch must leave it exactly where the user put it.
+    """
 
     def __init__(self, *, refuse: bool = False) -> None:
         self._refuse = refuse
         self.rendered: list[RenderRequest] = []
+        self.patched: list[list[dict[str, object]]] = []
         self.scene = _FakeSceneAccessor(self)
         self.callback = _FakeCallbackAccessor()
+        self.frame = _FakeFrameAccessor()
 
     def listener(
         self,
@@ -151,6 +210,31 @@ def _config(
         vibe=None,
         vibe_tags=None,
     )
+
+
+def _openai_index() -> int:
+    """Return the combo index a click on the ``openai`` provider carries.
+
+    One past its position in the enum: every non-empty combo is rendered
+    with a leading ``(none)`` entry, so the real choices start at 1.
+    """
+    from punt_vox.server_switches import PROVIDER_NAMES
+
+    return PROVIDER_NAMES.index("openai") + 1
+
+
+def _selected(request: RenderRequest, element_id: str) -> object:
+    """Return ``element_id``'s ``selected`` field from a full render, or raise.
+
+    A full :class:`~punt_lux.RenderRequest` always carries every element, so a
+    missing id is a test-setup bug, not a legitimate absence -- raise rather
+    than return ``None`` and let a typo read as a false failure two lines away.
+    """
+    for element in request.elements:
+        if element.get("id") == element_id:
+            return element["selected"]
+    msg = f"no {element_id!r} element in the render"
+    raise AssertionError(msg)
 
 
 class TestPrefetch:
@@ -205,7 +289,7 @@ class TestApplyEvent:
     def test_notify_writes_the_code_and_updates_state(self) -> None:
         service = VoxPanelService(_FakeDaemonClient(), (store := _FakeStore(_config())))
         changed = service.apply_event(PanelTopic.NOTIFY, {"value": 2})
-        assert changed is True
+        assert changed is ControlPush.REFRESH
         assert store.written["notify"] == "c"
         assert service.scene().notify == "c"
 
@@ -218,7 +302,7 @@ class TestApplyEvent:
     def test_voice_writes_the_name_and_updates_state(self) -> None:
         service = VoxPanelService(_FakeDaemonClient(), (store := _FakeStore(_config())))
         service.prefetch()
-        service.apply_event(PanelTopic.VOICE, {"value": 0})
+        service.apply_event(PanelTopic.VOICE, {"value": 1})
         assert store.written["voice"] == "aria"
         assert service.scene().voice == "aria"
 
@@ -227,7 +311,7 @@ class TestApplyEvent:
         service = VoxPanelService(client, _FakeStore(_config()))
         service.prefetch()
         changed = service.apply_event(PanelTopic.VOICE_PREVIEW, {})
-        assert changed is False
+        assert changed is ControlPush.NONE
         # The preview spec now fills provider from state through SessionSpec,
         # so the wire message carries the configured provider alongside the
         # candidate voice -- previously the preview sent no provider at all
@@ -238,12 +322,43 @@ class TestApplyEvent:
         )
         assert client.synth_calls == [expected]
 
-    def test_voice_preview_with_no_voice_selected_is_a_silent_no_op(self) -> None:
+    def test_voice_preview_with_no_voice_selected_says_so(self) -> None:
+        """A ▶ press that plays nothing must not also change nothing on screen.
+
+        Skipping in silence gave the user a button that swallowed the click:
+        no audio, no notice, no scene change, and only a daemon log line
+        recording that anything happened at all.
+        """
         client = _FakeDaemonClient()
         service = VoxPanelService(client, _FakeStore(_config(voice=None)))
         service.prefetch()
-        service.apply_event(PanelTopic.VOICE_PREVIEW, {})
+        changed = service.apply_event(PanelTopic.VOICE_PREVIEW, {})
         assert client.synth_calls == []
+        assert changed is ControlPush.REFRESH
+        assert service.scene().notice == PanelNotice.no_voice_selected()
+
+    def test_a_heard_preview_clears_a_stale_voxd_warning(self) -> None:
+        """Audio the user just heard is proof the warning about voxd is stale.
+
+        The preview is the one action that proves voxd answered, so leaving
+        a "voxd is unreachable" line standing after one plays contradicts
+        the evidence in the user's ears.
+        """
+        client = _FakeDaemonClient()
+        service = VoxPanelService(client, _FakeStore(_config()))
+        service.prefetch()
+        service.note_rejection("voxd said no")
+        assert service.scene().notice.is_present
+
+        changed = service.apply_event(PanelTopic.VOICE_PREVIEW, {})
+
+        assert changed is ControlPush.REFRESH
+        assert service.scene().notice == PanelNotice.silent()
+        assert len(client.synth_calls) == 1
+        # The already-silent case is the complementary branch, and
+        # ``test_voice_preview_does_not_write_and_reports_no_repush`` above
+        # already pins it: a heard preview over a clean band asks for
+        # nothing.
 
     def test_voice_preview_survives_an_unavailable_voxd(self) -> None:
         client = _FakeDaemonClient(raise_on_synth=True)
@@ -251,7 +366,7 @@ class TestApplyEvent:
         service.prefetch()
         # Must not raise -- a preview failure is logged, never propagated.
         changed = service.apply_event(PanelTopic.VOICE_PREVIEW, {})
-        assert changed is True
+        assert changed is ControlPush.REFRESH
         assert service.scene().notice == PanelNotice.voxd_unavailable()
 
     def test_provider_writes_the_name_and_cascades_model_and_voice(self) -> None:
@@ -261,7 +376,7 @@ class TestApplyEvent:
             (store := _FakeStore(_config(provider="elevenlabs", model="eleven_v3"))),
         )
         service.prefetch()
-        service.apply_event(PanelTopic.PROVIDER, {"value": 1})  # openai
+        service.apply_event(PanelTopic.PROVIDER, {"value": 2})  # openai
         assert store.written["provider"] == "openai"
         # Model cascades to MODEL_TABLE.available("openai")[0].
         assert store.written["model"] == "tts-1"
@@ -286,7 +401,7 @@ class TestApplyEvent:
         )
         service.prefetch()
         # espeak has index 4 in PROVIDER_NAMES (elevenlabs, openai, polly, say, espeak).
-        service.apply_event(PanelTopic.PROVIDER, {"value": 4})
+        service.apply_event(PanelTopic.PROVIDER, {"value": 5})
         scene = service.scene()
         assert scene.provider == "espeak"
         assert scene.roster == ("en", "en-us")
@@ -311,7 +426,7 @@ class TestApplyEvent:
             (store := _FakeStore(_config(voice="benno", provider="elevenlabs"))),
         )
         service.prefetch()
-        service.apply_event(PanelTopic.PROVIDER, {"value": 4})  # espeak
+        service.apply_event(PanelTopic.PROVIDER, {"value": 5})  # espeak
         assert store.written["voice"] == "en"
         assert service.scene().voice == "en"
 
@@ -332,7 +447,7 @@ class TestApplyEvent:
             client, (store := _FakeStore(_config(voice="alloy", provider="openai")))
         )
         service.prefetch()
-        service.apply_event(PanelTopic.PROVIDER, {"value": 3})  # say
+        service.apply_event(PanelTopic.PROVIDER, {"value": 4})  # say
         assert store.written["voice"] == "alloy"  # say roster[0]
         assert service.scene().voice == "alloy"
 
@@ -344,12 +459,49 @@ class TestApplyEvent:
         )
         service.prefetch()
         client.roster_reads_by_provider.clear()
-        service.apply_event(PanelTopic.PROVIDER, {"value": 0})  # elevenlabs (same)
+        service.apply_event(PanelTopic.PROVIDER, {"value": 1})  # elevenlabs (same)
         assert "provider" not in store.written
         assert "voice" not in store.written
         # And no wasteful roster refetch for a no-op switch.
         assert client.roster_reads_by_provider == []
         assert service.scene().voice == "benno"
+
+    def test_provider_no_op_clearing_a_stale_notice_asks_for_a_repush(self) -> None:
+        """Clearing a displayed notice IS a scene change, so it needs a push.
+
+        A re-publish of the already-selected provider writes nothing, but it
+        does wipe whatever warning the notice band was showing. Answering
+        ``NONE`` there left that wipe stranded in daemon memory: the runner
+        pushes nothing, and the display goes on rendering a warning the panel
+        no longer holds.
+        """
+        client = _FakeDaemonClient(voices_by_provider={"elevenlabs": ["benno", "aria"]})
+        service = VoxPanelService(
+            client, (store := _FakeStore(_config(voice="benno", provider="elevenlabs")))
+        )
+        service.prefetch()
+        service.note_rejection("voxd said no")
+        assert service.scene().notice.is_present
+
+        changed = service.apply_event(PanelTopic.PROVIDER, {"value": 1})  # same
+
+        assert changed is ControlPush.REFRESH
+        assert service.scene().notice == PanelNotice.silent()
+        assert "provider" not in store.written
+
+    def test_provider_no_op_over_a_silent_panel_asks_for_nothing(self) -> None:
+        """With no notice to clear, the same re-publish really is a no-op."""
+        client = _FakeDaemonClient(voices_by_provider={"elevenlabs": ["benno", "aria"]})
+        service = VoxPanelService(
+            client, (store := _FakeStore(_config(voice="benno", provider="elevenlabs")))
+        )
+        service.prefetch()
+        assert not service.scene().notice.is_present
+
+        changed = service.apply_event(PanelTopic.PROVIDER, {"value": 1})  # same
+
+        assert changed is ControlPush.NONE
+        assert "provider" not in store.written
 
     def test_provider_roster_wire_rejection_surfaces_reason_verbatim(self) -> None:
         """A daemon-sent rejection during a roster fetch shows voxd's reason.
@@ -380,7 +532,7 @@ class TestApplyEvent:
             (store := _FakeStore(_config(voice="benno", provider="elevenlabs"))),
         )
         service.prefetch()
-        service.apply_event(PanelTopic.PROVIDER, {"value": 1})  # openai
+        service.apply_event(PanelTopic.PROVIDER, {"value": 2})  # openai
         assert "provider" not in store.written
         assert "voice" not in store.written
         notice = service.scene().notice
@@ -438,7 +590,12 @@ class TestApplyEvent:
             (store := _FakeStore(_config(voice="benno", provider="elevenlabs"))),
         )
         service.prefetch()
-        service.apply_event(PanelTopic.PROVIDER, {"value": 4})  # espeak
+        changed = service.apply_event(PanelTopic.PROVIDER, {"value": 5})  # espeak
+        # The widget already applied "espeak" optimistically the instant the
+        # click fired; ``_state`` never moved, so only a full reinstall
+        # (``ControlPush.CORRECT``) snaps it back -- a ``REFRESH`` diff
+        # against the last confirmed render has nothing to patch.
+        assert changed is ControlPush.CORRECT
         assert "provider" not in store.written
         assert "voice" not in store.written
         assert service.scene().notice == PanelNotice.voxd_unavailable()
@@ -485,7 +642,14 @@ class TestApplyEvent:
         )
         ref.append(service)
         service.prefetch()
-        service.apply_event(PanelTopic.PROVIDER, {"value": 4})  # ask for espeak
+        changed = service.apply_event(
+            PanelTopic.PROVIDER, {"value": 5}
+        )  # ask for espeak
+        # The widget already shows "espeak"; ``_state`` landed on "openai"
+        # instead, via the race, so a diff against the last confirmed render
+        # would find "espeak" already there and skip it. Only a full
+        # reinstall (``ControlPush.CORRECT``) snaps the widget back.
+        assert changed is ControlPush.CORRECT
         # The racing "openai" write happened during our roster RPC. We must
         # NOT write espeak on top of it.
         assert "provider" not in store.written
@@ -495,12 +659,83 @@ class TestApplyEvent:
     def test_model_writes_the_name_and_updates_state(self) -> None:
         service = VoxPanelService(
             _FakeDaemonClient(),
+            (store := _FakeStore(_config(provider="openai", model="tts-1"))),
+        )
+        service.prefetch()
+        service.apply_event(PanelTopic.MODEL, {"value": 2})  # tts-1-hd
+        assert store.written["model"] == "tts-1-hd"
+        assert service.scene().model == "tts-1-hd"
+
+    def test_model_click_indexes_past_the_sentinel(self) -> None:
+        """The combo always leads with ``(none)``, so 1 is the first model.
+
+        The service resolves the click through the same ``ChoiceList`` the
+        scene was rendered from, and that list leads with the sentinel
+        whether or not a model is chosen -- so the offset cannot differ
+        between the render and the click that answers it.
+        """
+        service = VoxPanelService(
+            _FakeDaemonClient(),
+            (store := _FakeStore(_config(provider="openai", model=None))),
+        )
+        service.prefetch()
+        service.apply_event(PanelTopic.MODEL, {"value": 1})
+        assert store.written["model"] == "tts-1"
+
+    def test_model_click_with_no_provider_selected_corrects(self) -> None:
+        """A model commit dispatched before any provider is chosen is abandoned.
+
+        ``apply_event``'s own ``_model_for`` guard already refuses a MODEL
+        click with no provider selected (an empty model list makes
+        ``ModelControl`` raise before ``_commit_model`` runs), so this drives
+        ``_commit_model`` directly -- the same private entry point the
+        mid-fetch race tests below reach into -- to prove its own no-provider
+        guard also answers :attr:`~ControlPush.CORRECT`: the widget already
+        applied the pick optimistically and ``_state`` never moves, so only a
+        full reinstall snaps it back.
+        """
+        service = VoxPanelService(
+            _FakeDaemonClient(), (store := _FakeStore(_config(provider=None)))
+        )
+        service.prefetch()
+        changed = service._commit_model("tts-1")
+        assert changed is ControlPush.CORRECT
+        assert "model" not in store.written
+        assert "voice" not in store.written
+
+    def test_model_roster_fetch_error_aborts_the_write(self) -> None:
+        """VoxdConnectionError on the model-switch roster fetch aborts the commit.
+
+        Mirrors ``test_provider_roster_fetch_error_aborts_the_write``: the
+        disk must never land a model whose companion voice we could not
+        read, and the widget's optimistic pick needs a full reinstall
+        (``ControlPush.CORRECT``), not a diff that finds nothing changed.
+        """
+
+        class _RosterFailingClient:
+            call_count = 0
+
+            def voices(self, provider: str | None = None) -> list[str]:
+                self.call_count += 1
+                if self.call_count > 1:  # first call is the prefetch
+                    msg = "voxd unreachable"
+                    raise VoxdConnectionError(msg)
+                return ["benno", "aria"]
+
+            def synthesize(self, *args: object, **kwargs: object) -> object:
+                raise NotImplementedError
+
+        client = _RosterFailingClient()
+        service = VoxPanelService(
+            client,  # type: ignore[arg-type]
             (store := _FakeStore(_config(provider="openai"))),
         )
         service.prefetch()
-        service.apply_event(PanelTopic.MODEL, {"value": 1})  # tts-1-hd
-        assert store.written["model"] == "tts-1-hd"
-        assert service.scene().model == "tts-1-hd"
+        changed = service.apply_event(PanelTopic.MODEL, {"value": 2})  # tts-1-hd
+        assert changed is ControlPush.CORRECT
+        assert "model" not in store.written
+        assert "voice" not in store.written
+        assert service.scene().notice == PanelNotice.voxd_unavailable()
 
     def test_model_yields_when_provider_changed_mid_fetch(self) -> None:
         """A mid-flight competing provider commit wins; this model commit gives up.
@@ -539,7 +774,13 @@ class TestApplyEvent:
         )
         ref.append(service)
         service.prefetch()
-        service.apply_event(PanelTopic.MODEL, {"value": 1})  # tts-1-hd (arbitrary)
+        changed = service.apply_event(
+            PanelTopic.MODEL, {"value": 2}
+        )  # tts-1-hd (arbitrary)
+        # The widget already shows "tts-1-hd"; ``_state`` landed on "espeak"
+        # instead, via the race, so only a full reinstall
+        # (``ControlPush.CORRECT``) snaps the widget back.
+        assert changed is ControlPush.CORRECT
         # The racing "espeak" write happened mid-fetch. We MUST NOT write
         # a model + old-provider voice on top of it.
         assert "model" not in store.written
@@ -607,7 +848,7 @@ class TestApplyEvent:
 
     def test_unknown_topic_is_ignored(self) -> None:
         service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
-        assert service.apply_event("vox.unknown", {}) is False
+        assert service.apply_event("vox.unknown", {}) is ControlPush.NONE
 
     @pytest.mark.parametrize("payload", [{}, {"value": "not-an-int"}, {"value": True}])
     def test_missing_or_wrong_typed_value_raises(
@@ -631,6 +872,163 @@ class TestPushScene:
         await service.push_scene(
             cast("LuxClient", _FakeRest(refuse=True))
         )  # must not raise
+
+    async def test_a_refusal_disarms_so_the_next_push_installs(self) -> None:
+        # luxd kept whatever it had, so what we believe is installed is a guess;
+        # patching against that guess would write onto the wrong tree.
+        service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
+        await service.push_scene(cast("LuxClient", _FakeRest(refuse=True)))
+
+        rest = _FakeRest()
+        await service.push_scene(cast("LuxClient", rest))
+
+        assert len(rest.rendered) == 1
+        assert rest.patched == []
+
+    async def test_an_absent_luxd_disarms_and_propagates(self) -> None:
+        # The outage guard around the caller owns the throttled reporting, so the
+        # error has to reach it -- but the live scene forgets first.
+        service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
+        with pytest.raises(HubUnavailableError):
+            await service.push_scene(cast("LuxClient", _DownRest()))
+
+        rest = _FakeRest()
+        await service.push_scene(cast("LuxClient", rest))
+
+        assert len(rest.rendered) == 1  # installed on the fresh connection
+        assert rest.patched == []
+
+
+class TestRefreshDoesNotReinstall:
+    async def test_a_second_push_of_a_changed_scene_patches(self) -> None:
+        # The reported defect: every control change re-showed the panel, which
+        # raises its frame -- so a radio click yanked the window forward.
+        service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
+        rest = _FakeRest()
+
+        await service.push_scene(cast("LuxClient", rest))
+        service.apply_event(PanelTopic.NOTIFY, {"value": 1})
+        await service.push_scene(cast("LuxClient", rest))
+
+        assert len(rest.rendered) == 1  # NOT re-installed
+        assert [entry["id"] for entry in rest.patched[0]] == ["vox.panel.notify"]
+
+    async def test_an_unchanged_scene_puts_nothing_on_the_wire(self) -> None:
+        service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
+        rest = _FakeRest()
+
+        await service.push_scene(cast("LuxClient", rest))
+        await service.push_scene(cast("LuxClient", rest))
+
+        assert len(rest.rendered) == 1
+        assert rest.patched == []
+
+    async def test_a_provider_change_patches_the_model_combo_in_one_batch(self) -> None:
+        # The model list changes with the provider, so items and selected move
+        # together. combo validates selected against items after the whole batch,
+        # so one batch is both correct and order-insensitive.
+        store = _FakeStore(_config(provider="elevenlabs", model="eleven_flash_v2_5"))
+        service = VoxPanelService(_FakeDaemonClient(), store)
+        service.refresh()
+        rest = _FakeRest()
+        await service.push_scene(cast("LuxClient", rest))
+
+        service.apply_event(PanelTopic.PROVIDER, {"value": _openai_index()})
+        await service.push_scene(cast("LuxClient", rest))
+
+        model = next(
+            entry for entry in rest.patched[0] if entry["id"] == "vox.panel.model"
+        )
+        assert set(cast("dict[str, object]", model["set"])) == {"items", "selected"}
+
+
+class TestInstallScene:
+    async def test_install_shows_even_when_nothing_changed(self) -> None:
+        # The Vox menu entry's whole job: bring the window forward.
+        service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
+        rest = _FakeRest()
+
+        await service.push_scene(cast("LuxClient", rest))
+        await service.install_scene(cast("LuxClient", rest))
+
+        assert len(rest.rendered) == 2
+        assert rest.patched == []
+        # DES-072 addendum: ``show`` alone does not reliably raise a frame the
+        # scene is not new to -- ``install_scene`` must ALSO raise explicitly.
+        assert rest.frame.raised == ["vox.panel"]
+
+
+class TestCorrectScene:
+    """vox-h777 regression: a failure snap-back must reassert the control field.
+
+    ``push_scene`` (the diff-based refresh) computes its patch against the
+    last render this session successfully pushed -- which, after any of
+    these failures, is exactly what the corrective render says again, save
+    for the notice (or, in the malformed-payload case, not even that). A
+    diff sees nothing changed and skips the control's field entirely, so
+    the optimistic value the widget already applied client-side never gets
+    corrected. ``correct_scene`` must disarm and reinstall in full instead.
+    """
+
+    async def test_a_write_failure_snap_back_reasserts_the_control_on_the_wire(
+        self,
+    ) -> None:
+        class _AlwaysFailsToWrite:
+            def read(self) -> VoxConfig:
+                return _config()
+
+            def write_field(self, key: str, value: str) -> None:
+                msg = "disk full"
+                raise OSError(msg)
+
+            def write_fields(self, updates: dict[str, str]) -> None:
+                msg = "disk full"
+                raise OSError(msg)
+
+        service = VoxPanelService(_FakeDaemonClient(), _AlwaysFailsToWrite())
+        service.refresh()
+        rest = _FakeRest()
+
+        # notify="y" is index 1 in NOTIFY_SPEC's codes ("n", "y", "c").
+        await service.push_scene(cast("LuxClient", rest))
+        assert _selected(rest.rendered[0], "vox.panel.notify") == 1
+
+        # The user clicks "Continuous" (index 2); the widget applies that
+        # optimistically the instant it fires. The write to disk then fails,
+        # so vox's own model never moves off "y"/index 1.
+        with pytest.raises(OSError, match="disk full"):
+            service.apply_event(PanelTopic.NOTIFY, {"value": 2})
+        service.recover_from_write_failure("notify")
+
+        await service.correct_scene(cast("LuxClient", rest))
+
+        # A full reinstall, not a patch: the corrective render is otherwise
+        # byte-identical to the one already pushed -- only the notice moved
+        # -- so a diff-based push would find no reason to touch "selected"
+        # at all. Only a full install unconditionally reasserts it, snapping
+        # the widget back from the "Continuous" it never really landed.
+        assert len(rest.rendered) == 2
+        assert rest.patched == []
+        assert _selected(rest.rendered[1], "vox.panel.notify") == 1
+
+    async def test_a_correction_reinstalls_even_when_nothing_at_all_changed(
+        self,
+    ) -> None:
+        # The malformed-event branch sets no notice and touches no state, so
+        # the corrective render is not merely unpatchable -- it is byte-
+        # identical to the last one pushed. A diff-based push would plan a
+        # ``NoPush`` and put nothing at all on the wire; a correction must
+        # still reinstall, because the widget's own guess is still wrong.
+        service = VoxPanelService(_FakeDaemonClient(), _FakeStore(_config()))
+        service.refresh()
+        rest = _FakeRest()
+
+        await service.push_scene(cast("LuxClient", rest))
+        await service.correct_scene(cast("LuxClient", rest))
+
+        assert len(rest.rendered) == 2
+        assert rest.patched == []
+        assert _selected(rest.rendered[1], "vox.panel.notify") == 1
 
 
 class TestRefreshAndRecover:
@@ -781,6 +1179,7 @@ class TestAcknowledgeAndService:
         rest = _FakeRest()
         await service.acknowledge(cast("LuxClient", rest), ClickLatency("vox-panel"))
         assert len(rest.rendered) == 1
+        assert rest.frame.raised == ["vox.panel"]  # the click's frame raise
 
     async def test_service_refreshes_then_pushes(self) -> None:
         from punt_lux.applets import ClickLatency

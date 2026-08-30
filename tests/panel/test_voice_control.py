@@ -23,8 +23,8 @@ class TestToDict:
         assert wire["layout"] == "columns"
         combo, button = _children(wire)
         assert combo["kind"] == "combo"
-        assert combo["items"] == ["aria", "roger"]
-        assert combo["selected"] == 1
+        assert combo["items"] == ["(none)", "aria", "roger"]
+        assert combo["selected"] == 2
         assert combo["handlers"] == [
             {"event": "changed", "publish": [PanelTopic.VOICE.value]}
         ]
@@ -43,14 +43,40 @@ class TestToDict:
         combo, _ = _children(control.to_dict())
         assert combo["selected"] == 0
 
+    def test_an_empty_roster_renders_both_halves_inert(self) -> None:
+        """Nothing to pick and nothing to preview means nothing to click.
+
+        A session whose provider offers no roster used to get a combo with
+        an empty item list carrying a live ``changed`` handler, beside a ▶
+        button that published a preview of a voice the panel did not hold.
+        Both looked functional; neither did anything a user could see.
+        """
+        control = VoiceControl(roster=(), current=None)
+        combo, button = _children(control.to_dict())
+        assert combo["items"] == ["(no voices)"]
+        assert combo["selected"] == 0
+        assert "handlers" not in combo
+        assert button["label"] == "▶"
+        assert "publish" not in button
+
 
 class TestVoiceForIndex:
-    def test_valid_index_returns_its_voice(self) -> None:
-        control = VoiceControl(roster=("aria", "roger"), current=None)
-        assert control.voice_for_index(1) == "roger"
+    @pytest.mark.parametrize("current", [None, "aria", "roger"])
+    def test_the_roster_starts_at_one_whatever_is_chosen(
+        self, current: str | None
+    ) -> None:
+        """Index 0 is always ``(none)``, so the offset never depends on state."""
+        control = VoiceControl(roster=("aria", "roger"), current=current)
+        assert control.voice_for_index(1) == "aria"
+        assert control.voice_for_index(2) == "roger"
 
-    @pytest.mark.parametrize("index", [-1, 2])
-    def test_out_of_range_index_raises(self, index: int) -> None:
+    def test_clicking_the_sentinel_itself_is_refused(self) -> None:
         control = VoiceControl(roster=("aria", "roger"), current=None)
+        with pytest.raises(ValueError, match="out of range"):
+            control.voice_for_index(0)
+
+    @pytest.mark.parametrize("index", [-1, 3])
+    def test_out_of_range_index_raises(self, index: int) -> None:
+        control = VoiceControl(roster=("aria", "roger"), current="aria")
         with pytest.raises(ValueError, match="out of range"):
             control.voice_for_index(index)
