@@ -3476,7 +3476,13 @@ traces/metrics.
   subsequent tools stay intact — but the interrupted call's result is
   deterministically dropped from the LLM context (recoverable by re-ask).
   E+ mitigation: idempotent client tools plus a `voxd`-side result cache
-  so a post-interruption re-invocation is instant.
+  so a post-interruption re-invocation is instant. For the evidence
+  trail: the automated adjudicator's committed verdict artifacts
+  (`results/verdict_barge_in_*.json`) record FAIL on the recall
+  criterion — the dropped result is exactly what they detect — and the
+  operator ruled that recoverable loss acceptable on 2026-08-29; the
+  PASS here is that ruling layered over the machine verdict, not a
+  contradiction of it.
 - **New requirements surfaced for DES-068:** the live capture leg needs
   acoustic echo cancellation (open speakers without AEC produce a
   self-interruption feedback loop); seeds of 1KB/10KB/50KB were all
