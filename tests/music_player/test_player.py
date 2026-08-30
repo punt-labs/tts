@@ -227,6 +227,23 @@ class TestInstallSurvivesARefreshFailure:
 
         assert len(publisher.installed) == 1
 
+    async def test_install_still_shows_the_window_on_a_corrupt_manifest(
+        self, album_of: AlbumFactory
+    ) -> None:
+        # A corrupt on-disk manifest surfaces as ValueError (AlbumManifest.
+        # from_json's documented contract), not OSError -- _try_refresh_cache
+        # must catch both, or this is exactly as fatal to the menu click as
+        # the unguarded OSError case above used to be.
+        album = album_of(
+            "aa11bb", name="Techno Mix", fails_with=ValueError("corrupt manifest")
+        )
+        publisher = _CapturingPublisher()
+        player = MusicPlayer(_FakeService(ProgramStatus.idle(), (album,)), publisher)
+
+        await player.install()  # must not raise
+
+        assert len(publisher.installed) == 1
+
     async def test_a_warning_install_clears_is_not_resurrected_by_a_refresh_in_flight(
         self, album_of: AlbumFactory
     ) -> None:
@@ -338,8 +355,9 @@ class TestTrackCountsNeverBlockTheHotPath:
         self, album_of: AlbumFactory
     ) -> None:
         # One per completed Part could mean many notify_changed calls in a
-        # row; they must coalesce onto whichever refresh is already in
-        # flight rather than queueing an unbounded pile of disk reads.
+        # row; every one after the first must be dropped outright while a
+        # refresh is already in flight, rather than queueing an unbounded
+        # pile of disk reads.
         album = album_of("aa11bb", tracks=0, on_disk=9)
         publisher = _CapturingPublisher()
         player = MusicPlayer(_FakeService(ProgramStatus.idle(), (album,)), publisher)

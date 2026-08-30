@@ -184,9 +184,13 @@ class MusicPlayer:
         """Best-effort: warm the cache off the hot path, then resubmit if it changes.
 
         Single-flighted via :attr:`_refresher`: a burst of state changes (one
-        per completed Part) coalesces onto whichever refresh is in flight, the
-        same "latest wins" shape :class:`~punt_vox.voxd.music_player.
-        scene_mailbox.SceneMailbox` already uses for the lux push itself.
+        per completed Part) that arrives while a refresh is already in flight
+        is dropped outright, not merged with it -- safe here only because
+        :meth:`_refresh_track_counts` re-reads the live catalog and
+        :attr:`_latest_notice` fresh at execution time rather than closing
+        over the ``albums`` snapshot captured when this call was scheduled, so
+        the run already in flight still picks up whatever state a dropped
+        call would have carried.
         """
         self._refresher.schedule(lambda: self._refresh_track_counts(albums))
 
@@ -212,17 +216,24 @@ class MusicPlayer:
         """Refresh :attr:`_cache`; log and report failure rather than raise.
 
         Both callers -- :meth:`install` and :meth:`_refresh_track_counts` --
-        treat a refresh fault (an ``OSError`` the cache does not itself catch,
-        from disk pressure or descriptor exhaustion) as non-fatal: a stale
-        count is a display nit, never a reason to sink a menu click or take
-        down the write path that fired a background refresh. The log line
-        names how many albums this refresh covered, so a persistently failing
-        catalog is diagnosable from the log rather than an unqualified line
-        repeating forever.
+        treat a refresh fault as non-fatal: a stale count is a display nit,
+        never a reason to sink a menu click or take down the write path that
+        fired a background refresh. The log line names how many albums this
+        refresh covered, so a persistently failing catalog is diagnosable from
+        the log rather than an unqualified line repeating forever.
+
+        Narrowed to ``(OSError, ValueError)`` on purpose, not a bare
+        ``Exception``: both name a store-side data condition rather than a
+        programmer bug -- ``OSError`` covers disk pressure, descriptor
+        exhaustion, and a genuine read-level timeout; ``ValueError`` covers
+        ``AlbumManifest.from_json`` rejecting a corrupt on-disk manifest
+        record, which the store's own ``open()`` raises uncaught. A real bug
+        (``AttributeError``, ``TypeError``) still propagates rather than being
+        swallowed under the same log line and severity as store corruption.
         """
         try:
             await self._cache.serialized_refresh(albums)
-        except Exception:
+        except (OSError, ValueError):
             logger.exception(
                 "music: track-count cache refresh failed for %d albums", len(albums)
             )
