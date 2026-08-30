@@ -70,11 +70,16 @@ class _FakeFrameAccessor:
 
 @final
 class _UnexpectedFrameAccessor:
-    """A ``frame`` stand-in that fails the test if it is ever called.
+    """A ``frame`` stand-in that raises if it is ever called -- fixture-only guard.
 
-    Used where the push must NOT reach the raise step at all -- a plain
-    refresh, or an install whose scene push itself failed -- so a regression
-    that raises unconditionally is caught even without inspecting call logs.
+    Not a substitute for an assertion: :meth:`LuxScenePublisher.run`'s own
+    ``except Exception`` boundary would catch and silently swallow an
+    ``AssertionError`` raised from here just as it would any other exception,
+    so a test whose only check IS "no exception escaped" proves nothing (see
+    ``TestExplicitFrameRaise.test_a_refused_install_push_skips_the_raise`` and
+    its sibling, fixed to assert ``client.frame.raised == []`` against a
+    recording ``_FakeFrameAccessor`` instead). Retained only where no test
+    presently asserts on frame-raise behavior through this fixture at all.
     """
 
     async def raise_(self, frame_id: str) -> FrameRaise | OpError:
@@ -109,8 +114,12 @@ class _DownClient:
     def __init__(self) -> None:
         self.scene = _DownSceneAccessor()
         # A down luxd fails inside ``show``/``update`` themselves, so the
-        # publisher never reaches the raise step; a call here is a bug.
-        self.frame = _UnexpectedFrameAccessor()
+        # publisher never reaches the raise step. A recording double, not an
+        # asserting one: ``run()``'s own ``except Exception`` boundary would
+        # catch and swallow an ``AssertionError`` raised from here just like
+        # any other exception, silently defeating the check -- the test must
+        # assert on ``raised == []`` instead of relying on one never firing.
+        self.frame = _FakeFrameAccessor()
 
 
 @final
@@ -128,8 +137,13 @@ class _RejectingSceneAccessor:
 class _RejectingClient:
     def __init__(self) -> None:
         self.scene = _RejectingSceneAccessor()
-        # A refused scene push must not be followed by a raise attempt.
-        self.frame = _UnexpectedFrameAccessor()
+        # A refused scene push must not be followed by a raise attempt. A
+        # recording double, not an asserting one: ``run()``'s own ``except
+        # Exception`` boundary would catch and swallow an ``AssertionError``
+        # raised from here just like any other exception, silently defeating
+        # the check -- the test must assert on ``raised == []`` instead of
+        # relying on one never firing.
+        self.frame = _FakeFrameAccessor()
 
 
 @final
@@ -324,16 +338,20 @@ class TestExplicitFrameRaise:
         assert client.frame.raised == []
 
     async def test_a_refused_install_push_skips_the_raise(self) -> None:
-        # _RejectingClient's frame accessor fails the test if called at all.
-        publisher = LuxScenePublisher(lambda: _as_client(_RejectingClient()))
+        client = _RejectingClient()
+        publisher = LuxScenePublisher(lambda: _as_client(client))
         publisher.reinstall(_scene("vox.music"))
-        await _drain_once(publisher)  # no AssertionError -> the raise was skipped
+        await _drain_once(publisher)
+
+        assert client.frame.raised == []
 
     async def test_a_down_luxd_on_the_scene_push_skips_the_raise(self) -> None:
-        # _DownClient's frame accessor fails the test if called at all.
-        publisher = LuxScenePublisher(lambda: _as_client(_DownClient()))
+        client = _DownClient()
+        publisher = LuxScenePublisher(lambda: _as_client(client))
         publisher.reinstall(_scene("vox.music"))
-        await _drain_once(publisher)  # no AssertionError -> the raise was skipped
+        await _drain_once(publisher)
+
+        assert client.frame.raised == []
 
     async def test_a_refused_raise_is_logged_and_swallowed(
         self, caplog: pytest.LogCaptureFixture
