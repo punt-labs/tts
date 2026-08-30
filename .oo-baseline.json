@@ -1091,6 +1091,19 @@
     "module_size": 102.0,
     "public_attr_violations": 0.0
   },
+  "src/punt_vox/panel/control_push.py": {
+    "method_ratio": 1.0,
+    "encapsulation_ratio": 1.0,
+    "avg_params": 0.0,
+    "max_complexity": 0.0,
+    "avg_complexity": 0.0,
+    "module_size": 23.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 1.0,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
+  },
   "src/punt_vox/panel/leg.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
@@ -3135,7 +3148,7 @@
   "src/punt_vox/voxd/music_player/player.py": {
     "method_ratio": 1.0,
     "encapsulation_ratio": 1.0,
-    "avg_params": 0.92,
+    "avg_params": 0.75,
     "max_complexity": 2.0,
     "avg_complexity": 1.17,
     "module_size": 204.0,

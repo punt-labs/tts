@@ -165,7 +165,7 @@ class MusicPlayer:
         """
         self._latest_notice = notice
         self._publisher.submit(self._render(albums, notice))
-        self._schedule_track_count_refresh(albums)
+        self._schedule_track_count_refresh()
 
     def _render(
         self, albums: tuple[Album, ...], notice: PlaybackNotice
@@ -180,37 +180,38 @@ class MusicPlayer:
         view = PlayerView.from_status(self._service.status(), roster.albums)
         return AlbumListScene(roster, view, notice).render_request()
 
-    def _schedule_track_count_refresh(self, albums: tuple[Album, ...]) -> None:
+    def _schedule_track_count_refresh(self) -> None:
         """Best-effort: warm the cache off the hot path, then resubmit if it changes.
 
         Single-flighted via :attr:`_refresher`: a burst of state changes (one
-        per completed Part) that arrives while a refresh is already in flight
-        is dropped outright, not merged with it -- safe here only because
-        :meth:`_refresh_track_counts` re-reads the live catalog and
-        :attr:`_latest_notice` fresh at execution time rather than closing
-        over the ``albums`` snapshot captured when this call was scheduled, so
-        the run already in flight still picks up whatever state a dropped
-        call would have carried.
+        per completed Part) arriving while a refresh is in flight is dropped
+        outright, not merged -- safe only because :meth:`_refresh_track_counts`
+        re-reads the live catalog fresh at execution time, so the run already
+        in flight still picks up a newly joined album a dropped call carried.
         """
-        self._refresher.schedule(lambda: self._refresh_track_counts(albums))
+        self._refresher.schedule(self._refresh_track_counts)
 
-    async def _refresh_track_counts(self, albums: tuple[Album, ...]) -> None:
+    async def _refresh_track_counts(self) -> None:
         """Refresh the cache from disk, off the control-channel writer entirely.
 
-        A failure here is logged and dropped by :meth:`_try_refresh_cache`: a
-        stale track count is a display nit, never a reason to take down the
-        write path that fired this refresh. On success, resubmits with
-        whatever notice is current at THIS moment -- never the one captured
-        when the refresh was scheduled -- so a warning raised, or cleared,
-        while the refresh was in flight is never clobbered or resurrected by a
-        repaint that started before it happened.
+        Reads the live catalog fresh, at execution time, and reuses that SAME
+        read for both halves of the operation: the refresh itself
+        (:meth:`_try_refresh_cache`) and the resubmit below. Splitting those
+        two reads is exactly the bug this closes: an album joining the catalog
+        between scheduling and this run's disk read would be excluded from
+        :class:`~punt_vox.voxd.music_player.track_count_cache.TrackCountCache`'s
+        wholesale-replaced ``_counts`` dict, then rendered at 0 tracks in the
+        resubmit -- stuck there, since SingleFlightRefresh had already dropped
+        the second ``schedule`` call that would otherwise have picked it up.
+
+        A failure here is logged and dropped by :meth:`_try_refresh_cache`. On
+        success, resubmits with whatever notice is current at THIS moment --
+        not the one captured at schedule time -- so a warning is never lost.
         """
+        albums = self._service.catalog_albums()
         if not await self._try_refresh_cache(albums):
             return
-        # Fresh, not the snapshot the refresh was scheduled with: the catalog
-        # itself may have gained or lost an album while the disk read ran.
-        fresh_albums = self._service.catalog_albums()
-        self._publisher.submit(self._render(fresh_albums, self._latest_notice))
+        self._publisher.submit(self._render(albums, self._latest_notice))
 
     async def _try_refresh_cache(self, albums: tuple[Album, ...]) -> bool:
         """Refresh :attr:`_cache`; log and report failure rather than raise.

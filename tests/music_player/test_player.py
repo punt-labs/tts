@@ -69,6 +69,10 @@ class _FakeService:
     def catalog_albums(self) -> tuple[Album, ...]:
         return self._albums
 
+    def set_albums(self, albums: tuple[Album, ...]) -> None:
+        """Replace the catalog mid-test -- simulates an album joining live."""
+        self._albums = albums
+
 
 @final
 class _CapturingPublisher:
@@ -414,6 +418,36 @@ class TestTrackCountsNeverBlockTheHotPath:
         await _settle()
 
         assert len(calls) == 1
+
+    async def test_an_album_added_during_an_in_flight_refresh_is_not_stuck_at_zero(
+        self, album_of: AlbumFactory
+    ) -> None:
+        # Round 9 finding 2: _schedule_track_count_refresh used to close over
+        # the ``albums`` snapshot captured at SCHEDULE time and feed it
+        # straight into the refresh itself (not just the resubmit). Sequence:
+        # notify_changed schedules a refresh over catalog {kept}; before that
+        # scheduled run executes, ``added`` joins the catalog and a second
+        # notify_changed's schedule call is dropped outright (SingleFlightRefresh
+        # is drop-on-busy while a run is in flight); the in-flight run lands and
+        # TrackCountCache._refresh replaces its whole _counts dict using only
+        # {kept}, so ``added`` is absent -- the resubmit then renders the fresh
+        # catalog {kept, added} against that cache and ``added``'s row reads 0,
+        # stuck there indefinitely, because nothing else reschedules.
+        kept = album_of("aa11bb", name="Kept", tracks=0, on_disk=3)
+        added = album_of("cc22dd", name="Added", tracks=0, on_disk=5)
+        service = _FakeService(ProgramStatus.idle(), (kept,))
+        publisher = _CapturingPublisher()
+        player = MusicPlayer(service, publisher)
+
+        player.notify_changed()  # schedules a refresh over catalog {kept}
+        service.set_albums((kept, added))  # added joins before the run executes
+        player.notify_changed()  # dropped: a refresh is already in flight
+        await _settle()  # let the in-flight refresh land and resubmit
+
+        assert _by_id(publisher.submitted[-1].elements, "music.albums")["rows"] == [
+            ["Kept", "techno", 3],
+            ["Added", "techno", 5],  # not stuck at 0
+        ]
 
     async def test_install_awaits_a_fresh_cache_refresh(
         self, album_of: AlbumFactory, monkeypatch: pytest.MonkeyPatch
