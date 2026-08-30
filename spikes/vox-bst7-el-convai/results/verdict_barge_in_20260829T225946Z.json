@@ -1,0 +1,11 @@
+{
+  "verdict": "INCONCLUSIVE",
+  "criteria": [
+    {
+      "name": "scenario",
+      "passed": false,
+      "evidence": "search_code was never invoked -- the scenario was not reached"
+    }
+  ],
+  "answer_text": ""
+}

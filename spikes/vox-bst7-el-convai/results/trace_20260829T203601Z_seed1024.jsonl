@@ -1,0 +1,40 @@
+{"seed_bytes": 1024, "prompt_bytes": 1597, "t": "2026-08-29T20:36:01.156+00:00", "ms": 0.1, "dir": "note", "type": "run_config"}
+{"ws_connect_ms": 656.2, "t": "2026-08-29T20:36:02.123+00:00", "ms": 967.0, "dir": "note", "type": "ws_open"}
+{"conversation_id": "conv_9201m17ks1snfrg91c94ejwkvdc9", "agent_output_audio_format": "pcm_16000", "user_input_audio_format": "pcm_16000", "persistent_session_token": null, "t": "2026-08-29T20:36:02.123+00:00", "ms": 967.2, "dir": "recv", "type": "conversation_initiation_metadata"}
+{"text": "What time is it right now?", "t": "2026-08-29T20:36:02.123+00:00", "ms": 967.3, "dir": "send", "type": "user_message"}
+{"t": "2026-08-29T20:36:02.226+00:00", "ms": 1070.0, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-29T20:36:02.226+00:00", "ms": 1070.2, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-29T20:36:02.226+00:00", "ms": 1070.3, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-29T20:36:02.226+00:00", "ms": 1070.3, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Voice agent ready. What do you need?", "t": "2026-08-29T20:36:02.226+00:00", "ms": 1070.4, "dir": "recv", "type": "agent_response"}
+{"t": "2026-08-29T20:36:02.226+00:00", "ms": 1070.5, "dir": "recv", "type": "agent_response_complete"}
+{"tool": "clock", "tool_call_id": "clock_b8f36c98a7004787b77e908011a96bc8", "t": "2026-08-29T20:36:03.062+00:00", "ms": 1906.4, "dir": "recv", "type": "client_tool_call"}
+{"t": "2026-08-29T20:36:03.062+00:00", "ms": 1906.7, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-29T20:36:03.062+00:00", "ms": 1906.8, "dir": "recv", "type": "agent_chat_response_part"}
+{"tool": "clock", "tool_call_id": "clock_b8f36c98a7004787b77e908011a96bc8", "exec_ms": 0.7, "is_error": false, "t": "2026-08-29T20:36:03.064+00:00", "ms": 1908.0, "dir": "send", "type": "client_tool_result"}
+{"t": "2026-08-29T20:36:03.164+00:00", "ms": 2008.4, "dir": "recv", "type": "agent_tool_response"}
+{"t": "2026-08-29T20:36:03.906+00:00", "ms": 2750.5, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-29T20:36:03.906+00:00", "ms": 2750.9, "dir": "recv", "type": "agent_chat_response_part"}
+{"ping_ms": null, "t": "2026-08-29T20:36:03.907+00:00", "ms": 2751.3, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T20:36:03.943+00:00", "ms": 2787.8, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-29T20:36:03.944+00:00", "ms": 2788.1, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"t": "2026-08-29T20:36:03.961+00:00", "ms": 2805.3, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-29T20:36:03.961+00:00", "ms": 2805.6, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "It is currently 8:36 PM on August 29, 2026.", "t": "2026-08-29T20:36:03.961+00:00", "ms": 2805.7, "dir": "recv", "type": "agent_response"}
+{"t": "2026-08-29T20:36:03.961+00:00", "ms": 2805.8, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 119, "t": "2026-08-29T20:36:05.616+00:00", "ms": 4460.7, "dir": "recv", "type": "ping"}
+{"text": "Write a note saying: smoke test note.", "t": "2026-08-29T20:36:05.631+00:00", "ms": 4475.5, "dir": "send", "type": "user_message"}
+{"tool": "write_note", "tool_call_id": "write_note_285b58c6e0704bd9b552e6c0dfea19c0", "t": "2026-08-29T20:36:06.436+00:00", "ms": 5280.8, "dir": "recv", "type": "client_tool_call"}
+{"tool": "write_note", "tool_call_id": "write_note_285b58c6e0704bd9b552e6c0dfea19c0", "exec_ms": 0.7, "is_error": false, "t": "2026-08-29T20:36:06.438+00:00", "ms": 5282.0, "dir": "send", "type": "client_tool_result"}
+{"t": "2026-08-29T20:36:06.452+00:00", "ms": 5296.3, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-29T20:36:06.452+00:00", "ms": 5296.8, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-29T20:36:06.528+00:00", "ms": 5372.9, "dir": "recv", "type": "agent_tool_response"}
+{"t": "2026-08-29T20:36:06.953+00:00", "ms": 5797.7, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-29T20:36:06.954+00:00", "ms": 5798.1, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-29T20:36:07.044+00:00", "ms": 5888.8, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-29T20:36:07.045+00:00", "ms": 5889.3, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-29T20:36:07.045+00:00", "ms": 5889.4, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "I have saved the note for you.", "t": "2026-08-29T20:36:07.045+00:00", "ms": 5889.5, "dir": "recv", "type": "agent_response"}
+{"t": "2026-08-29T20:36:07.045+00:00", "ms": 5889.6, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 156, "t": "2026-08-29T20:36:07.293+00:00", "ms": 6137.4, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T20:36:09.524+00:00", "ms": 8368.7, "dir": "note", "type": "session_closed"}

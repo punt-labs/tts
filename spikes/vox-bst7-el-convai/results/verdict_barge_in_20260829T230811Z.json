@@ -1,0 +1,26 @@
+{
+  "verdict": "FAIL",
+  "criteria": [
+    {
+      "name": "interruption mid tool call",
+      "passed": true,
+      "evidence": "interruption at #20@10935.7ms, inside [tool_call #18@10224.0ms, post-tool response #35@18562.5ms]"
+    },
+    {
+      "name": "session survived",
+      "passed": true,
+      "evidence": "no WS close; 4 agent turns after the barge-in at #20@10935.7ms"
+    },
+    {
+      "name": "recall answer references tool findings",
+      "passed": false,
+      "evidence": "no result marker in the answer: 'I did not find anything because the search was stopped before it could finish. Would you like me to try searching for the playback queue again?'"
+    },
+    {
+      "name": "write_note works after barge-in",
+      "passed": true,
+      "evidence": "write_note result posted cleanly at #59@27759.9ms (after #20@10935.7ms)"
+    }
+  ],
+  "answer_text": "I did not find anything because the search was stopped before it could finish. Would you like me to try searching for the playback queue again?"
+}

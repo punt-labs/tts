@@ -1,0 +1,682 @@
+{
+  "generated": "2026-08-29T20:38:09+00:00",
+  "llm": "gemini-2.0-flash",
+  "gate": "overall overhead_ms p95 < 1500",
+  "runs": [
+    {
+      "tag": "20260829T203630Z_seed1024",
+      "seed_bytes": 1024,
+      "prompt_bytes": 1597,
+      "signed_url_ms": 337.8,
+      "conversation_id": "conv_7901m17ksy6gebcsdmz5154mnh2y",
+      "ws_connect_ms": 553.1,
+      "init_metadata_ms": 0.3,
+      "session_start_ms": 553.4,
+      "first_response_ms": 130.2,
+      "turn_response_ms": [
+        130.2,
+        4027.0,
+        1596.9,
+        5027.8,
+        6571.8,
+        3026.2,
+        880.0
+      ],
+      "ping_ms": [
+        215.0,
+        254.0,
+        215.0,
+        248.0,
+        70.0,
+        248.0,
+        101.0,
+        101.0,
+        96.0,
+        94.0,
+        94.0,
+        102.0,
+        102.0,
+        83.0,
+        67.0,
+        83.0,
+        67.0,
+        180.0,
+        165.0
+      ],
+      "invocations": [
+        {
+          "tool": "clock",
+          "tool_call_id": "clock_a393b3d9e12049cabaa20a11995572e1",
+          "exec_ms": 0.4,
+          "handling_ms": 1.1,
+          "total_ms": 40.6,
+          "overhead_ms": 40.2,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "search_code",
+          "tool_call_id": "search_code_d173cc388dff418695dd8660152f404b",
+          "exec_ms": 2200.7,
+          "handling_ms": 2201.4,
+          "total_ms": 2920.8,
+          "overhead_ms": 720.1,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "write_note",
+          "tool_call_id": "write_note_879126733ae94496b5c89f00ed155808",
+          "exec_ms": 0.2,
+          "handling_ms": 0.5,
+          "total_ms": 20.6,
+          "overhead_ms": 20.3,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "clock",
+          "tool_call_id": "clock_867cfa2437714375999ea60da9b55a80",
+          "exec_ms": 0.4,
+          "handling_ms": 1.5,
+          "total_ms": 127.6,
+          "overhead_ms": 127.2,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "search_code",
+          "tool_call_id": "search_code_17f7bbce0d534f60b67fa07150bc6ec0",
+          "exec_ms": 3100.8,
+          "handling_ms": 3101.5,
+          "total_ms": 3853.1,
+          "overhead_ms": 752.3,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "search_code",
+          "tool_call_id": "search_code_8af9551cafb94c628cddda42cd9af44a",
+          "exec_ms": 4300.6,
+          "handling_ms": 4301.3,
+          "total_ms": 4451.0,
+          "overhead_ms": 150.3,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "write_note",
+          "tool_call_id": "write_note_5692b239f5164aeba21875bc598380cc",
+          "exec_ms": 0.4,
+          "handling_ms": 0.8,
+          "total_ms": 993.1,
+          "overhead_ms": 992.7,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "clock",
+          "tool_call_id": "clock_685231b5d4e14bfdb8faa35266e6a4d2",
+          "exec_ms": 0.4,
+          "handling_ms": 1.2,
+          "total_ms": 22.3,
+          "overhead_ms": 22.0,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "write_note",
+          "tool_call_id": "write_note_c3bed7585e304c879e892024dc926e91",
+          "exec_ms": 0.5,
+          "handling_ms": 1.1,
+          "total_ms": 929.4,
+          "overhead_ms": 928.9,
+          "is_error": false,
+          "is_clean": true
+        }
+      ],
+      "incomplete_invocations": 0,
+      "transcript": [
+        {
+          "role": "user",
+          "text": "What time is it right now?"
+        },
+        {
+          "role": "agent",
+          "text": "Voice agent ready. What do you need?"
+        },
+        {
+          "role": "agent",
+          "text": "It is currently 8:36 PM on August 29, 2026."
+        },
+        {
+          "role": "user",
+          "text": "Search the code for the playback queue."
+        },
+        {
+          "role": "agent",
+          "text": "I found three matches for the playback queue in the daemon, playback, and provider files."
+        },
+        {
+          "role": "user",
+          "text": "Write a note saying: spike checkpoint alpha."
+        },
+        {
+          "role": "agent",
+          "text": "I have saved the note for spike checkpoint alpha."
+        },
+        {
+          "role": "user",
+          "text": "Check the clock and also search the code for provider registry."
+        },
+        {
+          "role": "agent",
+          "text": "It is 8:36 PM, and I found three matches for the provider registry in the daemon, playback, and provider files."
+        },
+        {
+          "role": "user",
+          "text": "Search the code for websocket dispatch, and write a note that says: dispatch reviewed."
+        },
+        {
+          "role": "agent",
+          "text": "I found three matches for websocket dispatch in the codebase and saved your note."
+        },
+        {
+          "role": "user",
+          "text": "What day is it today? Also note down: seed run complete."
+        },
+        {
+          "role": "agent",
+          "text": "Today is August 29, 2026, and I have noted down that the seed run is complete."
+        },
+        {
+          "role": "user",
+          "text": "Thanks. Give me a one-sentence summary of what you did."
+        },
+        {
+          "role": "agent",
+          "text": "I checked the time, searched the codebase for the playback queue, provider registry, and websocket dispatch, and saved notes for your spike checkpoint, dispatch review, and seed run completion."
+        }
+      ]
+    },
+    {
+      "tag": "20260829T203630Z_seed10240",
+      "seed_bytes": 10240,
+      "prompt_bytes": 10813,
+      "signed_url_ms": 460.7,
+      "conversation_id": "conv_6701m17kv0zcfe1an5y2vsngcmep",
+      "ws_connect_ms": 266.2,
+      "init_metadata_ms": 0.6,
+      "session_start_ms": 266.8,
+      "first_response_ms": 409.4,
+      "turn_response_ms": [
+        409.4,
+        3856.6,
+        1683.1,
+        4915.0,
+        6467.9,
+        2590.4,
+        1119.3
+      ],
+      "ping_ms": [
+        203.0,
+        197.0,
+        191.0,
+        177.0,
+        77.0,
+        77.0,
+        111.0,
+        144.0,
+        144.0,
+        144.0,
+        131.0,
+        125.0,
+        125.0,
+        197.0,
+        197.0,
+        195.0,
+        144.0,
+        144.0
+      ],
+      "invocations": [
+        {
+          "tool": "clock",
+          "tool_call_id": "clock_5cd889a1326b47e4ab5a3d9e5889385a",
+          "exec_ms": 0.6,
+          "handling_ms": 1.2,
+          "total_ms": 1.4,
+          "overhead_ms": 0.8,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "search_code",
+          "tool_call_id": "search_code_0f1cdfdf105d45888b8f5518e0d52852",
+          "exec_ms": 2200.6,
+          "handling_ms": 2201.4,
+          "total_ms": 2875.8,
+          "overhead_ms": 675.2,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "write_note",
+          "tool_call_id": "write_note_80262024f9c64fabad60633311330ffa",
+          "exec_ms": 0.6,
+          "handling_ms": 1.1,
+          "total_ms": 18.1,
+          "overhead_ms": 17.5,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "clock",
+          "tool_call_id": "clock_d0a360a4f273410693aae4cf2db6588b",
+          "exec_ms": 0.5,
+          "handling_ms": 1.2,
+          "total_ms": 10.7,
+          "overhead_ms": 10.2,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "search_code",
+          "tool_call_id": "search_code_524292178f3d421bb74ad142921c2ddc",
+          "exec_ms": 3100.8,
+          "handling_ms": 3101.4,
+          "total_ms": 3771.5,
+          "overhead_ms": 670.8,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "search_code",
+          "tool_call_id": "search_code_c713463747814288bc5fa9af668a43ca",
+          "exec_ms": 4300.7,
+          "handling_ms": 4301.4,
+          "total_ms": 4484.4,
+          "overhead_ms": 183.7,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "write_note",
+          "tool_call_id": "write_note_87b929011d87485aabbe723053de471b",
+          "exec_ms": 0.9,
+          "handling_ms": 1.5,
+          "total_ms": 811.6,
+          "overhead_ms": 810.7,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "clock",
+          "tool_call_id": "clock_ca1e41fab2fe4ba198545d94ed15d617",
+          "exec_ms": 0.4,
+          "handling_ms": 1.0,
+          "total_ms": 61.4,
+          "overhead_ms": 61.0,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "write_note",
+          "tool_call_id": "write_note_4ab8b81f9694411e9f0ec20d8ab15163",
+          "exec_ms": 0.4,
+          "handling_ms": 0.8,
+          "total_ms": 45.0,
+          "overhead_ms": 44.5,
+          "is_error": false,
+          "is_clean": true
+        }
+      ],
+      "incomplete_invocations": 0,
+      "transcript": [
+        {
+          "role": "user",
+          "text": "What time is it right now?"
+        },
+        {
+          "role": "agent",
+          "text": "Voice agent ready. What do you need?"
+        },
+        {
+          "role": "agent",
+          "text": "The current time is 8:37 PM UTC on August 29, 2026."
+        },
+        {
+          "role": "user",
+          "text": "Search the code for the playback queue."
+        },
+        {
+          "role": "agent",
+          "text": "I found matches for the playback queue in the daemon and playback modules."
+        },
+        {
+          "role": "user",
+          "text": "Write a note saying: spike checkpoint alpha."
+        },
+        {
+          "role": "agent",
+          "text": "I have saved the note for spike checkpoint alpha."
+        },
+        {
+          "role": "user",
+          "text": "Check the clock and also search the code for provider registry."
+        },
+        {
+          "role": "agent",
+          "text": "The current time is 8:37 PM UTC, and I found matches for the provider registry in the providers initialization file."
+        },
+        {
+          "role": "user",
+          "text": "Search the code for websocket dispatch, and write a note that says: dispatch reviewed."
+        },
+        {
+          "role": "agent",
+          "text": "I found matches for websocket dispatch in the daemon module and saved the note confirming it has been reviewed."
+        },
+        {
+          "role": "user",
+          "text": "What day is it today? Also note down: seed run complete."
+        },
+        {
+          "role": "agent",
+          "text": "Today is August 29, 2026, and I have noted down that the seed run is complete."
+        },
+        {
+          "role": "user",
+          "text": "Thanks. Give me a one-sentence summary of what you did."
+        },
+        {
+          "role": "agent",
+          "text": "I checked the time, searched the codebase for playback queue, provider registry, and websocket dispatch, and saved notes for spike checkpoint alpha, dispatch reviewed, and seed run complete."
+        }
+      ]
+    },
+    {
+      "tag": "20260829T203630Z_seed51200",
+      "seed_bytes": 51200,
+      "prompt_bytes": 51773,
+      "signed_url_ms": 550.6,
+      "conversation_id": "conv_0701m17kw366fk6tqfr4z9rayfsh",
+      "ws_connect_ms": 334.3,
+      "init_metadata_ms": 1.3,
+      "session_start_ms": 335.7,
+      "first_response_ms": 140.5,
+      "turn_response_ms": [
+        140.5,
+        826.7,
+        944.8,
+        1020.3,
+        1367.2,
+        2792.0,
+        1103.0
+      ],
+      "ping_ms": [
+        111.0,
+        88.0,
+        64.0,
+        64.0,
+        65.0,
+        65.0,
+        65.0,
+        82.0,
+        134.0,
+        134.0,
+        70.0,
+        70.0,
+        73.0,
+        173.0,
+        240.0
+      ],
+      "invocations": [
+        {
+          "tool": "clock",
+          "tool_call_id": "clock_ba58b0c1d2304c1fb79187544bbff453",
+          "exec_ms": 0.4,
+          "handling_ms": 1.1,
+          "total_ms": 17.7,
+          "overhead_ms": 17.3,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "search_code",
+          "tool_call_id": "search_code_11d3c040063b4f7aab95e132afceec8e",
+          "exec_ms": 2200.8,
+          "handling_ms": 2201.5,
+          "total_ms": 2999.1,
+          "overhead_ms": 798.3,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "write_note",
+          "tool_call_id": "write_note_c4da2e0d35254e21a12735e717152097",
+          "exec_ms": 2.8,
+          "handling_ms": 3.6,
+          "total_ms": 710.7,
+          "overhead_ms": 708.0,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "clock",
+          "tool_call_id": "clock_6f1e6b2d92a24dd8bb772fa2d26aa098",
+          "exec_ms": 0.4,
+          "handling_ms": 0.9,
+          "total_ms": 16.8,
+          "overhead_ms": 16.3,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "search_code",
+          "tool_call_id": "search_code_17900ab916b047009c2346f723589ccb",
+          "exec_ms": 3100.6,
+          "handling_ms": 3101.0,
+          "total_ms": 4093.8,
+          "overhead_ms": 993.2,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "search_code",
+          "tool_call_id": "search_code_1e4607824ebb4c878f95ed30c3429eee",
+          "exec_ms": 4300.6,
+          "handling_ms": 4301.4,
+          "total_ms": 4409.1,
+          "overhead_ms": 108.5,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "write_note",
+          "tool_call_id": "write_note_3bb4936f76064d91bc72eee007001ae7",
+          "exec_ms": 0.6,
+          "handling_ms": 1.0,
+          "total_ms": 886.8,
+          "overhead_ms": 886.2,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "clock",
+          "tool_call_id": "clock_68e4f6a25859499e9785219f60b33db1",
+          "exec_ms": 0.5,
+          "handling_ms": 1.1,
+          "total_ms": 17.2,
+          "overhead_ms": 16.8,
+          "is_error": false,
+          "is_clean": true
+        },
+        {
+          "tool": "write_note",
+          "tool_call_id": "write_note_71bb04faada44da887985e876681c585",
+          "exec_ms": 0.7,
+          "handling_ms": 1.4,
+          "total_ms": 950.3,
+          "overhead_ms": 949.6,
+          "is_error": false,
+          "is_clean": true
+        }
+      ],
+      "incomplete_invocations": 0,
+      "transcript": [
+        {
+          "role": "user",
+          "text": "What time is it right now?"
+        },
+        {
+          "role": "agent",
+          "text": "Voice agent ready. What do you need?"
+        },
+        {
+          "role": "agent",
+          "text": "It is currently 8:37 PM."
+        },
+        {
+          "role": "user",
+          "text": "Search the code for the playback queue."
+        },
+        {
+          "role": "agent",
+          "text": "Searching the codebase for playback queue."
+        },
+        {
+          "role": "user",
+          "text": "Write a note saying: spike checkpoint alpha."
+        },
+        {
+          "role": "agent",
+          "text": "Saving a note for spike checkpoint alpha."
+        },
+        {
+          "role": "agent",
+          "text": "I have successfully saved your note for spike checkpoint alpha."
+        },
+        {
+          "role": "user",
+          "text": "Check the clock and also search the code for provider registry."
+        },
+        {
+          "role": "agent",
+          "text": "Checking the current time and searching the code for provider registry."
+        },
+        {
+          "role": "agent",
+          "text": "Searching the code for provider registry."
+        },
+        {
+          "role": "user",
+          "text": "Search the code for websocket dispatch, and write a note that says: dispatch reviewed."
+        },
+        {
+          "role": "agent",
+          "text": "Searching the code for websocket dispatch and saving your note."
+        },
+        {
+          "role": "user",
+          "text": "What day is it today? Also note down: seed run complete."
+        },
+        {
+          "role": "agent",
+          "text": "Today is August 29, 2026, and I have saved your note about the seed run being complete."
+        },
+        {
+          "role": "user",
+          "text": "Thanks. Give me a one-sentence summary of what you did."
+        },
+        {
+          "role": "agent",
+          "text": "I checked the current date and successfully saved your note stating that the seed run is complete."
+        }
+      ]
+    }
+  ],
+  "aggregate": {
+    "overall": {
+      "handling_ms": {
+        "n": 27,
+        "p50_ms": 1.2,
+        "p95_ms": 4301.4,
+        "max_ms": 4301.4
+      },
+      "total_ms": {
+        "n": 27,
+        "p50_ms": 811.6,
+        "p95_ms": 4451.0,
+        "max_ms": 4484.4
+      },
+      "overhead_ms": {
+        "n": 27,
+        "p50_ms": 150.3,
+        "p95_ms": 992.7,
+        "max_ms": 993.2
+      }
+    },
+    "per_tool": {
+      "clock": {
+        "handling_ms": {
+          "n": 9,
+          "p50_ms": 1.1,
+          "p95_ms": 1.5,
+          "max_ms": 1.5
+        },
+        "total_ms": {
+          "n": 9,
+          "p50_ms": 17.7,
+          "p95_ms": 127.6,
+          "max_ms": 127.6
+        },
+        "overhead_ms": {
+          "n": 9,
+          "p50_ms": 17.3,
+          "p95_ms": 127.2,
+          "max_ms": 127.2
+        }
+      },
+      "search_code": {
+        "handling_ms": {
+          "n": 9,
+          "p50_ms": 3101.4,
+          "p95_ms": 4301.4,
+          "max_ms": 4301.4
+        },
+        "total_ms": {
+          "n": 9,
+          "p50_ms": 3853.1,
+          "p95_ms": 4484.4,
+          "max_ms": 4484.4
+        },
+        "overhead_ms": {
+          "n": 9,
+          "p50_ms": 675.2,
+          "p95_ms": 993.2,
+          "max_ms": 993.2
+        }
+      },
+      "write_note": {
+        "handling_ms": {
+          "n": 9,
+          "p50_ms": 1.1,
+          "p95_ms": 3.6,
+          "max_ms": 3.6
+        },
+        "total_ms": {
+          "n": 9,
+          "p50_ms": 811.6,
+          "p95_ms": 993.1,
+          "max_ms": 993.1
+        },
+        "overhead_ms": {
+          "n": 9,
+          "p50_ms": 810.7,
+          "p95_ms": 992.7,
+          "max_ms": 992.7
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,67 @@
+{"ws_connect_ms": 300.3, "t": "2026-08-29T23:08:12.141+00:00", "ms": 488.9, "dir": "note", "type": "ws_open"}
+{"conversation_id": "conv_9601m17wfnpxeqq8jt388t4k3mr9", "agent_output_audio_format": "pcm_16000", "user_input_audio_format": "pcm_16000", "persistent_session_token": null, "t": "2026-08-29T23:08:12.142+00:00", "ms": 490.1, "dir": "recv", "type": "conversation_initiation_metadata"}
+{"t": "2026-08-29T23:08:12.231+00:00", "ms": 578.8, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 41952, "event_id": 1, "t": "2026-08-29T23:08:12.381+00:00", "ms": 729.0, "dir": "recv", "type": "audio"}
+{"bytes_b64": 32276, "event_id": 1, "t": "2026-08-29T23:08:12.419+00:00", "ms": 767.1, "dir": "recv", "type": "audio"}
+{"text": "Voice agent ready. What do you need?", "t": "2026-08-29T23:08:12.421+00:00", "ms": 768.4, "dir": "recv", "type": "agent_response"}
+{"ping_ms": null, "t": "2026-08-29T23:08:13.938+00:00", "ms": 2286.1, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:08:14.233+00:00", "ms": 2580.7, "dir": "recv", "type": "agent_response_complete"}
+{"step": "trigger_search", "text": "Hey there, hello, please search the code for the playback queue, thank you", "t": "2026-08-29T23:08:15.450+00:00", "ms": 3797.4, "dir": "note", "type": "barge_in_step"}
+{"ping_ms": 118, "t": "2026-08-29T23:08:15.626+00:00", "ms": 3974.3, "dir": "recv", "type": "ping"}
+{"ping_ms": 93, "t": "2026-08-29T23:08:17.328+00:00", "ms": 5675.7, "dir": "recv", "type": "ping"}
+{"ping_ms": 69, "t": "2026-08-29T23:08:19.050+00:00", "ms": 7397.8, "dir": "recv", "type": "ping"}
+{"ping_ms": 69, "t": "2026-08-29T23:08:20.738+00:00", "ms": 9086.2, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:08:21.684+00:00", "ms": 10032.2, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Hey there. Hello. Please search the code for the playback queue. Thank you.", "t": "2026-08-29T23:08:21.790+00:00", "ms": 10137.4, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 55, "t": "2026-08-29T23:08:21.805+00:00", "ms": 10152.9, "dir": "recv", "type": "audio"}
+{"bytes_b64": 32276, "event_id": 55, "t": "2026-08-29T23:08:21.871+00:00", "ms": 10218.7, "dir": "recv", "type": "audio"}
+{"text": "Searching the code for playback queue.", "t": "2026-08-29T23:08:21.876+00:00", "ms": 10223.7, "dir": "recv", "type": "agent_response"}
+{"tool": "search_code", "tool_call_id": "search_code_ca5f1e74386f41b0942d75b72b78a674", "t": "2026-08-29T23:08:21.876+00:00", "ms": 10224.0, "dir": "recv", "type": "client_tool_call"}
+{"step": "interrupt", "text": "Wait, wait, stop, hold on one moment, wait, hold on, stop for a second", "t": "2026-08-29T23:08:22.100+00:00", "ms": 10447.5, "dir": "note", "type": "barge_in_step"}
+{"event_id": 64, "t": "2026-08-29T23:08:22.588+00:00", "ms": 10935.7, "dir": "recv", "type": "interruption"}
+{"original_agent_response": "Searching the code for playback queue.", "corrected_agent_response": "Searching the...", "event_id": 55, "response_id": "62b04d26-45ab-4ccf-8815-e1da8e41af8e", "t": "2026-08-29T23:08:22.588+00:00", "ms": 10935.9, "dir": "recv", "type": "agent_response_correction"}
+{"ping_ms": 73, "t": "2026-08-29T23:08:22.588+00:00", "ms": 10936.0, "dir": "recv", "type": "ping"}
+{"tool": "search_code", "tool_call_id": "search_code_ca5f1e74386f41b0942d75b72b78a674", "exec_ms": 2200.5, "is_error": false, "t": "2026-08-29T23:08:24.077+00:00", "ms": 12425.0, "dir": "send", "type": "client_tool_result"}
+{"ping_ms": 204, "t": "2026-08-29T23:08:24.172+00:00", "ms": 12519.5, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:08:24.172+00:00", "ms": 12519.8, "dir": "recv", "type": "agent_tool_response"}
+{"ping_ms": 147, "t": "2026-08-29T23:08:25.831+00:00", "ms": 14178.6, "dir": "recv", "type": "ping"}
+{"ping_ms": 147, "t": "2026-08-29T23:08:27.587+00:00", "ms": 15934.9, "dir": "recv", "type": "ping"}
+{"interrupted": true, "count": 1, "t": "2026-08-29T23:08:29.091+00:00", "ms": 17438.4, "dir": "note", "type": "interrupt_observed"}
+{"ping_ms": 128, "t": "2026-08-29T23:08:29.233+00:00", "ms": 17581.1, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:08:30.077+00:00", "ms": 18424.7, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Wait, wait, stop, hold on one moment, wait, hold on, stop for a second.", "t": "2026-08-29T23:08:30.077+00:00", "ms": 18424.9, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 64544, "event_id": 101, "t": "2026-08-29T23:08:30.103+00:00", "ms": 18451.0, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:08:30.104+00:00", "ms": 18451.8, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 90376, "event_id": 101, "t": "2026-08-29T23:08:30.214+00:00", "ms": 18561.7, "dir": "recv", "type": "audio"}
+{"text": "No problem, I have stopped. Let me know whenever you are ready to continue.", "t": "2026-08-29T23:08:30.215+00:00", "ms": 18562.5, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 65, "t": "2026-08-29T23:08:30.949+00:00", "ms": 19296.7, "dir": "recv", "type": "ping"}
+{"step": "probe_recall", "text": "What did you just find?", "t": "2026-08-29T23:08:31.592+00:00", "ms": 19939.8, "dir": "note", "type": "barge_in_step"}
+{"event_id": 117, "t": "2026-08-29T23:08:31.942+00:00", "ms": 20289.3, "dir": "recv", "type": "interruption"}
+{"original_agent_response": "No problem, I have stopped. Let me know whenever you are ready to continue.", "corrected_agent_response": "No problem, I have stopped. Let me...", "event_id": 101, "response_id": "798b602c-cac3-4cbe-8353-f52b6a5af644", "t": "2026-08-29T23:08:31.942+00:00", "ms": 20289.6, "dir": "recv", "type": "agent_response_correction"}
+{"ping_ms": 128, "t": "2026-08-29T23:08:32.638+00:00", "ms": 20986.2, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:08:34.152+00:00", "ms": 22500.2, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "What did you just find?", "t": "2026-08-29T23:08:34.275+00:00", "ms": 22623.2, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 41952, "event_id": 125, "t": "2026-08-29T23:08:34.303+00:00", "ms": 22651.0, "dir": "recv", "type": "audio"}
+{"ping_ms": 88, "t": "2026-08-29T23:08:34.336+00:00", "ms": 22684.2, "dir": "recv", "type": "ping"}
+{"bytes_b64": 106512, "event_id": 125, "t": "2026-08-29T23:08:34.511+00:00", "ms": 22859.3, "dir": "recv", "type": "audio"}
+{"t": "2026-08-29T23:08:34.512+00:00", "ms": 22859.5, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 119424, "event_id": 125, "t": "2026-08-29T23:08:34.583+00:00", "ms": 22931.3, "dir": "recv", "type": "audio"}
+{"text": "I did not find anything because the search was stopped before it could finish. Would you like me to try searching for the playback queue again?", "t": "2026-08-29T23:08:34.593+00:00", "ms": 22940.3, "dir": "recv", "type": "agent_response"}
+{"step": "note_roundtrip", "text": "Please write a note that says barge in state check.", "t": "2026-08-29T23:08:34.603+00:00", "ms": 22950.6, "dir": "note", "type": "barge_in_step"}
+{"event_id": 131, "t": "2026-08-29T23:08:35.008+00:00", "ms": 23355.9, "dir": "recv", "type": "interruption"}
+{"original_agent_response": "I did not find anything because the search was stopped before it could finish. Would you like me to try searching for the playback queue again?", "corrected_agent_response": "I did not...", "event_id": 125, "response_id": "c7eb32b1-0e09-4f48-a132-1ca35750e78f", "t": "2026-08-29T23:08:35.008+00:00", "ms": 23356.1, "dir": "recv", "type": "agent_response_correction"}
+{"ping_ms": 215, "t": "2026-08-29T23:08:36.087+00:00", "ms": 24435.1, "dir": "recv", "type": "ping"}
+{"ping_ms": 215, "t": "2026-08-29T23:08:37.736+00:00", "ms": 26083.3, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:08:39.266+00:00", "ms": 27613.9, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Please write a note that says, \"Barge in state check.\"", "t": "2026-08-29T23:08:39.410+00:00", "ms": 27757.3, "dir": "recv", "type": "user_transcript"}
+{"bytes_b64": 35496, "event_id": 149, "t": "2026-08-29T23:08:39.410+00:00", "ms": 27758.2, "dir": "recv", "type": "audio"}
+{"text": "Writing a note...", "t": "2026-08-29T23:08:39.411+00:00", "ms": 27758.6, "dir": "recv", "type": "agent_response"}
+{"tool": "write_note", "tool_call_id": "write_note_8948213121554988bee79007bb8c5ccd", "t": "2026-08-29T23:08:39.411+00:00", "ms": 27758.9, "dir": "recv", "type": "client_tool_call"}
+{"tool": "write_note", "tool_call_id": "write_note_8948213121554988bee79007bb8c5ccd", "exec_ms": 0.6, "is_error": false, "t": "2026-08-29T23:08:39.412+00:00", "ms": 27759.9, "dir": "send", "type": "client_tool_result"}
+{"ping_ms": 215, "t": "2026-08-29T23:08:39.521+00:00", "ms": 27868.3, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:08:39.579+00:00", "ms": 27927.1, "dir": "recv", "type": "agent_tool_response"}
+{"t": "2026-08-29T23:08:40.257+00:00", "ms": 28604.9, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"bytes_b64": 58096, "event_id": 149, "t": "2026-08-29T23:08:40.413+00:00", "ms": 28760.9, "dir": "recv", "type": "audio"}
+{"text": "I have saved the note for you.", "t": "2026-08-29T23:08:40.413+00:00", "ms": 28761.2, "dir": "recv", "type": "agent_response"}
+{"ping_ms": 153, "t": "2026-08-29T23:08:41.137+00:00", "ms": 29485.2, "dir": "recv", "type": "ping"}
+{"t": "2026-08-29T23:08:42.020+00:00", "ms": 30367.4, "dir": "note", "type": "session_closed"}
