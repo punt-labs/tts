@@ -223,23 +223,27 @@ class Arm1Runner:
         it. The child's exit code is recorded either way.
         """
         print(f"--- scenario: {name}")
-        session = self._session(name)
         summary: dict[str, object]
+        # None until spawn succeeds: a spawn/seed failure must be THIS
+        # scenario's error outcome, not a run abort with no evidence.
+        session: PiRpcSession | None = None
         try:
             try:
+                session = self._session(name)
                 summary = scenario(session)
             finally:
-                session.close()
+                if session is not None:
+                    session.close()
             print(f"    ok: {json.dumps(summary, sort_keys=True)[:160]}")
         except _SCENARIO_FAULTS as exc:
             # A characterization run must complete and report; the miss IS
             # the finding for that scenario.
             print(f"    error: {exc}")
             summary = {"error": str(exc)}
-        summary["pi_exit_code"] = session.exit_code()
-        return ScenarioOutcome(
-            name=name, summary=summary, transcript=session.transcript
-        )
+        # None: the child never existed, so there is no exit code to report.
+        summary["pi_exit_code"] = session.exit_code() if session is not None else None
+        transcript = session.transcript if session is not None else Transcript()
+        return ScenarioOutcome(name=name, summary=summary, transcript=transcript)
 
     def _session(self, name: str) -> PiRpcSession:
         project = SCRATCH_ROOT / name

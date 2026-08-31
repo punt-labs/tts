@@ -126,7 +126,7 @@ class RelayScript:
         url = shlex.quote(self._url)
         return (
             "#!/bin/sh\n"
-            "# Rendered by the vox-73y7 harness: sender-side stamp, then relay.\n"
+            "# Rendered by the vox-04qy harness: sender-side stamp, then relay.\n"
             "start_ns=$(date +%s%N)\n"
             "case \"$start_ns\" in *[!0-9]*|'')\n"
             f"    start_ns=$({python} -c 'import time; print(time.time_ns())') ;;\n"

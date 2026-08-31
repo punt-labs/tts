@@ -95,6 +95,46 @@ class TestGuardedKeepsTheEvidence:
         assert outcome.summary == {"ok": True, "pi_exit_code": 0}
 
 
+class TestSpawnFailureIsAScenarioOutcome:
+    """A session that never spawns is that scenario's finding, not a crash."""
+
+    def test_spawn_failure_yields_an_error_outcome(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        runner = _runner(tmp_path, monkeypatch)
+
+        def refuse(_self: Arm1Runner, _name: str) -> PiRpcSession:
+            msg = "spawn refused: transient resource exhaustion"
+            raise OSError(msg)
+
+        monkeypatch.setattr(Arm1Runner, "_session", refuse)
+        outcome = runner._guarded("never_spawned", lambda _s: {"ok": True})
+        assert "spawn refused" in str(outcome.summary["error"])
+        assert outcome.transcript.entries() == ()  # honest: nothing happened
+        assert outcome.summary["pi_exit_code"] is None
+
+    def test_later_scenarios_still_execute_after_a_spawn_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        runner = _runner(tmp_path, monkeypatch)
+        working = _peer_session(tmp_path, _HANGING_PEER)
+        calls: list[str] = []
+
+        def flaky(_self: Arm1Runner, name: str) -> PiRpcSession:
+            calls.append(name)
+            if name == "first":
+                msg = "spawn refused once"
+                raise OSError(msg)
+            return working
+
+        monkeypatch.setattr(Arm1Runner, "_session", flaky)
+        first = runner._guarded("first", lambda _s: {"ok": True})
+        second = runner._guarded("second", lambda _s: {"ok": True})
+        assert "error" in first.summary
+        assert second.summary == {"ok": True, "pi_exit_code": 0}
+        assert calls == ["first", "second"]
+
+
 class TestIdleSteerHungTurn:
     """A started-then-hung turn is reported as exactly that."""
 
