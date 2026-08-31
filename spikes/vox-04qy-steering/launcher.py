@@ -201,18 +201,25 @@ class SessionLauncher:
         project: ScratchProject,
         config: IsolatedConfig,
         prompt: str,
+        extra_env: dict[str, str] | None = None,  # None: config env only
     ) -> TmuxSession:
-        """Fork one session; refuses past the per-run cap."""
+        """Fork one session; refuses past the per-run cap.
+
+        ``extra_env`` entries (e.g. the sentinel-stub PATH) are merged
+        over the isolated config's own env and ride the same tmux ``-e``
+        injection.
+        """
         if self._forked >= MAX_FORKS_PER_RUN:
             msg = f"fork cap reached ({MAX_FORKS_PER_RUN} per run)"
             raise RuntimeError(msg)
         if not name.startswith(SESSION_PREFIX):
             msg = f"session name must carry the {SESSION_PREFIX!r} prefix: {name}"
             raise ValueError(msg)
+        env = config.env()
+        if extra_env is not None:
+            env.update(extra_env)
         session = TmuxSession(name)
-        session.spawn(
-            LaunchCommand(self._claude_bin, prompt), project.path, config.env()
-        )
+        session.spawn(LaunchCommand(self._claude_bin, prompt), project.path, env)
         # Budget is consumed only by a session that verifiably exists: a
         # spawn failure (tmux absent, bad cwd) or a fork that died at
         # startup (bad claude binary exits instantly, taking the tmux

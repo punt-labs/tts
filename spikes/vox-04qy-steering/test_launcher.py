@@ -90,3 +90,17 @@ class TestInjectionArgv:
             "-t",
             f"{SESSION_PREFIX}-t3:",
         ]
+
+
+class TestExtraEnv:
+    """extra_env entries must ride the same tmux -e injection."""
+
+    def test_extra_env_merges_over_config_env(self, tmp_path: Path) -> None:
+        # spawn_argv is the pure seam: build the merged env the way
+        # SessionLauncher.launch does and assert the stub PATH survives.
+        session = TmuxSession(f"{SESSION_PREFIX}-t4")
+        merged = {"CLAUDE_CONFIG_DIR": "/cfg", "PATH": "/stubs:/usr/bin"}
+        argv = session.spawn_argv(
+            LaunchCommand(Path("/bin/claude"), "go"), cwd=tmp_path, env=merged
+        )
+        assert "PATH=/stubs:/usr/bin" in argv
