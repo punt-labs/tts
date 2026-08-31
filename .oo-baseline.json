@@ -2327,17 +2327,17 @@
     "public_attr_violations": 0.0
   },
   "src/punt_vox/voxd/config.py": {
-    "avg_complexity": 2.18,
-    "avg_params": 0.41,
-    "class_to_func_ratio": 0.333,
-    "classes_per_module": 2.0,
+    "method_ratio": 0.789,
     "encapsulation_ratio": 1.0,
-    "future_annotations": 1.0,
-    "init_violations": 0.0,
+    "avg_params": 0.37,
     "max_complexity": 10.0,
-    "method_ratio": 0.765,
-    "module_size": 227.0,
-    "public_attr_violations": 0.0
+    "avg_complexity": 2.05,
+    "module_size": 245.0,
+    "classes_per_module": 2.0,
+    "class_to_func_ratio": 0.333,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
   },
   "src/punt_vox/voxd/containment.py": {
     "avg_complexity": 1.4,
@@ -2899,17 +2899,17 @@
     "public_attr_violations": 0.0
   },
   "src/punt_vox/voxd/daemon.py": {
-    "avg_complexity": 1.69,
-    "avg_params": 1.5,
-    "class_to_func_ratio": 0.5,
-    "classes_per_module": 1.0,
+    "method_ratio": 0.923,
     "encapsulation_ratio": 1.0,
-    "future_annotations": 1.0,
-    "init_violations": 0.0,
+    "avg_params": 1.6,
     "max_complexity": 6.0,
-    "method_ratio": 0.929,
-    "module_size": 336.0,
-    "public_attr_violations": 0.0
+    "avg_complexity": 1.67,
+    "module_size": 290.0,
+    "classes_per_module": 1.0,
+    "class_to_func_ratio": 0.5,
+    "init_violations": 0.0,
+    "public_attr_violations": 0.0,
+    "future_annotations": 1.0
   },
   "src/punt_vox/voxd/data_root_boundary.py": {
     "avg_complexity": 2.0,
