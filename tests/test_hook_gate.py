@@ -148,9 +148,13 @@ def sweep_no_spawn_sentinels() -> Iterator[None]:
 
     Three seconds comfortably exceeds the observed landing tail (a 2-second
     deadline was missed once in 15 quiet runs), and every test that ran after
-    the registering one has already added its own elapsed time on top.
+    the registering one has already added its own elapsed time on top. With
+    no registered sentinels (a ``-k`` run of unrelated classes) there is
+    nothing to wait for, so the sleep is skipped.
     """
     yield
+    if not _NO_SPAWN_SENTINELS:
+        return
     time.sleep(3.0)
     spawned = {
         s: s.read_text(encoding="utf-8") for s in _NO_SPAWN_SENTINELS if s.exists()
@@ -297,13 +301,36 @@ class TestPanelSpawn:
         pytest process's own pid, fixed for the whole run -- so a slow
         3-second sleeper left over from one test would otherwise satisfy the
         *next* test's pgrep guard check and make it look like nothing spawned.
+
+        Ordering invariant: `pgrep` runs BEFORE `pkill`. A stub that leaked
+        from a no-spawn test but has not yet written its sentinel (the
+        beyond-2s tail) is pkill-matchable, and killing it before the write
+        would starve the module-teardown sweep of exactly the late leak it
+        exists to catch. The process's existence is the failure evidence --
+        no sentinel write needed -- so it is captured first, then reaped.
+        The assertion applies only to tests that registered a no-spawn
+        sentinel; the spawn-expecting tests leave a live 3-second sleeper
+        by design.
         """
+        registered_before = len(_NO_SPAWN_SENTINELS)
         yield
+        pattern = f"vox-panel --session-pid {os.getpid()}"
+        survivors = subprocess.run(
+            ["pgrep", "-f", pattern],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
         subprocess.run(
-            ["pkill", "-f", f"vox-panel --session-pid {os.getpid()}"],
+            ["pkill", "-f", pattern],
             check=False,
             capture_output=True,
         )
+        if len(_NO_SPAWN_SENTINELS) > registered_before:
+            assert survivors.returncode != 0, (
+                "a vox-panel stub survived a no-spawn test (killed before it "
+                f"could write its sentinel): pids {survivors.stdout.split()}"
+            )
 
     @staticmethod
     def _write_vox_panel_stub(bin_dir: Path) -> None:
