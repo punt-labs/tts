@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.4] - 2026-08-31
+
 ### Changed
 
 - **Every `astral-sh/setup-uv` pin now names the version it actually runs, and all six agree (vox-qw9r).** The workflows carried one pin at `c771a70e` commented `# v9.0.0` and five at `e58605a9` commented `# v5`. The automated bump raised only the first to `20cfd1bf # v10.0.1` and rewrote the other five to `c771a70e` while leaving their `# v5` comment intact — which would have shipped five pins claiming v5 while running v9.0.0, and two different versions of one action across the CI matrix. A SHA-pinned action whose version comment lies is worse than an unpinned one, because the comment is the only thing a reader can check. All six are now `20cfd1bf # v10.0.1`.
@@ -16,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The release scripts no longer bypass git hooks (pkit-hsyi).** `scripts/release-plugin.sh` and `scripts/restore-dev-plugin.sh` both passed `--no-verify`, which the org standards ban: the release path was the one path that skipped every local hook, including the audit seal. Hooks now run on the release-prep commit. `restore-dev-plugin.sh` additionally no longer commits at all — it stages the restored dev state and the caller commits it with hooks running, because committing inside the script meant either keeping `--no-verify` or resolving a hook failure mid-release with no re-stamp step to fold the resolution into. A test now pins that neither script can reintroduce the flag.
 - **`vox daemon install` now captures `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` into the voxd LaunchAgent, and the plist is its own object.** Behind a TLS-inspecting corporate proxy — which presents its own CA — a launchd-started voxd could not reach HTTPS endpoints the installing shell reached, because the plist carried only `PATH` and `VOXD_BIND`. The only remaining way to supply the CA was a `launchctl bootout`/`bootstrap` cycle from an activation script, and `bootout` is asynchronous: on nix-darwin this raced `claude plugin install`'s git clone through a window where the CA was untrusted, failing 3/3 times with `SSL certificate verify result 20`. Both vars are now captured at install time, so no bootout dance is needed. An unset *or empty* var is omitted rather than written through, because an empty `SSL_CERT_FILE` is worse than an absent one — OpenSSL reads it as a bundle containing no certificates instead of falling back to the system trust store. The env capture, the plist XML, and the plist file move to a new `VoxdPlist`, leaving `LaunchdBackend` with only the launchd lifecycle it composes a `LaunchctlAgent` for: the class had held two disjoint responsibilities, which its cohesion score stated numerically — `max_lcom` and `avg_lcom` fall from 0.694 to 0.067, and `module_size` from 144 to 73.
 - **The test suite no longer spawns real vox-panels against the live Lux hub
   (vox-h7k8).** `tests/test_hook_gate.py`'s stdin-edge tests (malformed and
