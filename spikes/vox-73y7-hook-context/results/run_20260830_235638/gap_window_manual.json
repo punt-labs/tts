@@ -12,7 +12,8 @@
     "killed_at": "2026-08-31T00:20:14+00:00",
     "lost_events": 9,
     "port_confirmed_closed": true,
-    "restarted_at": "2026-08-31T00:22:30+00:00",
+    "restart_machine_evidence": "first post-restart receipt: relay_seq 102 at 2026-08-31T00:21:59.134603+00:00 (hook_ledger.jsonl)",
+    "restarted_at": "2026-08-31T00:22:30+00:00 (hand-recorded, ~30s late)",
     "traffic_during_window": "one full turn (README edit + suite run, DONE5)"
   }
 }

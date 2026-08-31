@@ -26,9 +26,11 @@ multi-file task — 8 files created/edited, a crash reproduced by
 traceback, fixes, 27 tests green — with ALL hook events relayed:
 SessionStart, UserPromptSubmit, PreToolUse (matcher `*`), PostToolUse
 (matcher `*`), Notification, Stop, SubagentStart/Stop, PreCompact,
-SessionEnd wired; the first six fired (the profile denies Task, no
-compaction occurred, and an interactive session that stays open emits no
-SessionEnd).
+SessionEnd wired; the first six fired during the working session (the
+profile denies Task and no compaction occurred), and SessionEnd fired
+once at teardown (00:31:40, when the tmux session was killed) — AFTER
+the committed analysis snapshots were taken, arriving without relay
+stamps because the fork's process tree was being torn down mid-relay.
 
 Field inventory (`field_inventory.json`; state = work content, pointer =
 path to state elsewhere on host, metadata = plumbing):
@@ -281,7 +283,11 @@ stamping), same host, same wall clock, over the whole session
 
 ~32ms median, worst case under 100ms, dominated by interpreter and
 mcp-proxy process startup — the rolling store sees session state
-effectively in real time on loopback.
+effectively in real time on loopback. The committed `latency.json`
+(n=95, `unstamped_records: 0`) was snapshotted before the teardown-time
+SessionEnd landed; a re-run over the final 96-record ledger reports the
+same percentiles with that one unstamped record excluded and counted
+(`unstamped_records: 1`).
 
 ## (c) Gap detection: loss is detectable only with SENDER-side sequences
 
@@ -306,12 +312,16 @@ on the store). Evidence from the run (`gap_report.json`,
   run, `DONE5`) entirely inside the dead window — relays failed
   non-blocking, the session never stalled (juhw's survival result
   reconfirmed under load).
-- Store restarted at 00:22:30 on the same port/ledger; a post-restart
+- Store restarted on the same port/ledger by 00:21:59 (machine
+  evidence: first post-restart receipt, relay_seq 102 at
+  00:21:59.134603; the hand-recorded 00:22:30 in
+  `gap_window_manual.json` is annotated as ~30s late); a post-restart
   turn landed normally.
-- `gap_check.py` on resume: `received=94 lost=9 receiver_resets=3
-  gap_detected=True` — the nine `relay_seq` holes are exactly the dead
-  window's events, detected and quantified; the receiver-side numbering
-  shows only its three restarts and zero loss signal.
+- `gap_check.py` on resume (`gap_report.json`): `received=95 lost=9
+  receiver_resets=3 gap_detected=True` — the nine `relay_seq` holes are
+  exactly the dead window's events, detected and quantified; the
+  receiver-side numbering shows only its three restarts and zero loss
+  signal.
 - Two earlier kill/restart windows (the harness's scheduled one at
   00:03:40 and a mis-aimed manual one at 00:08:41) fell in idle periods
   and lost nothing — `gap_detected=False` with all sequences contiguous,
@@ -327,7 +337,8 @@ sender**. That precision must land in DES-070's text.
 current goal (last prompt), active files, last three verbatim tool
 results, freshest open failure, and the agent's last end-of-turn report,
 bounded at 10,240 bytes with oldest-result-first trimming (actual seeds
-in this run: ~2.5-9KB). Graded seed-only above: **5/5 PASS**, including
+in this run: 1,026-5,632 bytes across the five timepoints, per
+`reconstructions.json`). Graded seed-only above: **5/5 PASS**, including
 the timepoint where the raw tail lost the goal.
 
 Reading it correctly: the seed is *derived from the fanout ledger*, so
