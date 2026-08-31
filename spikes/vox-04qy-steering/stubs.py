@@ -42,8 +42,14 @@ class SentinelStubs:
         return self._root / "invocations.log"
 
     def create(self) -> None:
-        """Write one recording stub per guarded binary name."""
+        """Write one recording stub per guarded binary name.
+
+        The log file is created empty here, so "no hits" is always the
+        observation of an existing empty log — never an inference from a
+        missing file.
+        """
         self.bin_dir.mkdir(parents=True, exist_ok=True)
+        self.log_path.touch()
         for name in STUBBED_NAMES:
             stub = self.bin_dir / name
             stub.write_text(self._script_body(), encoding="utf-8")
@@ -54,9 +60,19 @@ class SentinelStubs:
         return f"{self.bin_dir}:{base_path}"
 
     def invocations(self) -> tuple[str, ...]:
-        """Every intercepted call, one line each; empty means none."""
+        """Every intercepted call, one line each; empty means none.
+
+        Raises when the log file is gone: a missing log means the stubs
+        were never created or the scratch root was already removed, and
+        either way "zero hits" would be a fabricated all-clear. Harvest
+        BEFORE teardown.
+        """
         if not self.log_path.exists():
-            return ()
+            msg = (
+                "stub invocation log missing (harvest before teardown): "
+                f"{self.log_path}"
+            )
+            raise FileNotFoundError(msg)
         return tuple(self.log_path.read_text(encoding="utf-8").splitlines())
 
     def _script_body(self) -> str:

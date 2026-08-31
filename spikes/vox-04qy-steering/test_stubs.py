@@ -11,6 +11,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from stubs import SentinelStubs
 
 
@@ -46,3 +48,11 @@ class TestSentinelStubs:
         stubs = SentinelStubs(tmp_path / "stubs")
         stubs.create()
         assert stubs.invocations() == ()
+
+    def test_missing_log_is_loud_not_zero_hits(self, tmp_path: Path) -> None:
+        # A removed (or never-created) log must never read as "zero hits":
+        # that is exactly how a teardown-before-harvest bug fabricates a
+        # clean isolation claim.
+        stubs = SentinelStubs(tmp_path / "stubs")
+        with pytest.raises(FileNotFoundError, match="invocation log"):
+            stubs.invocations()

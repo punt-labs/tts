@@ -233,6 +233,11 @@ class Arm2Runner:
         self._nudges = []
         return self
 
+    @property
+    def stubs(self) -> SentinelStubs:
+        """The sentinel stand-ins guarding the vox surface."""
+        return self._stubs
+
     def run(self) -> int:
         """Fork, run the matrix, write evidence, tear down; exit code."""
         _RESULTS.mkdir(parents=True, exist_ok=True)
@@ -269,8 +274,8 @@ class Arm2Runner:
                     print(f"    error: {exc}")
                     results.append(CaseResult(name, {"error": str(exc)}))
         finally:
-            teardown_lines = self._teardown(store)
-        self._write_summary(results, teardown_lines)
+            stub_lines, teardown_lines = self.teardown_with_evidence(store)
+        self._write_summary(results, stub_lines, teardown_lines)
         failed = [result.name for result in results if "error" in result.summary]
         if failed:
             print(f"cases with errors: {', '.join(failed)}")
@@ -496,7 +501,17 @@ class Arm2Runner:
         target = _RESULTS / f"pane_{label}.txt"
         target.write_text(self._sanitizer.scrub(cleaned) + "\n", encoding="utf-8")
 
-    def _teardown(self, store: StoreProcess) -> list[str]:
+    def teardown_with_evidence(
+        self, store: StoreProcess
+    ) -> tuple[list[str], list[str]]:
+        """Harvest the stub evidence, THEN destroy everything.
+
+        The invocation log lives under the scratch root the teardown
+        removes; reading it after the rmtree would fabricate a "zero
+        hits" all-clear (the first live run did exactly that). Returns
+        (stub invocation lines, teardown log lines).
+        """
+        stub_lines = list(self._stubs.invocations())
         lines: list[str] = []
         session = self._session
         if session is not None:
@@ -517,16 +532,19 @@ class Arm2Runner:
             outcome = Teardown(_SCRATCH_ROOT).run()
             lines.append(f"teardown pass {attempt} clean={outcome.clean}")
             lines.extend(outcome.log)
-        return lines
+        return stub_lines, lines
 
     def _write_summary(
-        self, results: list[CaseResult], teardown_lines: list[str]
+        self,
+        results: list[CaseResult],
+        stub_lines: list[str],
+        teardown_lines: list[str],
     ) -> None:
         body = {
             "environment": self._environment(),
             "cases": {result.name: result.summary for result in results},
             "dialog_nudges": self._nudges,
-            "stub_invocations": list(self._stubs.invocations()),
+            "stub_invocations": stub_lines,
             "teardown": teardown_lines,
         }
         (_RESULTS / "summary.json").write_text(
