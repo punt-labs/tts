@@ -104,13 +104,16 @@ _SENTINELS: list[Path] = []
 def sweep_panel_sentinels() -> Iterator[None]:
     """Fail the module if any session-start run in it spawned a vox-panel.
 
-    Runs a second after the last test, long past the observed landing window
-    for a backgrounded stub's write. Each sentinel's content names the
-    spawning invocation (`<stub pid> --session-pid <watched pid>`), and its
-    tmp directory names the test.
+    Runs three seconds after the last test: the observed landing tail for a
+    backgrounded stub's write exceeds two seconds, and the module's LAST
+    `_run` invocation has only this pause as its guard -- every earlier one
+    also gets the elapsed time of the tests that followed it. Each sentinel's
+    content names the spawning invocation
+    (`<stub pid> --session-pid <watched pid>`), and its tmp directory names
+    the test.
     """
     yield
-    time.sleep(1.0)
+    time.sleep(3.0)
     spawned = {s: s.read_text(encoding="utf-8") for s in _SENTINELS if s.exists()}
     assert not spawned, f"session-start.sh spawned vox-panels: {spawned}"
 
@@ -172,7 +175,9 @@ def _vox_panel_free_path() -> str:
     Under `uv run` the project venv's bin -- which ships the real vox-panel --
     leads PATH, so an unstripped tail leaves the live binary reachable. Same
     helper as test_hook_gate's `_path_without_vox_panel`, local to keep the
-    test modules uncoupled.
+    test modules uncoupled. Drops each whole directory, so a host that
+    colocates `vox-panel` with tools the hook needs (git, jq) loses those
+    tools too -- a loud, if misdirecting, failure rather than a silent one.
     """
     entries = _system_path().split(os.pathsep)
     return os.pathsep.join(d for d in entries if not (Path(d) / "vox-panel").exists())

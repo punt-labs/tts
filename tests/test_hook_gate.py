@@ -63,7 +63,12 @@ def _write_failing_git(bin_dir: Path) -> None:
 
 
 def _path_without_vox() -> str:
-    """The current PATH with every directory that contains a `vox` removed."""
+    """The current PATH with every directory that contains a `vox` removed.
+
+    Drops each whole directory, so a host that colocates `vox` with tools the
+    hook needs (git, jq) loses those tools too -- a loud, if misdirecting,
+    failure rather than a silent one.
+    """
     entries = os.environ.get("PATH", "").split(os.pathsep)
     return os.pathsep.join(d for d in entries if not (Path(d) / "vox").exists())
 
@@ -119,9 +124,38 @@ def _poll_until(predicate: Callable[[], bool], *, timeout: float = 10.0) -> None
 
 
 def _path_without_vox_panel() -> str:
-    """The current PATH with every directory that contains `vox-panel` removed."""
+    """The current PATH with every directory that contains `vox-panel` removed.
+
+    Drops each whole directory, so a host that colocates `vox-panel` with
+    tools the hook needs (git, jq) loses those tools too -- a loud, if
+    misdirecting, failure rather than a silent one.
+    """
     entries = os.environ.get("PATH", "").split(os.pathsep)
     return os.pathsep.join(d for d in entries if not (Path(d) / "vox-panel").exists())
+
+
+# Sentinels from the no-spawn assertions, re-checked at module teardown. The
+# spawn is backgrounded, and this file's own polling evidence (see
+# _poll_until) is that a record can land after a 2-second window. The
+# per-test window gives fast, attributed feedback; this sweep is the guard
+# sized to the observed tail.
+_NO_SPAWN_SENTINELS: list[Path] = []
+
+
+@pytest.fixture(autouse=True, scope="module")
+def sweep_no_spawn_sentinels() -> Iterator[None]:
+    """Fail the module if a no-spawn test's vox-panel record landed late.
+
+    Three seconds comfortably exceeds the observed landing tail (a 2-second
+    deadline was missed once in 15 quiet runs), and every test that ran after
+    the registering one has already added its own elapsed time on top.
+    """
+    yield
+    time.sleep(3.0)
+    spawned = {
+        s: s.read_text(encoding="utf-8") for s in _NO_SPAWN_SENTINELS if s.exists()
+    }
+    assert not spawned, f"session-start.sh spawned vox-panels late: {spawned}"
 
 
 @pytest.fixture
@@ -320,10 +354,15 @@ class TestPanelSpawn:
 
         The spawn is backgrounded (``nohup ... & disown``), so its record can
         arrive after the hook process has already exited -- an instant check
-        would pass before a slow leak lands. The window is evidence, not the
-        guarantee: the guarantee is structural (an unenabled scratch cwd and
-        a PATH whose tail carries no real vox-panel).
+        would pass before a slow leak lands, and by this file's own evidence
+        (see ``_poll_until``) even 2 seconds is not a safe bound. So the
+        sentinel is also registered for the module-teardown sweep, which
+        re-checks it long past the observed tail; this window gives fast,
+        per-test attribution. The window is evidence, not the guarantee: the
+        guarantee is structural (an unenabled scratch cwd and a PATH whose
+        tail carries no real vox-panel).
         """
+        _NO_SPAWN_SENTINELS.append(sentinel)
         deadline = time.monotonic() + window
         while time.monotonic() < deadline:
             assert not sentinel.exists(), (

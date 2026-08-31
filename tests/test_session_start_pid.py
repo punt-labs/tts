@@ -108,6 +108,9 @@ def _vox_panel_free_path() -> str:
     leads PATH, so an unstripped tail leaves the live binary one lookup miss
     away from the Lux hub. Same helper as test_hook_gate's
     `_path_without_vox_panel`, local to keep the test modules uncoupled.
+    Drops each whole directory, so a host that colocates `vox-panel` with
+    tools the hook needs (git, jq) loses those tools too -- a loud, if
+    misdirecting, failure rather than a silent one.
     """
     entries = _system_path().split(os.pathsep)
     return os.pathsep.join(d for d in entries if not (Path(d) / "vox-panel").exists())
