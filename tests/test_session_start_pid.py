@@ -6,8 +6,7 @@ process that actually owns the session. Every ``vox-panel-*.log`` under
 ``~/.punt-labs/vox/logs`` contained exactly one line -- "session <pid> has
 gone; the applet is leaving" -- because the panel was spawned watching
 ``$PPID`` directly, so its own liveness check saw the wrapper vanish within
-seconds and left before ever reaching the Hub to register in the Lux menu
-(vox-nkn8).
+seconds and left before ever reaching the Hub to register in the Lux menu.
 
 These tests drive the real hook script as a subprocess at the bottom of a
 real three-level process tree -- a stand-in ``claude`` process, a wrapper
@@ -46,10 +45,17 @@ pytestmark = [
 _RELAY_SH = """#!/usr/bin/env bash
 # Forks "$@" as a genuine child (backgrounding always forks) and waits for it,
 # so each level in the tree is a distinct process with the expected parent.
+# The explicit <&0 keeps the hook's stdin: without a redirection, a
+# non-interactive bash gives an asynchronous command /dev/null as stdin, so
+# the JSON payload written to the top of the tree never reached the hook --
+# its cwd fell back to $PWD, the enablement-marker gate saw an unenabled
+# directory, and the panel spawn these tests observe was silently skipped
+# wherever $PWD did not nest under an enabled repo (CI, but not a local
+# checkout whose TMPDIR-pinned tmp_path sits inside the real vox repo).
 if [[ -n "${RELAY_TRACE_FILE:-}" ]]; then
   echo "$$" >> "$RELAY_TRACE_FILE"
 fi
-"$@" &
+"$@" <&0 &
 wait
 """
 
@@ -102,6 +108,27 @@ def _system_path() -> str:
     return os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
 
 
+def _vox_panel_free_path() -> str:
+    """The system PATH with every directory that contains `vox-panel` removed.
+
+    Under `uv run` the project venv's bin -- which ships the real vox-panel --
+    leads PATH, so an unstripped tail leaves the live binary one lookup miss
+    away from the Lux hub. Same helper as test_hook_gate's
+    `_path_without_vox_panel`, local to keep the test modules uncoupled.
+    Drops each whole directory, so a host that colocates `vox-panel` with
+    tools the hook needs (git, jq) loses those tools too -- a loud, if
+    misdirecting, failure rather than a silent one. Only absolute entries are
+    kept: relative entries ("", ".", "./x", "..") resolve against the hook's
+    cwd, which could still resolve a `./vox-panel`.
+    """
+    entries = _system_path().split(os.pathsep)
+    return os.pathsep.join(
+        d
+        for d in entries
+        if (p := Path(d)).is_absolute() and not (p / "vox-panel").exists()
+    )
+
+
 def _run_tree(tmp_path: Path, *, claude_comm: str) -> tuple[int, int, int]:
     """Spawn claude(comm=claude_comm) -> wrapper -> session-start.sh.
 
@@ -124,21 +151,35 @@ def _run_tree(tmp_path: Path, *, claude_comm: str) -> tuple[int, int, int]:
 
     fake_home = tmp_path / "home"
     fake_home.mkdir()
+    # A standalone git repo, so the hook's `git -C` resolves its root HERE
+    # rather than walking up to the enclosing (enabled) vox repo that pytest's
+    # TMPDIR-pinned tmp_path nests under -- the spawn this fixture observes
+    # must be gated on this tree's own marker, not the real repo's.
     repo_dir = tmp_path / "repo"
     (repo_dir / ".punt-labs" / "vox").mkdir(parents=True)
     (repo_dir / ".punt-labs" / "vox" / "enabled").touch()
+    subprocess.run(["git", "init", "-q", str(repo_dir)], check=True)
     trace_file = tmp_path / "relay_trace.txt"
 
     env = dict(os.environ)
     env["HOME"] = str(fake_home)
-    env["PATH"] = f"{stub_bin}:{_system_path()}"
+    # Stub first, real vox-panel stripped from the tail: the spawn
+    # this fixture captures must never be able to reach the live binary, even
+    # if the stub is somehow skipped.
+    env["PATH"] = os.pathsep.join(
+        p for p in (str(stub_bin), _vox_panel_free_path()) if p
+    )
     env["RELAY_TRACE_FILE"] = str(trace_file)
+    assert shutil.which("vox-panel", path=env["PATH"]) == str(stub_bin / "vox-panel"), (
+        "the recording stub must be the only vox-panel this hook run can reach"
+    )
 
     proc = subprocess.Popen(
         [str(claude_bin), str(relay_sh), "bash", str(relay_sh), "bash", str(_SCRIPT)],
         env=env,
         stdin=subprocess.PIPE,
         text=True,
+        cwd=tmp_path,  # never inherit pytest's cwd (the enabled repo)
     )
     claude_pid = proc.pid
     proc.communicate(input=json.dumps({"cwd": str(repo_dir)}), timeout=15)
