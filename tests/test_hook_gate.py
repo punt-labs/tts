@@ -67,10 +67,12 @@ def _path_without_vox() -> str:
 
     Drops each whole directory, so a host that colocates `vox` with tools the
     hook needs (git, jq) loses those tools too -- a loud, if misdirecting,
-    failure rather than a silent one.
+    failure rather than a silent one. Empty entries are dropped too: on POSIX
+    an empty PATH entry means the current directory, which could still
+    resolve a `./vox`.
     """
     entries = os.environ.get("PATH", "").split(os.pathsep)
-    return os.pathsep.join(d for d in entries if not (Path(d) / "vox").exists())
+    return os.pathsep.join(d for d in entries if d and not (Path(d) / "vox").exists())
 
 
 def _run_hook(name: str, cwd: str, event: str, env: dict[str, str]) -> int:
@@ -128,10 +130,14 @@ def _path_without_vox_panel() -> str:
 
     Drops each whole directory, so a host that colocates `vox-panel` with
     tools the hook needs (git, jq) loses those tools too -- a loud, if
-    misdirecting, failure rather than a silent one.
+    misdirecting, failure rather than a silent one. Empty entries are dropped
+    too: on POSIX an empty PATH entry means the current directory, which
+    could still resolve a `./vox-panel`.
     """
     entries = os.environ.get("PATH", "").split(os.pathsep)
-    return os.pathsep.join(d for d in entries if not (Path(d) / "vox-panel").exists())
+    return os.pathsep.join(
+        d for d in entries if d and not (Path(d) / "vox-panel").exists()
+    )
 
 
 # Sentinels from the no-spawn assertions, re-checked at module teardown. The

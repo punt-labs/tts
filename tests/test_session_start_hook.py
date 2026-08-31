@@ -110,9 +110,12 @@ def sweep_panel_sentinels() -> Iterator[None]:
     also gets the elapsed time of the tests that followed it. Each sentinel's
     content names the spawning invocation
     (`<stub pid> --session-pid <watched pid>`), and its tmp directory names
-    the test.
+    the test. With no registered sentinels (a ``-k`` run that never called
+    `_run`) there is nothing to wait for, so the sleep is skipped.
     """
     yield
+    if not _SENTINELS:
+        return
     time.sleep(3.0)
     spawned = {s: s.read_text(encoding="utf-8") for s in _SENTINELS if s.exists()}
     assert not spawned, f"session-start.sh spawned vox-panels: {spawned}"
@@ -178,9 +181,13 @@ def _vox_panel_free_path() -> str:
     test modules uncoupled. Drops each whole directory, so a host that
     colocates `vox-panel` with tools the hook needs (git, jq) loses those
     tools too -- a loud, if misdirecting, failure rather than a silent one.
+    Empty entries are dropped too: on POSIX an empty PATH entry means the
+    current directory, which could still resolve a `./vox-panel`.
     """
     entries = _system_path().split(os.pathsep)
-    return os.pathsep.join(d for d in entries if not (Path(d) / "vox-panel").exists())
+    return os.pathsep.join(
+        d for d in entries if d and not (Path(d) / "vox-panel").exists()
+    )
 
 
 def _commands_dir(home: Path) -> Path:

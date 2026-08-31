@@ -110,10 +110,14 @@ def _vox_panel_free_path() -> str:
     `_path_without_vox_panel`, local to keep the test modules uncoupled.
     Drops each whole directory, so a host that colocates `vox-panel` with
     tools the hook needs (git, jq) loses those tools too -- a loud, if
-    misdirecting, failure rather than a silent one.
+    misdirecting, failure rather than a silent one. Empty entries are dropped
+    too: on POSIX an empty PATH entry means the current directory, which
+    could still resolve a `./vox-panel`.
     """
     entries = _system_path().split(os.pathsep)
-    return os.pathsep.join(d for d in entries if not (Path(d) / "vox-panel").exists())
+    return os.pathsep.join(
+        d for d in entries if d and not (Path(d) / "vox-panel").exists()
+    )
 
 
 def _run_tree(tmp_path: Path, *, claude_comm: str) -> tuple[int, int, int]:
