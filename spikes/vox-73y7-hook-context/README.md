@@ -85,9 +85,13 @@ Analyzers re-run standalone over any ledger:
 direnv exec ../../ uv run field_inventory.py --ledger results/run_<ts>/hook_ledger.jsonl
 direnv exec ../../ uv run latency.py --ledger ... --out latency.json
 direnv exec ../../ uv run gap_check.py --ledger ...
-direnv exec ../../ uv run reconstructor.py --ledger ... --cutoff <recv_seq>
-direnv exec ../../ uv run seed_builder.py --ledger ... --cutoff <recv_seq>
+direnv exec ../../ uv run reconstructor.py --ledger ... --cutoff <cutoff_index>
+direnv exec ../../ uv run seed_builder.py --ledger ... --cutoff <cutoff_index>
 ```
+
+`--cutoff` is a file-order record count (the `cutoff_index` recorded in
+`timepoints.json`), not a `recv_seq` — receiver sequences reset across
+store restarts, so they cannot bound a timepoint.
 
 ## Isolation and bounds
 

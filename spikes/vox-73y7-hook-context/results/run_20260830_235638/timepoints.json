@@ -1,17 +1,17 @@
 {
   "early": {
     "capture_file": "capture_early.txt",
-    "cutoff_recv_seq": 5,
+    "cutoff_index": 5,
     "sampled_at": "2026-08-30T23:56:47+00:00"
   },
   "end": {
     "capture_file": "capture_end.txt",
-    "cutoff_recv_seq": 46,
+    "cutoff_index": 46,
     "sampled_at": "2026-08-30T23:58:18+00:00"
   },
   "mid-debug": {
     "capture_file": "capture_mid_debug.txt",
-    "cutoff_recv_seq": 60,
+    "cutoff_index": 65,
     "sampled_at": "2026-08-31T00:05:51+00:00"
   }
 }

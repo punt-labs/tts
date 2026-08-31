@@ -285,13 +285,22 @@ class TimepointSampler:
                 and has_success(response_text(record))
                 for index, record in enumerate(records, 1)
             )
-        return any(r.event == "Stop" for r in records)
+        # end: the Stop strictly after post-fix. Claude Code fires Stop
+        # at EVERY turn boundary, so an unordered trigger samples the
+        # FIRST turn's end -- and a Stop in the same snapshot as another
+        # timepoint's trigger would alias end onto its cutoff.
+        fix_index = self._sampled_index("post-fix")
+        return fix_index is not None and any(
+            index > fix_index and record.event == "Stop"
+            for index, record in enumerate(records, 1)
+        )
 
     def _sampled_index(self, label: str) -> int | None:
         # None until the labeled timepoint has been sampled -- each
         # dependent timepoint is ordered strictly after its predecessor
         # via this lookup: mid-debug after early, post-fix after
-        # mid-debug, so no two labels can alias onto one cutoff.
+        # mid-debug, end after post-fix, so no two labels can alias
+        # onto one cutoff.
         sample = self._samples.get(label)
         if sample is None:
             return None

@@ -1,9 +1,11 @@
 """Pins for the capture run's timepoint sampling.
 
-The four timepoints are evidence only if they are four DISTINCT moments.
-A seeded prompt whose first action is the failing suite must not let
-``early`` and ``mid-debug`` collapse onto one cutoff -- mid-debug requires
-a failing record strictly AFTER early's sampled cutoff.
+The four timepoints are evidence only if they are four DISTINCT moments,
+so each label requires its trigger record strictly AFTER its
+predecessor's sampled cutoff: a seeded prompt whose first action is the
+failing suite must not collapse ``early`` and ``mid-debug`` onto one
+cutoff, and a turn-boundary ``Stop`` (Claude Code fires one at EVERY
+turn end) must not alias ``end`` onto ``early``.
 """
 
 from __future__ import annotations
@@ -40,6 +42,14 @@ def _sampler(tmp_path: Path) -> TimepointSampler:
 
 def _failing(record: RecordFactory) -> HookRecord:
     return record(payload={"tool_response": "FAILED (errors=1)\nexit code 1"})
+
+
+def _passing(record: RecordFactory) -> HookRecord:
+    return record(payload={"tool_response": "Ran 5 tests in 0.01s\nOK"})
+
+
+def _stop(record: RecordFactory) -> HookRecord:
+    return record(event="Stop")
 
 
 class TestTimepointSampler:
@@ -79,3 +89,41 @@ class TestTimepointSampler:
         assert sampler.observe(records) == ("early",)
         assert sampler.samples["early"]["cutoff_index"] == 2
         assert "mid-debug" not in sampler.samples
+
+    def test_stop_in_the_first_snapshot_samples_only_early(
+        self, record: RecordFactory, tmp_path: Path
+    ) -> None:
+        # Claude Code fires Stop at every turn boundary: a first snapshot
+        # holding both a PostToolUse and the first turn's Stop must not
+        # give early and end the same cutoff.
+        sampler = _sampler(tmp_path)
+        snapshot = (_passing(record), _stop(record))
+        assert sampler.observe(snapshot) == ("early",)
+        assert sampler.observe(snapshot) == ()
+        assert "end" not in sampler.samples
+
+    def test_end_requires_a_stop_strictly_after_post_fix(
+        self, record: RecordFactory, tmp_path: Path
+    ) -> None:
+        sampler = _sampler(tmp_path)
+        first_failure = _failing(record)
+        assert sampler.observe((first_failure,)) == ("early",)
+        second_failure = _failing(record)
+        turn_stop = _stop(record)
+        assert sampler.observe((first_failure, second_failure, turn_stop)) == (
+            "mid-debug",
+        )
+        # The fix lands; the earlier turn-boundary Stop (index 3) is at
+        # or before post-fix's cutoff and must not close the run.
+        fixed = _passing(record)
+        assert sampler.observe((first_failure, second_failure, turn_stop, fixed)) == (
+            "post-fix",
+        )
+        assert "end" not in sampler.samples
+        final_stop = _stop(record)
+        assert sampler.observe(
+            (first_failure, second_failure, turn_stop, fixed, final_stop)
+        ) == ("end",)
+        assert sampler.samples["post-fix"]["cutoff_index"] == 4
+        assert sampler.samples["end"]["cutoff_index"] == 5
+        assert sampler.done()

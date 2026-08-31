@@ -15,7 +15,11 @@ The seed then answers the same four "what was I just doing?" timepoints
 through :class:`SeedReconstructor`, producing the identical answer shape
 as the ledger-tail path so the grading is apples-to-apples.
 
-Run:  uv run seed_builder.py --ledger <path> --cutoff <recv_seq>
+Run:  uv run seed_builder.py --ledger <path> --cutoff <cutoff_index>
+
+``--cutoff`` is a FILE-ORDER record count (the ``cutoff_index`` in
+``timepoints.json``), not a ``recv_seq`` -- receiver sequences reset
+across store restarts, so they cannot bound a timepoint.
 """
 
 from __future__ import annotations

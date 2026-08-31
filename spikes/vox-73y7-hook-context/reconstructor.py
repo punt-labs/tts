@@ -15,7 +15,11 @@ The same answer shape is produced by the seed-only path (``seed_builder``),
 so the two conditions are graded apples-to-apples against the pane-capture
 ground truth.
 
-Run:  uv run reconstructor.py --ledger <path> --cutoff <recv_seq> [--n 15]
+Run:  uv run reconstructor.py --ledger <path> --cutoff <cutoff_index> [--n 15]
+
+``--cutoff`` is a FILE-ORDER record count (the ``cutoff_index`` in
+``timepoints.json``), not a ``recv_seq`` -- receiver sequences reset
+across store restarts, so they cannot bound a timepoint.
 """
 
 from __future__ import annotations

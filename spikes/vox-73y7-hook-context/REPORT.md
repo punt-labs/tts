@@ -73,6 +73,18 @@ from the ledger visible at the cutoff — Layer 1's shape). Five timepoints
 sampled (bead minimum four); cutoffs are file-order indices because
 receiver `recv_seq` collides across store restarts (see (c)).
 
+**Post-adjudication sampler fix (labels unchanged here).** This run's
+harness let the `end` trigger fire on ANY `Stop`, but Claude Code emits
+`Stop` at every turn boundary — so the auto-sampled "end" (cutoff 46) is
+really the first turn's end, graded honestly below as
+`end-of-main-task`. The sampler now chains every timepoint strictly
+after its predecessor (early → mid-debug → post-fix → end), making `end`
+the first Stop after post-fix. Replayed over this run's committed
+ledger, the chained sampler would have placed `end` at cutoff 88 (the
+first Stop after the manual post-fix cutoff 79); the graded
+reconstructions below are unchanged — they were produced at the recorded
+cutoffs and stay byte-reproducible from the committed ledger.
+
 **Grading rubric.** PASS: the answer names the current goal AND the
 specific in-flight activity (file/command/result) matching ground truth,
 and any stated failure state is consistent. PARTIAL: goal or activity
