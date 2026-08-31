@@ -1,0 +1,49 @@
+{
+  "measured": "relay-script start (date +%s%N) to store receipt (time.time_ns), same host wall clock",
+  "overall": {
+    "max": 96.3,
+    "n": 95,
+    "p50": 32.3,
+    "p95": 43.2
+  },
+  "per_event": {
+    "Notification": {
+      "max": 43.2,
+      "n": 6,
+      "p50": 38.6,
+      "p95": 43.2
+    },
+    "PostToolUse": {
+      "max": 69.6,
+      "n": 36,
+      "p50": 31.3,
+      "p95": 39.9
+    },
+    "PreToolUse": {
+      "max": 96.3,
+      "n": 38,
+      "p50": 32.3,
+      "p95": 41.6
+    },
+    "SessionStart": {
+      "max": 33.0,
+      "n": 1,
+      "p50": 33.0,
+      "p95": 33.0
+    },
+    "Stop": {
+      "max": 39.5,
+      "n": 7,
+      "p50": 32.8,
+      "p95": 39.5
+    },
+    "UserPromptSubmit": {
+      "max": 56.3,
+      "n": 7,
+      "p50": 33.4,
+      "p95": 56.3
+    }
+  },
+  "unit": "ms",
+  "unstamped_records": 0
+}

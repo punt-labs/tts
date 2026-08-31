@@ -1,0 +1,72 @@
+
+  Listed 1 directory, ran 2 shell commands
+
+● 28 tests pass, no temp files left behind.
+
+  Note on scope: the two-file case you asked for was already covered by test_too_many_arguments_exits_2_with_usage. Instead of duplicating it, I added test_two_readable_files_still_exit_2_with_usage, which uses two files that actually exist — so it fails if the argument-count guard ever moves after the
+  file read, and additionally asserts stdout is empty and no traceback appears. If you specifically wanted a literal duplicate of the existing case, say so and I'll add it.
+
+  DONE4
+
+✻ Crunched for 32s · done 5:17 PM
+
+❯ Reply with exactly the word RESUMED and nothing else.
+
+● RESUMED
+
+✻ Cogitated for 1s · done 5:18 PM
+
+❯ Append a short Limitations section (two sentences) to README.md, then run python3 -m unittest discover -s tests -v 2>&1 one final time and reply DONE5 if green.
+  ⎿  UserPromptSubmit hook error
+  ⎿  Failed with non-blocking status code: mcp-proxy: connection refused: 127.0.0.1:46499
+
+  Read 1 file
+  ⎿  PreToolUse:Read hook error
+  ⎿  Failed with non-blocking status code: mcp-proxy: connection refused: 127.0.0.1:46499
+  ⎿  PostToolUse:Read hook error
+  ⎿  Failed with non-blocking status code: mcp-proxy: connection refused: 127.0.0.1:46499
+
+● Update(README.md)
+  ⎿  PreToolUse:Edit hook error
+  ⎿  Failed with non-blocking status code: mcp-proxy: connection refused: 127.0.0.1:46499
+  ⎿  Added 9 lines
+      49  ```console
+      50  $ python3 -m unittest discover -s tests -v
+      51  ```
+      52 +
+      53 +## Limitations
+      54 +
+      55 +Sentence detection is a heuristic: it skips periods that close a short list of
+      56 +known abbreviations (`Dr.`, `e.g.`, `p.m.`, and similar), so an unlisted
+      57 +abbreviation splits a sentence early and a listed one genuinely ending a
+      58 +sentence (`...and so on, etc.`) is not counted. Word counting is purely
+      59 +whitespace-based, which means hyphenated and contracted forms each count as one
+      60 +word and numbers count as words.
+  ⎿  PostToolUse:Edit hook error
+  ⎿  Failed with non-blocking status code: mcp-proxy: connection refused: 127.0.0.1:46499
+
+  Ran 1 shell command
+  ⎿  PreToolUse:Bash hook error
+  ⎿  Failed with non-blocking status code: mcp-proxy: connection refused: 127.0.0.1:46499
+  ⎿  PostToolUse:Bash hook error
+  ⎿  Failed with non-blocking status code: mcp-proxy: connection refused: 127.0.0.1:46499
+
+● Limitations section appended (two sentences, covering the sentence-detection heuristic and whitespace-based word counting). Suite is green: 28 tests, 0 failures.
+
+  DONE5
+
+● Ran 1 stop hook
+  ⎿  Stop hook error: Failed with non-blocking status code: mcp-proxy: connection refused: 127.0.0.1:46499
+
+✻ Cooked for 13s · done 5:20 PM
+
+❯ Reply with exactly RESUMED2 and nothing else.
+
+● RESUMED2
+
+✻ Crunched for 2s · done 5:22 PM
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ accept edits on (shift+tab to cycle) · ← for agents

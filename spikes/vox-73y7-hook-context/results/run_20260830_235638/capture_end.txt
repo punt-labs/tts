@@ -1,0 +1,72 @@
+      17 +```
+      18 +
+      19 +`textstat.readability`:
+      20 +
+      21 +```python
+      22 +from textstat.readability import sentence_count, avg_words_per_sentence
+      23 +
+      24 +sentence_count("One. Two! Three?")            # 3  -- sentences end with . ! or ?
+      25 +avg_words_per_sentence("a b. c.")             # 1.5  -- 0.0 when there are no sentences
+      26 +```
+      27 +
+      28 +### Command line
+      29 +
+      30 +`stats_cli.py` takes a file path and prints the word count, the longest word,
+      31 +and the sentence count, one per line:
+      32 +
+      33 +```console
+      34 +$ python3 stats_cli.py README.md
+      35 +119
+      36 +punctuation
+      37 +5
+      38 +```
+      39 +
+      40 +### Tests
+      41 +
+      42 +```console
+      43 +$ python3 -m unittest discover -s tests -v
+      44 +```
+
+● The README shows sample output, so let me verify it against the real run.
+
+  Ran 1 shell command
+
+● Self-referential output on the README is unstable (documenting the numbers changes them). Let me use a stable example instead.
+
+● Update(README.md)
+  ⎿  Added 10 lines, removed 3 lines
+      31  and the sentence count, one per line:
+      32
+      33  ```console
+      34 +$ python3 stats_cli.py notes.txt
+      35 +6
+      36 +sentences
+      37 +2
+      38 +```
+      39 +
+      40 +For a `notes.txt` containing `Two short sentences. Counted right here!` that is
+      41 +6 words, longest word `sentences`, and 2 sentences. Run it on any file:
+      42 +
+      43 +```console
+      44  $ python3 stats_cli.py README.md
+      35 -119
+      36 -punctuation
+      37 -5
+      45  ```
+      46
+      47  ### Tests
+
+  Ran 1 shell command
+
+● The documented example matches actual output. Final verification of the whole suite and the CLI on README.md:
+
+  Ran 1 shell command
+
+● DONE
+
+✻ Baked for 1m 36s · done 4:58 PM
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ accept edits on (shift+tab to cycle) · ← for agents

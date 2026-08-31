@@ -1,0 +1,380 @@
+{
+  "Notification": {
+    "count": 6,
+    "fields": {
+      "cwd": {
+        "class": "pointer",
+        "presence": 1.0
+      },
+      "hook_event_name": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "message": {
+        "class": "state",
+        "presence": 1.0
+      },
+      "notification_type": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "prompt_id": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "relay_seq": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "relay_start_ns": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "session_id": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "transcript_path": {
+        "class": "pointer",
+        "presence": 1.0
+      }
+    },
+    "payload_bytes": {
+      "max": 762.0,
+      "n": 6,
+      "p50": 761.0,
+      "p95": 762.0
+    },
+    "state_bytes": {
+      "max": 34.0,
+      "n": 6,
+      "p50": 34.0,
+      "p95": 34.0
+    }
+  },
+  "PostToolUse": {
+    "count": 36,
+    "fields": {
+      "cwd": {
+        "class": "pointer",
+        "presence": 1.0
+      },
+      "duration_ms": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "effort": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "hook_event_name": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "permission_mode": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "prompt_id": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "relay_seq": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "relay_start_ns": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "session_id": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "tool_input": {
+        "class": "state",
+        "presence": 1.0
+      },
+      "tool_name": {
+        "class": "state",
+        "presence": 1.0
+      },
+      "tool_response": {
+        "class": "state",
+        "presence": 1.0
+      },
+      "tool_use_id": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "transcript_path": {
+        "class": "pointer",
+        "presence": 1.0
+      }
+    },
+    "payload_bytes": {
+      "max": 11425.0,
+      "n": 36,
+      "p50": 2115.0,
+      "p95": 7120.0
+    },
+    "state_bytes": {
+      "max": 10853.0,
+      "n": 36,
+      "p50": 1543.0,
+      "p95": 6263.0
+    }
+  },
+  "PreToolUse": {
+    "count": 38,
+    "fields": {
+      "cwd": {
+        "class": "pointer",
+        "presence": 1.0
+      },
+      "effort": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "hook_event_name": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "permission_mode": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "prompt_id": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "relay_seq": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "relay_start_ns": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "session_id": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "tool_input": {
+        "class": "state",
+        "presence": 1.0
+      },
+      "tool_name": {
+        "class": "state",
+        "presence": 1.0
+      },
+      "tool_use_id": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "transcript_path": {
+        "class": "pointer",
+        "presence": 1.0
+      }
+    },
+    "payload_bytes": {
+      "max": 3725.0,
+      "n": 38,
+      "p50": 711.0,
+      "p95": 2612.0
+    },
+    "state_bytes": {
+      "max": 3192.0,
+      "n": 38,
+      "p50": 125.0,
+      "p95": 2079.0
+    }
+  },
+  "SessionEnd": {
+    "count": 1,
+    "fields": {},
+    "payload_bytes": {
+      "max": 2.0,
+      "n": 1,
+      "p50": 2.0,
+      "p95": 2.0
+    },
+    "state_bytes": {
+      "max": 0.0,
+      "n": 1,
+      "p50": 0.0,
+      "p95": 0.0
+    }
+  },
+  "SessionStart": {
+    "count": 1,
+    "fields": {
+      "cwd": {
+        "class": "pointer",
+        "presence": 1.0
+      },
+      "hook_event_name": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "model": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "relay_seq": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "relay_start_ns": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "session_id": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "source": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "transcript_path": {
+        "class": "pointer",
+        "presence": 1.0
+      }
+    },
+    "payload_bytes": {
+      "max": 389.0,
+      "n": 1,
+      "p50": 389.0,
+      "p95": 389.0
+    },
+    "state_bytes": {
+      "max": 0.0,
+      "n": 1,
+      "p50": 0.0,
+      "p95": 0.0
+    }
+  },
+  "Stop": {
+    "count": 7,
+    "fields": {
+      "background_tasks": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "cwd": {
+        "class": "pointer",
+        "presence": 1.0
+      },
+      "effort": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "hook_event_name": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "last_assistant_message": {
+        "class": "state",
+        "presence": 1.0
+      },
+      "permission_mode": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "prompt_id": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "relay_seq": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "relay_start_ns": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "session_crons": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "session_id": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "stop_hook_active": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "transcript_path": {
+        "class": "pointer",
+        "presence": 1.0
+      }
+    },
+    "payload_bytes": {
+      "max": 1535.0,
+      "n": 7,
+      "p50": 875.0,
+      "p95": 1535.0
+    },
+    "state_bytes": {
+      "max": 988.0,
+      "n": 7,
+      "p50": 42.0,
+      "p95": 988.0
+    }
+  },
+  "UserPromptSubmit": {
+    "count": 7,
+    "fields": {
+      "cwd": {
+        "class": "pointer",
+        "presence": 1.0
+      },
+      "hook_event_name": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "permission_mode": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "prompt": {
+        "class": "state",
+        "presence": 1.0
+      },
+      "prompt_id": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "relay_seq": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "relay_start_ns": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "session_id": {
+        "class": "metadata",
+        "presence": 1.0
+      },
+      "transcript_path": {
+        "class": "pointer",
+        "presence": 1.0
+      }
+    },
+    "payload_bytes": {
+      "max": 1971.0,
+      "n": 7,
+      "p50": 857.0,
+      "p95": 1971.0
+    },
+    "state_bytes": {
+      "max": 1530.0,
+      "n": 7,
+      "p50": 223.0,
+      "p95": 1530.0
+    }
+  }
+}

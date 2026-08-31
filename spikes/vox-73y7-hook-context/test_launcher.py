@@ -1,0 +1,60 @@
+"""Pins for the launcher's pure argv construction (no tmux spawned).
+
+A wrong quote or a dropped env entry here launches a fork that half-works:
+the session starts but reads the user's real config, or the prompt splits
+at the first space. These pins hold the argv exactly.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from launcher import SESSION_PREFIX, LaunchCommand, TmuxSession
+
+
+class TestLaunchCommand:
+    """The exact shell line handed to the fork's pane."""
+
+    def test_empty_prompt_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="empty prompt"):
+            LaunchCommand(Path("/usr/local/bin/claude"), "")
+
+    def test_prompt_travels_as_one_quoted_argument(self) -> None:
+        command = LaunchCommand(Path("/usr/local/bin/claude"), "fix the bug; run tests")
+        assert command.to_shell() == ("/usr/local/bin/claude 'fix the bug; run tests'")
+
+    def test_binary_path_with_spaces_is_quoted(self) -> None:
+        command = LaunchCommand(Path("/opt/my tools/claude"), "hi")
+        assert command.to_shell().startswith("'/opt/my tools/claude' ")
+
+
+class TestSpawnArgv:
+    """The tmux invocation: detached, named, cwd-pinned, env-injected."""
+
+    def test_argv_shape(self, tmp_path: Path) -> None:
+        session = TmuxSession(f"{SESSION_PREFIX}-t1")
+        argv = session.spawn_argv(
+            LaunchCommand(Path("/bin/claude"), "go"),
+            cwd=tmp_path,
+            env={"CLAUDE_CONFIG_DIR": "/cfg", "ANTHROPIC_API_KEY": ""},
+        )
+        assert argv[:5] == ["tmux", "new-session", "-d", "-s", f"{SESSION_PREFIX}-t1"]
+        assert argv[5:7] == ["-c", str(tmp_path)]
+        # env entries are sorted and each rides its own -e flag
+        assert argv[7:11] == [
+            "-e",
+            "ANTHROPIC_API_KEY=",
+            "-e",
+            "CLAUDE_CONFIG_DIR=/cfg",
+        ]
+        assert argv[-1] == "/bin/claude go"
+
+    def test_every_env_entry_is_injected(self, tmp_path: Path) -> None:
+        env = {"A": "1", "B": "2", "C": "3"}
+        argv = TmuxSession("s").spawn_argv(
+            LaunchCommand(Path("/bin/claude"), "go"), cwd=tmp_path, env=env
+        )
+        flags = [argv[i + 1] for i, item in enumerate(argv) if item == "-e"]
+        assert flags == ["A=1", "B=2", "C=3"]
