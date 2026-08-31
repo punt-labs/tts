@@ -33,9 +33,9 @@ sanitized transcripts + `summary.json` each).
   both summaries. The bst7 barge-in question, answered on the pi side:
   no tool call is killed.
 - **Injection point: the next turn boundary.** At the in-flight tool's
-  `turn_end`/`turn_start` seam — ≤7 ms after send (2.7 ms plain, 7.1 ms
-  adversarial) — the queue drains and the steer text enters the
-  conversation as a user message.
+  `turn_end`/`turn_start` seam — 2.7 ms after send in the plain run,
+  7.1 ms in the adversarial — the queue drains and the steer text enters
+  the conversation as a user message.
   Evidence: `arm1-plain/midturn_steer.transcript.jsonl` — send `steer`,
   then `queue_update`, `tool_execution_end`, `turn_end`, `turn_start`,
   user `message_start` carrying the steer text.
