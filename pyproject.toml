@@ -39,8 +39,10 @@ dependencies = [
     # (LuxClient.for_identity, ClientIdentity), scene push (client.scene.show),
     # session menu registration (client.callback.register), and the subscribe/
     # callback listener (client.listener) with per-handshake on_connect for
-    # register-fresh. 0.28.0 retires LuxRestClient/LuxHubClient from the public
-    # surface in favour of the noun-grouped LuxClient facade with async accessors.
+    # register-fresh. LuxRestClient/LuxHubClient are gone from the public surface;
+    # the noun-grouped facade with async accessors is the only supported entry.
+    # Keep this floor equal to the locked version — a floor below the lock lets an
+    # install resolve a lux the tests never exercised.
     "punt-lux>=0.31.1",
 ]
 
