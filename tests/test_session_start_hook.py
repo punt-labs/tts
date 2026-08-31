@@ -20,9 +20,14 @@ retirement actually cleaned — not unconditionally, and not in dev mode.
 
 Driven as a subprocess against the real script, with a copy of the real
 ``plugin/`` tree and a sandboxed ``$HOME`` — the interface is the contract,
-so this exercises the shell, not a reimplementation of it. Only ``$HOME`` is
-sandboxed; ``jq``, ``git``, and the coreutils the script shells out to run
-from the real system ``PATH``.
+so this exercises the shell, not a reimplementation of it. ``jq``, ``git``,
+and the coreutils the script shells out to run from the real system ``PATH``,
+but the panel spawn is fenced (vox-h7k8): every run gets a recording
+``vox-panel`` stub first on PATH with the real binary stripped from the tail,
+an unenabled standalone git root as its cwd, and a zero-spawn assertion —
+these tests are about command deployment, and the hook's panel block used to
+resolve the enabled vox repo through pytest's nested tmp dir and start a real
+panel against the live Lux hub on every suite run.
 """
 
 from __future__ import annotations
@@ -32,6 +37,8 @@ import os
 import shutil
 import stat
 import subprocess
+import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -86,24 +93,89 @@ def _make_dev_plugin(root: Path) -> Path:
     return dest
 
 
+# Sentinel files registered by _run, swept at module teardown: the hook's
+# panel spawn is backgrounded (`nohup ... & disown`), so a per-call instant
+# check loses the race with the stub's write -- 19 of 19 leaked spawns landed
+# their record only after the calling test's own assertion had already passed.
+_SENTINELS: list[Path] = []
+
+
+@pytest.fixture(autouse=True, scope="module")
+def sweep_panel_sentinels() -> Iterator[None]:
+    """Fail the module if any session-start run in it spawned a vox-panel.
+
+    Runs a second after the last test, long past the observed landing window
+    for a backgrounded stub's write. Each sentinel's content names the
+    spawning invocation (`<stub pid> --session-pid <watched pid>`), and its
+    tmp directory names the test.
+    """
+    yield
+    time.sleep(1.0)
+    spawned = {s: s.read_text(encoding="utf-8") for s in _SENTINELS if s.exists()}
+    assert not spawned, f"session-start.sh spawned vox-panels: {spawned}"
+
+
 def _run(
     plugin_dir: Path, home: Path, *, bash: str = "bash"
 ) -> subprocess.CompletedProcess[str]:
     home.mkdir(parents=True, exist_ok=True)
+    # A standalone git repo: the hook resolves its repo root with `git -C`,
+    # and `home` nests under the enabled vox repo via pytest's TMPDIR-pinned
+    # tmp_path -- without a boundary here, every run in this file resolved to
+    # the real repo root, found the real enablement marker, and spawned a
+    # REAL vox-panel against the live Lux hub (vox-h7k8). `home` itself has
+    # no marker, so the spawn block is never reached.
+    subprocess.run(["git", "init", "-q", str(home)], check=True)
     hook = plugin_dir / "hooks" / "session-start.sh"
-    env = {"HOME": str(home), "PATH": _system_path()}
-    return subprocess.run(
+    stub_bin = home.parent / "panel-stub-bin"
+    sentinel = home.parent / "panel-sentinel.log"
+    _SENTINELS.append(sentinel)
+    if not stub_bin.exists():
+        stub_bin.mkdir()
+        stub = stub_bin / "vox-panel"
+        stub.write_text(
+            '#!/usr/bin/env bash\necho "$$ $*" >> "$VOX_PANEL_SENTINEL"\n',
+            encoding="utf-8",
+        )
+        stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    env = {
+        "HOME": str(home),
+        "PATH": f"{stub_bin}:{_vox_panel_free_path()}",
+        "VOX_PANEL_SENTINEL": str(sentinel),
+    }
+    assert shutil.which("vox-panel", path=env["PATH"]) == str(stub_bin / "vox-panel"), (
+        "the recording stub must be the only vox-panel this hook run can reach"
+    )
+    result = subprocess.run(
         [bash, str(hook)],
         input=json.dumps({"cwd": str(home)}),
         env=env,
         text=True,
         capture_output=True,
+        cwd=home,
         check=False,
     )
+    assert not sentinel.exists(), (
+        f"session-start.sh spawned a vox-panel: "
+        f"{sentinel.read_text(encoding='utf-8')!r}"
+    )
+    return result
 
 
 def _system_path() -> str:
     return os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+
+
+def _vox_panel_free_path() -> str:
+    """The system PATH with every directory that contains `vox-panel` removed.
+
+    Under `uv run` the project venv's bin -- which ships the real vox-panel --
+    leads PATH, so an unstripped tail leaves the live binary reachable. Same
+    helper as test_hook_gate's `_path_without_vox_panel`, local to keep the
+    test modules uncoupled.
+    """
+    entries = _system_path().split(os.pathsep)
+    return os.pathsep.join(d for d in entries if not (Path(d) / "vox-panel").exists())
 
 
 def _commands_dir(home: Path) -> Path:

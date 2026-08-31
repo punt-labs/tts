@@ -102,6 +102,18 @@ def _system_path() -> str:
     return os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
 
 
+def _vox_panel_free_path() -> str:
+    """The system PATH with every directory that contains `vox-panel` removed.
+
+    Under `uv run` the project venv's bin -- which ships the real vox-panel --
+    leads PATH, so an unstripped tail leaves the live binary one lookup miss
+    away from the Lux hub (vox-h7k8). Same helper as test_hook_gate's
+    `_path_without_vox_panel`, local to keep the test modules uncoupled.
+    """
+    entries = _system_path().split(os.pathsep)
+    return os.pathsep.join(d for d in entries if not (Path(d) / "vox-panel").exists())
+
+
 def _run_tree(tmp_path: Path, *, claude_comm: str) -> tuple[int, int, int]:
     """Spawn claude(comm=claude_comm) -> wrapper -> session-start.sh.
 
@@ -124,21 +136,33 @@ def _run_tree(tmp_path: Path, *, claude_comm: str) -> tuple[int, int, int]:
 
     fake_home = tmp_path / "home"
     fake_home.mkdir()
+    # A standalone git repo, so the hook's `git -C` resolves its root HERE
+    # rather than walking up to the enclosing (enabled) vox repo that pytest's
+    # TMPDIR-pinned tmp_path nests under -- the spawn this fixture observes
+    # must be gated on this tree's own marker, not the real repo's.
     repo_dir = tmp_path / "repo"
     (repo_dir / ".punt-labs" / "vox").mkdir(parents=True)
     (repo_dir / ".punt-labs" / "vox" / "enabled").touch()
+    subprocess.run(["git", "init", "-q", str(repo_dir)], check=True)
     trace_file = tmp_path / "relay_trace.txt"
 
     env = dict(os.environ)
     env["HOME"] = str(fake_home)
-    env["PATH"] = f"{stub_bin}:{_system_path()}"
+    # Stub first, real vox-panel stripped from the tail (vox-h7k8): the spawn
+    # this fixture captures must never be able to reach the live binary, even
+    # if the stub is somehow skipped.
+    env["PATH"] = f"{stub_bin}:{_vox_panel_free_path()}"
     env["RELAY_TRACE_FILE"] = str(trace_file)
+    assert shutil.which("vox-panel", path=env["PATH"]) == str(stub_bin / "vox-panel"), (
+        "the recording stub must be the only vox-panel this hook run can reach"
+    )
 
     proc = subprocess.Popen(
         [str(claude_bin), str(relay_sh), "bash", str(relay_sh), "bash", str(_SCRIPT)],
         env=env,
         stdin=subprocess.PIPE,
         text=True,
+        cwd=tmp_path,  # never inherit pytest's cwd (the enabled repo)
     )
     claude_pid = proc.pid
     proc.communicate(input=json.dumps({"cwd": str(repo_dir)}), timeout=15)
