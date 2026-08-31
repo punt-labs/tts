@@ -111,7 +111,11 @@ class VoxdPlist:
         ``AudioQueueStart`` with ``-66681`` after a ~15s block -- 72 such
         failures were logged in one session before the pin was added.
         """
-        path_value = html.escape(os.environ.get("PATH", _FALLBACK_PATH))
+        # `or` rather than a get() default: PATH set to the empty string has to
+        # take the fallback too. An empty <string> here leaves voxd with no PATH
+        # at all, so every subprocess lookup it makes fails -- the same
+        # empty-is-worse-than-absent trap as the CA vars in captured_env().
+        path_value = html.escape(os.environ.get("PATH") or _FALLBACK_PATH)
         return textwrap.dedent(f"""\
             <?xml version="1.0" encoding="UTF-8"?>
             <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -119,7 +123,7 @@ class VoxdPlist:
             <plist version="1.0">
             <dict>
                 <key>Label</key>
-                <string>{self._label}</string>
+                <string>{html.escape(self._label)}</string>
                 <key>ProcessType</key>
                 <string>Interactive</string>
                 <key>LimitLoadToSessionType</key>

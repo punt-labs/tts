@@ -114,6 +114,35 @@ def test_content_carries_the_install_time_path(tmp_path: Path) -> None:
     assert "/opt/homebrew/bin:/usr/bin" in _plist(tmp_path).content()
 
 
+@patch.dict("os.environ", {"PATH": ""}, clear=True)
+def test_an_empty_path_takes_the_fallback_too(tmp_path: Path) -> None:
+    """PATH set to the empty string must fall back, not be written through.
+
+    An empty ``<string>`` leaves voxd with no PATH at all, so every subprocess
+    lookup it makes fails -- the same empty-is-worse-than-absent trap the CA
+    vars have, and the reason the fallback tests unset rather than blank.
+    """
+    content = _plist(tmp_path).content()
+    assert "<string>/usr/bin:/bin:/usr/sbin:/sbin</string>" in content
+    assert "<key>PATH</key>\n            <string></string>" not in content
+
+
+def test_content_xml_escapes_the_label(tmp_path: Path) -> None:
+    """The label is caller-supplied, so it is escaped like every other value.
+
+    An unescaped metacharacter here makes the whole plist malformed XML and
+    launchd rejects the job outright.
+    """
+    plist = VoxdPlist(
+        "com.punt-labs.voxd<&>",
+        tmp_path / "x.plist",
+        lambda: list(_ARGS),
+    )
+    content = plist.content()
+    assert "<string>com.punt-labs.voxd&lt;&amp;&gt;</string>" in content
+    assert "voxd<&>" not in content
+
+
 @patch.dict("os.environ", {"VOXD_BIND": "0.0.0.0 & <friends>"}, clear=True)
 def test_content_xml_escapes_captured_values(tmp_path: Path) -> None:
     """launchd reads <string> content literally, so values are entity-encoded.

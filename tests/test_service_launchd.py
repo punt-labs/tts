@@ -134,6 +134,7 @@ def test_launchd_plist_contains_path_from_env() -> None:
         "SSL_CERT_FILE": "/etc/ssl/certs/proxy-ca.pem",
         "REQUESTS_CA_BUNDLE": "/etc/ssl/certs/proxy-ca.pem",
     },
+    clear=True,
 )
 def test_launchd_plist_bakes_the_ca_bundle_vars() -> None:
     """The CA vars reach the plist through the backend a user installs with.
