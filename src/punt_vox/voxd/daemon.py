@@ -16,20 +16,19 @@ from typing import TYPE_CHECKING, Self
 if TYPE_CHECKING:
     from starlette.requests import Request
 
+    from punt_vox.voxd.music_player.hub_ports import LuxClientFactory
+
 import typer
 import uvicorn
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 
-from punt_vox.logging_config import configure_daemon_logging
-from punt_vox.paths import ensure_user_dirs
 from punt_vox.providers.elevenlabs_music import ElevenLabsMusicProvider
+from punt_vox.voxd.background_tasks import BackgroundTasks
 from punt_vox.voxd.config import (
     DaemonConfig,
-    _config_dir,
     _install_token_redact_filter,
-    _log_dir,
     _run_dir,
 )
 from punt_vox.voxd.crash_logging import CrashLogger
@@ -68,6 +67,7 @@ class VoxDaemon:
     __slots__ = (
         "_config",
         "_health",
+        "_lux_clients",
         "_playback",
         "_programs",
         "_router",
@@ -80,6 +80,7 @@ class VoxDaemon:
     _programs: ProgramSubsystem
     _router: WebSocketRouter
     _synthesis: SynthesisPipeline
+    _lux_clients: LuxClientFactory | None
 
     def __new__(
         cls,
@@ -89,6 +90,14 @@ class VoxDaemon:
         programs: ProgramSubsystem,
         health: DaemonHealth,
         router: WebSocketRouter,
+        # None means voxd's real app-identity clients, resolved against the
+        # running luxd. It is a constructor argument rather than a lookup inside
+        # ``_lifespan`` so that whoever composes the daemon decides which luxd it
+        # reaches: a test that drives the real lifespan to exercise task wiring
+        # would otherwise connect to the operator's live hub and publish a
+        # ``vox.music`` scene from its own scratch store, putting a second
+        # "Music" frame on their display beside the real one.
+        lux_clients: LuxClientFactory | None = None,
     ) -> Self:
         self = super().__new__(cls)
         self._config = config
@@ -97,6 +106,7 @@ class VoxDaemon:
         self._programs = programs
         self._health = health
         self._router = router
+        self._lux_clients = lux_clients
         return self
 
     def build_app(self) -> Starlette:
@@ -167,41 +177,32 @@ class VoxDaemon:
         lifetime and are cancelled on shutdown; a down luxd never blocks them.
         """
         service = self._programs.service
-        music = MusicPlayerSubsystem(service, service.changes)
-        consumer_task = asyncio.create_task(self._playback.consumer())
-        control_task = asyncio.create_task(service.serve_control())
+        music = MusicPlayerSubsystem(service, service.changes, self._lux_clients)
+        # Two groups because ``service.shutdown()`` has to land BETWEEN them: the
+        # producers stop, then the service drains, then the consumer that drains
+        # it stops. Collapsing both into one group would cancel the consumer
+        # before ``shutdown()`` and drop whatever draining enqueues.
+        producers = BackgroundTasks()
+        consumer = BackgroundTasks()
+        consumer.start(self._playback.consumer)
+        producers.start(service.serve_control)
         # The mpv supervisor spawns the one program-tier process and keeps it up;
         # the loop waits on it before any load. Its cancellation on shutdown drives
         # the graceful mpv teardown (quit then hard-kill).
-        supervisor_task = asyncio.create_task(service.run_player_supervisor())
-        playback_task = asyncio.create_task(service.run_playback())
-        scene_task = asyncio.create_task(music.run())
+        producers.start(service.run_player_supervisor)
+        producers.start(service.run_playback)
+        producers.start(music.run)
         logger.info("Playback consumer, control writer, loop, mpv, and scene up")
         try:
             yield
         finally:
-            await VoxDaemon._cancel(scene_task)
-            await VoxDaemon._cancel(playback_task)
-            await VoxDaemon._cancel(supervisor_task)
-            await VoxDaemon._cancel(control_task)
+            # Reverse start order: scene, playback, supervisor, then the writer.
+            await producers.stop_all()
             service.shutdown()
-            await VoxDaemon._cancel(consumer_task)
+            await consumer.stop_all()
             with contextlib.suppress(Exception):
                 self._config.remove_port_file()
             logger.info("voxd stopped")
-
-    @staticmethod
-    async def _cancel(task: asyncio.Task[None]) -> None:
-        """Cancel a background task and await its exit, swallowing the teardown.
-
-        ``CancelledError`` is a ``BaseException`` (not ``Exception``) since 3.8, so
-        it must be suppressed explicitly -- otherwise the *expected* cancel of the
-        first task would propagate out of ``_lifespan``'s finally and skip every
-        remaining teardown step (leaking the writer, the fill, and the port file).
-        """
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await task
 
     @staticmethod
     def read_port_file() -> int | None:
@@ -226,7 +227,7 @@ class VoxDaemon:
         return default_output_dir()
 
     @staticmethod
-    def _build_programs() -> ProgramSubsystem:
+    def build_programs() -> ProgramSubsystem:
         """Build the Programs subsystem with the production ElevenLabs producer.
 
         The producer is injected (not hard-wired in ``ProgramSubsystem``) so tests
@@ -290,7 +291,7 @@ class VoxDaemon:
         """
         pb = playback or PlaybackQueue()
         syn = synthesis or SynthesisPipeline(playback_mutex=pb.mutex)
-        progs = programs or VoxDaemon._build_programs()
+        progs = programs or VoxDaemon.build_programs()
         hlth = health or DaemonHealth(pb, lambda: 0, 0)
 
         if router is None:
@@ -328,68 +329,11 @@ def main(
     ),
 ) -> None:
     """Start the voxd audio server daemon."""
-    crash = CrashLogger(logger)
-    # FIRST, before anything can raise and before the file handler exists: an
-    # emergency sink that writes with raw os syscalls, so a crash in
-    # ``ensure_user_dirs`` or ``configure_daemon_logging`` itself lands in
-    # ``vox-boot.log`` instead of vanishing (the daemon has no stderr).
-    crash.install_bootstrap_excepthook(_log_dir() / "vox-boot.log")
+    # Imported here, not at module scope: boot imports this module for the
+    # class it composes, so a top-level import back would be a cycle.
+    from punt_vox.voxd.boot import DaemonBoot
 
-    ensure_user_dirs()
-
-    daemon_cfg = DaemonConfig(
-        run_dir=_run_dir(), config_dir=_config_dir(), log_dir=_log_dir()
-    )
-
-    configure_daemon_logging()
-    # The file handler is now live: upgrade from the bootstrap sink to the
-    # file-backed logger so the rest of startup and ``asyncio.run`` crashes land
-    # in ``vox.log`` beside everything else.
-    crash.install_excepthook()
-    daemon_cfg.log_environment()
-
-    loaded_keys = daemon_cfg.load_keys()
-    if loaded_keys:
-        logger.info(
-            "Loaded provider keys from %s: %s",
-            daemon_cfg.config_dir,
-            sorted(loaded_keys),
-        )
-    else:
-        logger.info("No provider keys loaded from %s", daemon_cfg.config_dir)
-
-    auth_token = daemon_cfg.read_or_create_token()
-
-    programs = VoxDaemon._build_programs()
-    playback = PlaybackQueue()
-    synthesis = SynthesisPipeline(playback_mutex=playback.mutex)
-
-    # Health needs the router's client_count, but router needs health.
-    # Use a lambda to defer the lookup.
-    health = DaemonHealth(playback, lambda: ws_router.client_count, port)
-
-    handlers = HandlerRegistry(
-        synthesis=synthesis,
-        playback=playback,
-        programs=programs,
-        health=health,
-    ).build()
-    ws_router = WebSocketRouter(
-        handlers=handlers,
-        auth_token=auth_token,
-    )
-
-    daemon = VoxDaemon(
-        config=daemon_cfg,
-        playback=playback,
-        synthesis=synthesis,
-        programs=programs,
-        health=health,
-        router=ws_router,
-    )
-
-    logger.info("Starting voxd on %s:%d", host, port)
-    asyncio.run(daemon.run(host, port))
+    DaemonBoot(host, port).run()
 
 
 if __name__ == "__main__":

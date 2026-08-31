@@ -128,6 +128,42 @@ def test_launchd_plist_contains_path_from_env() -> None:
     assert "/opt/homebrew/bin:/usr/bin:/bin" in content
 
 
+@patch.dict(
+    "os.environ",
+    {
+        "SSL_CERT_FILE": "/etc/ssl/certs/proxy-ca.pem",
+        "REQUESTS_CA_BUNDLE": "/etc/ssl/certs/proxy-ca.pem",
+    },
+    clear=True,
+)
+def test_launchd_plist_bakes_the_ca_bundle_vars() -> None:
+    """The CA vars reach the plist through the backend a user installs with.
+
+    ``VoxdPlist`` is unit-tested directly; this pins the wiring, so a backend
+    that stopped consulting the captured environment would fail here even
+    while the plist class still passed its own tests.
+    """
+    be = LaunchdBackend(
+        ProcessManager(),
+        lambda: ["/usr/local/bin/voxd", "--port", "8421"],
+    )
+    content = be.plist_content()
+    assert "<key>SSL_CERT_FILE</key>" in content
+    assert "<key>REQUESTS_CA_BUNDLE</key>" in content
+    assert "/etc/ssl/certs/proxy-ca.pem" in content
+
+
+@patch.dict("os.environ", {}, clear=True)
+def test_launchd_plist_omits_the_ca_bundle_vars_when_unset() -> None:
+    be = LaunchdBackend(
+        ProcessManager(),
+        lambda: ["/usr/local/bin/voxd", "--port", "8421"],
+    )
+    content = be.plist_content()
+    assert "<key>SSL_CERT_FILE</key>" not in content
+    assert "<key>REQUESTS_CA_BUNDLE</key>" not in content
+
+
 # ---------------------------------------------------------------------------
 # stop -- delegates to the composed LaunchctlAgent
 # ---------------------------------------------------------------------------

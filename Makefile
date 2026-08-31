@@ -21,7 +21,10 @@ type: ## Type check with mypy and pyright
 	uv run pyright src/ tests/
 
 docs: ## Lint markdown files (matches CI docs job)
-	npx --yes markdownlint-cli2@0.22.1 "**/*.md"
+	# Keep this pin equal to the cli2 version bundled by the markdownlint-cli2-action
+	# tag in .github/workflows/docs.yml. A lower pin here lets a rule the newer
+	# linter enforces pass locally and fail in CI.
+	npx --yes markdownlint-cli2@0.23.2 "**/*.md"
 
 # Base-comparison flags injected by CI (e.g. --base-ref <merge-base> --require-base).
 # Empty locally, where the tools default base to `git merge-base origin/main HEAD`.
