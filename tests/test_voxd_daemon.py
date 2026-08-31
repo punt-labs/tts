@@ -120,6 +120,20 @@ def _daemon(tmp_path: Path, lux: _CountingLux | None = None) -> VoxDaemon:
     )
 
 
+async def _wait_for_hub_leg(lux: _CountingLux) -> None:
+    """Yield until the subscription asks ``lux`` for a hub leg, or give up.
+
+    Polling rather than sleeping a fixed span: the leg is requested as soon as
+    the scene task runs, so a wall-clock wait is both slower than needed and
+    flaky under load. Returning without the leg is not an error here -- the
+    caller's assertion is what reports it, with the diagnosis.
+    """
+    for _ in range(2000):
+        if lux.hub_calls:
+            return
+        await asyncio.sleep(0)
+
+
 async def _wait_for_mode(daemon: VoxDaemon, mode: Mode) -> bool:
     """Poll the daemon's status until it reaches ``mode`` (or give up)."""
     service = daemon._programs.service  # pyright: ignore[reportPrivateUsage]
@@ -181,9 +195,7 @@ async def test_lifespan_asks_the_injected_factory_for_its_lux_legs(
     app = daemon.build_app()
 
     async with daemon._lifespan(app):  # pyright: ignore[reportPrivateUsage]
-        # Long enough for the scene task to reach its first leg request; the
-        # probe that found this bug saw the hub leg asked for within 0.3s.
-        await asyncio.sleep(0.4)
+        await _wait_for_hub_leg(lux)
 
     assert lux.hub_calls >= 1, (
         "the lifespan never asked the injected factory for a hub leg -- either "

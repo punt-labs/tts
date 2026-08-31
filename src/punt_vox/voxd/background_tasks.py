@@ -1,4 +1,4 @@
-"""The daemon's background task set: started together, torn down in order."""
+"""The daemon's background task set: started in order, cancelled in reverse."""
 
 from __future__ import annotations
 
