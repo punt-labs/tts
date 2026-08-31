@@ -92,9 +92,11 @@ direnv exec ../../ uv run seed_builder.py --ledger ... --cutoff <recv_seq>
 ## Isolation and bounds
 
 - One fork per capture run (hard cap 2 = one retry), in a fresh
-  `git init` project under this directory's gitignored `.tmp/`, with a
-  fresh `CLAUDE_CONFIG_DIR`; the fork env blanks
-  `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`.
+  `git init` project under the repo root's gitignored
+  `.tmp/vox73y7-scratch/` (outside the spike tree: the fork's config dir
+  pulls vendored plugin markdown that would otherwise fail `make docs`
+  while a run is live), with a fresh `CLAUDE_CONFIG_DIR`; the fork env
+  blanks `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`.
 - The `context-capture-v1` profile allows Bash (the debug loop needs a
   test runner), unlike juhw's voice-launch profile: this fork stands in
   for the USER'S OWN working session, not a voice-launched capability

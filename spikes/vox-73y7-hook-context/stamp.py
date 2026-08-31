@@ -34,8 +34,24 @@ UNATTRIBUTED = "unattributed"
 
 # Substrings that mark a payload key as credential-shaped. Values under such
 # keys are replaced before the payload is persisted (DES-069 copy-forward:
-# bearer-shaped material never lands in traces).
-_REDACT_MARKERS = ("token", "secret", "signed_url", "api_key", "apikey")
+# bearer-shaped material never lands in traces). Matching is on the LOWERED
+# key, and both underscore and hyphen spellings are listed because real tool
+# inputs carry HTTP-header shapes (X-Api-Key, Authorization) that the
+# underscore-only set let through.
+_REDACT_MARKERS = (
+    "token",
+    "secret",
+    "signed_url",
+    "signed-url",
+    "api_key",
+    "api-key",
+    "apikey",
+    "access_key",
+    "access-key",
+    "authorization",
+    "password",
+    "credential",
+)
 _REDACTED = "[redacted]"
 
 
@@ -159,8 +175,10 @@ class HookRecord:
         # None when the payload skipped the sender-side stamping wrapper
         # (e.g. a bare mcp-proxy relay); latency is computable only for
         # wrapper-stamped events, so the absence is data, not an error.
+        # bool is excluded explicitly: it subclasses int, so a JSON `true`
+        # would otherwise read as the number 1.
         raw = self.payload.get("relay_start_ns")
-        if isinstance(raw, int):
+        if isinstance(raw, int) and not isinstance(raw, bool):
             return raw
         return None
 
@@ -168,7 +186,7 @@ class HookRecord:
         # None for the same reason as relay_start_ns: only wrapper-stamped
         # payloads carry the sender-side sequence gap detection needs.
         raw = self.payload.get("relay_seq")
-        if isinstance(raw, int):
+        if isinstance(raw, int) and not isinstance(raw, bool):
             return raw
         return None
 

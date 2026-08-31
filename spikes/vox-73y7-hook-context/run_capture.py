@@ -55,7 +55,12 @@ from teardown import Teardown
 from wiring import CONTEXT_CAPTURE_V1, HookWiring, RelayScript, SettingsDocument
 
 _SPIKE_DIR = Path(__file__).parent
-_SCRATCH_ROOT = _SPIKE_DIR / ".tmp"
+# The fork's scratch (project + isolated claude-config) lives under the REPO
+# root's gitignored .tmp/, not the spike's own: the fork's config dir pulls
+# vendored plugin markdown, and repo `make check` markdownlints everything
+# under spikes/ -- a live run inside the spike tree fails the docs gate until
+# teardown. The repo-root .tmp/ is inside markdownlint's ignore list.
+_SCRATCH_ROOT = _SPIKE_DIR.parent.parent / ".tmp" / "vox73y7-scratch"
 
 # Interactive-UI chrome the fork may show before working; the poller answers
 # each once, with the keystrokes listed, and logs the nudge. The

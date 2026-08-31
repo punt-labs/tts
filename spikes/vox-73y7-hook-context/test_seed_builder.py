@@ -46,7 +46,7 @@ class TestBudget:
         self, record: RecordFactory
     ) -> None:
         records = tuple(_fat_tool_use(record, f"/p/f{i}.py") for i in range(3))
-        seed = SeedBuilder(records, cutoff_recv_seq=3).build()
+        seed = SeedBuilder(records, cutoff_index=3).build()
         assert seed.byte_size() <= SEED_BUDGET_BYTES
 
     def test_trim_drops_the_oldest_result_first(self, record: RecordFactory) -> None:
@@ -60,7 +60,7 @@ class TestBudget:
             )
             for tool in ("Read", "Edit", "Bash")  # receipt order: Read oldest
         )
-        seed = SeedBuilder(records, cutoff_recv_seq=3).build()
+        seed = SeedBuilder(records, cutoff_index=3).build()
         assert 0 < len(seed.last_tool_results) < 3
         assert seed.last_tool_results[-1].startswith("Bash:")
         assert all(not r.startswith("Read:") for r in seed.last_tool_results)
@@ -69,7 +69,7 @@ class TestBudget:
         # One result is capped at 2000 chars before serialization, so a
         # single-item seed always fits without trimming to empty.
         seed = SeedBuilder(
-            (_fat_tool_use(record, "/p/only.py"),), cutoff_recv_seq=1
+            (_fat_tool_use(record, "/p/only.py"),), cutoff_index=1
         ).build()
         assert seed.byte_size() <= SEED_BUDGET_BYTES
         assert len(seed.last_tool_results) == 1
@@ -101,7 +101,7 @@ class TestCategoryPicks:
                 },
             ),
         )
-        seed = SeedBuilder(records, cutoff_recv_seq=3).build()
+        seed = SeedBuilder(records, cutoff_index=3).build()
         assert seed.current_goal == "Fix the failing suite."
         assert seed.active_files == ("/proj/stats.py",)
         assert "AssertionError" in seed.recent_failure
@@ -117,19 +117,32 @@ class TestCategoryPicks:
                 payload={"tool_name": "Bash", "tool_response": "all good"},
             ),
         )
-        seed = SeedBuilder(records, cutoff_recv_seq=2).build()
+        seed = SeedBuilder(records, cutoff_index=2).build()
         answer = SeedReconstructor(seed).answer("t1")
         assert answer.source == "seed-only"
         assert answer.goal == "the goal"
         assert answer.last_result.endswith("all good")
         assert "What was I just doing?" in answer.render()
 
+    def test_picks_the_newest_agent_report(self, record: RecordFactory) -> None:
+        records = (
+            record(event="UserPromptSubmit", payload={"prompt": "goal"}),
+            record(
+                event="Stop",
+                payload={"last_assistant_message": "Done: suite is green."},
+            ),
+        )
+        seed = SeedBuilder(records, cutoff_index=2).build()
+        assert seed.last_agent_report == "Done: suite is green."
+        answer = SeedReconstructor(seed).answer("t")
+        assert answer.agent_report == "Done: suite is green."
+
     def test_cutoff_bounds_what_the_seed_may_see(self, record: RecordFactory) -> None:
         records = (
             record(event="UserPromptSubmit", payload={"prompt": "first goal"}),
             record(event="UserPromptSubmit", payload={"prompt": "later goal"}),
         )
-        seed = SeedBuilder(records, cutoff_recv_seq=1).build()
+        seed = SeedBuilder(records, cutoff_index=1).build()
         assert seed.current_goal == "first goal"
 
 
@@ -137,7 +150,7 @@ class TestEmptyLedger:
     """Nothing visible yields an empty seed, not a crash."""
 
     def test_empty_ledger_builds_an_empty_seed(self) -> None:
-        seed = SeedBuilder((), cutoff_recv_seq=99).build()
+        seed = SeedBuilder((), cutoff_index=99).build()
         assert seed.current_goal == ""
         assert seed.active_files == ()
         assert seed.last_tool_results == ()
@@ -168,7 +181,7 @@ class TestRedactionEndToEnd:
                 },
             ),
         )
-        seed = SeedBuilder(records, cutoff_recv_seq=2).build()
+        seed = SeedBuilder(records, cutoff_index=2).build()
         body = seed.to_json()
         assert "sk-live-VERYSECRET" not in body
         assert "SIGSECRET" not in body

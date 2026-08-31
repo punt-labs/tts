@@ -400,10 +400,11 @@ envelope.
 - Teardown ran twice, both clean (`teardown.log`); no tmux sessions, no
   scratch, no credentials copies left; committed artifacts are
   path/username-sanitized and credential-redacted.
-- Harness gotcha for the leader: markdownlint's `.tmp/` ignore covers
-  only the repo root, so a LIVE fork's scratch tree (`spikes/*/.tmp/`)
-  fails `make docs` until teardown. Transient here; worth an ignore-glob
-  fix repo-side.
+- Harness gotcha, hit live and since fixed in the harness: markdownlint's
+  `.tmp/` ignore covers only the repo root, so a LIVE fork's scratch tree
+  under `spikes/*/.tmp/` failed `make docs` until teardown (the fork's
+  config dir pulls vendored plugin markdown). The scratch root now lives
+  at the repo root's `.tmp/vox73y7-scratch/`, inside the ignore.
 
 ## Design notes to carry into DES-070
 

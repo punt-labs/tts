@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Self, final
 
@@ -36,6 +36,10 @@ SEED_BUDGET_BYTES = 10_240
 # whole visible ledger for its goal/failure, but keeps only this many tool
 # results verbatim.
 _MAX_RESULTS = 3
+
+# Below this length a text field is no longer halved by the budget ladder;
+# the residual seed is then the irreducible floor.
+_MIN_TEXT_CHARS = 64
 
 
 @final
@@ -67,18 +71,24 @@ class SeedPayload:
         """UTF-8 size of the serialized seed."""
         return len(self.to_json().encode("utf-8"))
 
-    def trimmed(self) -> Self:
-        """Drop the OLDEST tool result -- the budget-trim step."""
-        if not self.last_tool_results:
-            msg = "seed cannot be trimmed further: no tool results left"
-            raise ValueError(msg)
-        return type(self)(
-            current_goal=self.current_goal,
-            active_files=self.active_files,
-            last_tool_results=self.last_tool_results[1:],
-            recent_failure=self.recent_failure,
-            last_agent_report=self.last_agent_report,
-        )
+    def reduced(self) -> Self:
+        """One budget-reduction step, priority-ordered and TOTAL.
+
+        Judgment-time code must never raise on an awkward seed, so the
+        ladder always has a next rung: drop the oldest tool result, then
+        the oldest active file, then halve the long text fields. When
+        nothing is left to shrink the seed is returned unchanged -- the
+        irreducible floor -- and the caller stops.
+        """
+        if self.last_tool_results:
+            return replace(self, last_tool_results=self.last_tool_results[1:])
+        if self.active_files:
+            return replace(self, active_files=self.active_files[1:])
+        for field in ("recent_failure", "last_agent_report", "current_goal"):
+            value: str = getattr(self, field)
+            if len(value) > _MIN_TEXT_CHARS:
+                return replace(self, **{field: value[: len(value) // 2]})
+        return self
 
 
 @final
@@ -113,7 +123,13 @@ class SeedBuilder:
             last_agent_report=answer.agent_report,
         )
         while seed.byte_size() > SEED_BUDGET_BYTES:
-            seed = seed.trimmed()
+            shrunk = seed.reduced()
+            if shrunk == seed:
+                # Irreducible floor: accept it rather than raise at
+                # judgment time. With every list emptied and every text
+                # halved to the minimum this is far under budget anyway.
+                break
+            seed = shrunk
         return seed
 
     def _verbatim_results(self) -> tuple[str, ...]:

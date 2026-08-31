@@ -118,7 +118,10 @@ def main() -> None:
     parser.add_argument(
         "--scratch-root",
         type=Path,
-        default=Path(__file__).parent / ".tmp",
+        # Matches run_capture's relocated scratch: a dedicated subdir of the
+        # repo-root .tmp/, never the spike tree (markdownlint sweep) and
+        # never the whole .tmp/ (other tools' scratch lives there too).
+        default=Path(__file__).parent.parent.parent / ".tmp" / "vox73y7-scratch",
     )
     args = parser.parse_args()
     outcome = Teardown(args.scratch_root).run()
