@@ -220,9 +220,10 @@ class StoreProcess:
 class TimepointSampler:
     """Watches the ledger for the four trigger conditions and samples.
 
-    A sample is the pair the grading needs: the ledger cutoff (max
-    recv_seq the store knows at that instant) and the pane capture that
-    is ground truth for the same instant.
+    A sample is the pair the grading needs: the ledger cutoff (the
+    FILE-ORDER record count at that instant -- recv_seq restarts when the
+    store restarts, so it cannot bound a timepoint) and the pane capture
+    that is ground truth for the same instant.
     """
 
     __slots__ = ("_results_dir", "_samples", "_session")
@@ -240,7 +241,7 @@ class TimepointSampler:
 
     @property
     def samples(self) -> dict[str, dict[str, object]]:
-        """label -> {cutoff_recv_seq, sampled_at, capture_file}."""
+        """label -> {cutoff_index, sampled_at, capture_file}."""
         return self._samples
 
     def done(self) -> bool:
@@ -258,26 +259,30 @@ class TimepointSampler:
         return tuple(fired)
 
     def _triggered(self, label: str, records: tuple[HookRecord, ...]) -> bool:
-        tool_uses = [r for r in records if r.event == "PostToolUse"]
         if label == "early":
-            return bool(tool_uses)
+            return any(r.event == "PostToolUse" for r in records)
         if label == "mid-debug":
-            return any(has_failure(response_text(r)) for r in tool_uses)
+            return any(
+                r.event == "PostToolUse" and has_failure(response_text(r))
+                for r in records
+            )
         if label == "post-fix":
-            failure_seq = self._trigger_seq("mid-debug")
-            return failure_seq is not None and any(
-                r.recv_seq > failure_seq and has_success(response_text(r))
-                for r in tool_uses
+            failure_index = self._sampled_index("mid-debug")
+            return failure_index is not None and any(
+                index > failure_index
+                and record.event == "PostToolUse"
+                and has_success(response_text(record))
+                for index, record in enumerate(records, 1)
             )
         return any(r.event == "Stop" for r in records)
 
-    def _trigger_seq(self, label: str) -> int | None:
+    def _sampled_index(self, label: str) -> int | None:
         # None until the labeled timepoint has been sampled -- post-fix
         # is ordered strictly after mid-debug via this lookup.
         sample = self._samples.get(label)
         if sample is None:
             return None
-        cutoff = sample["cutoff_recv_seq"]
+        cutoff = sample["cutoff_index"]
         return cutoff if isinstance(cutoff, int) else None
 
     def _sample(self, label: str, records: tuple[HookRecord, ...]) -> None:
@@ -290,13 +295,13 @@ class TimepointSampler:
         )
         (self._results_dir / capture_name).write_text(body, "utf-8")
         self._samples[label] = {
-            "cutoff_recv_seq": max(r.recv_seq for r in records),
+            "cutoff_index": len(records),
             "sampled_at": datetime.now(tz=UTC).isoformat(timespec="seconds"),
             "capture_file": capture_name,
         }
         print(
             f"    sampled timepoint {label!r} at cutoff "
-            f"{self._samples[label]['cutoff_recv_seq']}"
+            f"{self._samples[label]['cutoff_index']}"
         )
 
 
@@ -473,7 +478,7 @@ class CaptureRun:
         rendered: list[str] = []
         machine: list[dict[str, object]] = []
         for label, sample in sampler.samples.items():
-            cutoff = sample["cutoff_recv_seq"]
+            cutoff = sample["cutoff_index"]
             if not isinstance(cutoff, int):
                 continue
             tail_answer = TailReconstructor(records, cutoff).answer(label)
@@ -483,7 +488,7 @@ class CaptureRun:
             machine.append(
                 {
                     "timepoint": label,
-                    "cutoff_recv_seq": cutoff,
+                    "cutoff_index": cutoff,
                     "seed_bytes": seed.byte_size(),
                     "ledger_tail": tail_answer.render(),
                     "seed_only": seed_answer.render(),

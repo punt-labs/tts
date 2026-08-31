@@ -36,7 +36,18 @@ from percentile import PercentileStats
 from stamp import HookLedger, HookRecord
 
 _STATE_FIELDS = frozenset(
-    {"prompt", "tool_input", "tool_response", "tool_name", "message", "title"}
+    {
+        "prompt",
+        "tool_input",
+        "tool_response",
+        "tool_name",
+        "message",
+        "title",
+        # Stop events carry the assistant's final message for the turn --
+        # discovered in the live capture; it is session work content, not
+        # plumbing, and the reconstructor leans on it.
+        "last_assistant_message",
+    }
 )
 _POINTER_FIELDS = frozenset({"transcript_path", "cwd"})
 # Everything else -- session_id, hook_event_name, permission_mode,

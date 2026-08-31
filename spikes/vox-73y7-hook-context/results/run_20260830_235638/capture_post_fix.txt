@@ -1,0 +1,72 @@
+      10 +# Exit statuses: 2 for a bad command line (the shell convention for a usage
+      11 +# error), 1 for a file we were told about but could not read.
+      12 +EXIT_USAGE = 2
+      13 +EXIT_UNREADABLE = 1
+      14 +
+      15 +
+      16  def main(argv):
+      17      if len(argv) != 2:
+      11 -        print("usage: stats_cli.py <file>", file=sys.stderr)
+      12 -        return 1
+      13 -    with open(argv[1], encoding="utf-8") as handle:
+      14 -        text = handle.read()
+      18 +        print(USAGE, file=sys.stderr)
+      19 +        return EXIT_USAGE
+      20 +    path = argv[1]
+      21 +    try:
+      22 +        with open(path, encoding="utf-8") as handle:
+      23 +            text = handle.read()
+      24 +    except OSError as error:
+      25 +        # A missing or unreadable path is ordinary user error, not a bug worth
+      26 +        # a traceback.
+      27 +        print(f"stats_cli.py: cannot read {path}: {error.strerror}", file=sys.stderr)
+      28 +        return EXIT_UNREADABLE
+      29      print(word_count(text))
+      30      print(longest_word(text))
+      31      print(sentence_count(text))
+
+● Write(tests/test_cli.py)
+  ⎿  Wrote 56 lines to tests/test_cli.py
+      1 """Tests for stats_cli.py, driven as a real subprocess."""
+      2
+      3 import subprocess
+      4 import sys
+      5 import unittest
+      6 from pathlib import Path
+      7
+      8 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+      9 SCRIPT = PROJECT_ROOT / "stats_cli.py"
+     … +46 lines
+
+  Ran 2 shell commands
+
+● All 27 tests pass. Summary of what I found and changed:
+
+  The reported bug didn't reproduce as described. python3 stats_cli.py with no arguments never crashed — it already printed usage to stderr and exited 1. The only traceback came from a missing file (FileNotFoundError), which is almost certainly the crash the user actually hit.
+
+  Changes to stats_cli.py:
+  - No path (or too many paths) → usage on stderr, exit 2 (as requested; was 1)
+  - Unreadable/missing path → stats_cli.py: cannot read <path>: <reason> on stderr, exit 1, no traceback
+
+  tests/test_cli.py drives the script through subprocess and covers the no-argument exit-2-with-usage case you asked for, plus no-traceback, too-many-arguments, missing-file, and the happy path.
+
+  The missing-file fix is beyond your literal ask — I made it because it's the actual crash behind the report, and I'd rather flag it than leave it. Say the word if you'd prefer that reverted.
+
+  DONE3
+
+✻ Churned for 51s · done 5:06 PM
+
+❯ Re-run the full suite once more to confirm: python3 -m unittest discover -s tests -v 2>&1 and reply GREEN if everything passes.
+
+  Ran 1 shell command
+
+● 27 tests, 0 failures, 0 errors.
+
+  GREEN
+
+✻ Worked for 4s · done 5:12 PM
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ accept edits on (shift+tab to cycle) · ← for agents

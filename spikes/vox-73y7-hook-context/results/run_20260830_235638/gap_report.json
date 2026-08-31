@@ -1,0 +1,22 @@
+{
+  "sessions": {
+    "6740dd67-1465-4382-94f8-b6a2626dbcd2": {
+      "gap_detected": true,
+      "lost_events": 9,
+      "missing_relay_seqs": [
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101
+      ],
+      "received": 95,
+      "receiver_seq_resets": 3,
+      "relay_stamped": 95
+    }
+  }
+}

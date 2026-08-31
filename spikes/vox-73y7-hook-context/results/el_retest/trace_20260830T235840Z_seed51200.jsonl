@@ -1,0 +1,154 @@
+{"seed_bytes": 51200, "prompt_bytes": 51773, "t": "2026-08-30T23:59:52.049+00:00", "ms": 0.4, "dir": "note", "type": "run_config"}
+{"ws_connect_ms": 313.3, "t": "2026-08-30T23:59:52.643+00:00", "ms": 593.7, "dir": "note", "type": "ws_open"}
+{"conversation_id": "conv_9501m1ahv0n0fhqsfhcpqd8rssye", "agent_output_audio_format": "pcm_16000", "user_input_audio_format": "pcm_16000", "persistent_session_token": null, "t": "2026-08-30T23:59:52.643+00:00", "ms": 594.4, "dir": "recv", "type": "conversation_initiation_metadata"}
+{"text": "What time is it right now?", "t": "2026-08-30T23:59:52.643+00:00", "ms": 594.5, "dir": "send", "type": "user_message"}
+{"t": "2026-08-30T23:59:52.805+00:00", "ms": 756.4, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-30T23:59:52.805+00:00", "ms": 756.6, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-30T23:59:52.805+00:00", "ms": 756.6, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-30T23:59:52.806+00:00", "ms": 756.7, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Voice agent ready. What do you need?", "t": "2026-08-30T23:59:52.806+00:00", "ms": 756.7, "dir": "recv", "type": "agent_response"}
+{"t": "2026-08-30T23:59:52.806+00:00", "ms": 756.7, "dir": "recv", "type": "agent_response_complete"}
+{"tool": "clock", "tool_call_id": "clock_0774edfb59c247c1b825b929749795a1", "t": "2026-08-30T23:59:53.830+00:00", "ms": 1780.8, "dir": "recv", "type": "client_tool_call"}
+{"t": "2026-08-30T23:59:53.830+00:00", "ms": 1781.1, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-30T23:59:53.830+00:00", "ms": 1781.1, "dir": "recv", "type": "agent_chat_response_part"}
+{"tool": "clock", "tool_call_id": "clock_0774edfb59c247c1b825b929749795a1", "exec_ms": 0.2, "is_error": false, "t": "2026-08-30T23:59:53.830+00:00", "ms": 1781.6, "dir": "send", "type": "client_tool_result"}
+{"t": "2026-08-30T23:59:53.902+00:00", "ms": 1853.2, "dir": "recv", "type": "agent_tool_response"}
+{"ping_ms": null, "t": "2026-08-30T23:59:54.480+00:00", "ms": 2431.3, "dir": "recv", "type": "ping"}
+{"t": "2026-08-30T23:59:54.631+00:00", "ms": 2581.8, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-30T23:59:54.631+00:00", "ms": 2582.1, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-30T23:59:54.824+00:00", "ms": 2774.9, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-30T23:59:54.824+00:00", "ms": 2775.0, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"t": "2026-08-30T23:59:55.039+00:00", "ms": 2989.9, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-30T23:59:55.039+00:00", "ms": 2990.0, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-30T23:59:55.039+00:00", "ms": 2990.0, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "It is currently 11:59 PM on August 30, 2026.", "t": "2026-08-30T23:59:55.039+00:00", "ms": 2990.1, "dir": "recv", "type": "agent_response"}
+{"t": "2026-08-30T23:59:55.039+00:00", "ms": 2990.1, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 67, "t": "2026-08-30T23:59:56.181+00:00", "ms": 4132.3, "dir": "recv", "type": "ping"}
+{"text": "Search the code for the playback queue.", "t": "2026-08-30T23:59:56.652+00:00", "ms": 4602.9, "dir": "send", "type": "user_message"}
+{"t": "2026-08-30T23:59:57.674+00:00", "ms": 5625.5, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Searching the codebase for playback queue.", "t": "2026-08-30T23:59:57.675+00:00", "ms": 5625.7, "dir": "recv", "type": "agent_response"}
+{"tool": "search_code", "tool_call_id": "search_code_4675a6d5df184636a453ec08222dba27", "t": "2026-08-30T23:59:57.675+00:00", "ms": 5625.7, "dir": "recv", "type": "client_tool_call"}
+{"t": "2026-08-30T23:59:57.682+00:00", "ms": 5632.8, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-30T23:59:57.682+00:00", "ms": 5632.9, "dir": "recv", "type": "agent_chat_response_part"}
+{"ping_ms": 68, "t": "2026-08-30T23:59:57.905+00:00", "ms": 5856.0, "dir": "recv", "type": "ping"}
+{"ping_ms": 69, "t": "2026-08-30T23:59:59.582+00:00", "ms": 7532.9, "dir": "recv", "type": "ping"}
+{"tool": "search_code", "tool_call_id": "search_code_4675a6d5df184636a453ec08222dba27", "exec_ms": 2200.4, "is_error": false, "t": "2026-08-30T23:59:59.875+00:00", "ms": 7826.6, "dir": "send", "type": "client_tool_result"}
+{"t": "2026-08-30T23:59:59.936+00:00", "ms": 7887.3, "dir": "recv", "type": "agent_tool_response"}
+{"t": "2026-08-31T00:00:00.737+00:00", "ms": 8688.4, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:00.738+00:00", "ms": 8688.7, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:01.045+00:00", "ms": 8996.6, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:01.046+00:00", "ms": 8996.7, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"t": "2026-08-31T00:00:01.056+00:00", "ms": 9007.2, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:01.056+00:00", "ms": 9007.3, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "I found three matches for playback queue in the daemon, playback, and provider registry files.", "t": "2026-08-31T00:00:01.056+00:00", "ms": 9007.4, "dir": "recv", "type": "agent_response"}
+{"t": "2026-08-31T00:00:01.056+00:00", "ms": 9007.4, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 69, "t": "2026-08-31T00:00:01.284+00:00", "ms": 9234.9, "dir": "recv", "type": "ping"}
+{"text": "Write a note saying: spike checkpoint alpha.", "t": "2026-08-31T00:00:02.664+00:00", "ms": 10615.0, "dir": "send", "type": "user_message"}
+{"ping_ms": 67, "t": "2026-08-31T00:00:03.301+00:00", "ms": 11252.1, "dir": "recv", "type": "ping"}
+{"tool": "write_note", "tool_call_id": "write_note_f845e017ceb44f2cabbba2a1200a8bd9", "t": "2026-08-31T00:00:03.618+00:00", "ms": 11569.0, "dir": "recv", "type": "client_tool_call"}
+{"tool": "write_note", "tool_call_id": "write_note_f845e017ceb44f2cabbba2a1200a8bd9", "exec_ms": 0.5, "is_error": false, "t": "2026-08-31T00:00:03.619+00:00", "ms": 11570.3, "dir": "send", "type": "client_tool_result"}
+{"t": "2026-08-31T00:00:03.653+00:00", "ms": 11604.3, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:03.653+00:00", "ms": 11604.6, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:03.756+00:00", "ms": 11706.7, "dir": "recv", "type": "agent_tool_response"}
+{"t": "2026-08-31T00:00:04.609+00:00", "ms": 12560.1, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:04.609+00:00", "ms": 12560.3, "dir": "recv", "type": "agent_chat_response_part"}
+{"ping_ms": 67, "t": "2026-08-31T00:00:04.685+00:00", "ms": 12635.8, "dir": "recv", "type": "ping"}
+{"t": "2026-08-31T00:00:04.823+00:00", "ms": 12774.2, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:04.823+00:00", "ms": 12774.5, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:04.823+00:00", "ms": 12774.6, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "I have successfully saved the note for spike checkpoint alpha.", "t": "2026-08-31T00:00:04.824+00:00", "ms": 12774.7, "dir": "recv", "type": "agent_response"}
+{"t": "2026-08-31T00:00:04.824+00:00", "ms": 12774.7, "dir": "recv", "type": "agent_response_complete"}
+{"text": "Check the clock and also search the code for provider registry.", "t": "2026-08-31T00:00:06.421+00:00", "ms": 14372.1, "dir": "send", "type": "user_message"}
+{"ping_ms": 67, "t": "2026-08-31T00:00:06.433+00:00", "ms": 14384.2, "dir": "recv", "type": "ping"}
+{"t": "2026-08-31T00:00:07.635+00:00", "ms": 15586.5, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Checking the clock and searching for provider registry.", "t": "2026-08-31T00:00:07.636+00:00", "ms": 15587.1, "dir": "recv", "type": "agent_response"}
+{"tool": "clock", "tool_call_id": "clock_4fcd3b9c0d0a42eeaf45b231f4a55265", "t": "2026-08-31T00:00:07.637+00:00", "ms": 15587.9, "dir": "recv", "type": "client_tool_call"}
+{"tool": "clock", "tool_call_id": "clock_4fcd3b9c0d0a42eeaf45b231f4a55265", "exec_ms": 0.3, "is_error": false, "t": "2026-08-31T00:00:07.637+00:00", "ms": 15588.5, "dir": "send", "type": "client_tool_result"}
+{"t": "2026-08-31T00:00:07.658+00:00", "ms": 15609.4, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:07.659+00:00", "ms": 15609.7, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:07.659+00:00", "ms": 15609.8, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:07.659+00:00", "ms": 15609.9, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:07.707+00:00", "ms": 15658.1, "dir": "recv", "type": "agent_tool_response"}
+{"t": "2026-08-31T00:00:07.709+00:00", "ms": 15659.7, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Searching the codebase for provider registry.", "t": "2026-08-31T00:00:07.709+00:00", "ms": 15660.3, "dir": "recv", "type": "agent_response"}
+{"tool": "search_code", "tool_call_id": "search_code_6b111a7307154ebfab1191328a96b3a7", "t": "2026-08-31T00:00:07.710+00:00", "ms": 15660.8, "dir": "recv", "type": "client_tool_call"}
+{"ping_ms": 116, "t": "2026-08-31T00:00:08.109+00:00", "ms": 16060.0, "dir": "recv", "type": "ping"}
+{"ping_ms": 91, "t": "2026-08-31T00:00:09.793+00:00", "ms": 17744.1, "dir": "recv", "type": "ping"}
+{"tool": "search_code", "tool_call_id": "search_code_6b111a7307154ebfab1191328a96b3a7", "exec_ms": 3100.5, "is_error": false, "t": "2026-08-31T00:00:10.811+00:00", "ms": 18762.0, "dir": "send", "type": "client_tool_result"}
+{"t": "2026-08-31T00:00:10.895+00:00", "ms": 18846.3, "dir": "recv", "type": "agent_tool_response"}
+{"ping_ms": 91, "t": "2026-08-31T00:00:11.519+00:00", "ms": 19469.7, "dir": "recv", "type": "ping"}
+{"t": "2026-08-31T00:00:11.791+00:00", "ms": 19742.3, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:11.791+00:00", "ms": 19742.5, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:11.872+00:00", "ms": 19822.7, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:11.872+00:00", "ms": 19822.8, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"t": "2026-08-31T00:00:12.010+00:00", "ms": 19961.3, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:12.043+00:00", "ms": 19993.7, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:12.043+00:00", "ms": 19993.8, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "It is 12:00 AM, and I found three matches for provider registry in the daemon, playback, and provider files.", "t": "2026-08-31T00:00:12.043+00:00", "ms": 19993.9, "dir": "recv", "type": "agent_response"}
+{"t": "2026-08-31T00:00:12.043+00:00", "ms": 19993.9, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 91, "t": "2026-08-31T00:00:13.286+00:00", "ms": 21236.9, "dir": "recv", "type": "ping"}
+{"text": "Search the code for websocket dispatch, and write a note that says: dispatch reviewed.", "t": "2026-08-31T00:00:13.692+00:00", "ms": 21643.6, "dir": "send", "type": "user_message"}
+{"t": "2026-08-31T00:00:15.135+00:00", "ms": 23086.3, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Searching the codebase for websocket dispatch.", "t": "2026-08-31T00:00:15.135+00:00", "ms": 23086.5, "dir": "recv", "type": "agent_response"}
+{"tool": "search_code", "tool_call_id": "search_code_d20465503eec4953a4e88874227c0cec", "t": "2026-08-31T00:00:15.135+00:00", "ms": 23086.6, "dir": "recv", "type": "client_tool_call"}
+{"ping_ms": 108, "t": "2026-08-31T00:00:15.136+00:00", "ms": 23086.7, "dir": "recv", "type": "ping"}
+{"t": "2026-08-31T00:00:15.136+00:00", "ms": 23086.8, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:15.136+00:00", "ms": 23086.8, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:15.136+00:00", "ms": 23086.9, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:15.136+00:00", "ms": 23086.9, "dir": "recv", "type": "agent_chat_response_part"}
+{"ping_ms": 168, "t": "2026-08-31T00:00:16.759+00:00", "ms": 24710.6, "dir": "recv", "type": "ping"}
+{"ping_ms": 242, "t": "2026-08-31T00:00:18.333+00:00", "ms": 26284.2, "dir": "recv", "type": "ping"}
+{"tool": "search_code", "tool_call_id": "search_code_d20465503eec4953a4e88874227c0cec", "exec_ms": 4300.3, "is_error": false, "t": "2026-08-31T00:00:19.436+00:00", "ms": 27387.4, "dir": "send", "type": "client_tool_result"}
+{"t": "2026-08-31T00:00:19.533+00:00", "ms": 27483.8, "dir": "recv", "type": "agent_tool_response"}
+{"tool": "write_note", "tool_call_id": "write_note_ded0fd3d9d1b45138091cf18a699d1a9", "t": "2026-08-31T00:00:19.533+00:00", "ms": 27484.0, "dir": "recv", "type": "client_tool_call"}
+{"tool": "write_note", "tool_call_id": "write_note_ded0fd3d9d1b45138091cf18a699d1a9", "exec_ms": 0.2, "is_error": false, "t": "2026-08-31T00:00:19.533+00:00", "ms": 27484.3, "dir": "send", "type": "client_tool_result"}
+{"t": "2026-08-31T00:00:19.831+00:00", "ms": 27782.4, "dir": "recv", "type": "agent_tool_response"}
+{"ping_ms": 242, "t": "2026-08-31T00:00:20.333+00:00", "ms": 28283.7, "dir": "recv", "type": "ping"}
+{"t": "2026-08-31T00:00:20.407+00:00", "ms": 28358.2, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:20.407+00:00", "ms": 28358.3, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:20.529+00:00", "ms": 28479.9, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:20.529+00:00", "ms": 28480.1, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"t": "2026-08-31T00:00:20.663+00:00", "ms": 28614.1, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:20.759+00:00", "ms": 28710.4, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:20.759+00:00", "ms": 28710.6, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "I found three matches for websocket dispatch in the code, and I have saved the note confirming dispatch is reviewed.", "t": "2026-08-31T00:00:20.760+00:00", "ms": 28710.7, "dir": "recv", "type": "agent_response"}
+{"t": "2026-08-31T00:00:20.760+00:00", "ms": 28710.8, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 242, "t": "2026-08-31T00:00:22.084+00:00", "ms": 30035.3, "dir": "recv", "type": "ping"}
+{"text": "What day is it today? Also note down: seed run complete.", "t": "2026-08-31T00:00:22.463+00:00", "ms": 30414.2, "dir": "send", "type": "user_message"}
+{"ping_ms": 475, "t": "2026-08-31T00:00:23.518+00:00", "ms": 31468.7, "dir": "recv", "type": "ping"}
+{"t": "2026-08-31T00:00:23.568+00:00", "ms": 31518.8, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Checking the current date and saving your note.", "t": "2026-08-31T00:00:23.568+00:00", "ms": 31519.0, "dir": "recv", "type": "agent_response"}
+{"tool": "clock", "tool_call_id": "clock_510fd14bc0c7408c92d2fcf1a09925c3", "t": "2026-08-31T00:00:23.568+00:00", "ms": 31519.0, "dir": "recv", "type": "client_tool_call"}
+{"t": "2026-08-31T00:00:23.568+00:00", "ms": 31519.0, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:23.568+00:00", "ms": 31519.1, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:23.568+00:00", "ms": 31519.1, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:23.568+00:00", "ms": 31519.1, "dir": "recv", "type": "agent_chat_response_part"}
+{"tool": "clock", "tool_call_id": "clock_510fd14bc0c7408c92d2fcf1a09925c3", "exec_ms": 0.1, "is_error": false, "t": "2026-08-31T00:00:23.568+00:00", "ms": 31519.4, "dir": "send", "type": "client_tool_result"}
+{"t": "2026-08-31T00:00:23.668+00:00", "ms": 31619.4, "dir": "recv", "type": "agent_tool_response"}
+{"tool": "write_note", "tool_call_id": "write_note_835f68e39055466583a3d6fe75060a04", "t": "2026-08-31T00:00:23.669+00:00", "ms": 31620.5, "dir": "recv", "type": "client_tool_call"}
+{"tool": "write_note", "tool_call_id": "write_note_835f68e39055466583a3d6fe75060a04", "exec_ms": 0.2, "is_error": false, "t": "2026-08-31T00:00:23.670+00:00", "ms": 31621.0, "dir": "send", "type": "client_tool_result"}
+{"t": "2026-08-31T00:00:23.741+00:00", "ms": 31691.9, "dir": "recv", "type": "agent_tool_response"}
+{"t": "2026-08-31T00:00:24.644+00:00", "ms": 32595.3, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:24.644+00:00", "ms": 32595.5, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:24.761+00:00", "ms": 32712.1, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:24.761+00:00", "ms": 32712.4, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"t": "2026-08-31T00:00:24.908+00:00", "ms": 32859.0, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:24.934+00:00", "ms": 32884.7, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:24.934+00:00", "ms": 32884.8, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "Today is Monday, August 31, 2026, and I have noted down that the seed run is complete.", "t": "2026-08-31T00:00:24.934+00:00", "ms": 32884.9, "dir": "recv", "type": "agent_response"}
+{"t": "2026-08-31T00:00:24.934+00:00", "ms": 32884.9, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 475, "t": "2026-08-31T00:00:25.095+00:00", "ms": 33046.0, "dir": "recv", "type": "ping"}
+{"text": "Thanks. Give me a one-sentence summary of what you did.", "t": "2026-08-31T00:00:26.470+00:00", "ms": 34421.6, "dir": "send", "type": "user_message"}
+{"ping_ms": 207, "t": "2026-08-31T00:00:26.881+00:00", "ms": 34832.3, "dir": "recv", "type": "ping"}
+{"t": "2026-08-31T00:00:27.490+00:00", "ms": 35440.8, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"t": "2026-08-31T00:00:27.698+00:00", "ms": 35649.4, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:27.698+00:00", "ms": 35649.5, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:27.698+00:00", "ms": 35649.6, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:27.698+00:00", "ms": 35649.6, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:27.699+00:00", "ms": 35649.6, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"t": "2026-08-31T00:00:27.743+00:00", "ms": 35693.7, "dir": "recv", "type": "agent_chat_response_part"}
+{"t": "2026-08-31T00:00:27.818+00:00", "ms": 35769.0, "dir": "recv", "type": "internal_tentative_agent_response"}
+{"text": "I checked the current date and time, searched the codebase for playback queue, provider registry, and websocket dispatch, and saved notes for spike checkpoint alpha, dispatch reviewed, and seed run complete.", "t": "2026-08-31T00:00:27.818+00:00", "ms": 35769.2, "dir": "recv", "type": "agent_response"}
+{"t": "2026-08-31T00:00:27.818+00:00", "ms": 35769.2, "dir": "recv", "type": "agent_response_complete"}
+{"ping_ms": 207, "t": "2026-08-31T00:00:28.550+00:00", "ms": 36501.6, "dir": "recv", "type": "ping"}
+{"t": "2026-08-31T00:00:30.068+00:00", "ms": 38019.2, "dir": "note", "type": "session_closed"}

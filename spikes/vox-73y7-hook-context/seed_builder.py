@@ -47,6 +47,7 @@ class SeedPayload:
     active_files: tuple[str, ...]
     last_tool_results: tuple[str, ...]
     recent_failure: str
+    last_agent_report: str
 
     def to_json(self) -> str:
         """Serialize; the budget check applies to this form."""
@@ -56,6 +57,7 @@ class SeedPayload:
                 "active_files": list(self.active_files),
                 "last_tool_results": list(self.last_tool_results),
                 "recent_failure": self.recent_failure,
+                "last_agent_report": self.last_agent_report,
             },
             indent=2,
             sort_keys=True,
@@ -75,6 +77,7 @@ class SeedPayload:
             active_files=self.active_files,
             last_tool_results=self.last_tool_results[1:],
             recent_failure=self.recent_failure,
+            last_agent_report=self.last_agent_report,
         )
 
 
@@ -86,9 +89,11 @@ class SeedBuilder:
 
     _visible: tuple[HookRecord, ...]
 
-    def __new__(cls, records: tuple[HookRecord, ...], cutoff_recv_seq: int) -> Self:
+    def __new__(cls, records: tuple[HookRecord, ...], cutoff_index: int) -> Self:
+        # File-order cutoff, matching TailReconstructor: recv_seq values
+        # collide across store restarts, so they cannot bound a timepoint.
         self = super().__new__(cls)
-        self._visible = tuple(r for r in records if r.recv_seq <= cutoff_recv_seq)
+        self._visible = tuple(records[:cutoff_index])
         return self
 
     def build(self) -> SeedPayload:
@@ -96,13 +101,16 @@ class SeedBuilder:
         # The curation reuses the tail extractors over the WHOLE visible
         # ledger (n=len): the seed's advantage over a display tail is
         # reach, its constraint is the byte budget.
-        wide = TailReconstructor(self._visible, cutoff_recv_seq=2**31, n=2**31)
+        wide = TailReconstructor(
+            self._visible, cutoff_index=len(self._visible), n=len(self._visible)
+        )
         answer = wide.answer("seed-build")
         seed = SeedPayload(
             current_goal=answer.goal,
             active_files=answer.files_in_play,
             last_tool_results=self._verbatim_results(),
             recent_failure=answer.open_failure,
+            last_agent_report=answer.agent_report,
         )
         while seed.byte_size() > SEED_BUDGET_BYTES:
             seed = seed.trimmed()
@@ -152,6 +160,7 @@ class SeedReconstructor:
             last_result=" ".join(last.split()),
             open_failure=self._seed.recent_failure,
             files_in_play=self._seed.active_files,
+            agent_report=self._seed.last_agent_report,
         )
 
 

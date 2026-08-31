@@ -121,6 +121,7 @@ class ContextAnswer:
     last_result: str
     open_failure: str
     files_in_play: tuple[str, ...]
+    agent_report: str
 
     def render(self) -> str:
         """The graded text block."""
@@ -132,7 +133,8 @@ class ContextAnswer:
             f"recent actions:\n{actions}\n"
             f"last result: {self.last_result or '(none)'}\n"
             f"open failure: {self.open_failure or 'none'}\n"
-            f"files in play: {files}"
+            f"files in play: {files}\n"
+            f"agent last said: {self.agent_report or '(nothing yet)'}"
         )
 
 
@@ -147,12 +149,18 @@ class TailReconstructor:
     def __new__(
         cls,
         records: tuple[HookRecord, ...],
-        cutoff_recv_seq: int,
+        cutoff_index: int,
         n: int = DEFAULT_TAIL_N,
     ) -> Self:
+        # The cutoff is a FILE-ORDER index (1-based count of records
+        # visible at the sampled moment), never a recv_seq: the store's
+        # receiver-assigned sequence restarts at 1 when the store
+        # restarts, so recv_seq values collide across restarts and a
+        # seq-based cut silently admits post-restart records into an
+        # earlier timepoint. Observed live in the capture run; the same
+        # trap applies to DES-070's receiver-side stamping.
         self = super().__new__(cls)
-        visible = [r for r in records if r.recv_seq <= cutoff_recv_seq]
-        self._tail = tuple(visible[-n:])
+        self._tail = tuple(records[:cutoff_index][-n:])
         return self
 
     @property
@@ -170,6 +178,7 @@ class TailReconstructor:
             last_result=self._last_result(),
             open_failure=self._open_failure(),
             files_in_play=self._files_in_play(),
+            agent_report=self._agent_report(),
         )
 
     def _goal(self) -> str:
@@ -213,6 +222,17 @@ class TailReconstructor:
                 return _clip(text[-800:], _RESULT_CHARS)
         return ""
 
+    def _agent_report(self) -> str:
+        # Stop payloads carry the assistant's final message for the turn;
+        # the newest one is the agent's own account of what it just did.
+        for record in reversed(self._tail):
+            if record.event != "Stop":
+                continue
+            raw = record.payload.get("last_assistant_message")
+            if isinstance(raw, str) and raw:
+                return _clip(raw, _RESULT_CHARS)
+        return ""
+
     def _files_in_play(self) -> tuple[str, ...]:
         seen: dict[str, None] = {}
         for record in self._tool_uses():
@@ -229,7 +249,9 @@ def main() -> None:
     """CLI entry: reconstruct at one cutoff and print the answer."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ledger", type=Path, required=True)
-    parser.add_argument("--cutoff", type=int, required=True)
+    parser.add_argument(
+        "--cutoff", type=int, required=True, help="file-order record count"
+    )
     parser.add_argument("--n", type=int, default=DEFAULT_TAIL_N)
     parser.add_argument("--timepoint", default="ad-hoc")
     args = parser.parse_args()

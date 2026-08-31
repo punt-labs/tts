@@ -16,6 +16,7 @@ Adaptations for this spike:
 
 from __future__ import annotations
 
+import getpass
 import json
 import os
 import time
@@ -66,6 +67,9 @@ class Sanitizer:
         Each prefix is also matched in Claude Code's dash-encoded form
         (the ``projects/`` directory slug, ``/`` and ``.`` -> ``-``),
         which otherwise re-leaks the username through transcript paths.
+        The bare username is scrubbed LAST: path rules must run first or
+        the username hit inside them would break the prefix match --
+        found when an ``ls -la`` owner column re-leaked it.
         """
         rules: list[tuple[str, str]] = []
         if scratch_root is not None:
@@ -73,6 +77,7 @@ class Sanitizer:
             rules.append((cls._dash_encoded(str(scratch_root)), "<scratch-slug>"))
         rules.append((str(Path.home()), "~"))
         rules.append((cls._dash_encoded(str(Path.home())), "<home-slug>"))
+        rules.append((getpass.getuser(), "<user>"))
         return cls(tuple(rules))
 
     @staticmethod

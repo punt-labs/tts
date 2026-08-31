@@ -1,0 +1,18 @@
+{
+  "manual_window": {
+    "killed_at": "2026-08-31T00:08:41+00:00",
+    "note": "second loss window, run manually while the fork was mid-fix (the harness fallback window fired while the fork was idle)",
+    "restarted_at": "2026-08-31T00:09:34+00:00",
+    "window_s": 53
+  },
+  "manual_window_2": {
+    "note": "kill at 00:08:41 hit the harness store; a manually restarted store then served the port, so no events were lost in this window"
+  },
+  "manual_window_3": {
+    "killed_at": "2026-08-31T00:20:14+00:00",
+    "lost_events": 9,
+    "port_confirmed_closed": true,
+    "restarted_at": "2026-08-31T00:22:30+00:00",
+    "traffic_during_window": "one full turn (README edit + suite run, DONE5)"
+  }
+}
