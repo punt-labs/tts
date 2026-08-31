@@ -76,6 +76,31 @@ _PROMPT_AFTER_IDLE = "Reply with exactly PROMPT-ACK and nothing else."
 _FOLLOWUP_TEXT = "FOLLOW-UP vox04qy: reply with exactly FOLLOWUP-ACK and nothing else."
 
 
+# Everything a live scenario can legitimately fail with; anything outside
+# this set is a harness bug and should crash loudly. RuntimeError covers
+# the session's own loud faults (fork died at startup, torn reader).
+_SCENARIO_FAULTS = (
+    TimeoutError,
+    LookupError,
+    OSError,
+    subprocess.SubprocessError,
+    RuntimeError,
+)
+
+
+def _probe(argv: list[str]) -> str:
+    """A version/provenance probe that records failure instead of raising.
+
+    Provenance must never abort a run after the scenarios completed, and
+    an empty string is not a recording of what went wrong.
+    """
+    result = subprocess.run(argv, check=False, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        return f"<probe failed rc={result.returncode}: {detail[:80]}>"
+    return result.stdout.strip()
+
+
 def _assistant_marker(marker: str) -> str:
     """Name for the predicate below, kept next to it for the report."""
     return f"assistant text containing {marker}"
@@ -135,6 +160,11 @@ class Arm1Runner:
 
     def run(self) -> int:
         """All three scenarios; returns a process exit code."""
+        # Results dir and environment provenance come FIRST: nothing that
+        # can fail at the end of the run may stand between a finished
+        # scenario and its evidence on disk.
+        self._results_dir.mkdir(parents=True, exist_ok=True)
+        environment = self._environment()
         self._stubs.create()
         outcomes = [
             self._guarded("midturn_steer", self._midturn_steer),
@@ -142,16 +172,16 @@ class Arm1Runner:
             self._guarded("followup_contrast", self._followup_contrast),
         ]
         summary: dict[str, object] = {
-            "environment": self._environment(),
+            "environment": environment,
             "scenarios": {outcome.name: outcome.summary for outcome in outcomes},
             "stub_invocations": list(self._stubs.invocations()),
         }
-        self._results_dir.mkdir(parents=True, exist_ok=True)
         for outcome in outcomes:
             outcome.transcript.dump(
                 self._results_dir / f"{outcome.name}.transcript.jsonl",
                 self._sanitizer,
             )
+        self._preserve_stderr(outcomes)
         summary_path = self._results_dir / "summary.json"
         summary_path.write_text(
             self._sanitizer.scrub(json.dumps(summary, indent=2, sort_keys=True)) + "\n",
@@ -165,21 +195,51 @@ class Arm1Runner:
             return 1
         return 0
 
+    def _preserve_stderr(self, outcomes: list[ScenarioOutcome]) -> None:
+        """Copy failed scenarios' pi stderr into the evidence dir.
+
+        The scratch teardown below would otherwise destroy the one file
+        kept precisely so a crash survives for the report.
+        """
+        for outcome in outcomes:
+            if "error" not in outcome.summary:
+                continue
+            source = SCRATCH_ROOT / outcome.name / "pi_stderr.log"
+            target = self._results_dir / f"{outcome.name}.pi_stderr.log"
+            if not source.exists():
+                target.write_text("<pi_stderr.log was never created>\n", "utf-8")
+                continue
+            text = source.read_text(encoding="utf-8", errors="replace")
+            target.write_text(self._sanitizer.scrub(text), encoding="utf-8")
+
     def _guarded(
-        self, name: str, scenario: Callable[[], ScenarioOutcome]
+        self, name: str, scenario: Callable[[PiRpcSession], dict[str, object]]
     ) -> ScenarioOutcome:
+        """One scenario against one session; the transcript ALWAYS survives.
+
+        The guard owns the session so a failing scenario still yields its
+        real transcript — a miss at analysis time (a marker that never
+        came) must not erase the evidence of the live turn that produced
+        it. The child's exit code is recorded either way.
+        """
         print(f"--- scenario: {name}")
+        session = self._session(name)
+        summary: dict[str, object]
         try:
-            outcome = scenario()
-        except (TimeoutError, LookupError, OSError) as exc:
+            try:
+                summary = scenario(session)
+            finally:
+                session.close()
+            print(f"    ok: {json.dumps(summary, sort_keys=True)[:160]}")
+        except _SCENARIO_FAULTS as exc:
             # A characterization run must complete and report; the miss IS
             # the finding for that scenario.
             print(f"    error: {exc}")
-            return ScenarioOutcome(
-                name=name, summary={"error": str(exc)}, transcript=Transcript()
-            )
-        print(f"    ok: {json.dumps(outcome.summary, sort_keys=True)[:160]}")
-        return outcome
+            summary = {"error": str(exc)}
+        summary["pi_exit_code"] = session.exit_code()
+        return ScenarioOutcome(
+            name=name, summary=summary, transcript=session.transcript
+        )
 
     def _session(self, name: str) -> PiRpcSession:
         project = SCRATCH_ROOT / name
@@ -205,34 +265,27 @@ class Arm1Runner:
                 body + "\n", encoding="utf-8"
             )
 
-    def _midturn_steer(self) -> ScenarioOutcome:
-        session = self._session("midturn_steer")
-        try:
-            session.send(RpcCommand.prompt(_LONG_TASK))
-            session.wait_for(
-                lambda e: e.type == "tool_execution_start",
-                timeout_s=_TOOL_WAIT_S,
-                description="first tool_execution_start",
-            )
-            steer_ns = session.send(RpcCommand.steer(self._steer_text))
-            session.wait_for(
-                lambda e: e.is_response_to("steer"),
-                timeout_s=_ACK_WAIT_S,
-                description="steer ack",
-            )
-            session.wait_for(
-                lambda e: e.type == "agent_end",
-                timeout_s=_TURN_WAIT_S,
-                description="agent_end after steer",
-            )
-            session.settle(quiet_s=2)
-        finally:
-            session.close()
-        return ScenarioOutcome(
-            name="midturn_steer",
-            summary=self._midturn_summary(session.transcript, steer_ns),
-            transcript=session.transcript,
+    def _midturn_steer(self, session: PiRpcSession) -> dict[str, object]:
+        session.send(RpcCommand.prompt(_LONG_TASK))
+        session.wait_for(
+            lambda e: e.type == "tool_execution_start",
+            timeout_s=_TOOL_WAIT_S,
+            description="first tool_execution_start",
         )
+        steer_ns = session.send(RpcCommand.steer(self._steer_text))
+        session.wait_for(
+            lambda e: e.is_response_to("steer"),
+            timeout_s=_ACK_WAIT_S,
+            description="steer ack",
+        )
+        session.wait_for(
+            lambda e: e.type == "agent_end",
+            timeout_s=_TURN_WAIT_S,
+            description="agent_end after steer",
+        )
+        session.settle(quiet_s=2)
+        session.close()
+        return self._midturn_summary(session.transcript, steer_ns)
 
     def _midturn_summary(
         self, transcript: Transcript, steer_ns: int
@@ -272,6 +325,11 @@ class Arm1Runner:
             0, lambda e: e.type == "tool_execution_start", description="tool start"
         )
         call_id = start.data.get("toolCallId")
+        if not isinstance(call_id, str) or not call_id:
+            # Without the id the end-predicate would match ANY id-less
+            # tool_execution_end and fabricate a completion + latency.
+            msg = "tool_execution_start carried no toolCallId; schema changed"
+            raise LookupError(msg)
         try:
             end = analysis.first_event_after(
                 steer_ns,
@@ -305,39 +363,40 @@ class Arm1Runner:
             count += 1
             probe_ns = event.recv_ns
 
-    def _idle_steer(self) -> ScenarioOutcome:
-        session = self._session("idle_steer")
+    def _idle_steer(self, session: PiRpcSession) -> dict[str, object]:
         summary: dict[str, object] = {}
-        try:
-            steer_ns = session.send(RpcCommand.steer(_IDLE_STEER_TEXT))
-            session.wait_for(
-                lambda e: e.is_response_to("steer"),
-                timeout_s=_ACK_WAIT_S,
-                description="idle steer ack",
-            )
+        steer_ns = session.send(RpcCommand.steer(_IDLE_STEER_TEXT))
+        session.wait_for(
+            lambda e: e.is_response_to("steer"),
+            timeout_s=_ACK_WAIT_S,
+            description="idle steer ack",
+        )
+        # The two waits are separate on purpose: the started-flag must
+        # never be rewritten by a LATER timeout, and a fresh prompt is
+        # sent only into a session that verifiably never started a turn.
+        started = self._idle_turn_started(session)
+        summary["idle_steer_started_a_turn"] = started
+        if started:
             try:
-                session.wait_for(
-                    lambda e: e.type == "agent_start",
-                    timeout_s=_IDLE_PROBE_S,
-                    description="agent_start from idle steer",
-                )
-                summary["idle_steer_started_a_turn"] = True
                 session.wait_for(
                     lambda e: e.type == "agent_end",
                     timeout_s=_TURN_WAIT_S,
                     description="agent_end after idle steer",
                 )
-            except TimeoutError:
-                summary["idle_steer_started_a_turn"] = False
-                session.send(RpcCommand.prompt(_PROMPT_AFTER_IDLE))
-                session.wait_for(
-                    lambda e: e.type == "agent_end",
-                    timeout_s=_TURN_WAIT_S,
-                    description="agent_end after post-idle prompt",
-                )
-            session.settle(quiet_s=2)
-        finally:
-            session.close()
+            except TimeoutError as exc:
+                # Started, then hung: report exactly that — the flag
+                # stands, the miss is recorded, and no prompt is sent
+                # into the still-running turn.
+                summary["error"] = f"idle steer started a turn that hung: {exc}"
+        else:
+            session.send(RpcCommand.prompt(_PROMPT_AFTER_IDLE))
+            session.wait_for(
+                lambda e: e.type == "agent_end",
+                timeout_s=_TURN_WAIT_S,
+                description="agent_end after post-idle prompt",
+            )
+        session.settle(quiet_s=2)
+        session.close()
         analysis = TranscriptAnalysis(session.transcript)
         for marker in ("IDLESTEER-ACK", "PROMPT-ACK"):
             try:
@@ -350,35 +409,43 @@ class Arm1Runner:
                     steer_ns, event.recv_ns
                 )
             except LookupError:
+                # Absence of a marker is a finding, not a fault.
                 summary[f"steer_to_{marker}_ms"] = None
         summary["timeline"] = analysis.timeline()
-        return ScenarioOutcome(
-            name="idle_steer", summary=summary, transcript=session.transcript
-        )
+        return summary
 
-    def _followup_contrast(self) -> ScenarioOutcome:
-        session = self._session("followup_contrast")
+    @staticmethod
+    def _idle_turn_started(session: PiRpcSession) -> bool:
         try:
-            session.send(RpcCommand.prompt(_LONG_TASK))
             session.wait_for(
-                lambda e: e.type == "tool_execution_start",
-                timeout_s=_TOOL_WAIT_S,
-                description="first tool_execution_start",
+                lambda e: e.type == "agent_start",
+                timeout_s=_IDLE_PROBE_S,
+                description="agent_start from idle steer",
             )
-            followup_ns = session.send(RpcCommand.follow_up(_FOLLOWUP_TEXT))
-            session.wait_for(
-                lambda e: e.is_response_to("follow_up"),
-                timeout_s=_ACK_WAIT_S,
-                description="follow_up ack",
-            )
-            session.wait_for(
-                _emits("FOLLOWUP-ACK"),
-                timeout_s=_TURN_WAIT_S,
-                description=_assistant_marker("FOLLOWUP-ACK"),
-            )
-            session.settle(quiet_s=2)
-        finally:
-            session.close()
+        except TimeoutError:
+            return False
+        return True
+
+    def _followup_contrast(self, session: PiRpcSession) -> dict[str, object]:
+        session.send(RpcCommand.prompt(_LONG_TASK))
+        session.wait_for(
+            lambda e: e.type == "tool_execution_start",
+            timeout_s=_TOOL_WAIT_S,
+            description="first tool_execution_start",
+        )
+        followup_ns = session.send(RpcCommand.follow_up(_FOLLOWUP_TEXT))
+        session.wait_for(
+            lambda e: e.is_response_to("follow_up"),
+            timeout_s=_ACK_WAIT_S,
+            description="follow_up ack",
+        )
+        session.wait_for(
+            _emits("FOLLOWUP-ACK"),
+            timeout_s=_TURN_WAIT_S,
+            description=_assistant_marker("FOLLOWUP-ACK"),
+        )
+        session.settle(quiet_s=2)
+        session.close()
         analysis = TranscriptAnalysis(session.transcript)
         marker = analysis.first_event_after(
             followup_ns,
@@ -400,19 +467,11 @@ class Arm1Runner:
             "agent_start_count": self._count_after(analysis, 0, "agent_start"),
             "timeline": analysis.timeline(),
         }
-        return ScenarioOutcome(
-            name="followup_contrast", summary=summary, transcript=session.transcript
-        )
+        return summary
 
     def _environment(self) -> dict[str, object]:
-        version = subprocess.run(
-            [str(self._spec.binary), "--version"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
         return {
-            "pi_version": version.stdout.strip(),
+            "pi_version": _probe([str(self._spec.binary), "--version"]),
             "provider": self._spec.provider,
             "model": self._spec.model,
             "tools": list(self._spec.tools),
