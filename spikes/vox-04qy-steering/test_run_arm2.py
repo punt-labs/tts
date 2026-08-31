@@ -62,9 +62,10 @@ class TestTeardownHarvestsFirst:
             ["vox-panel", "--probe-hit"], env=env, check=True, capture_output=True
         )
         store = StoreProcess(1, tmp_path / "ledger.jsonl")  # never started
-        stub_lines, _teardown_lines = runner.teardown_with_evidence(store)
+        stub_lines, _teardown_lines, clean = runner.teardown_with_evidence(store)
         assert any("vox-panel" in line for line in stub_lines)
         assert any("--probe-hit" in line for line in stub_lines)
+        assert clean is True
         assert not scratch.exists()
 
     def test_no_hits_reads_as_observed_empty(
@@ -75,6 +76,48 @@ class TestTeardownHarvestsFirst:
         runner = Arm2Runner()
         runner.stubs.create()
         store = StoreProcess(1, tmp_path / "ledger.jsonl")
-        stub_lines, _teardown_lines = runner.teardown_with_evidence(store)
+        stub_lines, _teardown_lines, clean = runner.teardown_with_evidence(store)
         assert stub_lines == []
+        assert clean is True
         assert not scratch.exists()
+
+
+class TestTeardownResidueIsNotClean:
+    """A teardown that leaves residue must surface clean=False."""
+
+    def test_dirty_teardown_pass_reports_not_clean(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        scratch = tmp_path / "scratch"
+        monkeypatch.setattr(run_arm2, "_SCRATCH_ROOT", scratch)
+        runner = Arm2Runner()
+        runner.stubs.create()
+
+        class DirtyTeardown:
+            def __init__(self, _root: Path) -> None: ...
+
+            def run(self) -> object:
+                # The worst residue: a credentials copy that survived.
+                return type(
+                    "Outcome", (), {"clean": False, "log": ("FAILED to remove",)}
+                )()
+
+        monkeypatch.setattr(run_arm2, "Teardown", DirtyTeardown)
+        store = StoreProcess(1, tmp_path / "ledger.jsonl")
+        _stub_lines, _lines, clean = runner.teardown_with_evidence(store)
+        assert clean is False
+
+
+class TestMissingCaptureIsExplicit:
+    """A dead session's pane capture is written down, not omitted."""
+
+    def test_capture_with_no_session_writes_a_marker_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(run_arm2, "_SCRATCH_ROOT", tmp_path / "scratch")
+        monkeypatch.setattr(run_arm2, "_RESULTS", tmp_path / "results")
+        (tmp_path / "results").mkdir()
+        runner = Arm2Runner()
+        runner._capture("dead_case")
+        marker = (tmp_path / "results" / "pane_dead_case.txt").read_text("utf-8")
+        assert "unavailable" in marker

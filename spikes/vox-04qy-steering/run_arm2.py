@@ -101,6 +101,31 @@ _LITERAL_TEXT = (
 )
 
 
+# Everything a live case can legitimately fail with. SubprocessError covers
+# the dominant family here — every tmux send/capture is check=True — which
+# OSError does NOT (CalledProcessError is not an OSError).
+_CASE_FAULTS = (
+    TimeoutError,
+    LookupError,
+    OSError,
+    subprocess.SubprocessError,
+    RuntimeError,
+)
+
+
+def _probe(argv: list[str]) -> str:
+    """A provenance probe that records failure instead of blanking.
+
+    An empty string in the committed environment block is not a recording
+    of what went wrong.
+    """
+    result = subprocess.run(argv, check=False, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        return f"<probe failed rc={result.returncode}: {detail[:80]}>"
+    return result.stdout.strip()
+
+
 def _free_port() -> int:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
@@ -277,16 +302,25 @@ class Arm2Runner:
                 print(f"--- case: {name}")
                 try:
                     results.append(case())
-                except (TimeoutError, LookupError, OSError) as exc:
+                except _CASE_FAULTS as exc:
                     # The matrix must complete; the miss IS the finding.
                     print(f"    error: {exc}")
                     results.append(CaseResult(name, {"error": str(exc)}))
         finally:
-            stub_lines, teardown_lines = self.teardown_with_evidence(store)
-        self._write_summary(results, stub_lines, teardown_lines)
+            stub_lines, teardown_lines, teardown_clean = self.teardown_with_evidence(
+                store
+            )
+        self._write_summary(
+            results, stub_lines, teardown_lines, teardown_clean=teardown_clean
+        )
         failed = [result.name for result in results if "error" in result.summary]
         if failed:
             print(f"cases with errors: {', '.join(failed)}")
+            return 1
+        if not teardown_clean:
+            # A run that leaves anything on disk — a credentials copy in
+            # the worst case — must not report success.
+            print("teardown left residue on disk; run FAILS")
             return 1
         return 0
 
@@ -481,11 +515,17 @@ class Arm2Runner:
 
     def _nudge_dialogs(self) -> None:
         session = self._session
-        if session is None or not session.alive():
+        if session is None:
+            return
+        if not session.alive():
+            self._note_once(f"session {session.name} is DEAD")
             return
         try:
             pane = session.capture()
         except subprocess.CalledProcessError:
+            # The pane vanished between the alive check and the capture;
+            # say so once instead of surfacing only as a receipt timeout.
+            self._note_once(f"session {session.name} pane vanished mid-poll")
             return
         for marker, keys in _DIALOG_MARKERS.items():
             note = f"nudged dialog: {marker!r} with {keys}"
@@ -498,26 +538,39 @@ class Arm2Runner:
                 return
 
     def _capture(self, label: str) -> None:
+        target = _RESULTS / f"pane_{label}.txt"
         session = self._session
         if session is None or not session.alive():
+            # The secondary witness is MISSING — write that down instead
+            # of silently omitting the file.
+            self._note_once(f"pane capture {label!r} unavailable: session dead")
+            target.write_text(
+                "<pane capture unavailable: session dead>\n", encoding="utf-8"
+            )
             return
         pane = session.capture()
         cleaned = "\n".join(
             _LOGIN_BANNER_PLACEHOLDER if _LOGIN_BANNER_MARKER in line else line
             for line in pane.splitlines()
         )
-        target = _RESULTS / f"pane_{label}.txt"
         target.write_text(self._sanitizer.scrub(cleaned) + "\n", encoding="utf-8")
+
+    def _note_once(self, note: str) -> None:
+        # Rides the dialog-nudge channel into the summary, deduplicated:
+        # the poll loop would otherwise repeat it every tick.
+        if note not in self._nudges:
+            self._nudges.append(note)
+            print(f"    {note}")
 
     def teardown_with_evidence(
         self, store: StoreProcess
-    ) -> tuple[list[str], list[str]]:
+    ) -> tuple[list[str], list[str], bool]:
         """Harvest the stub evidence, THEN destroy everything.
 
         The invocation log lives under the scratch root the teardown
         removes; reading it after the rmtree would fabricate a "zero
         hits" all-clear (the first live run did exactly that). Returns
-        (stub invocation lines, teardown log lines).
+        (stub invocation lines, teardown log lines, both-passes-clean).
         """
         stub_lines = list(self._stubs.invocations())
         lines: list[str] = []
@@ -536,17 +589,21 @@ class Arm2Runner:
             lines.append(f"killed tmux session {session.name}")
         store.stop_if_running()
         lines.append("store stopped")
+        clean = True
         for attempt in (1, 2):
             outcome = Teardown(_SCRATCH_ROOT).run()
+            clean = clean and outcome.clean
             lines.append(f"teardown pass {attempt} clean={outcome.clean}")
             lines.extend(outcome.log)
-        return stub_lines, lines
+        return stub_lines, lines, clean
 
     def _write_summary(
         self,
         results: list[CaseResult],
         stub_lines: list[str],
         teardown_lines: list[str],
+        *,
+        teardown_clean: bool,
     ) -> None:
         body = {
             "environment": self._environment(),
@@ -554,6 +611,7 @@ class Arm2Runner:
             "dialog_nudges": self._nudges,
             "stub_invocations": stub_lines,
             "teardown": teardown_lines,
+            "teardown_clean": teardown_clean,
         }
         (_RESULTS / "summary.json").write_text(
             self._sanitizer.scrub(json.dumps(body, indent=2, sort_keys=True)) + "\n",
@@ -565,15 +623,9 @@ class Arm2Runner:
         print(f"evidence written to {_RESULTS}")
 
     def _environment(self) -> dict[str, object]:
-        claude_version = subprocess.run(
-            ["claude", "--version"], check=False, capture_output=True, text=True
-        )
-        tmux_version = subprocess.run(
-            ["tmux", "-V"], check=False, capture_output=True, text=True
-        )
         return {
-            "claude_version": claude_version.stdout.strip(),
-            "tmux_version": tmux_version.stdout.strip(),
+            "claude_version": _probe(["claude", "--version"]),
+            "tmux_version": _probe(["tmux", "-V"]),
             "profile": STEER_INJECT_V1.name,
         }
 
