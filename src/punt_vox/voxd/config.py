@@ -128,6 +128,28 @@ class DaemonConfig:
         self._auth_token = None
         return self
 
+    @staticmethod
+    def user_log_dir() -> Path:
+        """Return this user's log directory without building a config.
+
+        The boot sequence needs somewhere to point its emergency crash sink
+        before it is safe to do anything else, so this resolves the one path it
+        needs and nothing more -- building a whole config first would put three
+        resolutions ahead of the sink that exists to catch them.
+        """
+        return _log_dir()
+
+    @classmethod
+    def for_user(cls) -> Self:
+        """Return the config rooted at this user's own vox directories.
+
+        The three resolvers are module-private, so every caller that wanted a
+        user-rooted config had to reach into them and name the same triple.
+        Asking the class instead keeps that knowledge in the one place that
+        owns the paths -- callers name the intent, not the layout.
+        """
+        return cls(run_dir=_run_dir(), config_dir=_config_dir(), log_dir=_log_dir())
+
     # -- read-only properties ------------------------------------------------
 
     @property
