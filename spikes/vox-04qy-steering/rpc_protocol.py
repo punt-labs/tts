@@ -161,12 +161,22 @@ class Transcript:
         return tuple(self._entries)
 
     def events(self) -> tuple[RpcEvent, ...]:
-        """The received lines, parsed, in wire order."""
-        return tuple(
-            RpcEvent(entry.text, entry.ns)
-            for entry in self._entries
-            if entry.direction == "recv"
-        )
+        """The received lines that parse as events, in wire order.
+
+        The session layer records stray non-JSON stdout lines in the
+        transcript deliberately (they are evidence); this accessor keeps
+        the same tolerance — such a line is in :meth:`entries` and the
+        dump, it just cannot be waited on or analyzed as an event.
+        """
+        events: list[RpcEvent] = []
+        for entry in self._entries:
+            if entry.direction != "recv":
+                continue
+            try:
+                events.append(RpcEvent(entry.text, entry.ns))
+            except ValueError:
+                continue
+        return tuple(events)
 
     def dump(self, path: Path, sanitizer: Sanitizer) -> None:
         """Write the transcript as sanitized JSONL evidence."""

@@ -94,6 +94,13 @@ class TestLatencyAndTimeline:
         )
         assert analysis.elapsed_ms(analysis.send_ns("steer"), marker.recv_ns) == 40.0
 
+    def test_timeline_tolerates_non_json_lines(self) -> None:
+        transcript = Transcript()
+        transcript.note_send(_line("prompt", message="go"), ns=0)
+        transcript.note_recv("stray warning from the child", ns=1 * _MS)
+        analysis = TranscriptAnalysis(transcript)
+        assert analysis.timeline()[1] == {"ms": 1.0, "dir": "recv", "label": "?"}
+
     def test_timeline_offsets_from_first_entry(self) -> None:
         analysis = TranscriptAnalysis(_steered_transcript())
         timeline = analysis.timeline()

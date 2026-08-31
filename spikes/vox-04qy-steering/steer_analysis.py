@@ -83,6 +83,11 @@ class TranscriptAnalysis:
 
     @staticmethod
     def _label(entry: TranscriptEntry) -> str:
-        body = json.loads(entry.text)
+        try:
+            body = json.loads(entry.text)
+        except ValueError:
+            # A stray non-JSON stdout line the session layer tolerated;
+            # it keeps its slot in the timeline, just unlabeled.
+            return "?"
         label = body.get("type") if isinstance(body, dict) else None
         return label if isinstance(label, str) else "?"

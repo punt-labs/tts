@@ -125,3 +125,15 @@ class TestTranscript:
         transcript.note_recv('{"type":"agent_end"}', ns=3)
         types = [event.type for event in transcript.events()]
         assert types == ["agent_start", "agent_end"]
+
+    def test_events_skips_non_json_recv_lines(self) -> None:
+        # The session layer records stray stdout prints in the transcript
+        # on purpose; the analyzer must tolerate exactly what the session
+        # tolerated instead of crashing the whole run at summary time.
+        transcript = Transcript()
+        transcript.note_recv("stray warning from the child", ns=1)
+        transcript.note_recv('{"type":"agent_end"}', ns=2)
+        types = [event.type for event in transcript.events()]
+        assert types == ["agent_end"]
+        # The raw line is still evidence: it stays in the entries.
+        assert transcript.entries()[0].text == "stray warning from the child"
