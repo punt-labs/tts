@@ -1,0 +1,65 @@
+{
+  "cases": {
+    "esc_steer": {
+      "hook_fire_to_store_ms": 79.03783,
+      "receipt_event": "UserPromptSubmit",
+      "receipt_recv_seq": 20,
+      "receipt_relay_seq": 20,
+      "send_to_hook_visible_ms": 610.046893,
+      "stops_before_delivery": 3,
+      "stops_before_escape": 3
+    },
+    "idle_inject": {
+      "hook_fire_to_store_ms": 55.751766,
+      "receipt_event": "UserPromptSubmit",
+      "receipt_recv_seq": 6,
+      "receipt_relay_seq": 6,
+      "send_to_hook_visible_ms": 582.217325
+    },
+    "literal_specials": {
+      "hook_fire_to_store_ms": 43.04695,
+      "prompt_as_received": "LITERALACK-vox04qy specials: -l --flag 'single' \"double\" ; & | Enter C-c",
+      "receipt_event": "UserPromptSubmit",
+      "receipt_recv_seq": 24,
+      "receipt_relay_seq": 24,
+      "send_to_hook_visible_ms": 576.785473,
+      "text_arrived_verbatim": true
+    },
+    "midturn_inject": {
+      "hook_fire_to_store_ms": 57.487375,
+      "receipt_event": "UserPromptSubmit",
+      "receipt_recv_seq": 11,
+      "receipt_relay_seq": 11,
+      "send_to_hook_visible_ms": 580.61955,
+      "stops_at_send": 2,
+      "stops_before_delivery": 2,
+      "tool_results_between_send_and_delivery": 0
+    },
+    "paste_multiline": {
+      "all_three_lines_in_one_prompt": true,
+      "hook_fire_to_store_ms": 46.247413,
+      "receipt_event": "UserPromptSubmit",
+      "receipt_recv_seq": 22,
+      "receipt_relay_seq": 22,
+      "send_to_hook_visible_ms": 1084.500226
+    }
+  },
+  "dialog_nudges": [],
+  "environment": {
+    "claude_version": "2.1.251 (Claude Code)",
+    "profile": "steer-inject-v1",
+    "tmux_version": "tmux 3.4"
+  },
+  "stub_invocations": [],
+  "teardown": [
+    "killed tmux session vox04qy-152829",
+    "store stopped",
+    "teardown pass 1 clean=True",
+    "pgrep before kill: no matching processes",
+    "removed scratch root: <scratch>",
+    "teardown pass 2 clean=True",
+    "pgrep before kill: no matching processes",
+    "scratch root already absent: <scratch>"
+  ],
+  "teardown_clean": true
+}

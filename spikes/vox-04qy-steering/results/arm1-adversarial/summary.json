@@ -1,0 +1,1246 @@
+{
+  "environment": {
+    "argv": [
+      "~/.local/bin/pi",
+      "--mode",
+      "rpc",
+      "--no-session",
+      "--no-extensions",
+      "--provider",
+      "anthropic",
+      "--model",
+      "claude-haiku-4-5",
+      "--tools",
+      "read,grep,find,ls"
+    ],
+    "model": "claude-haiku-4-5",
+    "pi_version": "0.84.4",
+    "provider": "anthropic",
+    "steer_text": "URGENT STEER vox04qy: stop the summaries immediately. Reply with exactly STEERED-ACK and nothing else, then stop.",
+    "tools": [
+      "read",
+      "grep",
+      "find",
+      "ls"
+    ]
+  },
+  "scenarios": {
+    "followup_contrast": {
+      "agent_end_count": 1,
+      "agent_start_count": 1,
+      "followup_to_assistant_marker_ms": 12864.821977,
+      "followup_to_queue_update_ms": 3.596191,
+      "pi_exit_code": 0,
+      "queue_update": {
+        "followUp": [
+          "FOLLOW-UP vox04qy: reply with exactly FOLLOWUP-ACK and nothing else."
+        ],
+        "steering": [],
+        "type": "queue_update"
+      },
+      "timeline": [
+        {
+          "dir": "send",
+          "label": "prompt",
+          "ms": 0.0
+        },
+        {
+          "dir": "recv",
+          "label": "response",
+          "ms": 194.391494
+        },
+        {
+          "dir": "recv",
+          "label": "agent_start",
+          "ms": 194.488258
+        },
+        {
+          "dir": "recv",
+          "label": "turn_start",
+          "ms": 194.527049
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 194.586783
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 194.70009
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 1135.670749
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 1137.768217
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 1138.147532
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 1138.523159
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 1361.170893
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 1621.387487
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 1622.625363
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 1623.448893
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 1624.059864
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 1941.893431
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 1943.366252
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 1944.462323
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 1945.13376
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 1947.462009
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 1948.12167
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 1948.25087
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 1952.479723
+        },
+        {
+          "dir": "recv",
+          "label": "tool_execution_start",
+          "ms": 1954.164331
+        },
+        {
+          "dir": "send",
+          "label": "follow_up",
+          "ms": 1954.290225
+        },
+        {
+          "dir": "recv",
+          "label": "queue_update",
+          "ms": 1957.886416
+        },
+        {
+          "dir": "recv",
+          "label": "response",
+          "ms": 1957.911879
+        },
+        {
+          "dir": "recv",
+          "label": "tool_execution_end",
+          "ms": 1959.230899
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 1959.332575
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 1959.401211
+        },
+        {
+          "dir": "recv",
+          "label": "turn_end",
+          "ms": 1959.504288
+        },
+        {
+          "dir": "recv",
+          "label": "turn_start",
+          "ms": 1959.843631
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 3061.681224
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 3062.560395
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 3062.63706
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 3411.582547
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 3820.729648
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 4025.991459
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 4026.532849
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 4026.595786
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 4026.702179
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 4026.949939
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 4027.129998
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 4027.210867
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 4027.891474
+        },
+        {
+          "dir": "recv",
+          "label": "tool_execution_start",
+          "ms": 4028.082066
+        },
+        {
+          "dir": "recv",
+          "label": "tool_execution_end",
+          "ms": 4029.699141
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 4029.824895
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 4029.959517
+        },
+        {
+          "dir": "recv",
+          "label": "turn_end",
+          "ms": 4030.073739
+        },
+        {
+          "dir": "recv",
+          "label": "turn_start",
+          "ms": 4030.172615
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 4810.748587
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 4811.516801
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 4811.70951
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 5156.507798
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 5320.168734
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 5641.534512
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 5641.671407
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 5642.1383
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 5642.231785
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 5904.187509
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 5905.020949
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 5905.44992
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 5907.047977
+        },
+        {
+          "dir": "recv",
+          "label": "tool_execution_start",
+          "ms": 5907.368419
+        },
+        {
+          "dir": "recv",
+          "label": "tool_execution_end",
+          "ms": 5910.789739
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 5911.015289
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 5911.314534
+        },
+        {
+          "dir": "recv",
+          "label": "turn_end",
+          "ms": 5911.492121
+        },
+        {
+          "dir": "recv",
+          "label": "turn_start",
+          "ms": 5911.697705
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 6604.684603
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 6605.275337
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 6605.349606
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 6950.905754
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 7469.601807
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 7596.598925
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 7597.046853
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 7597.151006
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 7597.272494
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 7597.765713
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 7598.226824
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 7598.382133
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 7599.504581
+        },
+        {
+          "dir": "recv",
+          "label": "tool_execution_start",
+          "ms": 7599.898849
+        },
+        {
+          "dir": "recv",
+          "label": "tool_execution_end",
+          "ms": 7603.5444
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 7603.770984
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 7603.976859
+        },
+        {
+          "dir": "recv",
+          "label": "turn_end",
+          "ms": 7604.153387
+        },
+        {
+          "dir": "recv",
+          "label": "turn_start",
+          "ms": 7604.362598
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 8514.657319
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 8515.233462
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 8515.285443
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 8850.38424
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 9092.81919
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 9454.005836
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 9454.887269
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 9455.035591
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 9455.120072
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 9456.151472
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 9456.509597
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 9456.871073
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 9458.621849
+        },
+        {
+          "dir": "recv",
+          "label": "tool_execution_start",
+          "ms": 9459.266151
+        },
+        {
+          "dir": "recv",
+          "label": "tool_execution_end",
+          "ms": 9462.787368
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 9462.984553
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 9463.170765
+        },
+        {
+          "dir": "recv",
+          "label": "turn_end",
+          "ms": 9463.373077
+        },
+        {
+          "dir": "recv",
+          "label": "turn_start",
+          "ms": 9463.583366
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 10754.034668
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 10755.188557
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 10755.320249
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 10783.115756
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 11196.710797
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 11431.193702
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 11431.364148
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 11431.538075
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 11431.704419
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 11432.040948
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 11501.528533
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 11606.720456
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 11608.445966
+        },
+        {
+          "dir": "recv",
+          "label": "tool_execution_start",
+          "ms": 11608.903544
+        },
+        {
+          "dir": "recv",
+          "label": "tool_execution_end",
+          "ms": 11611.776056
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 11612.037673
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 11612.224226
+        },
+        {
+          "dir": "recv",
+          "label": "turn_end",
+          "ms": 11612.453917
+        },
+        {
+          "dir": "recv",
+          "label": "turn_start",
+          "ms": 11612.73689
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 12934.495663
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 12935.472226
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 12935.722574
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 12935.785697
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 13354.339984
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 13558.061529
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 13754.934152
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 13755.369889
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 13756.642609
+        },
+        {
+          "dir": "recv",
+          "label": "turn_end",
+          "ms": 13757.025627
+        },
+        {
+          "dir": "recv",
+          "label": "turn_start",
+          "ms": 13757.599034
+        },
+        {
+          "dir": "recv",
+          "label": "queue_update",
+          "ms": 13757.796279
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 13757.855554
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 13757.960344
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 14474.576162
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 14475.391076
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 14477.567175
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 14709.028684
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 14709.334571
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 14709.383511
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 14709.591163
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 14709.818187
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 14819.112202
+        },
+        {
+          "dir": "recv",
+          "label": "turn_end",
+          "ms": 14819.377015
+        },
+        {
+          "dir": "recv",
+          "label": "agent_end",
+          "ms": 14820.494146
+        },
+        {
+          "dir": "recv",
+          "label": "agent_settled",
+          "ms": 14821.728003
+        }
+      ]
+    },
+    "idle_steer": {
+      "idle_steer_started_a_turn": false,
+      "pi_exit_code": 0,
+      "steer_to_IDLESTEER-ACK_ms": 13876.064511,
+      "steer_to_PROMPT-ACK_ms": 13876.064511,
+      "timeline": [
+        {
+          "dir": "send",
+          "label": "steer",
+          "ms": 0.0
+        },
+        {
+          "dir": "recv",
+          "label": "queue_update",
+          "ms": 188.354049
+        },
+        {
+          "dir": "recv",
+          "label": "response",
+          "ms": 188.451728
+        },
+        {
+          "dir": "send",
+          "label": "prompt",
+          "ms": 10188.759727
+        },
+        {
+          "dir": "recv",
+          "label": "response",
+          "ms": 10191.885422
+        },
+        {
+          "dir": "recv",
+          "label": "agent_start",
+          "ms": 10191.956554
+        },
+        {
+          "dir": "recv",
+          "label": "turn_start",
+          "ms": 10191.970816
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 10192.086541
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 10192.598558
+        },
+        {
+          "dir": "recv",
+          "label": "queue_update",
+          "ms": 10193.238481
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 10193.306754
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 10193.701807
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 11530.601761
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 11532.525554
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 11532.588547
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 11532.812474
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 11812.760429
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 12276.415693
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 12308.294828
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 12768.94321
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 12915.453179
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 13374.055282
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 13816.770505
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 13866.204209
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 13868.916366
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 13869.514519
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 13869.604045
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 13869.645136
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 13876.064511
+        },
+        {
+          "dir": "recv",
+          "label": "turn_end",
+          "ms": 13877.434526
+        },
+        {
+          "dir": "recv",
+          "label": "agent_end",
+          "ms": 13877.881606
+        },
+        {
+          "dir": "recv",
+          "label": "agent_settled",
+          "ms": 13878.523733
+        }
+      ]
+    },
+    "midturn_steer": {
+      "in_flight_tool": {
+        "completed_after_steer": true,
+        "steer_to_tool_end_ms": 4.099658,
+        "tool_call_id": "toolu_01XHUEs9PUA98vRPUUSH9GgP"
+      },
+      "pi_exit_code": 0,
+      "queue_update": {
+        "followUp": [],
+        "steering": [
+          "URGENT STEER vox04qy: stop the summaries immediately. Reply with exactly STEERED-ACK and nothing else, then stop."
+        ],
+        "type": "queue_update"
+      },
+      "steer_sent": true,
+      "steer_to_ack_ms": 2.871756,
+      "steer_to_assistant_marker_ms": 1647.81785,
+      "steer_to_queue_update_ms": 2.849834,
+      "timeline": [
+        {
+          "dir": "send",
+          "label": "prompt",
+          "ms": 0.0
+        },
+        {
+          "dir": "recv",
+          "label": "response",
+          "ms": 214.331367
+        },
+        {
+          "dir": "recv",
+          "label": "agent_start",
+          "ms": 214.486081
+        },
+        {
+          "dir": "recv",
+          "label": "turn_start",
+          "ms": 214.531165
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 214.620577
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 214.728784
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 989.389967
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 990.17915
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 990.509558
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 990.668398
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 1258.961542
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 1558.765745
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 1558.986742
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 1559.055273
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 1559.38898
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 2011.632061
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 2012.136955
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 2013.035066
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 2047.881106
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 2050.10937
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 2050.439704
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 2050.717048
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 2053.828838
+        },
+        {
+          "dir": "recv",
+          "label": "tool_execution_start",
+          "ms": 2055.070217
+        },
+        {
+          "dir": "send",
+          "label": "steer",
+          "ms": 2055.169644
+        },
+        {
+          "dir": "recv",
+          "label": "queue_update",
+          "ms": 2058.019478
+        },
+        {
+          "dir": "recv",
+          "label": "response",
+          "ms": 2058.0414
+        },
+        {
+          "dir": "recv",
+          "label": "tool_execution_end",
+          "ms": 2059.269302
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 2059.366427
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 2059.423784
+        },
+        {
+          "dir": "recv",
+          "label": "turn_end",
+          "ms": 2059.516581
+        },
+        {
+          "dir": "recv",
+          "label": "turn_start",
+          "ms": 2059.849917
+        },
+        {
+          "dir": "recv",
+          "label": "queue_update",
+          "ms": 2059.913262
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 2059.919061
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 2059.94063
+        },
+        {
+          "dir": "recv",
+          "label": "message_start",
+          "ms": 2940.74406
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 2941.703528
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 2941.98559
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 3120.535522
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 3575.596953
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 3688.166486
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 3689.850446
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 3690.079867
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 3690.121056
+        },
+        {
+          "dir": "recv",
+          "label": "message_update",
+          "ms": 3690.14331
+        },
+        {
+          "dir": "recv",
+          "label": "message_end",
+          "ms": 3702.987494
+        },
+        {
+          "dir": "recv",
+          "label": "turn_end",
+          "ms": 3703.406057
+        },
+        {
+          "dir": "recv",
+          "label": "agent_end",
+          "ms": 3704.532884
+        },
+        {
+          "dir": "recv",
+          "label": "agent_settled",
+          "ms": 3705.725378
+        }
+      ],
+      "tool_starts_after_steer": 0
+    }
+  },
+  "stub_invocations": []
+}
