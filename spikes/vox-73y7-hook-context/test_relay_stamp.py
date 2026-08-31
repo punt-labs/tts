@@ -139,6 +139,17 @@ class TestMain:
         assert isinstance(stamped, dict)
         assert stamped["relay_start_ns"] == 1234567890123456789
 
+    def test_start_ns_zero_is_not_treated_as_absent(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # A falsy-but-present shell timestamp must win over the
+        # interpreter's own start; only an ABSENT flag falls back.
+        stamped = self._run(
+            monkeypatch, tmp_path, {"session_id": "s"}, extra_argv=["--start-ns", "0"]
+        )
+        assert isinstance(stamped, dict)
+        assert stamped["relay_start_ns"] == 0
+
     def test_consecutive_fires_advance_the_sequence(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

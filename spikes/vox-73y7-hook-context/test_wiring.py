@@ -92,6 +92,23 @@ class TestRelayScript:
         assert f"stamped=$({shlex.quote(sys.executable)} " in body
         assert "$(python3 " not in body
 
+    def test_bsd_date_output_falls_back_to_the_baked_interpreter(self) -> None:
+        # date +%s%N is not POSIX: BSD/macOS date emits a literal N. A
+        # non-numeric (or empty) capture must be replaced via the baked
+        # interpreter before it reaches --start-ns, never passed through
+        # to skew the latency stamp.
+        body = RelayScript(
+            proxy=Path("/usr/bin/mcp-proxy"),
+            url="ws://127.0.0.1:9000",
+            stamper=Path("/opt/harness/relay_stamp.py"),
+            counter_dir=Path("/opt/harness/counters"),
+        ).render()
+        assert "case \"$start_ns\" in *[!0-9]*|'')" in body
+        fallback = f"start_ns=$({shlex.quote(sys.executable)} -c"
+        assert fallback in body
+        assert "time.time_ns()" in body
+        assert body.index(fallback) < body.index("relay_stamp.py")
+
     def test_paths_with_spaces_are_quoted(self) -> None:
         body = RelayScript(
             proxy=Path("/opt/my tools/mcp-proxy"),

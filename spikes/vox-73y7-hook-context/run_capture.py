@@ -267,9 +267,15 @@ class TimepointSampler:
         if label == "early":
             return any(r.event == "PostToolUse" for r in records)
         if label == "mid-debug":
-            return any(
-                r.event == "PostToolUse" and has_failure(response_text(r))
-                for r in records
+            # Strictly after early's cutoff: when the fork's FIRST action
+            # is the failing suite, both triggers match the same record
+            # and the two labels would otherwise collapse onto one cutoff.
+            early_index = self._sampled_index("early")
+            return early_index is not None and any(
+                index > early_index
+                and record.event == "PostToolUse"
+                and has_failure(response_text(record))
+                for index, record in enumerate(records, 1)
             )
         if label == "post-fix":
             failure_index = self._sampled_index("mid-debug")
@@ -282,8 +288,10 @@ class TimepointSampler:
         return any(r.event == "Stop" for r in records)
 
     def _sampled_index(self, label: str) -> int | None:
-        # None until the labeled timepoint has been sampled -- post-fix
-        # is ordered strictly after mid-debug via this lookup.
+        # None until the labeled timepoint has been sampled -- each
+        # dependent timepoint is ordered strictly after its predecessor
+        # via this lookup: mid-debug after early, post-fix after
+        # mid-debug, so no two labels can alias onto one cutoff.
         sample = self._samples.get(label)
         if sample is None:
             return None

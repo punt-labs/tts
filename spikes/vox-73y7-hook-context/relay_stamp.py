@@ -28,7 +28,10 @@ import re
 import sys
 import time
 from pathlib import Path
-from typing import Self, final
+from typing import TYPE_CHECKING, final
+
+if TYPE_CHECKING:
+    from typing import Self
 
 
 @final
@@ -97,7 +100,9 @@ def main() -> None:
     session_raw = payload.get("session_id")
     session_id = session_raw if isinstance(session_raw, str) and session_raw else ""
     payload["relay_seq"] = SessionCounter(args.counter_dir, session_id).next()
-    payload["relay_start_ns"] = args.start_ns if args.start_ns else start_ns
+    # Explicit None check: the shell-provided timestamp always wins when
+    # present, even a falsy one -- truthiness would silently replace 0.
+    payload["relay_start_ns"] = args.start_ns if args.start_ns is not None else start_ns
     json.dump(payload, sys.stdout)
 
 

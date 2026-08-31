@@ -123,6 +123,12 @@ class RelayScript:
         gap detection structurally blind to it. The substitution makes
         the stamper's exit status the hook's own, so the loss is loud in
         the fork's session log.
+
+        ``date +%s%N`` is a GNU extension: BSD/macOS date leaves ``%N``
+        as a literal N. A non-numeric (or empty) capture is replaced via
+        the baked interpreter -- a skewed-but-plausible timestamp must
+        never reach ``--start-ns``, and if even the fallback fails, the
+        stamper's int parse rejects the value loudly.
         """
         python = shlex.quote(sys.executable)
         stamper = shlex.quote(str(self._stamper))
@@ -133,6 +139,9 @@ class RelayScript:
             "#!/bin/sh\n"
             "# Rendered by the vox-73y7 harness: sender-side stamp, then relay.\n"
             "start_ns=$(date +%s%N)\n"
+            "case \"$start_ns\" in *[!0-9]*|'')\n"
+            f"    start_ns=$({python} -c 'import time; print(time.time_ns())') ;;\n"
+            "esac\n"
             f"stamped=$({python} {stamper} --counter-dir {counters} "
             '--start-ns "$start_ns") || exit 1\n'
             f'printf \'%s\' "$stamped" | {proxy} {url} --hook "$1"\n'
