@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
-from typing import TYPE_CHECKING, Self, final
 
-if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine
+# Runtime imports, not TYPE_CHECKING: the PEP 695 alias below is lazy, so a
+# gated import survives module import and then raises NameError the moment
+# anything resolves the alias -- typing.get_type_hints on ``start``, a doc
+# tool, any runtime annotation reader.
+from collections.abc import Callable, Coroutine
+from typing import Self, final
 
 logger = logging.getLogger(__name__)
 
@@ -46,13 +48,33 @@ class BackgroundTasks:
 
     @staticmethod
     async def _stop(task: asyncio.Task[None]) -> None:
-        """Cancel one task and await its exit, swallowing the teardown.
+        """Cancel one task and await its exit; report anything unexpected.
 
         ``CancelledError`` is a ``BaseException`` (not ``Exception``) since 3.8,
-        so it must be suppressed explicitly -- otherwise the *expected* cancel
-        of the first task would propagate out of the caller's ``finally`` and
-        skip every remaining teardown step.
+        so it must be caught explicitly -- otherwise the *expected* cancel of
+        the first task would propagate out of the caller's ``finally`` and skip
+        every remaining teardown step.
+
+        Any other exception means the task had ALREADY failed before the cancel
+        reached it. That is not a teardown detail, it is a background job that
+        died, and swallowing it silently is how such a death goes unnoticed
+        until something downstream behaves oddly. It is logged and not
+        re-raised: teardown continuity still matters more than propagating one
+        task's failure into the shutdown path.
         """
         task.cancel()
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await task
+        # ``asyncio.wait`` returns when the task settles WITHOUT re-raising what
+        # it settled with, so the outcome can be inspected rather than caught.
+        # Awaiting the task directly would raise -- CancelledError for the
+        # ordinary case, and anything else the task had already failed with --
+        # which is what forced the old blanket ``suppress(Exception)`` here.
+        await asyncio.wait({task})
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.warning(
+                "background task %s failed before shutdown cancelled it",
+                task.get_name(),
+                exc_info=exc,
+            )
