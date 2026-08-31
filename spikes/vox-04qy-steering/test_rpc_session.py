@@ -160,6 +160,16 @@ class TestPiRpcSession:
         session.close()
         session.close()
 
+    def test_exit_code_is_recorded_after_close(
+        self, peer_argv: list[str], tmp_path: Path
+    ) -> None:
+        # A nonzero-exit child must be distinguishable from a hung one in
+        # the committed summary; the code is the evidence.
+        session = _spawn(peer_argv, tmp_path)
+        assert session.exit_code() is None  # still running
+        session.close()
+        assert session.exit_code() == 0
+
     def test_spawn_env_reaches_the_child(self, tmp_path: Path) -> None:
         echo_env = tmp_path / "echo_env.py"
         echo_env.write_text(

@@ -119,6 +119,15 @@ class PiRpcSession:
         """The child's pid (also its process-group id)."""
         return self._process.pid
 
+    def exit_code(self) -> int | None:
+        """The child's exit code; None while it is still running.
+
+        A nonzero exit must be distinguishable from a hang in the
+        committed evidence — the code is recorded into every scenario
+        summary after close.
+        """
+        return self._process.poll()
+
     def send(self, command: RpcCommand) -> int:
         """Write one command line; return the send-nanosecond stamp."""
         stdin = self._process.stdin
@@ -184,6 +193,12 @@ class PiRpcSession:
                 self._process.kill()
                 self._process.wait()
         self._reader.join(timeout=_CLOSE_GRACE_S)
+        if self._reader.is_alive():
+            # The child is reaped, so its stdout is closed and the reader
+            # should have exited; a wedged reader could still be appending
+            # and the transcript can no longer be trusted as complete.
+            msg = "stdout reader did not stop after close; transcript may be torn"
+            raise RuntimeError(msg)
 
     def _read_stdout(self) -> None:
         stdout = self._process.stdout
