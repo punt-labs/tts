@@ -167,9 +167,9 @@ status as of 2026-08-30 (post vox-bst7 merge, PR #481)</p>
   <text x="76" y="768" font-size="13"><tspan font-weight="600">vox-juhw — Mode B same-host launch · PASSED (2026-08-30).</tspan></text>
   <text x="76" y="786" font-size="12" fill="#555">fork → configure → attach → hook-loopback works, zero custom Claude Code changes · 8 rough edges, all launcher work · reads not path-confined in v1 (mitigation: path-scoped rules) · code: spikes/vox-juhw-mode-b-launch/</text>
 
-  <rect x="52" y="806" width="14" height="14" rx="3" fill="#90a4ae"/>
-  <text x="76" y="818" font-size="13"><tspan font-weight="600">vox-73y7 — hook fanout as context feed · QUEUED NEXT.</tspan></text>
-  <text x="76" y="836" font-size="12" fill="#555">do hook payloads carry enough state, or does the /vox:talk seed suffice? · inherits the clean 50KB seed retest</text>
+  <rect x="52" y="806" width="14" height="14" rx="3" fill="#2e7d32"/>
+  <text x="76" y="818" font-size="13"><tspan font-weight="600">vox-73y7 — hook fanout as context feed · PASSED (2026-08-31).</tspan></text>
+  <text x="76" y="836" font-size="12" fill="#555">fanout is LOAD-BEARING: full tool state at 32ms p50 · tail 4/5 PASS, curated 10KB seed 5/5 · sequence numbers must be SENDER-side · 50KB degradation was the harness bug · code: spikes/vox-73y7-hook-context/</text>
 
   <rect x="52" y="852" width="14" height="14" rx="3" fill="#c62828"/>
   <text x="76" y="864" font-size="13"><tspan font-weight="600">vox-6v7f — A/B vs subprocess-per-turn · CLOSED, won't do</tspan> <tspan fill="#555">(baseline already rejected as high-latency).</tspan></text>

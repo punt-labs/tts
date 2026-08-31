@@ -3647,6 +3647,36 @@ For the primary session that just fired `/vox:talk` and is now blocked, Layer 2 
 - Sequence-gap detection under WAN drops is a real distributed-systems problem. Kill criterion: gap-detection fails to reliably catch drops **and** `/vox:talk` seed alone is not rich enough to make Layer 2 decorative — that is, the design is killed only when *neither* mitigation holds.
 - Cross-session context (voice agent seeing turns from a *different* primary session than the one that fired `/vox:talk`) may or may not be desirable — treated as opt-in, defaulting off, per privacy and confusion concerns.
 
+### Validation outcome (2026-08-31, `vox-73y7`)
+
+**Hook fanout is load-bearing — Layer 2 earns its place, and the seed
+built from it grades even better.** Full evidence:
+`spikes/vox-73y7-hook-context/REPORT.md` and its committed capture
+(ledger, graded reconstructions, latency and gap artifacts), all
+evaluator-verified by independent recomputation and re-grading.
+
+- **Payload sufficiency: PASS.** `PostToolUse` carries full tool
+  inputs/outputs (tracebacks, file contents) — state p50 ≈1.5KB, max
+  ≈11KB per event. "What was I just doing?" reconstructions from the
+  raw ledger tail graded 4 PASS + 1 PARTIAL across five timepoints of a
+  real debug-loop session; a curated ~10KB seed built from the same
+  feed graded 5/5. Both context layers work; neither is decorative.
+- **Delivery latency:** hook-fire to store-visible 32ms p50 / 43ms p95
+  — effectively real-time for conversation purposes.
+- **Design correction (must survive into implementation): sequence
+  numbering belongs on the SENDER.** A real 9-event loss window was
+  detected and quantified only by sender-side `relay_seq` stamped at
+  the hook relay; receiver-side stamping — this entry's original
+  wording — provably cannot see loss (never-received events leave no
+  receiver-side holes) and collides across store restarts. The rolling
+  store's gap detection must consume sender-assigned sequences.
+- **Seed-size ceiling revised up:** the 50KB quality degradation
+  recorded under vox-bst7 does NOT reproduce under the fixed harness
+  (3 bounded EL sessions, frozen bst7 harness byte-identical to main)
+  — it was the harness turn-end bug. Large seeds are viable; ~10KB
+  remains the curated sweet spot because it grades 5/5, not because
+  bigger breaks.
+
 ---
 
 ## DES-071: Mode B Voice-First Entry — User Talks First, `voxd` Launches a Fresh Session Same-Host by Default
