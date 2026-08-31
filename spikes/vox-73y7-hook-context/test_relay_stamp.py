@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -53,6 +54,25 @@ class TestSessionCounter:
         written = list(tmp_path.rglob("*.seq"))
         assert len(written) == 1
         assert written[0].parent == tmp_path
+
+    def test_next_fsyncs_the_flushed_value_before_returning(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # Durability pin: a kill right after next() returns must not roll
+        # the file back and reuse a relay_seq. At the moment of fsync the
+        # file must already hold the new value -- flush precedes sync,
+        # and the sync happens before the value is handed out.
+        real_fsync = os.fsync
+        synced: list[str] = []
+
+        def spy(fd: int) -> None:
+            real_fsync(fd)
+            synced.append((tmp_path / "sess-a.seq").read_text(encoding="utf-8"))
+
+        monkeypatch.setattr("relay_stamp.os.fsync", spy)
+        assert SessionCounter(tmp_path, "sess-a").next() == 1
+        assert SessionCounter(tmp_path, "sess-a").next() == 2  # simulated reopen
+        assert synced == ["1", "2"]
 
     def test_concurrent_increments_never_skip_or_repeat(self, tmp_path: Path) -> None:
         # A Stop hook can fire while a PostToolUse relay is still running;

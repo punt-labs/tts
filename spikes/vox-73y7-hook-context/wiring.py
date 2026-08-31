@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self, final
 
@@ -91,8 +92,10 @@ class RelayScript:
     The script captures the hook-command start time as early as a shell
     can (``date +%s%N``), pipes the payload through the sender-side
     stamper, and hands the stamped JSON to the real ``mcp-proxy --hook``.
-    All paths are baked in absolute at render time because hook commands
-    run with no environment the harness controls.
+    All paths are baked in absolute at render time -- including the
+    Python interpreter (``sys.executable``) -- because hook commands run
+    with no environment the harness controls, so even ``python3`` cannot
+    be left to a PATH lookup.
     """
 
     __slots__ = ("_counter_dir", "_proxy", "_stamper", "_url")
@@ -121,6 +124,7 @@ class RelayScript:
         the stamper's exit status the hook's own, so the loss is loud in
         the fork's session log.
         """
+        python = shlex.quote(sys.executable)
         stamper = shlex.quote(str(self._stamper))
         counters = shlex.quote(str(self._counter_dir))
         proxy = shlex.quote(str(self._proxy))
@@ -129,7 +133,7 @@ class RelayScript:
             "#!/bin/sh\n"
             "# Rendered by the vox-73y7 harness: sender-side stamp, then relay.\n"
             "start_ns=$(date +%s%N)\n"
-            f"stamped=$(python3 {stamper} --counter-dir {counters} "
+            f"stamped=$({python} {stamper} --counter-dir {counters} "
             '--start-ns "$start_ns") || exit 1\n'
             f'printf \'%s\' "$stamped" | {proxy} {url} --hook "$1"\n'
         )

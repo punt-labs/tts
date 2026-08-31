@@ -9,6 +9,8 @@ script's stamp-then-relay pipeline.
 from __future__ import annotations
 
 import json
+import shlex
+import sys
 from pathlib import Path
 from typing import cast
 
@@ -77,6 +79,18 @@ class TestRelayScript:
         proxy_pos = body.index("mcp-proxy")
         assert stamp_pos < proxy_pos  # stamp BEFORE relay, or latency is a lie
         assert '--hook "$1"' in body
+
+    def test_interpreter_path_is_baked_absolute(self) -> None:
+        # Hook commands run with no environment the harness controls, so
+        # the stamper's interpreter cannot be left to a PATH lookup.
+        body = RelayScript(
+            proxy=Path("/usr/bin/mcp-proxy"),
+            url="ws://127.0.0.1:9000",
+            stamper=Path("/opt/harness/relay_stamp.py"),
+            counter_dir=Path("/opt/harness/counters"),
+        ).render()
+        assert f"stamped=$({shlex.quote(sys.executable)} " in body
+        assert "$(python3 " not in body
 
     def test_paths_with_spaces_are_quoted(self) -> None:
         body = RelayScript(

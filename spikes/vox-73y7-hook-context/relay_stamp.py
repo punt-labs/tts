@@ -13,9 +13,9 @@ wrapper is that counter -- a per-session, flock-guarded file the launcher
 owns -- plus the wall-clock start stamp the latency measurement needs
 (hook-command start vs store receipt, same host, same clock).
 
-Deliberately boring Python: executed by the host's `python3` (not uv, not
-the repo venv) inside the fork's hook command, so it sticks to the stdlib
-and syntax any modern system interpreter accepts.
+Deliberately boring Python: executed by the absolute interpreter path the
+harness baked into the relay script (``sys.executable`` at render time),
+so it sticks to the stdlib and syntax any modern interpreter accepts.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import json
+import os
 import re
 import sys
 import time
@@ -50,7 +51,13 @@ class SessionCounter:
         return self
 
     def next(self) -> int:
-        """Atomically increment and return the counter."""
+        """Atomically increment, durably persist, and return the counter.
+
+        The new value is flushed AND fsynced before the lock releases: a
+        kill after return cannot roll the file back to the old value, so
+        a relay_seq that reached a payload is never handed out twice --
+        the monotonic-persisted assumption gap detection relies on.
+        """
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._path.open("a+", encoding="utf-8") as handle:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
@@ -61,6 +68,7 @@ class SessionCounter:
             handle.truncate()
             handle.write(str(value))
             handle.flush()
+            os.fsync(handle.fileno())
             return value
 
 
