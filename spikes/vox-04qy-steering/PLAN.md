@@ -27,12 +27,10 @@ and exercises `steer` specifically.
   stream coherence after; latency from steer-write to first steered output
   event. Also exercise `steer` at idle and contrast with `follow_up`.
 
-**Precondition (open):** `pi` is NOT installed on pembroke (checked
-2026-08-31: no `pi`, no `pi-tools` sibling repo in the workspace). Options:
-install pi here, run this arm on okinos, or descope the arm to
-protocol-documentation-only. **Operator decision needed at dispatch time —
-recommend installing pi here if the install is one command, else descope
-to Arm 2 first.**
+**Precondition (resolved 2026-08-31):** operator installed `pi` 0.84.4 on
+pembroke via the official installer (`pi.dev/install.sh`); `--mode rpc` and
+the `--tools` read-only restriction are confirmed present in `--help`.
+`opencode` 1.18.25 and `codex` 0.151.0 were installed alongside it.
 
 ## Arm 2 — claude TUI in tmux via `send-keys`
 
@@ -99,6 +97,10 @@ injection API (Wall 2), but the TTY is the interactive loop itself.
 
 ## Open questions for the operator (at dispatch, not now)
 
-1. pi availability on pembroke (install / okinos / descope Arm 1).
-2. Whether steering lands in E+ v1 scope (`launch_session` + steer) or is
+1. Whether steering lands in E+ v1 scope (`launch_session` + steer) or is
    validated now and shipped later.
+2. The operator installed `codex` alongside pi and opencode — a signal
+   that DES-071's `launch_session` agent set (`claude | pi | opencode`)
+   may want `codex` added. If so: does the spike grow a codex steering
+   arm (codex also runs as a TUI, so it likely shares Arm 2's tmux
+   send-keys channel), or is codex support a separate follow-on bead?
