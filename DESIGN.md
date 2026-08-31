@@ -3753,10 +3753,13 @@ captures, teardown logs).
 
 ## DES-073: Steering a Running Mode B Session — Per-Agent Channels, Amending DES-068's Wall 2
 
-**Status:** PROPOSED (2026-08-31). Sub-decision under DES-068, amending its
-"Wall 2" premise. Validation: `vox-04qy` (both arms PASS; evidence and
-per-arm semantics in `spikes/vox-04qy-steering/REPORT.md`). Requires
-operator ratification before any implementation dispatches against it.
+**Status:** RATIFIED 2026-08-31 (operator: "If the results were good, we
+can ratify the design" — results verified good: both arms PASS,
+evaluator-accepted round 1, twelve local-review findings fixed with the
+evidence regenerated on the hardened harness). Sub-decision under
+DES-068, amending its "Wall 2" premise. Validation: `vox-04qy` (evidence
+and per-arm semantics in `spikes/vox-04qy-steering/REPORT.md`).
+Implementation may dispatch against this design.
 
 ### Context
 
