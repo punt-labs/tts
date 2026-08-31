@@ -1,0 +1,64 @@
+{
+  "cases": {
+    "esc_steer": {
+      "hook_fire_to_store_ms": 57.769495,
+      "receipt_event": "UserPromptSubmit",
+      "receipt_recv_seq": 24,
+      "receipt_relay_seq": 24,
+      "send_to_hook_visible_ms": 568.636641,
+      "stops_before_delivery": 3,
+      "stops_before_escape": 3
+    },
+    "idle_inject": {
+      "hook_fire_to_store_ms": 63.668258,
+      "receipt_event": "UserPromptSubmit",
+      "receipt_recv_seq": 6,
+      "receipt_relay_seq": 6,
+      "send_to_hook_visible_ms": 579.788714
+    },
+    "literal_specials": {
+      "hook_fire_to_store_ms": 48.987502,
+      "prompt_as_received": "LITERALACK-vox04qy specials: -l --flag 'single' \"double\" ; & | Enter C-c",
+      "receipt_event": "UserPromptSubmit",
+      "receipt_recv_seq": 28,
+      "receipt_relay_seq": 28,
+      "send_to_hook_visible_ms": 583.774775,
+      "text_arrived_verbatim": true
+    },
+    "midturn_inject": {
+      "hook_fire_to_store_ms": 50.625325,
+      "receipt_event": "UserPromptSubmit",
+      "receipt_recv_seq": 13,
+      "receipt_relay_seq": 13,
+      "send_to_hook_visible_ms": 585.836005,
+      "stops_at_send": 2,
+      "stops_before_delivery": 2,
+      "tool_results_between_send_and_delivery": 0
+    },
+    "paste_multiline": {
+      "all_three_lines_in_one_prompt": true,
+      "hook_fire_to_store_ms": 42.967202,
+      "receipt_event": "UserPromptSubmit",
+      "receipt_recv_seq": 26,
+      "receipt_relay_seq": 26,
+      "send_to_hook_visible_ms": 1067.985185
+    }
+  },
+  "dialog_nudges": [],
+  "environment": {
+    "claude_version": "2.1.251 (Claude Code)",
+    "profile": "steer-inject-v1",
+    "tmux_version": "tmux 3.4"
+  },
+  "stub_invocations": [],
+  "teardown": [
+    "killed tmux session vox04qy-140702",
+    "store stopped",
+    "teardown pass 1 clean=True",
+    "pgrep before kill: no matching processes",
+    "removed scratch root: <scratch>",
+    "teardown pass 2 clean=True",
+    "pgrep before kill: no matching processes",
+    "scratch root already absent: <scratch>"
+  ]
+}
