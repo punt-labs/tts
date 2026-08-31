@@ -146,7 +146,9 @@ def _run(
         stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     env = {
         "HOME": str(home),
-        "PATH": f"{stub_bin}:{_vox_panel_free_path()}",
+        "PATH": os.pathsep.join(
+            p for p in (str(stub_bin), _vox_panel_free_path()) if p
+        ),
         "VOX_PANEL_SENTINEL": str(sentinel),
     }
     assert shutil.which("vox-panel", path=env["PATH"]) == str(stub_bin / "vox-panel"), (

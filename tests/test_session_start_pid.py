@@ -166,7 +166,9 @@ def _run_tree(tmp_path: Path, *, claude_comm: str) -> tuple[int, int, int]:
     # Stub first, real vox-panel stripped from the tail: the spawn
     # this fixture captures must never be able to reach the live binary, even
     # if the stub is somehow skipped.
-    env["PATH"] = f"{stub_bin}:{_vox_panel_free_path()}"
+    env["PATH"] = os.pathsep.join(
+        p for p in (str(stub_bin), _vox_panel_free_path()) if p
+    )
     env["RELAY_TRACE_FILE"] = str(trace_file)
     assert shutil.which("vox-panel", path=env["PATH"]) == str(stub_bin / "vox-panel"), (
         "the recording stub must be the only vox-panel this hook run can reach"

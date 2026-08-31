@@ -383,7 +383,9 @@ class TestPanelSpawn:
         ``session-start.sh`` under this PATH can reach the live Lux hub,
         whatever its cwd resolves to.
         """
-        return f"{bin_dir}{os.pathsep}{_path_without_vox_panel()}"
+        return os.pathsep.join(
+            p for p in (str(bin_dir), _path_without_vox_panel()) if p
+        )
 
     @staticmethod
     def _assert_no_panel_spawn(sentinel: Path, *, window: float = 2.0) -> None:
