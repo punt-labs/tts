@@ -190,6 +190,22 @@
       "p95": 2079.0
     }
   },
+  "SessionEnd": {
+    "count": 1,
+    "fields": {},
+    "payload_bytes": {
+      "max": 2.0,
+      "n": 1,
+      "p50": 2.0,
+      "p95": 2.0
+    },
+    "state_bytes": {
+      "max": 0.0,
+      "n": 1,
+      "p50": 0.0,
+      "p95": 0.0
+    }
+  },
   "SessionStart": {
     "count": 1,
     "fields": {
@@ -259,7 +275,7 @@
         "presence": 1.0
       },
       "last_assistant_message": {
-        "class": "metadata",
+        "class": "state",
         "presence": 1.0
       },
       "permission_mode": {
@@ -302,10 +318,10 @@
       "p95": 1535.0
     },
     "state_bytes": {
-      "max": 0.0,
+      "max": 988.0,
       "n": 7,
-      "p50": 0.0,
-      "p95": 0.0
+      "p50": 42.0,
+      "p95": 988.0
     }
   },
   "UserPromptSubmit": {

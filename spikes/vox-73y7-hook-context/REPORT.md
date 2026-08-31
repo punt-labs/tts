@@ -28,21 +28,27 @@ SessionStart, UserPromptSubmit, PreToolUse (matcher `*`), PostToolUse
 (matcher `*`), Notification, Stop, SubagentStart/Stop, PreCompact,
 SessionEnd wired; the first six fired during the working session (the
 profile denies Task and no compaction occurred), and SessionEnd fired
-once at teardown (00:31:40, when the tmux session was killed) — AFTER
-the committed analysis snapshots were taken, arriving without relay
-stamps because the fork's process tree was being torn down mid-relay.
+once at teardown (00:31:40, when the tmux session was killed) — arriving
+without relay stamps and with an EMPTY payload (the store's
+non-object-params fallback records the event and drops the content)
+because the fork's process tree was being torn down mid-relay. It
+landed after the mid-run analysis snapshots; `field_inventory.json` is
+regenerated over the final 96-record ledger and includes it, while
+`latency.json` remains the documented pre-SessionEnd snapshot (see (b)).
 
-Field inventory (`field_inventory.json`; state = work content, pointer =
-path to state elsewhere on host, metadata = plumbing):
+Field inventory (`field_inventory.json`, regenerated from the committed
+ledger; state = work content, pointer = path to state elsewhere on
+host, metadata = plumbing):
 
 | event | n | payload bytes p50/p95/max | state bytes p50/p95/max | state fields |
 |---|---|---|---|---|
 | PostToolUse | 36 | 2115 / 7120 / 11425 | 1543 / 6263 / 10853 | tool_name, tool_input, tool_response |
 | PreToolUse | 38 | 711 / 2612 / 3725 | 125 / 2079 / 3192 | tool_name, tool_input |
 | UserPromptSubmit | 7 | 857 / 1971 / 1971 | 223 / 1530 / 1530 | prompt (verbatim) |
-| Stop | 7 | 875 / 1535 / 1535 | (see note) | last_assistant_message |
+| Stop | 7 | 875 / 1535 / 1535 | 42 / 988 / 988 | last_assistant_message |
 | Notification | 6 | 761 / 762 / 762 | 34 | message |
 | SessionStart | 1 | 389 | 0 | — (source, model, cwd) |
+| SessionEnd | 1 | 2 | 0 | — (teardown-time; empty payload, see above) |
 
 **The payloads are state, not metadata.** PostToolUse carries the FULL
 tool response — complete test-run output, tracebacks, written file
