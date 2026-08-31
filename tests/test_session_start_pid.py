@@ -117,13 +117,15 @@ def _vox_panel_free_path() -> str:
     `_path_without_vox_panel`, local to keep the test modules uncoupled.
     Drops each whole directory, so a host that colocates `vox-panel` with
     tools the hook needs (git, jq) loses those tools too -- a loud, if
-    misdirecting, failure rather than a silent one. Empty entries are dropped
-    too: on POSIX an empty PATH entry means the current directory, which
-    could still resolve a `./vox-panel`.
+    misdirecting, failure rather than a silent one. Only absolute entries are
+    kept: relative entries ("", ".", "./x", "..") resolve against the hook's
+    cwd, which could still resolve a `./vox-panel`.
     """
     entries = _system_path().split(os.pathsep)
     return os.pathsep.join(
-        d for d in entries if d and not (Path(d) / "vox-panel").exists()
+        d
+        for d in entries
+        if (p := Path(d)).is_absolute() and not (p / "vox-panel").exists()
     )
 
 
