@@ -240,9 +240,17 @@ class Arm2Runner:
 
     def run(self) -> int:
         """Fork, run the matrix, write evidence, tear down; exit code."""
+        ledger_path = _RESULTS / "hook_ledger.jsonl"
+        if ledger_path.exists():
+            # The store APPENDS; a rerun over an old ledger makes every
+            # receipt wait match the previous run's records (observed
+            # live: negative latencies, stale recv_seqs). Refuse before
+            # anything spawns; the operator moves the old evidence aside.
+            msg = f"ledger already exists: {ledger_path} — move the old run aside first"
+            raise RuntimeError(msg)
         _RESULTS.mkdir(parents=True, exist_ok=True)
         self._stubs.create()
-        store = StoreProcess(_free_port(), _RESULTS / "hook_ledger.jsonl")
+        store = StoreProcess(_free_port(), ledger_path)
         results: list[CaseResult] = []
         try:
             store.start()
