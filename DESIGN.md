@@ -3669,7 +3669,14 @@ evaluator-verified by independent recomputation and re-grading.
   the hook relay; receiver-side stamping — this entry's original
   wording — provably cannot see loss (never-received events leave no
   receiver-side holes) and collides across store restarts. The rolling
-  store's gap detection must consume sender-assigned sequences.
+  store's gap detection must consume sender-assigned sequences. Two
+  blind spots come with that mechanism and must be designed for:
+  losses BEFORE the sender's counter increments (a crashed relay
+  wrapper drops the event with no sequence ever assigned — the relay
+  must fail the hook loudly rather than exit clean), and TRAILING
+  losses after the last received event (invisible to sequence
+  comparison; pair with an end-of-session handshake or accept and
+  document the gap).
 - **Seed-size ceiling revised up:** the 50KB quality degradation
   recorded under vox-bst7 does NOT reproduce under the fixed harness
   (3 bounded EL sessions, frozen bst7 harness byte-identical to main)
