@@ -45,10 +45,17 @@ pytestmark = [
 _RELAY_SH = """#!/usr/bin/env bash
 # Forks "$@" as a genuine child (backgrounding always forks) and waits for it,
 # so each level in the tree is a distinct process with the expected parent.
+# The explicit <&0 keeps the hook's stdin: without a redirection, a
+# non-interactive bash gives an asynchronous command /dev/null as stdin, so
+# the JSON payload written to the top of the tree never reached the hook --
+# its cwd fell back to $PWD, the enablement-marker gate saw an unenabled
+# directory, and the panel spawn these tests observe was silently skipped
+# wherever $PWD did not nest under an enabled repo (CI, but not a local
+# checkout whose TMPDIR-pinned tmp_path sits inside the real vox repo).
 if [[ -n "${RELAY_TRACE_FILE:-}" ]]; then
   echo "$$" >> "$RELAY_TRACE_FILE"
 fi
-"$@" &
+"$@" <&0 &
 wait
 """
 
