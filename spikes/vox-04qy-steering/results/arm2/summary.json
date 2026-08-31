@@ -1,47 +1,47 @@
 {
   "cases": {
     "esc_steer": {
-      "hook_fire_to_store_ms": 56.497253,
+      "hook_fire_to_store_ms": 79.03783,
       "receipt_event": "UserPromptSubmit",
       "receipt_recv_seq": 20,
       "receipt_relay_seq": 20,
-      "send_to_hook_visible_ms": 572.065265,
+      "send_to_hook_visible_ms": 610.046893,
       "stops_before_delivery": 3,
       "stops_before_escape": 3
     },
     "idle_inject": {
-      "hook_fire_to_store_ms": 50.106656,
+      "hook_fire_to_store_ms": 55.751766,
       "receipt_event": "UserPromptSubmit",
       "receipt_recv_seq": 6,
       "receipt_relay_seq": 6,
-      "send_to_hook_visible_ms": 564.420548
+      "send_to_hook_visible_ms": 582.217325
     },
     "literal_specials": {
-      "hook_fire_to_store_ms": 74.604332,
+      "hook_fire_to_store_ms": 43.04695,
       "prompt_as_received": "LITERALACK-vox04qy specials: -l --flag 'single' \"double\" ; & | Enter C-c",
       "receipt_event": "UserPromptSubmit",
       "receipt_recv_seq": 24,
       "receipt_relay_seq": 24,
-      "send_to_hook_visible_ms": 586.637174,
+      "send_to_hook_visible_ms": 576.785473,
       "text_arrived_verbatim": true
     },
     "midturn_inject": {
-      "hook_fire_to_store_ms": 47.413694,
+      "hook_fire_to_store_ms": 57.487375,
       "receipt_event": "UserPromptSubmit",
       "receipt_recv_seq": 11,
       "receipt_relay_seq": 11,
-      "send_to_hook_visible_ms": 561.308186,
+      "send_to_hook_visible_ms": 580.61955,
       "stops_at_send": 2,
       "stops_before_delivery": 2,
       "tool_results_between_send_and_delivery": 0
     },
     "paste_multiline": {
       "all_three_lines_in_one_prompt": true,
-      "hook_fire_to_store_ms": 60.098662,
+      "hook_fire_to_store_ms": 46.247413,
       "receipt_event": "UserPromptSubmit",
       "receipt_recv_seq": 22,
       "receipt_relay_seq": 22,
-      "send_to_hook_visible_ms": 1092.150137
+      "send_to_hook_visible_ms": 1084.500226
     }
   },
   "dialog_nudges": [],
@@ -52,13 +52,14 @@
   },
   "stub_invocations": [],
   "teardown": [
-    "killed tmux session vox04qy-145632",
+    "killed tmux session vox04qy-152829",
     "store stopped",
     "teardown pass 1 clean=True",
-    "pgrep before kill: 2137839 /bin/bash -c source ~/.claude/shell-snapshots/snapshot-bash-1788180613175-jseycu.sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'mkdir -p ../../.tmp/vox04qy-stale && mv results/arm2 ../../.tmp/vox04qy-stale/arm2-run1-plus-invalid-rerun && direnv exec ~/Coding/punt-labs/vox uv run run_arm2.py 2>&1 | tail -10' < /dev/null && pwd -P >| /tmp/claude-3bca-cwd",
+    "pgrep before kill: no matching processes",
     "removed scratch root: <scratch>",
     "teardown pass 2 clean=True",
-    "pgrep before kill: 2137839 /bin/bash -c source ~/.claude/shell-snapshots/snapshot-bash-1788180613175-jseycu.sh 2>/dev/null || true && shopt -u extglob 2>/dev/null || true && { \\builtin unalias -- 'unsetenv'; \\builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'mkdir -p ../../.tmp/vox04qy-stale && mv results/arm2 ../../.tmp/vox04qy-stale/arm2-run1-plus-invalid-rerun && direnv exec ~/Coding/punt-labs/vox uv run run_arm2.py 2>&1 | tail -10' < /dev/null && pwd -P >| /tmp/claude-3bca-cwd",
+    "pgrep before kill: no matching processes",
     "scratch root already absent: <scratch>"
-  ]
+  ],
+  "teardown_clean": true
 }
