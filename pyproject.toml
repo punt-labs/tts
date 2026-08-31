@@ -41,8 +41,10 @@ dependencies = [
     # callback listener (client.listener) with per-handshake on_connect for
     # register-fresh. LuxRestClient/LuxHubClient are gone from the public surface;
     # the noun-grouped facade with async accessors is the only supported entry.
-    # Keep this floor equal to the locked version — a floor below the lock lets an
-    # install resolve a lux the tests never exercised.
+    # Keep this floor at or above the locked version. It bounds installs from
+    # below only: no install can resolve a lux older than the one CI exercises.
+    # It does NOT pin installs to the lock — a newer lux still resolves, so
+    # keeping the lock current is what keeps tests honest.
     "punt-lux>=0.31.1",
 ]
 
