@@ -181,6 +181,14 @@ the steer text (Arm 1's refusal finding applies to any model).
   directory left behind. The runner now waits for the pane process to
   die and settle before removing the scratch root; `teardown.py` remains
   the idempotent backstop.
+- All committed evidence was generated AFTER the harness hardening round
+  (error disposal, exit-code recording, harvest-before-teardown,
+  rerun-refusal), and a post-hoc audit confirmed none of the previously
+  silent failure paths fired in it: teardown_clean true, all seven pane
+  captures present with no unavailable-markers, environment versions
+  non-empty with no probe failures, every ledger record relay-stamped
+  with contiguous sequences, all arm 1 transcripts non-empty with pi
+  exit code 0, no stray stderr files, stub logs observed empty.
 - The store APPENDS to its ledger, so a rerun over an existing
   `results/arm2/hook_ledger.jsonl` would interleave runs and satisfy
   receipt waits with the previous run's records (observed once as
