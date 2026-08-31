@@ -9,6 +9,7 @@ running.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 import textwrap
@@ -213,3 +214,51 @@ class TestWedgedReaderIsLoud:
         monkeypatch.setattr(rpc_session, "_CLOSE_GRACE_S", 0.2)
         with pytest.raises(RuntimeError, match="reader did not stop"):
             session.close()
+
+
+_GRANDCHILD_PEER = """\
+import json, subprocess, sys, time
+
+grandchild = subprocess.Popen(["sleep", "300"])
+print(json.dumps({"type": "hello", "grandchild_pid": grandchild.pid}), flush=True)
+time.sleep(600)  # ignore stdin EOF: close() must escalate to the group
+"""
+
+
+class TestCloseKillsTheWholeGroup:
+    """A grandchild in the child's session must not survive close()."""
+
+    def test_grandchild_is_reaped_with_the_group(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        script = tmp_path / "grandchild_peer.py"
+        script.write_text(_GRANDCHILD_PEER, encoding="utf-8")
+        session = PiRpcSession.spawn(
+            [sys.executable, str(script)],
+            cwd=tmp_path,
+            stderr_path=tmp_path / "stderr.log",
+        )
+        hello = session.wait_for(
+            lambda event: event.type == "hello", timeout_s=10, description="hello"
+        )
+        grandchild_pid = int(str(hello.data["grandchild_pid"]))
+        parent_pid = session.pid
+        monkeypatch.setattr(rpc_session, "_CLOSE_GRACE_S", 0.3)
+        try:
+            session.close()
+            # Signal delivery is asynchronous; give the group kill a moment.
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                try:
+                    os.kill(grandchild_pid, 0)
+                except ProcessLookupError:
+                    return
+                time.sleep(0.1)
+            msg = f"grandchild {grandchild_pid} survived close()"
+            raise AssertionError(msg)
+        finally:
+            # Never leak the sleeper (or its parent) past the test, even
+            # when close() itself fails — a red run must not litter.
+            for pid in (grandchild_pid, parent_pid):
+                with contextlib.suppress(ProcessLookupError):
+                    os.kill(pid, 9)

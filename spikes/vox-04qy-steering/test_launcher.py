@@ -7,6 +7,8 @@ at the first space. These pins hold the argv exactly.
 
 from __future__ import annotations
 
+import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -104,3 +106,36 @@ class TestExtraEnv:
             LaunchCommand(Path("/bin/claude"), "go"), cwd=tmp_path, env=merged
         )
         assert "PATH=/stubs:/usr/bin" in argv
+
+
+class TestSendLineIsLiteral:
+    """Steering text that happens to BE a tmux key token must not corrupt.
+
+    Real tmux: the pane runs a durable line reader; without literal mode
+    a whole-argument key name like "C-c" is sent as the INTERRUPT KEY
+    (killing the pane) instead of the three characters C, -, c.
+    """
+
+    def test_key_name_text_arrives_byte_for_byte(self, tmp_path: Path) -> None:
+        name = f"{SESSION_PREFIX}-linepin"
+        out = tmp_path / "lines.txt"
+        reader = f"while IFS= read -r line; do printf '%s\n' \"$line\" >> {out}; done"
+        subprocess.run(
+            ["tmux", "new-session", "-d", "-s", name, "-c", str(tmp_path), reader],
+            check=True,
+            capture_output=True,
+        )
+        session = TmuxSession(name)
+        try:
+            session.send_line("C-c")
+            time.sleep(0.5)
+            session.send_line("press Enter then C-c")
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if out.exists() and out.read_text("utf-8").count("\n") >= 2:
+                    break
+                time.sleep(0.2)
+        finally:
+            session.kill()
+        lines = out.read_text(encoding="utf-8").splitlines() if out.exists() else []
+        assert lines == ["C-c", "press Enter then C-c"]

@@ -106,18 +106,18 @@ class TmuxSession:
         return captured.stdout
 
     def send_line(self, text: str) -> None:
-        """Type one line into the session, then press Enter.
+        """Type one line into the session literally, then press Enter.
 
-        The Enter is a separate send-keys after a short settle: a TUI that
-        treats rapid input as a bracketed paste can otherwise leave the
-        whole line sitting unsubmitted in its composer -- observed with
-        Claude Code's input box on longer prompts.
+        The text rides :meth:`send_literal` (``-l --``): without literal
+        mode, a text that IS a tmux key token — steering text like
+        ``C-c`` — would be sent as the key (an interrupt) instead of its
+        characters. The Enter is a separate send-keys after a short
+        settle: a TUI that treats rapid input as a bracketed paste can
+        otherwise leave the whole line sitting unsubmitted in its
+        composer -- observed with Claude Code's input box on longer
+        prompts.
         """
-        subprocess.run(
-            ["tmux", "send-keys", "-t", f"{self._name}:", text],
-            check=True,
-            capture_output=True,
-        )
+        self.send_literal(text)
         time.sleep(0.5)
         self.send_key("Enter")
 

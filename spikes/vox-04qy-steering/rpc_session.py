@@ -10,6 +10,8 @@ whole group after reading its state — evidence before destruction.
 
 from __future__ import annotations
 
+import contextlib
+import os
 import queue
 import signal
 import subprocess
@@ -186,11 +188,11 @@ class PiRpcSession:
             # Evidence before destruction: the transcript already holds
             # everything received; the group kill is the last resort for
             # a child that ignored stdin EOF.
-            self._process.send_signal(signal.SIGTERM)
+            self._signal_group(signal.SIGTERM)
             try:
                 self._process.wait(timeout=_CLOSE_GRACE_S)
             except subprocess.TimeoutExpired:
-                self._process.kill()
+                self._signal_group(signal.SIGKILL)
                 self._process.wait()
         self._reader.join(timeout=_CLOSE_GRACE_S)
         if self._reader.is_alive():
@@ -199,6 +201,18 @@ class PiRpcSession:
             # and the transcript can no longer be trusted as complete.
             msg = "stdout reader did not stop after close; transcript may be torn"
             raise RuntimeError(msg)
+
+    def _signal_group(self, signum: signal.Signals) -> None:
+        """Signal the child's whole process group, not just the child.
+
+        ``start_new_session=True`` made the child a group leader; a
+        signal to only its pid would orphan any grandchildren it spawned
+        (a tool subprocess still running when the child wedged). The
+        already-dead race is expected: the group may vanish between the
+        wait timeout and the signal.
+        """
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(os.getpgid(self._process.pid), signum)
 
     def _read_stdout(self) -> None:
         stdout = self._process.stdout
