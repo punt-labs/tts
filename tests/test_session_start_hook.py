@@ -1,6 +1,6 @@
 """Behavioral tests for plugin/hooks/session-start.sh command deployment.
 
-vox-ovz3: model.md, provider.md, voice.md, and recap.md are namespaced-only
+model.md, provider.md, voice.md, and recap.md are namespaced-only
 commands (``/vox:model``, never bare ``/model``) because a bare top-level
 form collides with a name Claude Code itself may claim — ``/model`` already
 does. The deploy loop must skip them, and the RETIRED cleanup must remove
@@ -22,7 +22,7 @@ Driven as a subprocess against the real script, with a copy of the real
 ``plugin/`` tree and a sandboxed ``$HOME`` — the interface is the contract,
 so this exercises the shell, not a reimplementation of it. ``jq``, ``git``,
 and the coreutils the script shells out to run from the real system ``PATH``,
-but the panel spawn is fenced (vox-h7k8): every run gets a recording
+but the panel spawn is fenced: every run gets a recording
 ``vox-panel`` stub first on PATH with the real binary stripped from the tail,
 an unenabled standalone git root as its cwd, and a zero-spawn assertion —
 these tests are about command deployment, and the hook's panel block used to
@@ -123,7 +123,7 @@ def _run(
     # and `home` nests under the enabled vox repo via pytest's TMPDIR-pinned
     # tmp_path -- without a boundary here, every run in this file resolved to
     # the real repo root, found the real enablement marker, and spawned a
-    # REAL vox-panel against the live Lux hub (vox-h7k8). `home` itself has
+    # REAL vox-panel against the live Lux hub. `home` itself has
     # no marker, so the spawn block is never reached.
     subprocess.run(["git", "init", "-q", str(home)], check=True)
     hook = plugin_dir / "hooks" / "session-start.sh"

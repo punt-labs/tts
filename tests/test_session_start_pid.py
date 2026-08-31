@@ -6,8 +6,7 @@ process that actually owns the session. Every ``vox-panel-*.log`` under
 ``~/.punt-labs/vox/logs`` contained exactly one line -- "session <pid> has
 gone; the applet is leaving" -- because the panel was spawned watching
 ``$PPID`` directly, so its own liveness check saw the wrapper vanish within
-seconds and left before ever reaching the Hub to register in the Lux menu
-(vox-nkn8).
+seconds and left before ever reaching the Hub to register in the Lux menu.
 
 These tests drive the real hook script as a subprocess at the bottom of a
 real three-level process tree -- a stand-in ``claude`` process, a wrapper
@@ -107,7 +106,7 @@ def _vox_panel_free_path() -> str:
 
     Under `uv run` the project venv's bin -- which ships the real vox-panel --
     leads PATH, so an unstripped tail leaves the live binary one lookup miss
-    away from the Lux hub (vox-h7k8). Same helper as test_hook_gate's
+    away from the Lux hub. Same helper as test_hook_gate's
     `_path_without_vox_panel`, local to keep the test modules uncoupled.
     """
     entries = _system_path().split(os.pathsep)
@@ -148,7 +147,7 @@ def _run_tree(tmp_path: Path, *, claude_comm: str) -> tuple[int, int, int]:
 
     env = dict(os.environ)
     env["HOME"] = str(fake_home)
-    # Stub first, real vox-panel stripped from the tail (vox-h7k8): the spawn
+    # Stub first, real vox-panel stripped from the tail: the spawn
     # this fixture captures must never be able to reach the live binary, even
     # if the stub is somehow skipped.
     env["PATH"] = f"{stub_bin}:{_vox_panel_free_path()}"
