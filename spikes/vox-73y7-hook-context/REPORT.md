@@ -329,7 +329,11 @@ on the store). Evidence from the run (`gap_report.json`,
 
 Verdict for the DES-070 kill criterion: gap detection reliably catches
 and quantifies drops — **provided the sequence is stamped at the
-sender**. That precision must land in DES-070's text.
+sender**. That precision must land in DES-070's text. One inherent limit
+must land with it: sender-sequence detection catches INTERIOR losses
+only — trailing losses at session end (nothing ever arrives after the
+hole) are invisible to it, so DES-070 must pair the sequence with an
+end-of-session handshake or explicitly accept that blind spot.
 
 ## (d) Seed prototype
 

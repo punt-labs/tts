@@ -79,8 +79,11 @@ def main() -> None:
     args = parser.parse_args()
     payload = json.load(sys.stdin)
     if not isinstance(payload, dict):
-        # A non-object payload cannot carry stamps; forward it untouched
-        # rather than break the relay -- the store will record it as-is.
+        # A non-object payload cannot carry stamps; forward it rather
+        # than break the relay. Downstream reality: the store's JSON-RPC
+        # frame replaces non-object params with {}, so the EVENT is
+        # counted but this payload's content is dropped and the record
+        # lands unattributed and unstamped.
         json.dump(payload, sys.stdout)
         return
     session_raw = payload.get("session_id")

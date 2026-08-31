@@ -22,6 +22,13 @@ quantifies the loss window per session. Out-of-order arrival (concurrent
 hook commands racing) is not loss: only values missing below the observed
 maximum count as gaps.
 
+Known blind spot, inherent to sender-sequence detection: TRAILING losses
+-- events lost after the highest sequence that was ever received, with
+nothing arriving behind them -- are invisible, because no later arrival
+exposes the hole. Detection covers interior losses only; a consumer that
+must also catch tail loss needs an end-of-session handshake (or accepts
+the blind spot).
+
 Run:  uv run gap_check.py --ledger <path> [--out <json>]
 """
 
@@ -114,12 +121,18 @@ class GapReport:
         }
 
     def summary(self) -> str:
-        """One line per session for the console."""
+        """One line per session for the console.
+
+        ``relay_stamped`` is printed deliberately: a session whose
+        events all lack sender stamps reports zero gaps VACUOUSLY, and
+        that must be visible, not silent.
+        """
         lines = []
         for session, report in sorted(self._sessions.items()):
             body = report.as_dict()
             lines.append(
                 f"{session}: received={body['received']} "
+                f"relay_stamped={body['relay_stamped']} "
                 f"lost={body['lost_events']} "
                 f"receiver_resets={body['receiver_seq_resets']} "
                 f"gap_detected={body['gap_detected']}"
@@ -133,6 +146,11 @@ def main() -> None:
     parser.add_argument("--ledger", type=Path, required=True)
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
+    if not args.ledger.exists():
+        # Only the store treats an absent file as an empty ledger; an
+        # analyzer doing so would report a clean run for a typo'd path.
+        msg = f"ledger not found: {args.ledger}"
+        raise SystemExit(msg)
     report = GapReport(HookLedger(args.ledger).records())
     if args.out is not None:
         args.out.parent.mkdir(parents=True, exist_ok=True)

@@ -111,7 +111,16 @@ class RelayScript:
         return self
 
     def render(self) -> str:
-        """The relay script body; takes the event name as $1."""
+        """The relay script body; takes the event name as $1.
+
+        The stamper runs in a command substitution, NOT a pipe: POSIX sh
+        has no pipefail, so a piped stamper crash (bad stdin, unwritable
+        counter dir) would vanish behind the proxy's exit 0 -- the event
+        dropped silently AND the sender sequence never advanced, leaving
+        gap detection structurally blind to it. The substitution makes
+        the stamper's exit status the hook's own, so the loss is loud in
+        the fork's session log.
+        """
         stamper = shlex.quote(str(self._stamper))
         counters = shlex.quote(str(self._counter_dir))
         proxy = shlex.quote(str(self._proxy))
@@ -120,8 +129,9 @@ class RelayScript:
             "#!/bin/sh\n"
             "# Rendered by the vox-73y7 harness: sender-side stamp, then relay.\n"
             "start_ns=$(date +%s%N)\n"
-            f'python3 {stamper} --counter-dir {counters} --start-ns "$start_ns" '
-            f'| {proxy} {url} --hook "$1"\n'
+            f"stamped=$(python3 {stamper} --counter-dir {counters} "
+            '--start-ns "$start_ns") || exit 1\n'
+            f'printf \'%s\' "$stamped" | {proxy} {url} --hook "$1"\n'
         )
 
 

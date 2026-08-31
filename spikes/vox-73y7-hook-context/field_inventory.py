@@ -161,6 +161,11 @@ def main() -> None:
     parser.add_argument("--ledger", type=Path, required=True)
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
+    if not args.ledger.exists():
+        # Only the store treats an absent file as an empty ledger; an
+        # analyzer doing so would report a clean run for a typo'd path.
+        msg = f"ledger not found: {args.ledger}"
+        raise SystemExit(msg)
     inventory = FieldInventory(HookLedger(args.ledger).records())
     body = json.dumps(inventory.as_dict(), indent=2, sort_keys=True)
     if args.out is not None:

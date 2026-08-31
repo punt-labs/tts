@@ -282,10 +282,28 @@ def _wire_leg(failures: list[str]) -> None:
                 label="relay pipeline exits 0",
                 failures=failures,
             )
+        # A stamper crash must be LOUD: POSIX sh has no pipefail, so the
+        # relay runs the stamper in a command substitution and exits
+        # nonzero itself. Invalid stdin crashes json.load BEFORE the
+        # counter advances -- exactly the silent-drop shape that would
+        # otherwise be invisible to gap detection.
+        crashed = subprocess.run(
+            [str(relay), "Stop"],
+            input="this is not json",
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        _check(
+            condition=crashed.returncode != 0,
+            label="stamper crash makes the hook exit nonzero",
+            failures=failures,
+        )
         records = _await_records(ledger_path, expected=2)
         _check(
             condition=len(records) == 2,
-            label="store persisted both relayed events",
+            label="store persisted both relayed events (crash relayed nothing)",
             failures=failures,
         )
         if len(records) == 2:

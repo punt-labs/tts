@@ -357,7 +357,14 @@ class CaptureRun:
         session_name = f"{SESSION_PREFIX}-{datetime.now(tz=UTC):%H%M%S}"
         project = ScratchProject(_SCRATCH_ROOT / session_name / "project")
         config = IsolatedConfig(_SCRATCH_ROOT / session_name / "claude-config")
-        proxy = Path(shutil.which("mcp-proxy") or "mcp-proxy")
+        proxy_on_path = shutil.which("mcp-proxy")
+        if proxy_on_path is None:
+            # Falling back to a bare "mcp-proxy" would turn an absent
+            # binary into a generic four-minute first-hook timeout; fail
+            # at setup with the actual cause instead.
+            msg = "mcp-proxy not found on PATH; install it before a capture run"
+            raise RuntimeError(msg)
+        proxy = Path(proxy_on_path)
         relay_body = RelayScript(
             proxy, store.url, config.stamper_script, config.counter_dir
         ).render()
@@ -396,6 +403,7 @@ class CaptureRun:
         deadline = started + _RUN_DEADLINE_S
         first_hook_deadline = started + _FIRST_HOOK_WAIT_S
         gap_done = False
+        gap_confirmed = False
         while time.monotonic() < deadline:
             self._nudge_dialogs(session)
             records = ledger.records_snapshot()
@@ -413,12 +421,17 @@ class CaptureRun:
                 and time.monotonic() - started > _GAP_FALLBACK_S
             )
             if gap_due and not gap_done and session.alive():
-                self._gap(store)
+                gap_confirmed = self._gap(store)
                 gap_done = True
+                if not gap_confirmed:
+                    # A kill that never took means the "loss window" saw
+                    # no loss and gap_report.json's lost=0 would be a
+                    # false all-clear -- the run must FAIL, not pass.
+                    self._note("gap window kill NOT confirmed dead; run fails")
             if sampler.done():
                 if not gap_done:
                     self._note("gap window never ran (post-fix missed)")
-                return gap_done
+                return gap_done and gap_confirmed
             if not session.alive():
                 self._note("tmux session died before all timepoints sampled")
                 return False
@@ -426,7 +439,8 @@ class CaptureRun:
         self._note("run deadline reached before all timepoints sampled")
         return False
 
-    def _gap(self, store: StoreProcess) -> None:
+    def _gap(self, store: StoreProcess) -> bool:
+        """Run the loss window; True only when the port confirmed dead."""
         print("    [gap] SIGKILL store; loss window opens")
         killed_at = datetime.now(tz=UTC).isoformat(timespec="seconds")
         store.sigkill()
@@ -443,6 +457,7 @@ class CaptureRun:
         (self._results_dir / "gap_window.json").write_text(
             json.dumps(self._gap_window, indent=2, sort_keys=True), "utf-8"
         )
+        return dead
 
     def _nudge_dialogs(self, session: TmuxSession) -> None:
         if not session.alive():

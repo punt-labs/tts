@@ -92,6 +92,11 @@ def main() -> None:
     parser.add_argument("--ledger", type=Path, required=True)
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
+    if not args.ledger.exists():
+        # Only the store treats an absent file as an empty ledger; an
+        # analyzer doing so would report a clean run for a typo'd path.
+        msg = f"ledger not found: {args.ledger}"
+        raise SystemExit(msg)
     report = LatencyReport(HookLedger(args.ledger).records())
     if args.out is not None:
         args.out.parent.mkdir(parents=True, exist_ok=True)
