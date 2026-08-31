@@ -303,6 +303,38 @@ class TestPanelSpawn:
         return home / ".punt-labs" / "vox" / "logs" / f"vox-panel-{os.getpid()}.log"
 
     @staticmethod
+    def _hermetic_path(bin_dir: Path) -> str:
+        """``bin_dir`` first, then the current PATH stripped of every real
+        vox-panel.
+
+        Two layers: the recording stub shadows any real binary, and the real
+        one is gone from the tail outright -- no invocation of
+        ``session-start.sh`` under this PATH can reach the live Lux hub,
+        whatever its cwd resolves to.
+        """
+        return f"{bin_dir}{os.pathsep}{_path_without_vox_panel()}"
+
+    @staticmethod
+    def _assert_no_panel_spawn(sentinel: Path, *, window: float = 2.0) -> None:
+        """Assert no vox-panel invocation lands within *window* seconds.
+
+        The spawn is backgrounded (``nohup ... & disown``), so its record can
+        arrive after the hook process has already exited -- an instant check
+        would pass before a slow leak lands. The window is evidence, not the
+        guarantee: the guarantee is structural (an unenabled scratch cwd and
+        a PATH whose tail carries no real vox-panel).
+        """
+        deadline = time.monotonic() + window
+        while time.monotonic() < deadline:
+            assert not sentinel.exists(), (
+                f"a vox-panel spawned: {sentinel.read_text(encoding='utf-8')!r}"
+            )
+            time.sleep(0.05)
+        assert not sentinel.exists(), (
+            f"a vox-panel spawned: {sentinel.read_text(encoding='utf-8')!r}"
+        )
+
+    @staticmethod
     def _run_session_start(cwd: Path, env: dict[str, str]) -> int:
         payload = json.dumps({"cwd": str(cwd)})
         result = subprocess.run(
@@ -310,6 +342,10 @@ class TestPanelSpawn:
             input=payload,
             text=True,
             capture_output=True,
+            # Never inherit pytest's cwd: the hook falls back to $PWD when the
+            # payload cwd is unresolvable, and pytest runs from the enabled
+            # vox repo -- the fallback would find the real marker.
+            cwd=cwd,
             env=env,
             check=False,
         )
@@ -323,7 +359,7 @@ class TestPanelSpawn:
         sentinel = tmp_path / "sentinel.log"
         self._write_vox_panel_stub(bin_dir)
         env = self._base_env(tmp_path)
-        env["PATH"] = f"{bin_dir}{os.pathsep}{os.environ['PATH']}"
+        env["PATH"] = self._hermetic_path(bin_dir)
         env["VOX_PANEL_SENTINEL"] = str(sentinel)
 
         rc = self._run_session_start(repo, env)
@@ -340,7 +376,7 @@ class TestPanelSpawn:
         sentinel = tmp_path / "sentinel.log"
         self._write_vox_panel_stub(bin_dir)
         env = self._base_env(tmp_path)
-        env["PATH"] = f"{bin_dir}{os.pathsep}{os.environ['PATH']}"
+        env["PATH"] = self._hermetic_path(bin_dir)
         env["VOX_PANEL_SENTINEL"] = str(sentinel)
 
         assert self._run_session_start(repo, env) == 0
@@ -368,7 +404,7 @@ class TestPanelSpawn:
         sentinel = tmp_path / "sentinel.log"
         self._write_vox_panel_stub(bin_dir)
         env = self._base_env(tmp_path)
-        env["PATH"] = f"{bin_dir}{os.pathsep}{os.environ['PATH']}"
+        env["PATH"] = self._hermetic_path(bin_dir)
         env["VOX_PANEL_SENTINEL"] = str(sentinel)
 
         rc = self._run_session_start(isolated_root, env)
@@ -377,26 +413,47 @@ class TestPanelSpawn:
         _poll_until(sentinel.exists)
         assert f"--session-pid {os.getpid()}" in sentinel.read_text(encoding="utf-8")
 
-    def test_malformed_stdin_does_not_abort_the_hook(self, tmp_path: Path) -> None:
+    def test_malformed_stdin_does_not_abort_the_hook(
+        self, tmp_path: Path, isolated_root: Path
+    ) -> None:
         """Non-JSON stdin leaves `$_cwd` unresolvable, not the script dead.
 
         `jq` (and the jq-less `grep` fallback) exit non-zero on input with no
         `cwd`; under `set -e` that killed the hook before its command
         deployment and permission auto-allow ever ran.
+
+        An unresolvable cwd falls back to `$PWD`, so the subprocess runs from
+        an unenabled scratch directory (outside the repo tree, which pytest's
+        `tmp_path` is not) with a recording vox-panel stub first on PATH:
+        inheriting pytest's cwd here used to resolve the fallback to the real,
+        enabled vox repo and start a REAL panel against the live Lux hub on
+        every suite run.
         """
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        sentinel = tmp_path / "sentinel.log"
+        self._write_vox_panel_stub(bin_dir)
         env = self._base_env(tmp_path)
+        env["PATH"] = self._hermetic_path(bin_dir)
+        env["VOX_PANEL_SENTINEL"] = str(sentinel)
+        scratch = isolated_root / "unenabled"
+        scratch.mkdir()
         result = subprocess.run(
             ["bash", str(_HOOKS_DIR / "session-start.sh")],
             input="not json at all",
             text=True,
             capture_output=True,
+            cwd=scratch,
             env=env,
             check=False,
         )
 
         assert result.returncode == 0, "malformed stdin aborted the hook"
+        self._assert_no_panel_spawn(sentinel)
 
-    def test_unreadable_stdin_does_not_abort_the_hook(self, tmp_path: Path) -> None:
+    def test_unreadable_stdin_does_not_abort_the_hook(
+        self, tmp_path: Path, isolated_root: Path
+    ) -> None:
         """An unreadable stdin costs the session its panel, not just its cwd.
 
         `cat` exits non-zero when fd 0 cannot be read from, and under `set -e`
@@ -405,15 +462,28 @@ class TestPanelSpawn:
         alike. A write-only fd reproduces it without the deadlock a *closed*
         fd 0 causes: bash would hand the command substitution's own pipe to
         `cat` as its stdin, and `cat` would wait forever on itself.
+
+        Same isolation as the malformed-stdin test above: the empty cwd falls
+        back to `$PWD`, so run from an unenabled scratch directory with a
+        recording stub first on PATH and assert no panel spawns.
         """
         write_only = os.open(tmp_path / "sink", os.O_WRONLY | os.O_CREAT, 0o600)
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        sentinel = tmp_path / "sentinel.log"
+        self._write_vox_panel_stub(bin_dir)
         env = self._base_env(tmp_path)
+        env["PATH"] = self._hermetic_path(bin_dir)
+        env["VOX_PANEL_SENTINEL"] = str(sentinel)
+        scratch = isolated_root / "unenabled"
+        scratch.mkdir()
         try:
             result = subprocess.run(
                 ["bash", str(_HOOKS_DIR / "session-start.sh")],
                 stdin=write_only,
                 capture_output=True,
                 text=True,
+                cwd=scratch,
                 env=env,
                 check=False,
                 timeout=30,
@@ -422,8 +492,11 @@ class TestPanelSpawn:
             os.close(write_only)
 
         assert result.returncode == 0, "unreadable stdin aborted the hook"
+        self._assert_no_panel_spawn(sentinel)
 
-    def test_relative_cwd_does_not_hang_the_parent_walk(self, tmp_path: Path) -> None:
+    def test_relative_cwd_does_not_hang_the_parent_walk(
+        self, tmp_path: Path, isolated_root: Path
+    ) -> None:
         """A relative `cwd` in the payload must not spin the marker search.
 
         The walk up to the enablement marker stops at "/", which a relative
@@ -432,9 +505,21 @@ class TestPanelSpawn:
         than aborting it. The subprocess is run from a directory with no
         marker of its own, since a marker at `.` would end the walk on its
         first step and hide the defect.
+
+        That directory lives under `isolated_root`, not `tmp_path`: the
+        unresolvable relative cwd falls back to `$PWD`, and `tmp_path` nests
+        under the enabled vox repo (TMPDIR pins it there), so `git -C` from
+        it used to resolve straight to the real repo root and start a REAL
+        panel against the live Lux hub.
         """
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        sentinel = tmp_path / "sentinel.log"
+        self._write_vox_panel_stub(bin_dir)
         env = self._base_env(tmp_path)
-        elsewhere = tmp_path / "elsewhere"
+        env["PATH"] = self._hermetic_path(bin_dir)
+        env["VOX_PANEL_SENTINEL"] = str(sentinel)
+        elsewhere = isolated_root / "elsewhere"
         elsewhere.mkdir()
 
         result = subprocess.run(
@@ -449,6 +534,7 @@ class TestPanelSpawn:
         )
 
         assert result.returncode == 0
+        self._assert_no_panel_spawn(sentinel)
 
     def test_logs_a_reason_when_vox_panel_is_missing(self, tmp_path: Path) -> None:
         repo = _make_repo(tmp_path)
@@ -534,11 +620,17 @@ class TestManifestRefusal:
         env = dict(os.environ)
         env["HOME"] = str(home)
         env["TMPDIR"] = str(home)
+        # The payload cwd is an unenabled scratch repo, so the panel block is
+        # already gated off -- but no session-start.sh run in this file may be
+        # *capable* of reaching the live Lux hub: strip the real vox-panel
+        # from PATH and never inherit pytest's cwd (the enabled repo).
+        env["PATH"] = _path_without_vox_panel()
         return subprocess.run(
             ["bash", str(plugin / "hooks" / "session-start.sh")],
             input=json.dumps({"cwd": str(cwd)}),
             text=True,
             capture_output=True,
+            cwd=home,
             env=env,
             check=False,
         )
