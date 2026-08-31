@@ -146,9 +146,15 @@ class VoxdPlist:
         """)
 
     def write(self) -> None:
-        """Author the plist on disk with 0644 permissions."""
+        """Author the plist on disk with 0644 permissions.
+
+        The encoding is explicit because the XML declares ``UTF-8``, while
+        ``write_text`` would otherwise use the process locale: under a
+        non-UTF-8 locale a non-ASCII path in ProgramArguments would either
+        raise or land as bytes the declaration contradicts.
+        """
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(self.content())
+        self._path.write_text(self.content(), encoding="utf-8")
         self._path.chmod(0o644)
         logger.info("Wrote plist to %s", self._path)
 

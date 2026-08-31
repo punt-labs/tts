@@ -191,6 +191,24 @@ def test_write_sets_0644(tmp_path: Path) -> None:
     assert stat.S_IMODE(plist.path.stat().st_mode) == 0o644
 
 
+def test_write_encodes_utf8_regardless_of_locale(tmp_path: Path) -> None:
+    """The bytes on disk must match the XML's own UTF-8 declaration.
+
+    ``write_text`` defaults to the process locale, so a non-ASCII path under a
+    non-UTF-8 locale would raise or write bytes the declaration contradicts --
+    and launchd parses the file by that declaration.
+    """
+    plist = VoxdPlist(
+        "com.punt-labs.voxd",
+        tmp_path / "x.plist",
+        lambda: ["/Users/josé/bin/voxd", "--port", "8421"],
+    )
+    plist.write()
+    raw = plist.path.read_bytes()
+    assert "josé".encode() in raw
+    assert "/Users/josé/bin/voxd" in raw.decode("utf-8")
+
+
 def test_write_is_idempotent(tmp_path: Path) -> None:
     plist = _plist(tmp_path)
     plist.write()
