@@ -501,6 +501,15 @@ class Arm2Runner:
         session = self._session
         if session is not None:
             session.kill()
+            # Wait for the pane process to actually die, then let its
+            # exit flushes land: a dying claude recreates its (empty)
+            # CLAUDE_CONFIG_DIR skeleton at exit, and an rmtree racing
+            # that flush reports clean while leaving the skeleton behind
+            # — observed on the first live run.
+            deadline = time.monotonic() + 10
+            while session.alive() and time.monotonic() < deadline:
+                time.sleep(0.5)
+            time.sleep(1.0)
             lines.append(f"killed tmux session {session.name}")
         store.stop_if_running()
         lines.append("store stopped")

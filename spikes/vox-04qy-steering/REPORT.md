@@ -153,6 +153,12 @@ the steer text (Arm 1's refusal finding applies to any model).
 - One store-side `ConnectionClosedError` was logged when a relay client
   dropped without a close frame (mcp-proxy hitting its timeout); no
   ledger record was lost (relay sequences 1–29 are contiguous).
+- The first live run's teardown raced the dying fork's exit flush: claude
+  recreated an **empty** `claude-config/` skeleton (zero files, no
+  credentials) after `rmtree`, so "clean" was reported with a bare
+  directory left behind. The runner now waits for the pane process to
+  die and settle before removing the scratch root; `teardown.py` remains
+  the idempotent backstop.
 
 ## Reproducing
 
