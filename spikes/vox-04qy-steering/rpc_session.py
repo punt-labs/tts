@@ -82,7 +82,13 @@ class PiRpcSession:
         return self
 
     @classmethod
-    def spawn(cls, argv: list[str], cwd: Path, stderr_path: Path) -> Self:
+    def spawn(
+        cls,
+        argv: list[str],
+        cwd: Path,
+        stderr_path: Path,
+        env: dict[str, str] | None = None,  # None inherits; harness passes stub PATH
+    ) -> Self:
         """Start the child in its own process group, pipes attached.
 
         stderr goes to a file, not a pipe: a second reader thread for a
@@ -94,6 +100,7 @@ class PiRpcSession:
             process = subprocess.Popen(
                 argv,
                 cwd=cwd,
+                env=env,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=stderr_handle,

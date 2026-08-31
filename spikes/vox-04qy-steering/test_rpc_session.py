@@ -159,3 +159,27 @@ class TestPiRpcSession:
         session = _spawn(peer_argv, tmp_path)
         session.close()
         session.close()
+
+    def test_spawn_env_reaches_the_child(self, tmp_path: Path) -> None:
+        echo_env = tmp_path / "echo_env.py"
+        echo_env.write_text(
+            "import json, os\n"
+            'print(json.dumps({"type": "hello",'
+            ' "marker": os.environ.get("SPIKE_MARKER", "")}), flush=True)\n',
+            encoding="utf-8",
+        )
+        env = dict(os.environ)
+        env["SPIKE_MARKER"] = "vox04qy"
+        session = PiRpcSession.spawn(
+            [sys.executable, str(echo_env)],
+            cwd=tmp_path,
+            stderr_path=tmp_path / "stderr.log",
+            env=env,
+        )
+        try:
+            hello = session.wait_for(
+                lambda event: event.type == "hello", timeout_s=10, description="hello"
+            )
+            assert hello.data["marker"] == "vox04qy"
+        finally:
+            session.close()
