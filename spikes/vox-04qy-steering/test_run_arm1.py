@@ -18,7 +18,7 @@ import pytest
 import run_arm1
 from rpc_protocol import RpcCommand, Transcript
 from rpc_session import PiRpcSession
-from run_arm1 import Arm1Runner, _probe
+from run_arm1 import Arm1Runner, ScenarioOutcome, _probe
 from steer_analysis import TranscriptAnalysis
 
 if TYPE_CHECKING:
@@ -143,3 +143,46 @@ class TestProbe:
 
     def test_successful_probe_returns_stdout(self) -> None:
         assert _probe(["echo", "v1.2.3"]) == "v1.2.3"
+
+
+class TestPreserveStderr:
+    """A failed scenario's pi stderr survives into the evidence dir."""
+
+    def test_failed_scenario_stderr_is_copied_and_sanitized(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        runner = _runner(tmp_path, monkeypatch)
+        scratch = run_arm1.SCRATCH_ROOT / "boom"
+        scratch.mkdir(parents=True)
+        leaky = f"panic: cannot open {run_arm1.SCRATCH_ROOT}/boom/notes_01.txt"
+        (scratch / "pi_stderr.log").write_text(leaky + "\n", encoding="utf-8")
+        runner._results_dir.mkdir(parents=True)
+        outcome = ScenarioOutcome(
+            name="boom", summary={"error": "x"}, transcript=Transcript()
+        )
+        runner._preserve_stderr([outcome])
+        copied = (runner._results_dir / "boom.pi_stderr.log").read_text("utf-8")
+        assert "panic: cannot open" in copied
+        assert str(run_arm1.SCRATCH_ROOT) not in copied  # sanitized
+        assert "<scratch>" in copied
+
+    def test_missing_stderr_is_an_explicit_marker(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        runner = _runner(tmp_path, monkeypatch)
+        runner._results_dir.mkdir(parents=True)
+        outcome = ScenarioOutcome(
+            name="ghost", summary={"error": "x"}, transcript=Transcript()
+        )
+        runner._preserve_stderr([outcome])
+        marker = (runner._results_dir / "ghost.pi_stderr.log").read_text("utf-8")
+        assert "never created" in marker
+
+    def test_successful_scenarios_leave_no_stderr_copies(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        runner = _runner(tmp_path, monkeypatch)
+        runner._results_dir.mkdir(parents=True)
+        outcome = ScenarioOutcome(name="fine", summary={}, transcript=Transcript())
+        runner._preserve_stderr([outcome])
+        assert not list(runner._results_dir.glob("*.pi_stderr.log"))

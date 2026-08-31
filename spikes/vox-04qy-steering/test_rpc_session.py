@@ -12,10 +12,13 @@ from __future__ import annotations
 import os
 import sys
 import textwrap
+import threading
+import time
 from pathlib import Path
 
 import pytest
 
+import rpc_session
 from rpc_protocol import RpcCommand
 from rpc_session import PiRpcSession, PiSpec
 
@@ -192,4 +195,21 @@ class TestPiRpcSession:
             )
             assert hello.data["marker"] == "vox04qy"
         finally:
+            session.close()
+
+
+class TestWedgedReaderIsLoud:
+    """close() must not return while the reader could still be appending."""
+
+    def test_close_raises_when_the_reader_never_stops(
+        self, peer_argv: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        session = _spawn(peer_argv, tmp_path)
+        wedged = threading.Thread(target=time.sleep, args=(30,), daemon=True)
+        wedged.start()
+        # Swap in a thread that outlives the grace period — the shape of
+        # a reader stuck in a read that stdout's close never woke.
+        session._reader = wedged
+        monkeypatch.setattr(rpc_session, "_CLOSE_GRACE_S", 0.2)
+        with pytest.raises(RuntimeError, match="reader did not stop"):
             session.close()

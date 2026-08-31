@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 import run_arm2
-from run_arm2 import Arm2Runner, StoreProcess
+from run_arm2 import Arm2Runner, CaseResult, StoreProcess
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -121,3 +121,39 @@ class TestMissingCaptureIsExplicit:
         runner._capture("dead_case")
         marker = (tmp_path / "results" / "pane_dead_case.txt").read_text("utf-8")
         assert "unavailable" in marker
+
+
+class TestCaseGuardCoversSubprocessFaults:
+    """A tmux failure mid-case is the case's finding, never a run abort."""
+
+    def test_called_process_error_becomes_the_case_error(self) -> None:
+        def tmux_blew_up() -> CaseResult:
+            raise subprocess.CalledProcessError(1, ["tmux", "send-keys"])
+
+        result = Arm2Runner._guarded_case("boom", tmux_blew_up)
+        assert result.name == "boom"
+        assert "tmux" in str(result.summary["error"])
+
+    def test_a_harness_bug_still_escapes(self) -> None:
+        def broken_harness() -> CaseResult:
+            msg = "not a live-session fault"
+            raise ValueError(msg)
+
+        with pytest.raises(ValueError, match="not a live-session fault"):
+            Arm2Runner._guarded_case("bug", broken_harness)
+
+
+class TestExitCodeGatesOnResidue:
+    """Case errors and on-disk residue both fail the run."""
+
+    def test_dirty_teardown_fails_a_run_with_clean_cases(self) -> None:
+        results = [CaseResult("fine", {"ok": True})]
+        assert Arm2Runner._exit_code(results, teardown_clean=False) == 1
+
+    def test_clean_cases_and_clean_teardown_pass(self) -> None:
+        results = [CaseResult("fine", {"ok": True})]
+        assert Arm2Runner._exit_code(results, teardown_clean=True) == 0
+
+    def test_case_error_fails_even_a_clean_teardown(self) -> None:
+        results = [CaseResult("boom", {"error": "x"})]
+        assert Arm2Runner._exit_code(results, teardown_clean=True) == 1

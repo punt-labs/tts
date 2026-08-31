@@ -33,6 +33,7 @@ import signal
 import socket
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -299,13 +300,7 @@ class Arm2Runner:
                 ("paste_multiline", self._paste_multiline),
                 ("literal_specials", self._literal_specials),
             ):
-                print(f"--- case: {name}")
-                try:
-                    results.append(case())
-                except _CASE_FAULTS as exc:
-                    # The matrix must complete; the miss IS the finding.
-                    print(f"    error: {exc}")
-                    results.append(CaseResult(name, {"error": str(exc)}))
+                results.append(self._guarded_case(name, case))
         finally:
             stub_lines, teardown_lines, teardown_clean = self.teardown_with_evidence(
                 store
@@ -313,6 +308,22 @@ class Arm2Runner:
         self._write_summary(
             results, stub_lines, teardown_lines, teardown_clean=teardown_clean
         )
+        return self._exit_code(results, teardown_clean=teardown_clean)
+
+    @staticmethod
+    def _guarded_case(name: str, case: Callable[[], CaseResult]) -> CaseResult:
+        """One matrix case; a live-session fault is the case's finding."""
+        print(f"--- case: {name}")
+        try:
+            return case()
+        except _CASE_FAULTS as exc:
+            # The matrix must complete; the miss IS the finding.
+            print(f"    error: {exc}")
+            return CaseResult(name, {"error": str(exc)})
+
+    @staticmethod
+    def _exit_code(results: list[CaseResult], *, teardown_clean: bool) -> int:
+        """The run's verdict: case errors or on-disk residue both fail it."""
         failed = [result.name for result in results if "error" in result.summary]
         if failed:
             print(f"cases with errors: {', '.join(failed)}")
