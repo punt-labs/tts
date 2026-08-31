@@ -3748,3 +3748,83 @@ captures, teardown logs).
   capability must itself enforce scratch-namespace placement
   (deny-by-default in the capability, not the harness), and DES-070's
   context store needs recursive redaction of nested payloads.
+
+---
+
+## DES-073: Steering a Running Mode B Session — Per-Agent Channels, Amending DES-068's Wall 2
+
+**Status:** PROPOSED (2026-08-31). Sub-decision under DES-068, amending its
+"Wall 2" premise. Validation: `vox-04qy` (both arms PASS; evidence and
+per-arm semantics in `spikes/vox-04qy-steering/REPORT.md`). Requires
+operator ratification before any implementation dispatches against it.
+
+### Context
+
+DES-068 framed the option space with "Wall 2 — no background process can
+inject: Claude Code exposes no channel by which an external process hands
+a new user turn in." That premise ruled out steering — the user speaking
+to `voxd` mid-run and having those words reach the working session. The
+`vox-04qy` spike tested the two candidate channels directly and both
+delivered, with confirmed receipts and characterized semantics.
+
+### Proposed decision
+
+Amend Wall 2 from "no injection is possible" to "no injection *API*
+exists; the TTY is a workable injection surface, and protocol-native
+agents have first-class verbs." Steering becomes a `voxd` capability with
+a per-agent channel:
+
+- **pi** — the RPC `steer` verb over the daemon-held process's stdin.
+  Millisecond acks; queue-at-boundary semantics (the in-flight tool call
+  always completes; the text enters as a user message at the next turn
+  boundary). `follow_up` contrasts as end-of-task delivery for deferred
+  instructions.
+- **claude** — tmux `send-keys` into the harness-owned pane (exactly what
+  Mode B's launcher already creates), with the DES-070 hook store as the
+  delivery receipt: the injected text's own `UserPromptSubmit` event is
+  the confirmation. Same queue-then-inject shape (shared `prompt_id`
+  with the running turn; incorporated at the model's next inference
+  boundary). Escape is the hard interrupt — and it fires **no Stop
+  hook**, so a steering daemon must not use Stop as its turn-ended
+  signal.
+- **Steer text must be user-voiced** on every channel. Delivery and
+  compliance are separate: protocol-styled wrapper text ("URGENT STEER")
+  was delivered in milliseconds and refused by the model as suspected
+  prompt injection in one run (nondeterministically — the identical text
+  complied on a rerun). `voxd` relays the user's words as the user's
+  words, never wrapped in machinery.
+
+### Codex / opencode disposition (operator-ruled 2026-08-31)
+
+Two datapoints suffice; no third spike arm. The spike proved the two
+channel *types* — a native protocol verb and the TTY — and every coding
+agent has one or both (opencode is client/server with an API surface;
+codex ships programmatic modes). When `launch_session` grows an agent,
+that adapter's implementation includes characterizing its best steering
+channel with the committed `vox-04qy` harness. One genuine per-agent gap
+to carry: the hook-store receipt is Claude-specific — other agents need
+their own delivery witness (pane capture, or their server/event surface).
+
+### Rejected alternatives
+
+- **Steering only at turn boundaries (no mid-turn delivery).** Rejected:
+  both channels already queue safely mid-turn; refusing mid-turn sends
+  buys nothing and costs the "stop, wrong file" case, where Escape (claude)
+  or `abort` (pi) plus a user-voiced correction is the whole point.
+- **A Claude Code change to add an injection API.** Rejected for v1: the
+  TTY channel works today with zero Claude Code changes, the same
+  property that made Mode B v1 shippable (DES-071).
+- **Wrapping steer text in a protocol envelope for machine parsing.**
+  Rejected: the Arm 1 adversarial run showed wrapper-styled text risks
+  model refusal as suspected injection; the channel carries user words.
+
+### Open items / risks
+
+- Model compliance is phrasing- and model-dependent and nondeterministic;
+  the channel guarantees delivery, not obedience. UX must not promise
+  "the agent will do what you said," only "the agent heard you."
+- No per-token stream on the claude channel — injection timing inside a
+  single inference call is unobservable from outside.
+- The store appends: any consumer re-running capture over an existing
+  ledger would interleave sessions (guarded in the spike harness;
+  the real capability needs the same refusal).
