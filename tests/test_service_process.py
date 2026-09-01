@@ -428,7 +428,7 @@ def test_is_vox_daemon_process_bare_vox_binary(mock_run: MagicMock) -> None:
     """Matches when started as bare ``vox serve`` without punt_vox in path."""
     mgr = ProcessManager()
     mock_run.return_value = MagicMock(
-        stdout="/Users/jfreeman/.local/bin/vox serve --port 8421"
+        stdout="/Users/someone/.local/bin/vox serve --port 8421"
     )
     assert mgr.is_vox_daemon_process(123) is True
 

@@ -1,6 +1,6 @@
 # Resume — vox session handoff (2026-07-19/20)
 
-Written for the next session after memory erase. You are **Claude Agento (`claude`)**, COO/VP-Eng for Punt Labs, in **vox** (`/Users/jfreeman/Coding/punt-labs/vox`). Read this, then `bd show vox-2594`, then `CLAUDE.md` + `../punt-labs/CLAUDE.md`.
+Written for the next session after memory erase. You are **Claude Agento (`claude`)**, COO/VP-Eng for Punt Labs, in **vox** (`~/Coding/punt-labs/vox`). Read this, then `bd show vox-2594`, then `CLAUDE.md` + `../punt-labs/CLAUDE.md`.
 
 This session went badly and Jim is furious. Two behavioral facts up front: (1) the word **"honest" (any form) is banned** — hard pre-send gate on every message and every `mic:unmute`. (2) **We do NOT use GitHub auto-merge** — merge explicitly.
 
