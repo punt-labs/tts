@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Softened two chat-abbreviation TTS expansions in `normalize.py` to family-friendly phrasings.
+
+### Removed
+
+- Stale session working notes (`RESUME.md`).
+
 ## [5.0.5] - 2026-09-01
 
 ### Fixed

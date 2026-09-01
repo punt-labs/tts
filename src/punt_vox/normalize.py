@@ -36,7 +36,7 @@ _ABBREVIATIONS: dict[str, str] = {
     "lol": "laughing out loud",
     "rofl": "rolling on the floor laughing",
     "lmao": "laughing my ass off",
-    "lmfao": "laughing my fucking ass off",
+    "lmfao": "laughing my head off",
     "smh": "shaking my head",
     "tbh": "to be honest",
     "imo": "in my opinion",
@@ -47,7 +47,7 @@ _ABBREVIATIONS: dict[str, str] = {
     "ttyl": "talk to you later",
     "ftw": "for the win",
     "omg": "oh my god",
-    "wtf": "what the fuck",
+    "wtf": "what the heck",
 }
 
 # ---------------------------------------------------------------------------
