@@ -1,7 +1,7 @@
 # COE: Linux silent playback (2026-04-06)
 
 **Status:** Resolved 2026-04-07 (one day after writing).
-**Host:** okinos (Linux, <user>, espeak-ng provider, no API keys).
+**Host:** okinos (Linux, `<user>`, espeak-ng provider, no API keys).
 **Date opened:** 2026-04-06.
 
 ## Resolution
