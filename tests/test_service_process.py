@@ -418,7 +418,7 @@ def test_is_vox_daemon_process_true(mock_run: MagicMock) -> None:
 def test_is_vox_daemon_process_hyphen_path(mock_run: MagicMock) -> None:
     """Matches when cmd contains punt-vox (hyphen) but not punt_vox."""
     mgr = ProcessManager()
-    cmd = "/home/user/.local/share/uv/tools/punt-vox/bin/vox serve --port 8421"
+    cmd = "/home/<user>/.local/share/uv/tools/punt-vox/bin/vox serve --port 8421"
     mock_run.return_value = MagicMock(stdout=cmd)
     assert mgr.is_vox_daemon_process(123) is True
 
