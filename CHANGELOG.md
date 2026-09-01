@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.5] - 2026-09-01
+
 ### Fixed
 
 - **The test suite no longer publishes a `vox.music` scene into the operator's live Lux hub (vox-ghqw).** `tests/test_voxd_daemon.py` drives the real `VoxDaemon._lifespan` to prove the background tasks are wired, and that lifespan composes the music player. It did so as `MusicPlayerSubsystem(service, service.changes)` — two arguments, leaving the third to default — so the subsystem built `VoxLuxClients()`, voxd's *production* identity resolved against whatever luxd was running. Within about 300ms of the scene task starting, its subscription leg asked that factory for a hub and connected. The row the operator kept seeing was this module's own `turn_on(style="techno", vibe="calm", name="mix", ...)`: `AlbumTags.display_title` title-cases `mix` to **Mix**, the Genre cell is the style, and the test's blocking producer leaves Tracks at **0**. Scenes are owned per connection, so the test's scene did not overwrite the real one — it stood a *second* "Music" frame beside it, which is why the widget appeared to flip between two states and why restarting voxd, the hub, or the display never helped. The client factory is now a `VoxDaemon` constructor argument, so whoever composes the daemon decides which luxd it reaches; a regression test asserts the lifespan asks the *injected* factory for a leg, checking the call count rather than trusting an exception, because both legs run inside tasks whose exceptions are discarded when the lifespan cancels them. This is the same defect class as the hook tests spawning real `vox-panel`s, one layer down in the daemon, which is why fixing those did not stop it.
