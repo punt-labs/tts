@@ -45,10 +45,10 @@ context: |
     the agent is live; the key has convai read+write (verified).
 
     Working directory: the worktree at
-    /home/jfreeman/Coding/punt-labs/vox/.claude/worktrees/vox-bst7-el-convai-spike
+    /home/jdoe/Coding/punt-labs/vox/.claude/worktrees/vox-bst7-el-convai-spike
     on branch spike/vox-bst7-el-convai. Its own .envrc is direnv-blocked;
     prefix env-needing commands with
-    `direnv exec /home/jfreeman/Coding/punt-labs/vox` (the main checkout,
+    `direnv exec /home/jdoe/Coding/punt-labs/vox` (the main checkout,
     same env). Do not touch the main checkout otherwise.
 
     Bead: vox-bst7 (P1, in_progress). Labels: e-plus, spike, voice-arch.

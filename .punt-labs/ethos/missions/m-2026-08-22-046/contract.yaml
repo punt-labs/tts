@@ -28,7 +28,7 @@ budget:
     reflection_after_each: false
 current_round: 1
 context: |
-    Working in the isolated worktree /Users/jfreeman/Coding/punt-labs/vox/.claude/worktrees/conversation-mode-spikes
+    Working in the isolated worktree /Users/jdoe/Coding/punt-labs/vox/.claude/worktrees/conversation-mode-spikes
     (branch worktree-conversation-mode-spikes) -- cd there, do all work inside it. This worktree
     is isolated from the main working tree, where other unrelated agents are active (confirmed via
     bd mission show m-2026-08-15-003) -- do not touch anything outside this worktree.

@@ -53,7 +53,7 @@ context: |
     inline deps.
 
     Working directory: the dedicated worktree at
-    /home/jfreeman/Coding/punt-labs/vox/.claude/worktrees/vox-bst7-el-convai-spike
+    /home/jdoe/Coding/punt-labs/vox/.claude/worktrees/vox-bst7-el-convai-spike
     on branch spike/vox-bst7-el-convai (branched from origin/main today).
     Do not touch the main checkout at ~/Coding/punt-labs/vox -- another
     agent is active there.
