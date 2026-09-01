@@ -106,11 +106,17 @@ class TestAbbreviations:
     def test_lmao(self) -> None:
         assert normalize_for_speech("lmao") == "laughing my ass off"
 
+    def test_lmfao(self) -> None:
+        assert normalize_for_speech("lmfao") == "laughing my head off"
+
     def test_smh(self) -> None:
         assert normalize_for_speech("smh") == "shaking my head"
 
     def test_omg(self) -> None:
         assert normalize_for_speech("OMG") == "oh my god"
+
+    def test_wtf(self) -> None:
+        assert normalize_for_speech("WTF") == "what the heck"
 
 
 # ---------------------------------------------------------------------------
