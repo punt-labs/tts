@@ -36,7 +36,7 @@ _ABBREVIATIONS: dict[str, str] = {
     "lol": "laughing out loud",
     "rofl": "rolling on the floor laughing",
     "lmao": "laughing my ass off",
-    "lmfao": "laughing my fucking ass off",
+    "lmfao": "laughing my head off",
     "smh": "shaking my head",
     "tbh": "to be honest",
     "imo": "in my opinion",
@@ -47,7 +47,7 @@ _ABBREVIATIONS: dict[str, str] = {
     "ttyl": "talk to you later",
     "ftw": "for the win",
     "omg": "oh my god",
-    "wtf": "what the fuck",
+    "wtf": "what the heck",
 }
 
 # ---------------------------------------------------------------------------
@@ -608,14 +608,14 @@ def _normalize_token(token: str) -> str:
     if expanded != core:
         return expanded + suffix
 
-    # ALL_CAPS standalone: space out acronyms for TTS spelling
-    if core.isupper() and len(core) > 1:
-        spaced = _space_acronym(core)
-        if spaced != core:
-            return spaced + suffix
+    return _expand_standalone_acronym(core) + suffix
 
-    # Return reconstructed token (punctuation may have been stripped)
-    return core + suffix
+
+def _expand_standalone_acronym(core: str) -> str:
+    """Space out a standalone ALL_CAPS token for TTS spelling, else pass through."""
+    if core.isupper() and len(core) > 1:
+        return _space_acronym(core)
+    return core
 
 
 def _expand_parts(parts: list[str], suffix: str) -> str:
@@ -681,26 +681,27 @@ def _strip_punctuation(token: str) -> tuple[str, str]:
     TTS engines either mispronounce them or produce artifacts.
     Trailing underscores are discarded -- they are separators, not speech.
     """
-    start = 0
-    end = len(token)
+    start, end = 0, len(token)
     while start < end and not token[start].isalnum() and token[start] not in "~/._":
         start += 1
-    # Peel off trailing punctuation (not underscore, not alnum) → suffix
-    suffix_start = end
-    while suffix_start > start:
-        ch = token[suffix_start - 1]
+    rel_end, raw_suffix = _trailing_symbol_bounds(token[start:])
+    # Only keep prosody-affecting suffix characters; drop the rest
+    suffix = "".join(filter(_PROSODY_PUNCTUATION.__contains__, raw_suffix))
+    return token[start : start + rel_end], suffix
+
+
+def _trailing_symbol_bounds(core_candidate: str) -> tuple[int, str]:
+    """Return (core_end, raw_suffix), excluding trailing punctuation and underscores."""
+    suffix_start = len(core_candidate)
+    while suffix_start > 0:
+        ch = core_candidate[suffix_start - 1]
         if ch.isalnum() or ch == "_":
             break
         suffix_start -= 1
-    # Discard trailing underscores (separators, not speech)
     core_end = suffix_start
-    while core_end > start and token[core_end - 1] == "_":
+    while core_end > 0 and core_candidate[core_end - 1] == "_":
         core_end -= 1
-    # Only keep prosody-affecting suffix characters; drop the rest
-    raw_suffix = token[suffix_start:]
-    suffix = "".join(filter(_PROSODY_PUNCTUATION.__contains__, raw_suffix))
-    # Leading punctuation is never speech — always discarded above
-    return token[start:core_end], suffix
+    return core_end, core_candidate[suffix_start:]
 
 
 # Punctuation that affects TTS prosody (pauses, intonation) — keep these.

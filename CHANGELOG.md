@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `normalize.py`'s speech expansions for the `lmfao` and `wtf` chat
+  abbreviations are now family-friendly ("laughing my head off" and "what
+  the heck", respectively) instead of profane.
+
 ### Removed
 
 - Stale session working notes (`RESUME.md`).
