@@ -54,7 +54,7 @@ context: |
     contain exact file:line citations and reproduction steps.
 
     Working directory: this repo's dedicated worktree at
-    /home/jfreeman/Coding/punt-labs/vox/.claude/worktrees/vox-1gub-linux-desktop,
+    /home/jdoe/Coding/punt-labs/vox/.claude/worktrees/vox-1gub-linux-desktop,
     branch fix/vox-1gub-linux-desktop-config (already has 2 commits from
     round 1 -- continue on this branch, do not create a new one, do not
     touch the main checkout).
